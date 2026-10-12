@@ -1,5 +1,5 @@
 // Typed wrappers over the Rust commands in app/src-tauri/src/lib.rs.
-import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core'
 
 export interface ScanReport {
   files_seen: number
@@ -73,3 +73,28 @@ export const albumCovers = (root: string, dirs: string[], size: number) =>
     : dev<CoverThumb[]>('covers.json').then((all) => all.filter((c) => dirs.includes(c.dir)))
 
 export const assetUrl = (path: string) => (inApp() ? convertFileSrc(path) : path)
+
+export interface DeepCheckReport {
+  albums: number
+  tracks: number
+  cancelled: boolean
+  elapsed_ms: number
+}
+
+/** Decode new/changed tracks; `onProgress` fires as albums finish. */
+export function deepCheck(root: string, onProgress: (done: number, total: number) => void) {
+  if (!inApp()) return Promise.reject(new Error('The deep check runs in the desktop app.'))
+  const channel = new Channel<{ done: number; total: number }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total)
+  return invoke<DeepCheckReport>('deep_check', { root, onProgress: channel })
+}
+
+export const cancelDeepCheck = () => (inApp() ? invoke<void>('cancel_deep_check') : Promise.resolve())
+
+export const albumSpectrogram = (root: string, dir: string) =>
+  inApp()
+    ? invoke<string>('album_spectrogram', { root, dir }).then(assetUrl)
+    : Promise.reject(new Error('Spectrograms are drawn by the desktop app.'))
+
+/** Issues whose evidence is best seen as a spectrogram. */
+export const SPECTRAL_ISSUES = new Set(['limited_highs', 'upsampled_hires', 'padded_24bit', 'damaged_audio'])

@@ -11,7 +11,9 @@ pub mod index;
 pub mod library;
 pub mod media;
 pub mod paths;
+pub mod quality;
 pub mod scan;
+pub mod spectrogram;
 
 pub use error::{Error, Result};
 pub use index::Index;

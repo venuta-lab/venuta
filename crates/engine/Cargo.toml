@@ -20,6 +20,8 @@ tracing.workspace = true
 unicode-normalization.workspace = true
 symphonia.workspace = true
 image.workspace = true
+realfft.workspace = true
+ebur128.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

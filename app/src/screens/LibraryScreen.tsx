@@ -1,6 +1,14 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useState } from 'react'
-import type { AlbumSummary, HealthReport, Issue, Severity } from '../lib/engine'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  albumSpectrogram,
+  SPECTRAL_ISSUES,
+  type AlbumSummary,
+  type HealthReport,
+  type Issue,
+  type Severity,
+} from '../lib/engine'
 import { setAccent, useCovers } from '../lib/covers'
 import { IconChevron, IconFolder, IconRefresh } from '../components/Icons'
 
@@ -16,10 +24,14 @@ export function LibraryScreen(props: {
   root: string
   report: HealthReport | null
   busy: string
+  deep: { done: number; total: number } | null
   onChoose: () => void
   onRescan: () => void
+  onDeepCheck: () => void
+  onCancelDeep: () => void
 }) {
-  const { root, report, busy } = props
+  const { root, report, busy, deep } = props
+  const [spectrum, setSpectrum] = useState<AlbumSummary | null>(null)
   const name = root.split(/[\\/]/).filter(Boolean).pop() ?? root
   const [open, setOpen] = useState<string | null>(null)
 
@@ -47,6 +59,13 @@ export function LibraryScreen(props: {
           <PillButton onClick={props.onChoose} title="Choose another folder">
             <IconFolder />
           </PillButton>
+          <PillButton
+            onClick={props.onDeepCheck}
+            disabled={!!busy || !!deep}
+            title="Decode every new or changed track: integrity, quality and loudness. Changes nothing."
+          >
+            Deep check
+          </PillButton>
           <PillButton onClick={props.onRescan} disabled={!!busy} accent>
             <motion.span
               animate={busy ? { rotate: 360 } : { rotate: 0 }}
@@ -59,6 +78,8 @@ export function LibraryScreen(props: {
           </PillButton>
         </div>
       </header>
+
+      <AnimatePresence>{deep && <DeepProgressBar deep={deep} onCancel={props.onCancelDeep} />}</AnimatePresence>
 
       {report && <FormatBar formats={report.summary.formats} total={report.summary.tracks} />}
 
@@ -76,11 +97,15 @@ export function LibraryScreen(props: {
                 open={open === issue.id}
                 onToggle={() => setOpen(open === issue.id ? null : issue.id)}
                 albums={albumsByDir}
+                onAlbum={SPECTRAL_ISSUES.has(issue.id) ? setSpectrum : undefined}
               />
             ))}
           </div>
         </section>
       ))}
+      <AnimatePresence>
+        {spectrum && <SpectrogramView root={root} album={spectrum} onClose={() => setSpectrum(null)} />}
+      </AnimatePresence>
     </div>
   )
 }
@@ -90,6 +115,7 @@ function IssueRow(props: {
   open: boolean
   onToggle: () => void
   albums: Map<string, AlbumSummary>
+  onAlbum?: (a: AlbumSummary) => void
 }) {
   const { issue, open } = props
   return (
@@ -131,7 +157,10 @@ function IssueRow(props: {
                 ))}
               </div>
             )}
-            <CoverStrip dirs={issue.albums} albums={props.albums} />
+            {props.onAlbum && (
+              <p className="mt-3 text-[12.5px] text-ink/50">Click an album to see its spectrogram.</p>
+            )}
+            <CoverStrip dirs={issue.albums} albums={props.albums} onAlbum={props.onAlbum} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -140,7 +169,11 @@ function IssueRow(props: {
 }
 
 /** Affected albums as a strip of covers you can drag sideways, like flicking through a crate. */
-function CoverStrip(props: { dirs: string[]; albums: Map<string, AlbumSummary> }) {
+function CoverStrip(props: {
+  dirs: string[]
+  albums: Map<string, AlbumSummary>
+  onAlbum?: (a: AlbumSummary) => void
+}) {
   const cover = useCovers(320)
   const dirs = props.dirs.slice(0, 40)
   return (
@@ -157,7 +190,8 @@ function CoverStrip(props: { dirs: string[]; albums: Map<string, AlbumSummary> }
               transition={{ ...spring, delay: Math.min(i, 12) * 0.025 }}
               whileHover={{ y: -4, scale: 1.04 }}
               onHoverStart={() => setAccent(c?.accent)}
-              className="w-[112px] shrink-0"
+              onClick={() => a && props.onAlbum?.(a)}
+              className={`w-[112px] shrink-0 ${props.onAlbum ? 'cursor-pointer' : ''}`}
               title={a ? `${a.title}  (${a.album_artist})` : d}
             >
               <div className="aspect-square overflow-hidden rounded-xl bg-white/5 shadow-lg shadow-black/30">
@@ -174,6 +208,106 @@ function CoverStrip(props: { dirs: string[]; albums: Map<string, AlbumSummary> }
         )}
       </motion.div>
     </div>
+  )
+}
+
+function DeepProgressBar(props: { deep: { done: number; total: number }; onCancel: () => void }) {
+  const { done, total } = props.deep
+  const pct = total ? (done / total) * 100 : 0
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={spring}
+      className="overflow-hidden"
+    >
+      <div className="glass mt-6 flex items-center gap-4 rounded-2xl px-5 py-3.5">
+        <div className="flex-1">
+          <div className="text-[13.5px] text-ink/85">
+            {total ? `Deep check: ${fmt(done)} of ${fmt(total)} tracks` : 'Preparing the deep check…'}
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: 'var(--accent)' }}
+              animate={{ width: `${pct}%` }}
+              transition={{ type: 'spring', stiffness: 120, damping: 24 }}
+            />
+          </div>
+        </div>
+        <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-white/10 hover:text-ink">
+          Stop
+        </button>
+      </div>
+    </motion.div>
+  )
+}
+
+function SpectrogramView(props: { root: string; album: AlbumSummary; onClose: () => void }) {
+  const [result, setResult] = useState<{ dir: string; src?: string; error?: string } | null>(null)
+  useEffect(() => {
+    let live = true
+    albumSpectrogram(props.root, props.album.dir).then(
+      (src) => live && setResult({ dir: props.album.dir, src }),
+      (e) => live && setResult({ dir: props.album.dir, error: e instanceof Error ? e.message : String(e) }),
+    )
+    return () => {
+      live = false
+    }
+  }, [props.root, props.album.dir])
+  const current = result?.dir === props.album.dir ? result : null
+  const src = current?.src
+  const error = current?.error
+  return createPortal(
+    <motion.div
+      className="fixed inset-0 z-50 grid place-items-center p-10"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={props.onClose}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-md" />
+      <motion.div
+        onClick={(e) => e.stopPropagation()}
+        initial={{ y: 24, scale: 0.98 }}
+        animate={{ y: 0, scale: 1 }}
+        exit={{ y: 16, scale: 0.98 }}
+        transition={spring}
+        className="glass relative w-full max-w-[1040px] rounded-[26px] p-7"
+      >
+        <h2 className="text-[22px] font-semibold tracking-[-0.02em]">{props.album.title}</h2>
+        <p className="mt-1 text-[13.5px] text-ink/60">First track, from start to end.</p>
+        <div className="mt-5 flex gap-3">
+          <div className="flex flex-col justify-between py-1 text-right text-[11px] text-ink/45">
+            <span>top of range</span>
+            <span>0 Hz</span>
+          </div>
+          <div className="relative aspect-[960/360] flex-1 overflow-hidden rounded-xl bg-black/40">
+            {src ? (
+              <motion.img
+                src={src}
+                alt={`Spectrogram of ${props.album.title}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="h-full w-full"
+              />
+            ) : (
+              <div className="grid h-full place-items-center text-[13px] text-ink/55">
+                {error || 'Drawing the spectrogram…'}
+              </div>
+            )}
+          </div>
+        </div>
+        <p className="mt-5 max-w-[72ch] text-[13.5px] leading-relaxed text-ink/65">
+          Time runs left to right; higher rows are higher frequencies, brighter is louder. A hard, flat
+          edge with darkness above it means the sound was cut off there: typical of MP3 or AAC sources
+          (around 16 to 20 kHz) or of upsampling (around 22 kHz in a 96 kHz file). A soft, uneven fade is
+          usually just the music or an old master.
+        </p>
+      </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 

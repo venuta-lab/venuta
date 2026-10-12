@@ -12,7 +12,14 @@ import {
   IconPlaylists,
   IconReview,
 } from './components/Icons'
-import { inApp, libraryHealth, scanLibrary, type HealthReport } from './lib/engine'
+import {
+  cancelDeepCheck,
+  deepCheck,
+  inApp,
+  libraryHealth,
+  scanLibrary,
+  type HealthReport,
+} from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { LibraryScreen } from './screens/LibraryScreen'
 import { BrowseScreen } from './screens/BrowseScreen'
@@ -53,6 +60,7 @@ export default function App() {
   const [active, setActive] = useState('library')
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
+  const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
 
   const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
     try {
@@ -133,6 +141,18 @@ export default function App() {
     }
   }
 
+  async function runDeepCheck() {
+    setDeep({ done: 0, total: 0 })
+    try {
+      await deepCheck(root, (done, total) => setDeep({ done, total }))
+      await refresh(root, false)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDeep(null)
+    }
+  }
+
   async function chooseRoot() {
     const picked = inApp()
       ? await open({ directory: true, title: 'Choose your music library folder' })
@@ -155,6 +175,9 @@ export default function App() {
             busy={busy}
             onChoose={chooseRoot}
             onRescan={() => refresh(root, true)}
+            deep={deep}
+            onDeepCheck={runDeepCheck}
+            onCancelDeep={() => void cancelDeepCheck()}
           />
         )
       case 'browse':

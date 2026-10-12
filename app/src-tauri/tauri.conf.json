@@ -37,7 +37,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$DATA/music-librarian/thumbs/**"
+          "$DATA/music-librarian/thumbs/**",
+          "$DATA/music-librarian/spectrograms/**"
         ]
       }
     }

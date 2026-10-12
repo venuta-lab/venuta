@@ -418,6 +418,94 @@ pub fn run(lib: &Library) -> HealthReport {
         .collect();
     add(&mut issues, &mut flagged, b);
 
+    // --- Deep check (needs decoded audio) --------------------------------------------------
+    let mut b = Builder::new(
+        "damaged_audio",
+        "Audio doesn't match its checksum",
+        "The decoded audio differs from the checksum stored in the file, so it was damaged after it was made. Replace it from a backup.",
+        Severity::Problem,
+    );
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.quality
+                .as_ref()
+                .is_some_and(|q| q.verify_ok == Some(false) || q.decode_error.is_some())
+        })
+        .collect();
+    add(&mut issues, &mut flagged, b);
+
+    let mut b = Builder::new(
+        "limited_highs",
+        "High frequencies are cut off",
+        "The sound stops well below the top of the range, which is typical of audio converted from MP3 or AAC, or of old and lo-fi masters. Check the spectrogram before deciding.",
+        Severity::Note,
+    );
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.sample_rate <= 48_000
+                && t.quality
+                    .as_ref()
+                    .and_then(|q| q.cutoff_hz)
+                    .is_some_and(|c| c < 19_500)
+        })
+        .collect();
+    add(&mut issues, &mut flagged, b);
+
+    let mut b = Builder::new(
+        "upsampled_hires",
+        "Hi-res in name only",
+        "These files are stored at 88–192 kHz but contain nothing above CD range: the label upsampled a CD-quality master. Same sound, bigger files.",
+        Severity::Note,
+    );
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.sample_rate > 48_000
+                && t.quality
+                    .as_ref()
+                    .and_then(|q| q.hires_db)
+                    .is_some_and(|h| h < -100.0)
+        })
+        .collect();
+    add(&mut issues, &mut flagged, b);
+
+    let mut b = Builder::new(
+        "padded_24bit",
+        "24-bit in name only",
+        "These files are labelled 24-bit but only ever use 16 bits: CD-quality audio padded with zeros.",
+        Severity::Note,
+    );
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.bit_depth == 24
+                && t.quality
+                    .as_ref()
+                    .and_then(|q| q.effective_bits)
+                    .is_some_and(|b| b <= 16)
+        })
+        .collect();
+    add(&mut issues, &mut flagged, b);
+
+    let mut b = Builder::new(
+        "deep_check_pending",
+        "Not deep-checked yet",
+        "Run a deep check to verify these files and measure their loudness. It reads every track once and changes nothing.",
+        Severity::Note,
+    );
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| t.quality.is_none())
+        .collect();
+    add(&mut issues, &mut flagged, b);
+
     // --- Listening comfort ------------------------------------------------------------------
     let mut b = Builder::new(
         "no_replaygain",

@@ -34,6 +34,21 @@ pub struct Track {
     /// Keys exactly as written, in file order (for junk detection).
     pub raw_keys: Vec<String>,
     pub pictures: Vec<Picture>,
+    /// Deep-check results, if the track has been analysed since it last changed.
+    pub quality: Option<Quality>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Quality {
+    pub verify_ok: Option<bool>,
+    pub decode_error: Option<String>,
+    pub effective_bits: Option<u8>,
+    pub cutoff_hz: Option<u32>,
+    pub hires_db: Option<f32>,
+    pub lufs: Option<f64>,
+    pub peak: Option<f64>,
+    pub album_lufs: Option<f64>,
+    pub album_peak: Option<f64>,
 }
 
 impl Track {
@@ -104,6 +119,7 @@ impl Library {
                     tags: HashMap::new(),
                     raw_keys: Vec::new(),
                     pictures: Vec::new(),
+                    quality: None,
                 })
             })?;
             for t in rows {
@@ -139,6 +155,31 @@ impl Library {
                         height: r.get::<_, Option<i64>>(4)?.map(|v| v as u32),
                         progressive: r.get::<_, i64>(5)? != 0,
                         data_hash: r.get(6)?,
+                    });
+                }
+            }
+        }
+        {
+            // Only results that still match the file (same size and mtime) count.
+            let mut stmt = conn.prepare(
+                "SELECT q.file_id, q.verify_ok, q.decode_error, q.effective_bits, q.cutoff_hz,
+                        q.hires_db, q.lufs, q.peak, q.album_lufs, q.album_peak
+                 FROM quality q JOIN files f ON f.id = q.file_id
+                 WHERE q.size = f.size AND q.mtime_ns = f.mtime_ns",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(r) = rows.next()? {
+                if let Some(&i) = by_id.get(&r.get::<_, i64>(0)?) {
+                    tracks[i].quality = Some(Quality {
+                        verify_ok: r.get(1)?,
+                        decode_error: r.get(2)?,
+                        effective_bits: r.get::<_, Option<i64>>(3)?.map(|v| v as u8),
+                        cutoff_hz: r.get::<_, Option<i64>>(4)?.map(|v| v as u32),
+                        hires_db: r.get::<_, Option<f64>>(5)?.map(|v| v as f32),
+                        lufs: r.get(6)?,
+                        peak: r.get(7)?,
+                        album_lufs: r.get(8)?,
+                        album_peak: r.get(9)?,
                     });
                 }
             }

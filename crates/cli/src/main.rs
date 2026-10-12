@@ -24,6 +24,8 @@ enum Command {
     Scan { root: PathBuf },
     /// Scan, then report library health (read-only)
     Health { root: PathBuf },
+    /// Decode every new or changed track: integrity, quality suspicions, loudness (read-only)
+    Deepcheck { root: PathBuf },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
     Covers {
         root: PathBuf,
@@ -98,6 +100,28 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+        Command::Deepcheck { root } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let mut index = Index::open(&db, &root_key)?;
+            engine::scan(&mut index, &root)?;
+            let progress = engine::quality::Progress::default();
+            let last = std::sync::atomic::AtomicUsize::new(0);
+            let report = engine::quality::run(&mut index, &root, &progress, &|done, total| {
+                // Print roughly every 5%.
+                let step = (total / 20).max(1);
+                if done / step != last.swap(done, std::sync::atomic::Ordering::Relaxed) / step {
+                    eprintln!("  {done} / {total}");
+                }
+            })?;
+            println!(
+                "deep check: {} tracks in {} albums, {:.1} s{}",
+                report.tracks,
+                report.albums,
+                report.elapsed_ms as f64 / 1000.0,
+                if report.cancelled { " (cancelled)" } else { "" }
+            );
         }
         Command::Covers { root, size } => {
             let root_key = paths::canonical_root_string(&root);

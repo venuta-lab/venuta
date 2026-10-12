@@ -7,7 +7,27 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::Path;
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
+
+/// v2: results of the deep check, stamped with the file's size/mtime when analysed so a
+/// changed file is analysed again.
+const SCHEMA_V2: &str = r#"
+CREATE TABLE quality (
+    file_id        INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    size           INTEGER NOT NULL,
+    mtime_ns       INTEGER NOT NULL,
+    analyzed_at    INTEGER NOT NULL,
+    verify_ok      INTEGER,
+    decode_error   TEXT,
+    effective_bits INTEGER,
+    cutoff_hz      INTEGER,
+    hires_db       REAL,
+    lufs           REAL,
+    peak           REAL,
+    album_lufs     REAL,
+    album_peak     REAL
+);
+"#;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE meta (
@@ -115,12 +135,80 @@ impl Index {
         let version: i32 = self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < 1 {
-            let tx = self.conn.transaction()?;
-            tx.execute_batch(SCHEMA_V1)?;
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            tx.commit()?;
+        for (target, sql) in [(1, SCHEMA_V1), (2, SCHEMA_V2)] {
+            if version < target {
+                let tx = self.conn.transaction()?;
+                tx.execute_batch(sql)?;
+                tx.pragma_update(None, "user_version", target)?;
+                tx.commit()?;
+            }
         }
+        debug_assert!(SCHEMA_VERSION == 2);
+        Ok(())
+    }
+
+    /// Albums (folder → tracks) with at least one FLAC never analysed or changed since.
+    pub fn quality_todo(&self) -> Result<Vec<(String, Vec<(i64, String)>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.path,
+                    (q.file_id IS NULL OR q.size != f.size OR q.mtime_ns != f.mtime_ns) AS stale
+             FROM files f LEFT JOIN quality q ON q.file_id = f.id
+             WHERE f.kind = 'flac' ORDER BY f.path",
+        )?;
+        let mut albums: std::collections::BTreeMap<String, (bool, Vec<(i64, String)>)> =
+            Default::default();
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, path, stale) = row?;
+            let dir = crate::library::parent_dir(&path).to_owned();
+            let e = albums.entry(dir).or_default();
+            e.0 |= stale;
+            e.1.push((id, path));
+        }
+        Ok(albums
+            .into_iter()
+            .filter(|(_, (stale, _))| *stale)
+            .map(|(d, (_, t))| (d, t))
+            .collect())
+    }
+
+    /// Store deep-check results, stamped with each file's current size/mtime.
+    pub fn save_quality(
+        &mut self,
+        results: &[(i64, crate::quality::TrackQuality)],
+        now: i64,
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO quality (file_id, size, mtime_ns, analyzed_at, verify_ok,
+                    decode_error, effective_bits, cutoff_hz, hires_db, lufs, peak, album_lufs, album_peak)
+                 SELECT id, size, mtime_ns, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+                 FROM files WHERE id = ?1",
+            )?;
+            for (id, q) in results {
+                stmt.execute(params![
+                    id,
+                    now,
+                    q.verify_ok,
+                    q.decode_error,
+                    q.effective_bits,
+                    q.cutoff_hz,
+                    q.hires_db,
+                    q.lufs,
+                    q.peak,
+                    q.album_lufs,
+                    q.album_peak
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
