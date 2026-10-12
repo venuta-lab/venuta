@@ -71,3 +71,16 @@ pub fn load_decisions(root: &Path) -> BTreeMap<String, Decision> {
 pub fn save_decisions(root: &Path, d: &BTreeMap<String, Decision>) -> Result<(), String> {
     write_json(&decisions_path(root), d)
 }
+
+fn answers_path(root: &Path) -> PathBuf {
+    crate::paths::index_path_for(root).with_file_name("answers.json")
+}
+
+/// The owner's answers to decisions for one library (see `crate::review`).
+pub fn load_answers(root: &Path) -> crate::review::Answers {
+    read_json(&answers_path(root))
+}
+
+pub fn save_answers(root: &Path, a: &crate::review::Answers) -> Result<(), String> {
+    write_json(&answers_path(root), a)
+}

@@ -738,6 +738,7 @@ mod tests {
             images: Default::default(),
             meta: Default::default(),
             fetched_lyrics: Default::default(),
+            pairs: Default::default(),
         }
     }
 

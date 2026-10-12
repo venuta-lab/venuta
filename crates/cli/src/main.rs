@@ -197,10 +197,9 @@ fn main() -> Result<()> {
             let root_key = paths::canonical_root_string(&root);
             let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
             let index = Index::open(&db, &root_key)?;
-            let lib = engine::library::Library::load(&index)?;
             let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
             let started = std::time::Instant::now();
-            let mut plan = engine::plan::build(&lib, &r);
+            let (_, mut plan) = engine::plan::build_checked(&index, &root, &r)?;
             let elapsed = started.elapsed().as_millis();
             if let Some(o) = &only {
                 plan.albums.retain(|a| a.id.contains(o.as_str()));
@@ -219,16 +218,26 @@ fn main() -> Result<()> {
                     .filter(|a| matches!(a.action, AlbumAction::Quarantine { .. }))
                     .count();
                 println!(
-                    "{} albums planned in {elapsed} ms: {} high, {} medium, {} low confidence; {} set aside as duplicates; {} questions",
+                    "{} albums planned in {elapsed} ms: {} high, {} medium, {} low confidence; {} set aside as duplicates; {} decisions",
                     plan.albums.len(),
                     count(Confidence::High),
                     count(Confidence::Medium),
                     count(Confidence::Low),
                     quarantine,
-                    plan.questions.len()
+                    plan.decisions.len()
                 );
-                for q in &plan.questions {
-                    println!("  ? {}", q.text);
+                for d in &plan.decisions {
+                    println!(
+                        "  {} {:?} {} | {}{}",
+                        if d.auto { "✓" } else { "?" },
+                        d.kind,
+                        d.subject,
+                        if d.auto { &d.proof } else { &d.why },
+                        d.suggested
+                            .as_ref()
+                            .map(|s| format!(" → {s}"))
+                            .unwrap_or_default()
+                    );
                 }
                 for a in plan.albums.iter().take(if only.is_some() { 50 } else { 3 }) {
                     println!("\n{}  [{:?}]\n  -> {}", a.id, a.confidence, a.target_dir);
@@ -256,9 +265,10 @@ fn main() -> Result<()> {
             let root_key = paths::canonical_root_string(&root);
             let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
             let index = Index::open(&db, &root_key)?;
-            let lib = engine::library::Library::load(&index)?;
             let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
-            let mut plan = engine::plan::build(&lib, &r);
+            let (_, mut plan) = engine::plan::build_checked(&index, &root, &r)?;
+            // Albums still waiting for an answer are not built.
+            plan.albums.retain(|a| a.waiting_on.is_empty());
             if let Some(o) = &only {
                 plan.albums.retain(|a| a.id.contains(o.as_str()));
             }

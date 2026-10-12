@@ -8,7 +8,23 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Latest schema version; `migrate` applies every step up to it.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
+
+/// v4: decoded-audio comparisons of likely duplicates, stamped with both files' mtimes so a
+/// changed file is compared again.
+const SCHEMA_V4: &str = r#"
+CREATE TABLE audio_pairs (
+    a         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    b         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    a_mtime   INTEGER NOT NULL,
+    b_mtime   INTEGER NOT NULL,
+    verdict   TEXT NOT NULL,
+    samples   INTEGER NOT NULL,
+    differing INTEGER NOT NULL,
+    max_delta INTEGER NOT NULL,
+    PRIMARY KEY (a, b)
+);
+"#;
 
 /// v3: online lookups. One row per album folder (normalised results per source, JSON) and
 /// per track for lyrics, so lookups resume and are never repeated needlessly.
@@ -158,7 +174,12 @@ impl Index {
         let version: i32 = self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
-        for (target, sql) in [(1, SCHEMA_V1), (2, SCHEMA_V2), (3, SCHEMA_V3)] {
+        for (target, sql) in [
+            (1, SCHEMA_V1),
+            (2, SCHEMA_V2),
+            (3, SCHEMA_V3),
+            (4, SCHEMA_V4),
+        ] {
             if version < target {
                 let tx = self.conn.transaction()?;
                 tx.execute_batch(sql)?;

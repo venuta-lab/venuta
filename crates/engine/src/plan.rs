@@ -71,8 +71,21 @@ pub enum AlbumAction {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AlbumPlan {
-    /// Source album folder; the album's identity in the plan.
+    /// The album's identity in the plan: its source folder, or "folder#target" when a folder of
+    /// loose singles becomes several albums.
     pub id: String,
+    /// The folder the tracks come from.
+    pub source_dir: String,
+    /// Key for the cover thumbnail: the source folder, or "track:<path>" for one track's art.
+    pub cover: String,
+    /// Decisions this album waits for; it is held back from a build until they are answered.
+    pub waiting_on: Vec<String>,
+    /// (folder year, date-tag year) when they disagree and nothing else settles it.
+    #[serde(skip)]
+    pub year_conflict: Option<(String, String)>,
+    /// The year settled automatically for a conflict, with its proof.
+    #[serde(skip)]
+    pub year_auto: Option<(String, String)>,
     pub title: String,
     pub album_artist: String,
     pub target_dir: String,
@@ -88,18 +101,14 @@ pub struct AlbumPlan {
     pub tracks: Vec<TrackPlan>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Question {
-    pub id: String,
-    pub text: String,
-    pub a: String,
-    pub b: String,
-}
-
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Plan {
     pub albums: Vec<AlbumPlan>,
-    pub questions: Vec<Question>,
+    /// What only the owner can settle (see [`crate::review`]).
+    pub decisions: Vec<crate::review::Decision>,
+    /// Likely duplicates not yet compared by decoding; compare them and plan again.
+    #[serde(skip)]
+    pub pending_pairs: Vec<(i64, i64)>,
 }
 
 /// What the Review screen needs about an album: everything except per-track tag lists,
@@ -107,6 +116,9 @@ pub struct Plan {
 #[derive(Debug, Clone, Serialize)]
 pub struct AlbumView {
     pub id: String,
+    pub source_dir: String,
+    pub cover: String,
+    pub waiting_on: Vec<String>,
     pub title: String,
     pub album_artist: String,
     pub target_dir: String,
@@ -123,7 +135,7 @@ pub struct AlbumView {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanView {
     pub albums: Vec<AlbumView>,
-    pub questions: Vec<Question>,
+    pub decisions: Vec<crate::review::Decision>,
 }
 
 impl Plan {
@@ -134,6 +146,9 @@ impl Plan {
                 .iter()
                 .map(|a| AlbumView {
                     id: a.id.clone(),
+                    source_dir: a.source_dir.clone(),
+                    cover: a.cover.clone(),
+                    waiting_on: a.waiting_on.clone(),
                     title: a.title.clone(),
                     album_artist: a.album_artist.clone(),
                     target_dir: a.target_dir.clone(),
@@ -150,7 +165,7 @@ impl Plan {
                         .collect(),
                 })
                 .collect(),
-            questions: self.questions.clone(),
+            decisions: self.decisions.clone(),
         }
     }
 }
@@ -163,15 +178,61 @@ fn re(pattern: &'static str, cell: &'static OnceLock<Regex>) -> &'static Regex {
 }
 
 pub fn build(lib: &Library, rules: &Rules) -> Plan {
-    let albums = lib.albums();
+    build_with(lib, rules, &crate::review::Answers::new())
+}
+
+/// Plan with the owner's answers to earlier decisions applied.
+pub fn build_with(lib: &Library, rules: &Rules, answers: &crate::review::Answers) -> Plan {
+    use crate::review;
+    // Files with no tags take their names from the file name, or stay out if so answered.
+    let leave_out_untagged = answers.get(review::UNTAGGED).map(String::as_str) == Some("leave_out");
+    let named: HashMap<i64, Track> = lib
+        .tracks
+        .iter()
+        .filter(|t| review::is_untagged(t))
+        .map(|t| (t.id, review::tag_from_file_name(t)))
+        .collect();
+    let mut albums: BTreeMap<&str, Vec<&Track>> = BTreeMap::new();
+    for t in &lib.tracks {
+        let t = match named.get(&t.id) {
+            Some(_) if leave_out_untagged => continue,
+            Some(n) => n,
+            None => t,
+        };
+        albums.entry(t.dir.as_str()).or_default().push(t);
+    }
+    // One spelling per name: "AUR" and "aur" are the same name written two ways.
+    let mut answered = rules.clone();
+    for (id, v) in answers {
+        if let (true, Some(s)) = (id.starts_with("spell:"), v.strip_prefix("spell:")) {
+            answered.add_spelling(s);
+        }
+    }
+    let (rules, spellings) = &unify_spellings(lib, &answered);
     let quarantined = find_duplicate_albums(&albums);
     let mut plan = Plan::default();
     for (dir, tracks) in &albums {
-        plan.albums
-            .push(plan_album(dir, tracks, lib, rules, quarantined.get(*dir)));
+        let year = answers
+            .get(&review::year_id(dir))
+            .and_then(|y| y.strip_prefix("y:"));
+        plan.albums.extend(plan_album(
+            dir,
+            tracks,
+            lib,
+            rules,
+            quarantined.get(*dir),
+            year,
+        ));
     }
+    let mut decisions = review::duplicate_songs(&mut plan, lib, answers);
+    decisions.extend(review::spellings(&plan, spellings, answers));
+    decisions.extend(review::untagged(lib, answers, &plan));
+    decisions.extend(review::same_album(&mut plan, lib, answers));
     resolve_collisions(&mut plan);
-    plan.questions = name_questions(&plan, rules);
+    decisions.extend(review::years(&plan, lib, answers));
+    decisions.extend(review::same_artist(&plan, lib, rules));
+    review::hold(&mut plan, &decisions);
+    plan.decisions = decisions;
     plan
 }
 
@@ -181,7 +242,8 @@ fn plan_album(
     lib: &Library,
     rules: &Rules,
     duplicate_of: Option<&String>,
-) -> AlbumPlan {
+    year_answer: Option<&str>,
+) -> Vec<AlbumPlan> {
     let mut notes: Vec<String> = Vec::new();
     let mut reasons: BTreeMap<String, (String, Confidence)> = BTreeMap::new();
     let mut reason = |field: &str, why: &str, c: Confidence| {
@@ -235,7 +297,7 @@ fn plan_album(
     let soundtrack_artist: Option<(String, Confidence)> = if soundtrack && rule_inferred {
         catalogue_artist.map(|a| match rules.canonical(&a) {
             Some(c) => (c.to_owned(), Confidence::High),
-            None => (tidy_name(&a), Confidence::Medium),
+            None => (tidy_name(&a), Confidence::High),
         })
     } else {
         (soundtrack && !folder_artist.is_empty()).then(|| match rules.canonical(&folder_artist) {
@@ -243,7 +305,7 @@ fn plan_album(
             None if name_key(&folder_artist) == "variousartists" => {
                 ("Various Artists".to_owned(), Confidence::High)
             }
-            None => (folder_artist.clone(), Confidence::Medium),
+            None => (folder_artist.clone(), Confidence::High),
         })
     };
     // Everything else: each track's own album artist, because a folder of loose singles holds
@@ -262,12 +324,25 @@ fn plan_album(
         match first {
             Some(n) => match rules.canonical(&n) {
                 Some(c) => (c.to_owned(), Confidence::High),
-                None => (tidy_name(&n), Confidence::Medium),
+                None => (tidy_name(&n), Confidence::High),
             },
             None => ("Unknown Artist".to_owned(), Confidence::Low),
         }
     };
     let mut unknown_names: BTreeSet<String> = BTreeSet::new();
+    // Everyone credited anywhere on the album, so leftover album-artist names already known
+    // as a singer, composer or lyricist on another track aren't kept twice.
+    let album_known: HashSet<String> = tracks
+        .iter()
+        .flat_map(|t| {
+            ["ARTIST", "COMPOSER", "LYRICIST"]
+                .iter()
+                .flat_map(|k| t.tags.get(*k).cloned().unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .flat_map(|v| split_names(&v))
+        .map(|n| name_key(&canon(rules, &n)))
+        .collect();
 
     // --- Album title, years --------------------------------------------------------------
     let folder_album = crate::library::most_common(tracks.iter().filter_map(|t| t.first("ALBUM")))
@@ -284,6 +359,13 @@ fn plan_album(
     // --- Per track ----------------------------------------------------------------------
     let mut track_plans: Vec<TrackPlan> = Vec::new();
     let mut needs_art_fix = false;
+    let mut year_conflict: Option<(String, String)> = None;
+    let mut year_auto: Option<(String, String)> = None;
+    // The year the album's recording codes were issued: strong evidence of the original year.
+    let isrc_year = tracks
+        .iter()
+        .filter_map(|t| t.first("ISRC").and_then(isrc_year))
+        .min();
     let disc_total = tracks
         .iter()
         .filter_map(|t| t.first("DISCNUMBER").and_then(parse_num))
@@ -402,14 +484,14 @@ fn plan_album(
             .collect();
         let extra_credits: Vec<String> = extra_credits
             .into_iter()
-            .filter(|n| !known.contains(&name_key(n)))
+            .filter(|n| !known.contains(&name_key(n)) && !album_known.contains(&name_key(n)))
             .collect();
         if !extra_credits.is_empty() && !tags.has("CREDITS") {
             tags.set("CREDITS", extra_credits.clone());
             reason(
                 "CREDITS",
-                "Other names from the old album artist, kept until their roles (lyricist, composer…) are known.",
-                Confidence::Medium,
+                "Other names from the old album artist (cast, director, co-writers), kept so nothing is lost.",
+                Confidence::High,
             );
         }
 
@@ -449,7 +531,8 @@ fn plan_album(
             );
         }
 
-        // Singers: one display string for every player, plus ARTISTS for those that split names.
+        // Singers: one ARTIST entry per singer (the Vorbis standard). Card copies join them for
+        // players that read only one value.
         let singers: Vec<String> = t
             .tags
             .get("ARTIST")
@@ -463,16 +546,10 @@ fn plan_album(
             })
             .unwrap_or_default();
         if !singers.is_empty() {
-            tags.set("ARTIST", vec![singers.join(", ")]);
-            tags.set("ARTISTS", singers);
+            tags.set("ARTIST", singers);
             reason(
                 "ARTIST",
-                "Readable singer list, with each name spelled one way.",
-                Confidence::High,
-            );
-            reason(
-                "ARTISTS",
-                "Each singer as a separate value, for players that support it.",
+                "Each singer as a separate entry, spelled one way.",
                 Confidence::High,
             );
         }
@@ -530,6 +607,11 @@ fn plan_album(
             .and_then(|d| d.get(..4));
         let original = match (existing_orig, &folder_year, &date_year) {
             (Some(o), _, _) => Some(o.to_owned()),
+            (None, _, _) if year_answer.is_some() => {
+                let y = year_answer.unwrap_or_default().to_owned();
+                reason("ORIGINALYEAR", &format!("You chose {y}."), Confidence::High);
+                Some(y)
+            }
             (None, _, _) if mb_first.is_some() => {
                 let y = mb_first.unwrap_or_default().to_owned();
                 let mut why = format!("MusicBrainz: first released in {y}.");
@@ -543,14 +625,33 @@ fn plan_album(
                 Some(y)
             }
             (None, Some(f), Some(d)) if f != d => {
-                reason(
-                    "ORIGINALYEAR",
-                    &format!(
-                        "Your folder says {f}; the date tag says {d} (likely a re-release). Check this one."
-                    ),
-                    Confidence::Medium,
-                );
-                Some(f.clone())
+                year_conflict = Some((f.clone(), d.clone()));
+                match isrc_year.as_ref().filter(|y| *y == f || *y == d) {
+                    Some(y) => {
+                        let other = if y == f { d } else { f };
+                        let proof = format!(
+                            "Proof: the recording codes (ISRC) were issued in {y}, which matches {}; {other} is likely a re-release or a misdated folder.",
+                            if y == f {
+                                "your folder name"
+                            } else {
+                                "the date tag"
+                            }
+                        );
+                        reason("ORIGINALYEAR", &proof, Confidence::High);
+                        year_auto = Some((y.clone(), proof));
+                        Some(y.clone())
+                    }
+                    None => {
+                        reason(
+                            "ORIGINALYEAR",
+                            &format!(
+                                "Your folder says {f}; the date tag says {d}. Waiting for your answer."
+                            ),
+                            Confidence::Medium,
+                        );
+                        Some(f.clone())
+                    }
+                }
             }
             (None, _, Some(d)) => Some(d.clone()),
             (None, Some(f), None) => Some(f.clone()),
@@ -803,12 +904,8 @@ fn plan_album(
         });
     }
 
-    for n in &unknown_names {
-        notes.push(if n == "Unknown Artist" {
-            "Some tracks have no artist in their tags.".to_owned()
-        } else {
-            format!("“{n}” isn't in your aliases yet; check the spelling.")
-        });
+    if unknown_names.contains("Unknown Artist") {
+        notes.push("Some tracks have no artist in their tags.".to_owned());
     }
     let album_artist = crate::library::most_common(
         track_plans
@@ -839,14 +936,6 @@ fn plan_album(
         .flatten();
     if cover_url.is_some() {
         needs_art_fix = true;
-        notes.push(format!(
-            "A sharper cover ({}) replaces the {best_embedded} px one.",
-            if meta.and_then(|m| m.apple.as_ref()).is_some() {
-                "Apple, up to 3000 px"
-            } else {
-                "Deezer, 1400 px"
-            }
-        ));
     }
     let art = if tracks.iter().all(|t| t.front_cover().is_none()) && cover_url.is_none() {
         ArtPlan::Missing
@@ -863,20 +952,11 @@ fn plan_album(
         .and_then(|imgs| imgs.iter().max_by_key(|(_, s)| *s))
         .map(|(p, _)| p.clone());
 
-    let changes = summarize_changes(&track_plans, &reasons);
-    let target_dir = track_plans
-        .first()
-        .map(|t| crate::library::parent_dir(&t.target).to_owned())
-        .unwrap_or_default();
-    let mut confidence = changes
-        .iter()
-        .map(|c| c.confidence)
-        .min()
-        .unwrap_or(Confidence::High);
+    let mut confidence = Confidence::High;
     if rule.is_none() {
         confidence = Confidence::Low;
     } else if rule_inferred {
-        confidence = confidence.min(Confidence::Medium);
+        confidence = Confidence::Medium;
     }
     let action = match duplicate_of {
         Some(of) => {
@@ -887,28 +967,108 @@ fn plan_album(
         }
         None => AlbumAction::Migrate,
     };
-    let title = track_plans
-        .first()
-        .and_then(|t| {
-            TagSet(t.tags_after.clone())
-                .first("ALBUM")
-                .map(str::to_owned)
-        })
-        .unwrap_or(raw_album);
-    AlbumPlan {
-        id: dir.to_owned(),
-        title,
-        album_artist,
-        target_dir,
-        action,
-        confidence,
-        notes,
-        changes,
-        art,
-        cover_from,
-        cover_url,
-        tracks: track_plans,
+
+    // One album per destination: a folder of loose singles becomes one album per single.
+    let mut groups: Vec<(String, Vec<TrackPlan>)> = Vec::new();
+    for tp in track_plans {
+        let d = crate::library::parent_dir(&tp.target).to_owned();
+        match groups.iter_mut().find(|(g, _)| g.eq_ignore_ascii_case(&d)) {
+            Some((_, v)) => v.push(tp),
+            None => groups.push((d, vec![tp])),
+        }
     }
+    let split = groups.len() > 1;
+    let by_id: HashMap<i64, &Track> = tracks.iter().map(|t| (t.id, *t)).collect();
+    groups
+        .into_iter()
+        .map(|(target_dir, tps)| {
+            let changes = summarize_changes(&tps, &reasons);
+            let confidence = changes
+                .iter()
+                .map(|c| c.confidence)
+                .min()
+                .unwrap_or(Confidence::High)
+                .min(confidence);
+            let album_artist = crate::library::most_common(
+                tps.iter()
+                    .filter_map(|tp| {
+                        TagSet(tp.tags_after.clone())
+                            .first("ALBUMARTIST")
+                            .map(str::to_owned)
+                    })
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(String::as_str),
+            )
+            .unwrap_or_else(|| album_artist.clone());
+            let title = tps
+                .first()
+                .and_then(|t| {
+                    TagSet(t.tags_after.clone())
+                        .first("ALBUM")
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| raw_album.clone());
+            // A single's cover is its own embedded art; the folder's image and the looked-up
+            // cover belong to the folder's main album only.
+            let main = !split
+                || meta
+                    .and_then(|m| m.apple.as_ref().or(m.deezer.as_ref()))
+                    .is_some_and(|r| title_key_eq(&r.title, &title));
+            let cover = if split {
+                tps.iter()
+                    .find(|tp| {
+                        by_id
+                            .get(&tp.file_id)
+                            .is_some_and(|t| t.front_cover().is_some())
+                    })
+                    .map(|tp| format!("track:{}", tp.source))
+                    .unwrap_or_else(|| dir.to_owned())
+            } else {
+                dir.to_owned()
+            };
+            AlbumPlan {
+                id: if split {
+                    format!("{dir}#{target_dir}")
+                } else {
+                    dir.to_owned()
+                },
+                source_dir: dir.to_owned(),
+                cover,
+                waiting_on: vec![],
+                year_conflict: year_conflict.clone(),
+                year_auto: year_auto.clone(),
+                title,
+                album_artist,
+                target_dir,
+                action: action.clone(),
+                confidence,
+                notes: notes.clone(),
+                changes,
+                art: art.clone(),
+                cover_from: if main { cover_from.clone() } else { None },
+                cover_url: if main { cover_url.clone() } else { None },
+                tracks: tps,
+            }
+        })
+        .collect()
+}
+
+/// Whether two album titles are the same once catalogue suffixes are ignored.
+fn title_key_eq(a: &str, b: &str) -> bool {
+    let k = |s: &str| {
+        let s = s.to_lowercase();
+        let s = s
+            .split(" (")
+            .next()
+            .unwrap_or(&s)
+            .split(" - ")
+            .next()
+            .unwrap_or(&s)
+            .to_owned();
+        name_key(&s)
+    };
+    k(a) == k(b)
 }
 
 /// A category from the catalogues' genres, used when no rule of yours matches. Apple files
@@ -1111,7 +1271,7 @@ fn find_duplicate_albums(albums: &BTreeMap<&str, Vec<&Track>>) -> HashMap<String
     out
 }
 
-fn keep_score(dir: &str) -> i32 {
+pub(crate) fn keep_score(dir: &str) -> i32 {
     let mut s = 0;
     if !dir.contains("Various_Artists") && !dir.contains("06_Collections") {
         s += 2;
@@ -1148,42 +1308,6 @@ fn resolve_collisions(plan: &mut Plan) {
             }
         }
     }
-}
-
-/// "Is X the same person as Y?" when one album artist's name contains another's.
-fn name_questions(plan: &Plan, rules: &Rules) -> Vec<Question> {
-    let names: BTreeSet<&str> = plan
-        .albums
-        .iter()
-        .map(|a| a.album_artist.as_str())
-        .collect();
-    let tokens = |n: &str| -> BTreeSet<String> {
-        n.split(|c: char| !c.is_alphanumeric())
-            .filter(|t| !t.is_empty())
-            .map(str::to_lowercase)
-            .collect()
-    };
-    let mut out = Vec::new();
-    for a in &names {
-        for b in &names {
-            if a >= b || rules.is_distinct(a, b) {
-                continue;
-            }
-            let (ta, tb) = (tokens(a), tokens(b));
-            if ta.is_empty() || tb.is_empty() {
-                continue;
-            }
-            if ta.is_subset(&tb) || tb.is_subset(&ta) {
-                out.push(Question {
-                    id: format!("same:{}|{}", name_key(a), name_key(b)),
-                    text: format!("Are “{a}” and “{b}” the same artist?"),
-                    a: (*a).to_owned(),
-                    b: (*b).to_owned(),
-                });
-            }
-        }
-    }
-    out
 }
 
 struct PathFields<'a> {
@@ -1338,6 +1462,27 @@ fn folder_year(dir: &str) -> Option<String> {
     .then_some(y)
 }
 
+/// The year an ISRC was issued ("IN-O13-13-01169" → 2013).
+pub(crate) fn isrc_year(isrc: &str) -> Option<String> {
+    let code: String = isrc.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if code.len() != 12 {
+        return None;
+    }
+    let yy: u32 = code.get(5..7)?.parse().ok()?;
+    let this_year = 1970
+        + (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            / 31_556_952) as u32;
+    let full = if 2000 + yy <= this_year {
+        2000 + yy
+    } else {
+        1900 + yy
+    };
+    Some(full.to_string())
+}
+
 fn parse_num(s: &str) -> Option<u32> {
     s.split('/').next()?.trim().parse().ok()
 }
@@ -1345,6 +1490,15 @@ fn parse_num(s: &str) -> Option<u32> {
 /// Split "A, B & C" into names, keeping duo names like "Vishal-Shekhar" whole.
 pub fn split_names(s: &str) -> Vec<String> {
     s.split([',', ';'])
+        // "A/ B" and "A / B" are two names; a short "AC/DC" is one.
+        .flat_map(|p| {
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() > 1 && parts.iter().all(|x| x.trim().chars().count() > 2) {
+                parts
+            } else {
+                vec![p]
+            }
+        })
         .flat_map(|p| p.split(" & "))
         .flat_map(|p| p.split(" and "))
         .map(tidy_name)
@@ -1468,6 +1622,59 @@ impl TagSet {
     }
 }
 
+/// Names written more than one way (capitals, spacing, punctuation) and not covered by an
+/// alias get one spelling: the most common, preferring one that isn't all lower case.
+/// Returns the rules with those spellings added, and each name's spellings (chosen first).
+fn unify_spellings(lib: &Library, rules: &Rules) -> (Rules, Vec<Vec<String>>) {
+    let mut seen: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    for t in &lib.tracks {
+        for key in ["ALBUMARTIST", "ARTIST"] {
+            for v in t.tags.get(key).into_iter().flatten() {
+                for n in split_names(v) {
+                    *seen.entry(name_key(&n)).or_default().entry(n).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut out = rules.clone();
+    let mut variants = Vec::new();
+    for (key, spellings) in seen {
+        if spellings.len() < 2 || rules.canonical(&key).is_some() || key.is_empty() {
+            continue;
+        }
+        let mut list: Vec<(String, usize)> = spellings.into_iter().collect();
+        list.sort_by_key(|(s, n)| {
+            (
+                std::cmp::Reverse(s.chars().any(char::is_uppercase)),
+                std::cmp::Reverse(*n),
+                s.clone(),
+            )
+        });
+        out.add_spelling(&list[0].0);
+        variants.push(list.into_iter().map(|(s, _)| s).collect());
+    }
+    variants.sort();
+    (out, variants)
+}
+
+/// Plan a library with the owner's answers, comparing likely duplicates by decoding them
+/// first when they haven't been compared yet. Returns the library the plan was built from.
+pub fn build_checked(
+    index: &crate::Index,
+    root: &std::path::Path,
+    rules: &Rules,
+) -> crate::Result<(Library, Plan)> {
+    let answers = crate::settings::load_answers(root);
+    let mut lib = Library::load(index)?;
+    let mut plan = build_with(&lib, rules, &answers);
+    if !plan.pending_pairs.is_empty() {
+        crate::compare::run(index, root, &plan.pending_pairs)?;
+        lib.pairs = crate::compare::load(index)?;
+        plan = build_with(&lib, rules, &answers);
+    }
+    Ok((lib, plan))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1482,6 +1689,19 @@ mod tests {
         assert_eq!(tidy_name("Ram Sampath\u{a0}"), "Ram Sampath");
         assert_eq!(tidy_name("ADNAN SAMI"), "Adnan Sami");
         assert_eq!(tidy_name("KK"), "KK"); // short acronyms stay
+        assert_eq!(
+            split_names("Yashal Shahid/ Atif Ali"),
+            vec!["Yashal Shahid", "Atif Ali"]
+        );
+        assert_eq!(split_names("AC/DC").len(), 1); // not split
+    }
+
+    #[test]
+    fn isrc_years() {
+        assert_eq!(isrc_year("INO131301169").as_deref(), Some("2013"));
+        assert_eq!(isrc_year("QZ-Z7W-25-53774").as_deref(), Some("2025"));
+        assert_eq!(isrc_year("USRC17607839").as_deref(), Some("1976"));
+        assert_eq!(isrc_year("bad"), None);
     }
 
     #[test]

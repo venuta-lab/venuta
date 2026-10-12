@@ -96,6 +96,8 @@ pub struct Library {
     pub meta: HashMap<String, crate::enrich::AlbumMeta>,
     /// Validated synced lyrics found online, per track id.
     pub fetched_lyrics: HashMap<i64, crate::providers::LyricsFound>,
+    /// Decoded-audio comparisons of likely duplicates, by (smaller id, larger id).
+    pub pairs: HashMap<(i64, i64), crate::compare::Comparison>,
 }
 
 impl Library {
@@ -215,6 +217,7 @@ impl Library {
             images,
             meta: crate::enrich::load_album_meta(index)?,
             fetched_lyrics: crate::enrich::load_lyrics(index)?,
+            pairs: crate::compare::load(index)?,
         })
     }
 

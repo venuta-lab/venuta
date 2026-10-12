@@ -205,6 +205,13 @@ impl Rules {
     }
 
     /// Canonical spelling of a person's name, if the aliases know them.
+    /// Use this spelling for a name that has no alias yet (for this run only; not saved).
+    pub fn add_spelling(&mut self, spelling: &str) {
+        self.alias_index
+            .entry(name_key(spelling))
+            .or_insert_with(|| spelling.to_owned());
+    }
+
     pub fn canonical(&self, name: &str) -> Option<&str> {
         self.alias_index.get(&name_key(name)).map(String::as_str)
     }

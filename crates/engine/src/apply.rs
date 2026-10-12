@@ -353,10 +353,7 @@ impl AlbumCtx<'_> {
             let text = std::fs::read_to_string(self.source_root.join(lrc))
                 .map_err(|e| format!("read lyrics: {e}"))?;
             let _ = vc.remove("LYRICS").count();
-            vc.push(
-                "LYRICS".into(),
-                text.trim_start_matches('\u{feff}').to_owned(),
-            );
+            vc.push("LYRICS".into(), clean_lrc(&text));
         }
         if let Some(bytes) = cover {
             let _ = flac.remove_pictures();
@@ -408,14 +405,19 @@ impl AlbumCtx<'_> {
             return Ok(());
         }
         let text = if let Some(rel) = &t.copy_lrc_from {
-            std::fs::read(self.source_root.join(rel)).map_err(|e| format!("read lyrics: {e}"))?
+            let raw = std::fs::read(self.source_root.join(rel))
+                .map_err(|e| format!("read lyrics: {e}"))?;
+            match String::from_utf8(raw) {
+                Ok(s) => clean_lrc(&s).into_bytes(),
+                Err(e) => e.into_bytes(), // not UTF-8: copied as it is
+            }
         } else if t.write_lrc {
             match t
                 .tags_after
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("LYRICS"))
             {
-                Some((_, v)) => v.as_bytes().to_vec(),
+                Some((_, v)) => clean_lrc(v).into_bytes(),
                 None => return Ok(()),
             }
         } else {
@@ -427,6 +429,7 @@ impl AlbumCtx<'_> {
     }
 
     /// Set a duplicate album aside, unchanged, under `_Quarantine/<original folder>`.
+    /// (The folder is the album's source folder.)
     fn quarantine(
         &self,
         progress: &ApplyProgress,
@@ -434,7 +437,10 @@ impl AlbumCtx<'_> {
         total: usize,
     ) -> Result<(), Vec<ApplyError>> {
         let mut errors = Vec::new();
-        let base = self.target_root.join("_Quarantine").join(&self.album.id);
+        let base = self
+            .target_root
+            .join("_Quarantine")
+            .join(&self.album.source_dir);
         for t in &self.album.tracks {
             let name = t.source.rsplit('/').next().unwrap_or(&t.source);
             let dst = base.join(name);
@@ -614,6 +620,33 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Lyrics as players read them best: UTF-8 without a byte-order mark, and without the
+/// [ti:]/[ar:]/[al:]/[length:] header lines. Poweramp checks those headers against the song's
+/// tags and ignores the whole file when they differ, which they will after retagging.
+/// [offset:] stays, because it changes the timing.
+pub fn clean_lrc(text: &str) -> String {
+    const HEADERS: &[&str] = &[
+        "ti", "ar", "al", "au", "length", "by", "id", "re", "ve", "tool",
+    ];
+    let mut out: Vec<&str> = Vec::new();
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        let l = line.trim();
+        let header = l
+            .strip_prefix('[')
+            .and_then(|r| r.split_once(':'))
+            .is_some_and(|(k, rest)| {
+                HEADERS.contains(&k.trim().to_ascii_lowercase().as_str())
+                    && rest.trim_end().ends_with(']')
+            });
+        if !header {
+            out.push(line.trim_end_matches('\r'));
+        }
+    }
+    let mut s = out.join("\n");
+    s.push('\n');
+    s
+}
+
 #[cfg(test)]
 mod target_tests {
     use super::*;
@@ -638,5 +671,19 @@ mod target_tests {
         assert!(check_target(&src, &fresh).is_err(), "someone else's music");
         std::fs::write(fresh.join(LIBRARY_MARKER), b"").unwrap();
         assert!(check_target(&src, &fresh).is_ok(), "a library we built");
+    }
+}
+
+#[cfg(test)]
+mod lrc_tests {
+    use super::clean_lrc;
+
+    #[test]
+    fn headers_and_bom_go_timing_stays() {
+        let raw = "\u{feff}[ar: Atif Aslam]\r\n[ti: Maula]\r\n[al: Doorie (2006)]\r\n[offset: -200]\r\n[00:01.94]Maula\r\n[00:19.94]Wo ho ho\r\n";
+        assert_eq!(
+            clean_lrc(raw),
+            "[offset: -200]\n[00:01.94]Maula\n[00:19.94]Wo ho ho\n"
+        );
     }
 }
