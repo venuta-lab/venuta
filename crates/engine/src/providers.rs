@@ -111,6 +111,38 @@ pub fn musicbrainz_by_barcode(http: &Http, barcode: &str) -> Result<Option<Relea
     musicbrainz_release(http, &id).map(Some)
 }
 
+/// For albums without a barcode: search by title and artist, and accept only a near-certain
+/// match (search score ≥ 95 and the same number of tracks). No match beats a wrong one.
+pub fn musicbrainz_by_title(
+    http: &Http,
+    title: &str,
+    artist: &str,
+    track_count: usize,
+) -> Result<Option<ReleaseInfo>, NetError> {
+    let q = format!(
+        "release:\"{}\" AND artist:\"{}\"",
+        title.replace('"', ""),
+        artist.replace('"', "")
+    );
+    let search = http.get_json(&format!(
+        "https://musicbrainz.org/ws/2/release/?query={}&fmt=json&limit=5",
+        enc(&q)
+    ))?;
+    let id = search
+        .get("releases")
+        .and_then(Value::as_array)
+        .and_then(|rs| {
+            rs.iter()
+                .filter(|r| r.get("score").and_then(Value::as_u64).unwrap_or(0) >= 95)
+                .find(|r| r.get("track-count").and_then(Value::as_u64) == Some(track_count as u64))
+                .and_then(|r| s(r, "id"))
+        });
+    match id {
+        Some(id) => musicbrainz_release(http, &id).map(Some),
+        None => Ok(None),
+    }
+}
+
 pub fn musicbrainz_release(http: &Http, id: &str) -> Result<ReleaseInfo, NetError> {
     let r = http.get_json(&format!(
         "https://musicbrainz.org/ws/2/release/{id}?inc=recordings+isrcs+artist-credits+release-groups+labels+genres+recording-level-rels+work-rels+work-level-rels+artist-rels&fmt=json"

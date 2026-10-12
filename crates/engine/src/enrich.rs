@@ -59,6 +59,14 @@ struct AlbumJob {
     need_apple: bool,
 }
 
+/// Album without a barcode: a strict title + artist search on MusicBrainz.
+struct TitleJob {
+    dir: String,
+    title: String,
+    artist: String,
+    tracks: usize,
+}
+
 struct LyricsJob {
     file_id: i64,
     title: String,
@@ -96,6 +104,7 @@ pub fn run(
             .collect::<rusqlite::Result<_>>()?
     };
     let mut albums: Vec<AlbumJob> = Vec::new();
+    let mut by_title: Vec<TitleJob> = Vec::new();
     for (dir, tracks) in lib.albums() {
         if done_albums.contains(dir) {
             continue;
@@ -109,6 +118,21 @@ pub fn run(
             barcode.filter(|b| b.chars().all(|c| c.is_ascii_digit()) && b.len() >= 8)
         else {
             report.albums_without_barcode += 1;
+            let title = crate::library::most_common(tracks.iter().filter_map(|t| t.first("ALBUM")));
+            let artist = crate::library::most_common(
+                tracks
+                    .iter()
+                    .filter_map(|t| t.first("ALBUMARTIST").or_else(|| t.first("ARTIST"))),
+            )
+            .and_then(|a| crate::plan::split_names(&a).into_iter().next());
+            if let (Some(title), Some(artist)) = (title, artist) {
+                by_title.push(TitleJob {
+                    dir: dir.to_owned(),
+                    title,
+                    artist,
+                    tracks: tracks.len(),
+                });
+            }
             continue;
         };
         let best_art = tracks
@@ -154,17 +178,24 @@ pub fn run(
     }
 
     let apple_count = albums.iter().filter(|a| a.need_apple).count();
-    let total = albums.len() * 2 + apple_count + lyrics.len();
+    let total = albums.len() * 2 + apple_count + by_title.len() + lyrics.len();
     progress.total.store(total, Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
     on_progress(0, total);
-    report.albums_looked_up = albums.len();
+    report.albums_looked_up = albums.len() + by_title.len();
     report.lyrics_checked = lyrics.len();
 
     // Rows for the albums we are about to look up, so per-source results can be merged in.
     {
         let now = now();
         let tx = index.conn_mut().transaction()?;
+        for t in &by_title {
+            tx.execute(
+                "INSERT INTO album_meta (dir, barcode, fetched_at) VALUES (?1, NULL, ?2)
+                 ON CONFLICT(dir) DO UPDATE SET error = NULL",
+                params![t.dir, now],
+            )?;
+        }
         for a in &albums {
             tx.execute(
                 "INSERT INTO album_meta (dir, barcode, fetched_at) VALUES (?1, ?2, ?3)
@@ -207,6 +238,29 @@ pub fn run(
                             },
                         ),
                         Err(e) => send(&tx, Msg::Error(format!("{which} {}: {e}", a.dir))),
+                    }
+                }
+            });
+        }
+        {
+            // Shares MusicBrainz's pace with the barcode thread (pacing is per host).
+            let tx = tx.clone();
+            let by_title = &by_title;
+            scope.spawn(move || {
+                for t in by_title {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match providers::musicbrainz_by_title(http, &t.title, &t.artist, t.tracks) {
+                        Ok(info) => send(
+                            &tx,
+                            Msg::Release {
+                                dir: t.dir.clone(),
+                                which: "mb",
+                                info: info.map(Box::new),
+                            },
+                        ),
+                        Err(e) => send(&tx, Msg::Error(format!("mb {}: {e}", t.dir))),
                     }
                 }
             });

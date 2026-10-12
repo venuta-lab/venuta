@@ -15,8 +15,9 @@
 | M0 Foundations | ✅ Repo, workspace, Tauri shell, CI workflow. ✅ Spike S1 ([0001](decisions/0001-s1-tag-write-safety.md)). 🔲 S2 player read-back (owner, about 5 min). 🔲 S3 card write speed (needs a card) |
 | M1 Scan + health | ✅ Index, 23 checks, deep check (integrity, cutoff, upsampling, padded 24-bit, loudness), spectrograms ([0002](decisions/0002-deep-check-and-migration.md)) |
 | M2 Rules + plan + apply | ✅ Rules files, planner, Review screen with questions, build into a new library with undo, album editor with ratings and in-place edits. 🔲 Owner runs the full migration into `D:\Music` |
-| M3 Providers + intake | Next |
-| M4 SD sync · M5 Playlists · M6 Release | Later |
+| M3 Providers + intake | ✅ Polite cached HTTP, MusicBrainz / Apple / Deezer / LRCLIB, lookup job (barcode, then a strict title search), planner uses years, credits, labels, covers and lyrics, category inference, Incoming screen with drag-and-drop and import ([0003](decisions/0003-online-lookups-and-intake.md)). 🔲 Folder watcher in the tray (Incoming refreshes while open) |
+| M4 SD sync | Next |
+| M5 Playlists · M6 Release | Later |
 
 ---
 
