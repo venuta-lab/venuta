@@ -13,7 +13,7 @@ No AI at runtime, no accounts, no paid services, never downloads music.
 
 > Built for one person's library first, shared as-is in case it helps you. No support promised.
 
-Status: pre-alpha. See [docs/PLAN.md](docs/PLAN.md) for the design and [docs/research](docs/research) for the sources behind it.
+Status: pre-alpha (milestones 1–2 working: health audit, deep check, review and migration, album editor). See [docs/PLAN.md](docs/PLAN.md) for the design and [docs/research](docs/research) for the sources behind it.
 
 ## Development
 

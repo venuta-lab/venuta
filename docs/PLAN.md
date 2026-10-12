@@ -7,6 +7,17 @@
 > - SD sync is now a mirror of a device-safe library. Per-device profiles are deferred.
 > - All open decisions are taken.
 
+## Progress (2026-10-12)
+
+| Milestone | State |
+|---|---|
+| M-1 Safety | ✅ Apple export saved in `D:\Music-meta\apple-export\2026-10-12`. 🔲 Capture `9XM` / `Romance` (owner) |
+| M0 Foundations | ✅ Repo, workspace, Tauri shell, CI workflow. ✅ Spike S1 ([0001](decisions/0001-s1-tag-write-safety.md)). 🔲 S2 player read-back (owner, about 5 min). 🔲 S3 card write speed (needs a card) |
+| M1 Scan + health | ✅ Index, 23 checks, deep check (integrity, cutoff, upsampling, padded 24-bit, loudness), spectrograms ([0002](decisions/0002-deep-check-and-migration.md)) |
+| M2 Rules + plan + apply | ✅ Rules files, planner, Review screen with questions, build into a new library with undo, album editor with ratings and in-place edits. 🔲 Owner runs the full migration into `D:\Music` |
+| M3 Providers + intake | Next |
+| M4 SD sync · M5 Playlists · M6 Release | Later |
+
 ---
 
 ## 1. What this is
