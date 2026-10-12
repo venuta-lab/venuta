@@ -8,7 +8,19 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Latest schema version; `migrate` applies every step up to it.
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
+
+/// v5: optional sources. Discogs results per album (checked separately, so albums looked up
+/// before a token was added still get them), and AcoustID identities for files without tags.
+const SCHEMA_V5: &str = r#"
+ALTER TABLE album_meta ADD COLUMN discogs TEXT;
+ALTER TABLE album_meta ADD COLUMN discogs_checked INTEGER;
+CREATE TABLE track_identity (
+    file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    found      TEXT,
+    checked_at INTEGER NOT NULL
+);
+"#;
 
 /// v4: decoded-audio comparisons of likely duplicates, stamped with both files' mtimes so a
 /// changed file is compared again.
@@ -179,6 +191,7 @@ impl Index {
             (2, SCHEMA_V2),
             (3, SCHEMA_V3),
             (4, SCHEMA_V4),
+            (5, SCHEMA_V5),
         ] {
             if version < target {
                 let tx = self.conn.transaction()?;

@@ -168,7 +168,7 @@ export default function App() {
       setNotice(
         r.cancelled
           ? 'Stopped. What was found is kept; look up again to continue.'
-          : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} on Apple) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} songs. The Inbox shows what changes.`,
+          : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} on Apple${r.discogs_matches ? `, ${r.discogs_matches} on Discogs` : ''}) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} songs${r.identified ? `; recognised ${r.identified} files without tags by their sound` : ''}. The Inbox shows what changes.`,
       )
     } catch (e) {
       setError(String(e))
@@ -418,7 +418,7 @@ export default function App() {
       case 'devices':
         return <CardsScreen root={root} />
       case 'activity':
-        return <ActivityScreen />
+        return <ActivityScreen root={root} />
       case 'settings':
         return <SettingsScreen root={root} onChooseLibrary={chooseRoot} />
     }

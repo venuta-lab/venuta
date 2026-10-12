@@ -181,7 +181,32 @@ export interface Settings {
   apple_key?: string | null
   acoustid_key?: string | null
   discogs_token?: string | null
+  sources?: { musicbrainz: boolean; apple: boolean; deezer: boolean; lrclib: boolean }
 }
+
+export interface EditChange {
+  kind: 'edit'
+  journal: string
+  started_ms: number
+  files: number
+  examples: string[]
+}
+
+export const listAnswers = (root: string) =>
+  inApp() ? invoke<Record<string, string>>('list_answers', { root }) : Promise.resolve<Record<string, string>>({})
+export const clearAnswerQuick = (root: string, id: string) => invoke<unknown>('clear_answer', { root, id })
+
+export const listEdits = () => (inApp() ? invoke<EditChange[]>('list_edits') : Promise.resolve([] as EditChange[]))
+export const undoEdit = (journal: string) => invoke<number>('undo_edit', { journal })
+
+export interface Aliases {
+  artists: { name: string; variants: string[] }[]
+  distinct: [string, string][]
+}
+
+export const getAliases = () =>
+  inApp() ? invoke<Aliases>('get_aliases') : Promise.resolve<Aliases>({ artists: [{ name: 'Madan Mohan', variants: ['Late Madan Mohan'] }], distinct: [] })
+export const saveAliases = (view: Aliases) => (inApp() ? invoke<void>('save_aliases', { view }) : Promise.resolve())
 
 export const getSettings = () =>
   inApp()
@@ -379,6 +404,8 @@ export interface EnrichReport {
   musicbrainz_matches: number
   apple_matches: number
   deezer_matches: number
+  discogs_matches?: number
+  identified?: number
   lyrics_checked: number
   lyrics_found: number
   errors: string[]

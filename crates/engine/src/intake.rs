@@ -202,5 +202,7 @@ pub fn lookup(
     let (dir, mut index) = open_incoming_index(library_root).map_err(|e| e.to_string())?;
     crate::scan(&mut index, &dir).map_err(|e| e.to_string())?;
     let lib = Library::load(&index).map_err(|e| e.to_string())?;
-    crate::enrich::run(&mut index, &lib, rules, progress, on_progress).map_err(|e| e.to_string())
+    let opts = crate::enrich::LookupOptions::from_settings(&crate::settings::load());
+    crate::enrich::run(&mut index, &dir, &lib, rules, &opts, progress, on_progress)
+        .map_err(|e| e.to_string())
 }

@@ -26,6 +26,37 @@ pub struct Settings {
     /// lacks (optional).
     #[serde(default)]
     pub discogs_token: Option<String>,
+    /// Which free sources "Look up details online" asks.
+    #[serde(default)]
+    pub sources: Sources,
+}
+
+/// The free online sources, each on unless switched off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sources {
+    #[serde(default = "yes")]
+    pub musicbrainz: bool,
+    #[serde(default = "yes")]
+    pub apple: bool,
+    #[serde(default = "yes")]
+    pub deezer: bool,
+    #[serde(default = "yes")]
+    pub lrclib: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Sources {
+    fn default() -> Self {
+        Sources {
+            musicbrainz: true,
+            apple: true,
+            deezer: true,
+            lrclib: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

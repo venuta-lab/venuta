@@ -12,6 +12,7 @@ pub mod compare;
 pub mod edit;
 pub mod enrich;
 pub mod error;
+pub mod fingerprint;
 pub mod index;
 pub mod intake;
 pub mod library;

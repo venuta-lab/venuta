@@ -323,6 +323,12 @@ async fn answer_decisions(
     review(app, root, jobs).await
 }
 
+/// Your answers to Inbox decisions for this library, by decision id.
+#[tauri::command]
+fn list_answers(root: String) -> engine::review::Answers {
+    engine::settings::load_answers(Path::new(&root))
+}
+
 /// Take back an answer, so the decision is asked (or handled) afresh.
 #[tauri::command]
 async fn clear_answer(
@@ -447,6 +453,81 @@ fn list_runs() -> Vec<Run> {
         .collect();
     runs.sort_by_key(|r| std::cmp::Reverse(r.started_ms));
     runs
+}
+
+/// One change to your files, for the Activity timeline.
+#[derive(Serialize)]
+struct Change {
+    /// "edit": tags or ratings changed in place.
+    kind: &'static str,
+    journal: String,
+    started_ms: u128,
+    files: usize,
+    /// A few of the files that changed (library-relative).
+    examples: Vec<String>,
+}
+
+/// Tag and rating edits that can still be undone, newest first.
+#[tauri::command]
+fn list_edits() -> Vec<Change> {
+    let dir = engine::apply::journal_dir();
+    let mut out: Vec<Change> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with("-edit.jsonl") {
+                return None;
+            }
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            let files: Vec<String> = text
+                .lines()
+                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+                .filter_map(|v| v.get("file")?.as_str().map(str::to_owned))
+                .collect();
+            Some(Change {
+                kind: "edit",
+                journal: e.path().to_string_lossy().into_owned(),
+                started_ms: name.split('-').next()?.parse().ok()?,
+                files: files.len(),
+                examples: files.into_iter().take(3).collect(),
+            })
+        })
+        .filter(|c| c.files > 0)
+        .collect();
+    out.sort_by_key(|c| std::cmp::Reverse(c.started_ms));
+    out
+}
+
+#[tauri::command]
+async fn undo_edit(journal: String) -> CmdResult<usize> {
+    blocking(move || engine::edit::undo_edits(Path::new(&journal))).await
+}
+
+#[derive(Serialize, serde::Deserialize)]
+struct AliasesView {
+    artists: Vec<engine::rules::Alias>,
+    distinct: Vec<[String; 2]>,
+}
+
+/// Your artist names: each name with the spellings that mean it, and names kept apart.
+#[tauri::command]
+fn get_aliases() -> CmdResult<AliasesView> {
+    let r = rules()?;
+    Ok(AliasesView {
+        artists: r.aliases.artists.clone(),
+        distinct: r.aliases.distinct.clone(),
+    })
+}
+
+#[tauri::command]
+fn save_aliases(view: AliasesView) -> CmdResult<()> {
+    let dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+    let mut r = Rules::load(&dir)?;
+    r.aliases.artists = view.artists;
+    r.aliases.distinct = view.distinct;
+    r.save_aliases(&dir)
 }
 
 #[tauri::command]
@@ -1011,7 +1092,12 @@ pub fn run() {
             review,
             answer_decisions,
             clear_answer,
+            list_answers,
             build_library,
+            list_edits,
+            undo_edit,
+            get_aliases,
+            save_aliases,
             set_decisions,
             cancel_apply,
             list_runs,

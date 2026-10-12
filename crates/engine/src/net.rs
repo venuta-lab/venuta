@@ -20,6 +20,8 @@ fn pace_for(host: &str) -> Duration {
         "itunes.apple.com" => Duration::from_millis(3100), // ~20/min
         "api.deezer.com" => Duration::from_millis(150),   // well under 50 per 5 s
         "lrclib.net" => Duration::from_millis(250),
+        "api.discogs.com" => Duration::from_millis(1100), // 60/min with a token
+        "api.acoustid.org" => Duration::from_millis(350), // at most 3/s
         _ => Duration::from_millis(300),
     }
 }

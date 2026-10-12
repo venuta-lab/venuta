@@ -151,9 +151,12 @@ pub fn names_from_file(path: &str) -> (Option<String>, String) {
 
 /// A copy of an untagged track with artist, title and album (the title, as a single) taken
 /// from its file name.
-pub fn tag_from_file_name(t: &Track) -> Track {
+pub fn tag_from_file_name(t: &Track, identity: Option<&crate::providers::Identified>) -> Track {
     let mut c = t.clone();
-    let (artist, title) = names_from_file(&t.path);
+    let (artist, title) = match identity {
+        Some(i) => (Some(i.artist.clone()), i.title.clone()),
+        None => names_from_file(&t.path),
+    };
     let mut set = |k: &str, v: &str| {
         c.tags.insert(k.into(), vec![v.into()]);
         c.raw_keys.push(k.into());
@@ -180,12 +183,19 @@ pub fn untagged(lib: &Library, answers: &Answers, plan: &Plan) -> Option<Decisio
         .map(|a| a.id.clone())
         .collect();
     let lossy = files.iter().filter(|t| t.kind != "flac").count();
+    let recognised = files
+        .iter()
+        .filter(|t| lib.identities.contains_key(&t.id))
+        .count();
     let named: Vec<String> = files
         .iter()
         .take(2)
-        .map(|t| match names_from_file(&t.path) {
-            (Some(a), title) => format!("{a} – {title}"),
-            (None, title) => title,
+        .map(|t| match lib.identities.get(&t.id) {
+            Some(i) => format!("{} – {}", i.artist, i.title),
+            None => match names_from_file(&t.path) {
+                (Some(a), title) => format!("{a} – {title}"),
+                (None, title) => title,
+            },
         })
         .collect();
     Some(Decision {
@@ -219,6 +229,14 @@ pub fn untagged(lib: &Library, answers: &Answers, plan: &Plan) -> Option<Decisio
                     },
                 ),
                 fact(
+                    "Recognised by sound",
+                    if recognised > 0 {
+                        format!("{recognised} of {} (AcoustID)", files.len())
+                    } else {
+                        "none yet (add an AcoustID key in Settings)".into()
+                    },
+                ),
+                fact(
                     "Folders",
                     files
                         .iter()
@@ -232,7 +250,10 @@ pub fn untagged(lib: &Library, answers: &Answers, plan: &Plan) -> Option<Decisio
             songs: files
                 .iter()
                 .map(|t| {
-                    let (artist, title) = names_from_file(&t.path);
+                    let (artist, title) = match lib.identities.get(&t.id) {
+                        Some(i) => (Some(i.artist.clone()), i.title.clone()),
+                        None => names_from_file(&t.path),
+                    };
                     Song {
                         title: match artist {
                             Some(a) => format!("{a} – {title}"),

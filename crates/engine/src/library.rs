@@ -98,6 +98,8 @@ pub struct Library {
     pub fetched_lyrics: HashMap<i64, crate::providers::LyricsFound>,
     /// Decoded-audio comparisons of likely duplicates, by (smaller id, larger id).
     pub pairs: HashMap<(i64, i64), crate::compare::Comparison>,
+    /// What AcoustID recognised files without tags as (with a key), by file id.
+    pub identities: HashMap<i64, crate::providers::Identified>,
 }
 
 impl Library {
@@ -218,6 +220,7 @@ impl Library {
             meta: crate::enrich::load_album_meta(index)?,
             fetched_lyrics: crate::enrich::load_lyrics(index)?,
             pairs: crate::compare::load(index)?,
+            identities: crate::enrich::load_identities(index)?,
         })
     }
 

@@ -245,10 +245,38 @@ impl Rules {
         })
     }
 
-    /// Write every rules file (used by `init` and by the UI when the owner answers a question).
+    /// Write only `aliases.toml`: answers about names never touch your other rules files
+    /// (which may hold your own comments and ordering).
+    pub fn save_aliases(&self, dir: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let body = toml::to_string_pretty(&self.aliases).map_err(|e| e.to_string())?;
+        let tmp = dir.join("aliases.toml.part");
+        std::fs::write(
+            &tmp,
+            format!("# One canonical spelling per person. Variants are matched ignoring case, spaces and punctuation.
+
+{body}"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, dir.join("aliases.toml")).map_err(|e| e.to_string())
+    }
+
+    /// Write every rules file, replacing what is there (tests and first-time setup).
     pub fn save(&self, dir: &Path) -> Result<(), String> {
+        self.write_files(dir, false)
+    }
+
+    /// Create the rules files that don't exist yet; files you already have are left alone.
+    pub fn save_missing(&self, dir: &Path) -> Result<(), String> {
+        self.write_files(dir, true)
+    }
+
+    fn write_files(&self, dir: &Path, only_missing: bool) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let write = |name: &str, header: &str, body: String| -> Result<(), String> {
+            if only_missing && dir.join(name).exists() {
+                return Ok(());
+            }
             let tmp = dir.join(format!("{name}.part"));
             std::fs::write(&tmp, format!("{header}\n\n{body}")).map_err(|e| e.to_string())?;
             std::fs::rename(&tmp, dir.join(name)).map_err(|e| e.to_string())
@@ -344,7 +372,7 @@ pub fn answer_same_artist(dir: &Path, a: &str, b: &str, keep: Option<&str>) -> R
             }
         }
     }
-    rules.save(dir)
+    rules.save_aliases(dir)
 }
 
 /// Starter aliases from the library itself: every spelling of every credited name (album
@@ -509,5 +537,27 @@ soundtrack = true
         let again = Rules::load(dir.path()).unwrap();
         assert_eq!(again.aliases.artists.len(), 1);
         assert_eq!(again.layout.max_path, 180);
+    }
+
+    #[test]
+    fn answering_about_names_leaves_other_rules_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mine = "# My own notes: Marathi folders first.
+
+[[rule]]
+pattern = \"02_Marathi/**\"
+category = \"Film & Series\"
+";
+        std::fs::write(dir.path().join("categories.toml"), mine).unwrap();
+        answer_same_artist(dir.path(), "Pritam", "Pritam Chakraborty", Some("Pritam")).unwrap();
+        answer_same_artist(dir.path(), "Sami Khan", "Azaan Sami Khan", None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("categories.toml")).unwrap(),
+            mine
+        );
+        let r = Rules::load(dir.path()).unwrap();
+        assert_eq!(r.canonical("Pritam Chakraborty"), Some("Pritam"));
+        assert!(r.is_distinct("Azaan Sami Khan", "Sami Khan"));
+        assert!(!dir.path().join("layout.toml").exists());
     }
 }

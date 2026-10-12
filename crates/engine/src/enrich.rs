@@ -18,6 +18,31 @@ use std::sync::mpsc;
 /// Embedded art smaller than this is worth replacing with a catalogue cover.
 pub const GOOD_ART_PX: u32 = 1400;
 
+/// What "Look up details online" may use: the free sources you left on, and the optional
+/// keys you added.
+#[derive(Debug, Clone)]
+pub struct LookupOptions {
+    pub sources: crate::settings::Sources,
+    pub discogs_token: Option<String>,
+    pub acoustid_key: Option<String>,
+}
+
+impl LookupOptions {
+    pub fn from_settings(s: &crate::settings::Settings) -> Self {
+        LookupOptions {
+            sources: s.sources.clone(),
+            discogs_token: s.discogs_token.clone().filter(|t| !t.trim().is_empty()),
+            acoustid_key: s.acoustid_key.clone().filter(|t| !t.trim().is_empty()),
+        }
+    }
+}
+
+impl Default for LookupOptions {
+    fn default() -> Self {
+        LookupOptions::from_settings(&crate::settings::Settings::default())
+    }
+}
+
 #[derive(Default)]
 pub struct EnrichProgress {
     pub done: AtomicUsize,
@@ -32,6 +57,8 @@ pub struct EnrichReport {
     pub musicbrainz_matches: usize,
     pub apple_matches: usize,
     pub deezer_matches: usize,
+    pub discogs_matches: usize,
+    pub identified: usize,
     pub lyrics_checked: usize,
     pub lyrics_found: usize,
     pub errors: Vec<String>,
@@ -48,6 +75,10 @@ enum Msg {
     Lyrics {
         file_id: i64,
         found: Option<LyricsFound>,
+    },
+    Identity {
+        file_id: i64,
+        found: Option<providers::Identified>,
     },
     Error(String),
 }
@@ -78,8 +109,10 @@ struct LyricsJob {
 
 pub fn run(
     index: &mut Index,
+    root: &Path,
     lib: &Library,
     rules: &Rules,
+    opts: &LookupOptions,
     progress: &EnrichProgress,
     on_progress: &(dyn Fn(usize, usize) + Sync),
 ) -> crate::Result<EnrichReport> {
@@ -98,6 +131,14 @@ pub fn run(
         stmt.query_map([], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<_>>()?
     };
+    let discogs_checked: HashSet<String> = {
+        let mut stmt = index
+            .conn()
+            .prepare("SELECT dir FROM album_meta WHERE discogs_checked IS NOT NULL")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut discogs_jobs: Vec<AlbumJob> = Vec::new();
     let checked_lyrics: HashSet<i64> = {
         let mut stmt = index.conn().prepare("SELECT file_id FROM track_lyrics")?;
         stmt.query_map([], |r| r.get::<_, i64>(0))?
@@ -106,14 +147,27 @@ pub fn run(
     let mut albums: Vec<AlbumJob> = Vec::new();
     let mut by_title: Vec<TitleJob> = Vec::new();
     for (dir, tracks) in lib.albums() {
-        if done_albums.contains(dir) {
-            continue;
-        }
         let barcode = crate::library::most_common(
             tracks
                 .iter()
                 .filter_map(|t| t.first("BARCODE").or_else(|| t.first("UPC"))),
         );
+        // Discogs is asked separately, also for albums looked up before the token was added.
+        if opts.discogs_token.is_some()
+            && !discogs_checked.contains(dir)
+            && let Some(b) = barcode
+                .as_ref()
+                .filter(|b| b.chars().all(|c| c.is_ascii_digit()) && b.len() >= 8)
+        {
+            discogs_jobs.push(AlbumJob {
+                dir: dir.to_owned(),
+                barcode: b.clone(),
+                need_apple: false,
+            });
+        }
+        if done_albums.contains(dir) {
+            continue;
+        }
         let Some(barcode) =
             barcode.filter(|b| b.chars().all(|c| c.is_ascii_digit()) && b.len() >= 8)
         else {
@@ -147,11 +201,26 @@ pub fn run(
             need_apple: best_art < GOOD_ART_PX,
         });
     }
+    // Files without tags, identified by their sound (only with an AcoustID key).
+    let identified: HashSet<i64> = {
+        let mut stmt = index.conn().prepare("SELECT file_id FROM track_identity")?;
+        stmt.query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let to_identify: Vec<(i64, std::path::PathBuf)> = if opts.acoustid_key.is_some() {
+        lib.tracks
+            .iter()
+            .filter(|t| crate::review::is_untagged(t) && !identified.contains(&t.id))
+            .map(|t| (t.id, root.join(&t.path)))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut lyrics: Vec<LyricsJob> = Vec::new();
     for t in lib
         .tracks
         .iter()
-        .filter(|t| t.kind == "flac" && !checked_lyrics.contains(&t.id))
+        .filter(|t| opts.sources.lrclib && t.kind == "flac" && !checked_lyrics.contains(&t.id))
     {
         let sidecar = format!(
             "{}.lrc",
@@ -177,8 +246,18 @@ pub fn run(
         });
     }
 
-    let apple_count = albums.iter().filter(|a| a.need_apple).count();
-    let total = albums.len() * 2 + apple_count + by_title.len() + lyrics.len();
+    let s = &opts.sources;
+    let apple_count = if s.apple {
+        albums.iter().filter(|a| a.need_apple).count()
+    } else {
+        0
+    };
+    let total = albums.len() * (usize::from(s.musicbrainz) + usize::from(s.deezer))
+        + apple_count
+        + if s.musicbrainz { by_title.len() } else { 0 }
+        + lyrics.len()
+        + discogs_jobs.len()
+        + to_identify.len();
     progress.total.store(total, Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
     on_progress(0, total);
@@ -196,7 +275,7 @@ pub fn run(
                 params![t.dir, now],
             )?;
         }
-        for a in &albums {
+        for a in albums.iter().chain(&discogs_jobs) {
             tx.execute(
                 "INSERT INTO album_meta (dir, barcode, fetched_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(dir) DO UPDATE SET barcode = excluded.barcode, error = NULL",
@@ -215,12 +294,20 @@ pub fn run(
             let _ = tx.send(m);
         };
         type Lookup = fn(&Http, &str) -> Result<Option<ReleaseInfo>, NetError>;
-        let lookups: [(&'static str, Lookup, bool); 3] = [
-            ("mb", providers::musicbrainz_by_barcode, false),
-            ("deezer", providers::deezer_by_upc, false),
-            ("apple", providers::apple_by_upc, true),
+        let lookups: [(&'static str, Lookup, bool, bool); 3] = [
+            (
+                "mb",
+                providers::musicbrainz_by_barcode,
+                false,
+                s.musicbrainz,
+            ),
+            ("deezer", providers::deezer_by_upc, false, s.deezer),
+            ("apple", providers::apple_by_upc, true, s.apple),
         ];
-        for (which, lookup, only_needed) in lookups {
+        for (which, lookup, only_needed, on) in lookups {
+            if !on {
+                continue;
+            }
             let tx = tx.clone();
             let albums = &albums;
             scope.spawn(move || {
@@ -242,7 +329,56 @@ pub fn run(
                 }
             });
         }
-        {
+        if let Some(key) = opts.acoustid_key.as_deref() {
+            let tx = tx.clone();
+            let files = &to_identify;
+            scope.spawn(move || {
+                for (file_id, path) in files {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let found = match crate::fingerprint::fingerprint(path) {
+                        Ok(p) => providers::acoustid_lookup(http, key, p.duration_s, &p.encoded),
+                        Err(_) => Ok(None), // can't be fingerprinted: nothing to identify
+                    };
+                    match found {
+                        Ok(found) => send(
+                            &tx,
+                            Msg::Identity {
+                                file_id: *file_id,
+                                found,
+                            },
+                        ),
+                        Err(e) => {
+                            send(&tx, Msg::Error(format!("acoustid {}: {e}", path.display())))
+                        }
+                    }
+                }
+            });
+        }
+        if let Some(token) = opts.discogs_token.as_deref() {
+            let tx = tx.clone();
+            let jobs = &discogs_jobs;
+            scope.spawn(move || {
+                for a in jobs {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match providers::discogs_by_barcode(http, token, &a.barcode) {
+                        Ok(info) => send(
+                            &tx,
+                            Msg::Release {
+                                dir: a.dir.clone(),
+                                which: "discogs",
+                                info: info.map(Box::new),
+                            },
+                        ),
+                        Err(e) => send(&tx, Msg::Error(format!("discogs {}: {e}", a.dir))),
+                    }
+                }
+            });
+        }
+        if s.musicbrainz {
             // Shares MusicBrainz's pace with the barcode thread (pacing is per host).
             let tx = tx.clone();
             let by_title = &by_title;
@@ -306,14 +442,20 @@ pub fn run(
                         match which {
                             "mb" => report.musicbrainz_matches += 1,
                             "apple" => report.apple_matches += 1,
+                            "discogs" => report.discogs_matches += 1,
                             _ => report.deezer_matches += 1,
                         }
                     }
                     let json = info.map(|i| serde_json::to_string(&i).unwrap_or_default());
                     // Column name comes from a fixed list, never from data.
-                    let sql = format!(
-                        "UPDATE album_meta SET {which} = ?1, fetched_at = ?2 WHERE dir = ?3"
-                    );
+                    let sql = if which == "discogs" {
+                        "UPDATE album_meta SET discogs = ?1, discogs_checked = ?2 WHERE dir = ?3"
+                            .to_owned()
+                    } else {
+                        format!(
+                            "UPDATE album_meta SET {which} = ?1, fetched_at = ?2 WHERE dir = ?3"
+                        )
+                    };
                     let _ = conn.execute(&sql, params![json, now(), dir]);
                 }
                 Msg::Lyrics { file_id, found } => {
@@ -321,6 +463,14 @@ pub fn run(
                     let json = found.map(|f| serde_json::to_string(&f).unwrap_or_default());
                     let _ = conn.execute(
                         "INSERT OR REPLACE INTO track_lyrics (file_id, found, checked_at) VALUES (?1, ?2, ?3)",
+                        params![file_id, json, now()],
+                    );
+                }
+                Msg::Identity { file_id, found } => {
+                    report.identified += usize::from(found.is_some());
+                    let json = found.map(|f| serde_json::to_string(&f).unwrap_or_default());
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO track_identity (file_id, found, checked_at) VALUES (?1, ?2, ?3)",
                         params![file_id, json, now()],
                     );
                 }
@@ -355,12 +505,14 @@ pub struct AlbumMeta {
     pub mb: Option<ReleaseInfo>,
     pub apple: Option<ReleaseInfo>,
     pub deezer: Option<ReleaseInfo>,
+    /// Only with a Discogs token.
+    pub discogs: Option<ReleaseInfo>,
 }
 
 pub fn load_album_meta(index: &Index) -> crate::Result<HashMap<String, AlbumMeta>> {
     let mut stmt = index
         .conn()
-        .prepare("SELECT dir, mb, apple, deezer FROM album_meta")?;
+        .prepare("SELECT dir, mb, apple, deezer, discogs FROM album_meta")?;
     let parse = |s: Option<String>| s.and_then(|j| serde_json::from_str::<ReleaseInfo>(&j).ok());
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -368,19 +520,37 @@ pub fn load_album_meta(index: &Index) -> crate::Result<HashMap<String, AlbumMeta
             r.get::<_, Option<String>>(1)?,
             r.get::<_, Option<String>>(2)?,
             r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
         ))
     })?;
     let mut out = HashMap::new();
     for row in rows {
-        let (dir, mb, apple, deezer) = row?;
+        let (dir, mb, apple, deezer, discogs) = row?;
         out.insert(
             dir,
             AlbumMeta {
                 mb: parse(mb),
                 apple: parse(apple),
                 deezer: parse(deezer),
+                discogs: parse(discogs),
             },
         );
+    }
+    Ok(out)
+}
+
+/// What AcoustID recognised files without tags as, by file id.
+pub fn load_identities(index: &Index) -> crate::Result<HashMap<i64, providers::Identified>> {
+    let mut stmt = index
+        .conn()
+        .prepare("SELECT file_id, found FROM track_identity WHERE found IS NOT NULL")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (id, json) = row?;
+        if let Ok(f) = serde_json::from_str(&json) {
+            out.insert(id, f);
+        }
     }
     Ok(out)
 }
@@ -420,5 +590,6 @@ pub fn run_for_root(
     )
     .map_err(|e| e.to_string())?;
     let lib = Library::load(&index).map_err(|e| e.to_string())?;
-    run(&mut index, &lib, rules, progress, on_progress).map_err(|e| e.to_string())
+    let opts = LookupOptions::from_settings(&crate::settings::load());
+    run(&mut index, root, &lib, rules, &opts, progress, on_progress).map_err(|e| e.to_string())
 }

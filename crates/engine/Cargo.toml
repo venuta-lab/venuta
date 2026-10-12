@@ -19,6 +19,7 @@ serde_json.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
 symphonia.workspace = true
+rusty-chromaprint.workspace = true
 image.workspace = true
 realfft.workspace = true
 regex.workspace = true

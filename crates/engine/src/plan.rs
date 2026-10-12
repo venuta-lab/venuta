@@ -193,7 +193,12 @@ pub fn build_with(lib: &Library, rules: &Rules, answers: &crate::review::Answers
         .tracks
         .iter()
         .filter(|t| review::is_untagged(t))
-        .map(|t| (t.id, review::tag_from_file_name(t)))
+        .map(|t| {
+            (
+                t.id,
+                review::tag_from_file_name(t, lib.identities.get(&t.id)),
+            )
+        })
         .collect();
     let mut albums: BTreeMap<&str, Vec<&Track>> = BTreeMap::new();
     for t in &lib.tracks {
@@ -260,7 +265,9 @@ fn plan_album(
 
     // Online lookups (if "Look up online" has run).
     let meta = lib.meta.get(dir);
-    let mb = meta.and_then(|m| m.mb.as_ref());
+    // MusicBrainz first; Discogs (with a token) where MusicBrainz doesn't know the release.
+    let mb = meta.and_then(|m| m.mb.as_ref().or(m.discogs.as_ref()));
+    let mb_name = mb.map(|r| r.source.label()).unwrap_or("MusicBrainz");
 
     // Your category rules decide; failing that, the catalogue genre suggests one.
     let (rule_owned, rule_inferred) = match rules.category_for(dir) {
@@ -617,7 +624,7 @@ fn plan_album(
             }
             (None, _, _) if mb_first.is_some() => {
                 let y = mb_first.unwrap_or_default().to_owned();
-                let mut why = format!("MusicBrainz: first released in {y}.");
+                let mut why = format!("{mb_name}: first released in {y}.");
                 if folder_year.as_deref().is_some_and(|f| f != y) {
                     why.push_str(&format!(
                         " Your folder says {}.",

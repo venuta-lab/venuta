@@ -18,6 +18,7 @@ pub enum Source {
     Apple,
     Deezer,
     Lrclib,
+    Discogs,
 }
 
 impl Source {
@@ -27,6 +28,7 @@ impl Source {
             Source::Apple => "Apple Music catalogue",
             Source::Deezer => "Deezer",
             Source::Lrclib => "LRCLIB",
+            Source::Discogs => "Discogs",
         }
     }
 }
@@ -560,4 +562,236 @@ mod tests {
         assert_eq!(script_of("پسوڑی"), Script::Arabic);
         assert_eq!(preferred_script(Some("mar")), Some(Script::Devanagari));
     }
+}
+
+// --- Discogs (optional: needs your own personal token) -------------------------------------
+
+/// Discogs adds "(2)", "(3)" to tell same-named artists apart; that is not part of the name.
+fn discogs_name(n: &str) -> String {
+    let n = n.trim();
+    match n.rsplit_once(" (") {
+        Some((base, tail))
+            if tail
+                .trim_end_matches(')')
+                .chars()
+                .all(|c| c.is_ascii_digit()) =>
+        {
+            base.trim().to_owned()
+        }
+        _ => n.to_owned(),
+    }
+}
+
+/// Composer and lyricist names from Discogs credits ("Music By", "Lyrics By"…).
+fn discogs_credits(list: Option<&Value>) -> (Vec<String>, Vec<String>) {
+    let (mut composers, mut lyricists) = (Vec::new(), Vec::new());
+    for c in list.and_then(Value::as_array).into_iter().flatten() {
+        let (Some(name), Some(role)) = (s(c, "name"), s(c, "role")) else {
+            continue;
+        };
+        let role = role.to_lowercase();
+        let name = discogs_name(&name);
+        if role.contains("lyrics") || role.contains("words by") {
+            lyricists.push(name.clone());
+        }
+        if role.contains("music by")
+            || role.contains("composed by")
+            || role.contains("written-by")
+            || role == "music"
+        {
+            composers.push(name);
+        }
+    }
+    composers.dedup();
+    lyricists.dedup();
+    (composers, lyricists)
+}
+
+/// "3:45" → milliseconds.
+fn discogs_duration(d: &str) -> Option<u64> {
+    let mut secs = 0u64;
+    for part in d.split(':') {
+        secs = secs * 60 + part.trim().parse::<u64>().ok()?;
+    }
+    (secs > 0).then_some(secs * 1000)
+}
+
+/// A release on Discogs by barcode, with its credits and the year of its first release (the
+/// "master"). Only used with a token, which the owner adds in Settings.
+pub fn discogs_by_barcode(
+    http: &Http,
+    token: &str,
+    barcode: &str,
+) -> Result<Option<ReleaseInfo>, NetError> {
+    let search = http.get_json(&format!(
+        "https://api.discogs.com/database/search?barcode={}&type=release&per_page=5&token={}",
+        enc(barcode),
+        enc(token)
+    ))?;
+    let Some(id) = search
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|r| r.first())
+        .and_then(|r| r.get("id"))
+        .and_then(Value::as_u64)
+    else {
+        return Ok(None);
+    };
+    discogs_release(http, token, id)
+}
+
+pub fn discogs_release(http: &Http, token: &str, id: u64) -> Result<Option<ReleaseInfo>, NetError> {
+    let v = match http.get_json(&format!(
+        "https://api.discogs.com/releases/{id}?token={}",
+        enc(token)
+    )) {
+        Ok(v) => v,
+        Err(NetError::NotFound) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    // The master release holds the year of the first release of this album anywhere.
+    let first_year = match v
+        .get("master_id")
+        .and_then(Value::as_u64)
+        .filter(|m| *m > 0)
+    {
+        Some(m) => http
+            .get_json(&format!(
+                "https://api.discogs.com/masters/{m}?token={}",
+                enc(token)
+            ))
+            .ok()
+            .and_then(|mv| mv.get("year").and_then(Value::as_u64))
+            .filter(|y| *y > 0),
+        None => None,
+    }
+    .or_else(|| v.get("year").and_then(Value::as_u64).filter(|y| *y > 0));
+    let (album_composers, album_lyricists) = discogs_credits(v.get("extraartists"));
+    let tracks: Vec<TrackInfo> = v
+        .get("tracklist")
+        .and_then(Value::as_array)
+        .map(|ts| {
+            ts.iter()
+                .filter(|t| s(t, "type_").as_deref().unwrap_or("track") == "track")
+                .enumerate()
+                .map(|(i, t)| {
+                    let (mut composers, mut lyricists) = discogs_credits(t.get("extraartists"));
+                    if composers.is_empty() {
+                        composers = album_composers.clone();
+                    }
+                    if lyricists.is_empty() {
+                        lyricists = album_lyricists.clone();
+                    }
+                    TrackInfo {
+                        disc: 1,
+                        number: i as u32 + 1,
+                        title: s(t, "title").unwrap_or_default(),
+                        composers,
+                        lyricists,
+                        duration_ms: s(t, "duration").and_then(|d| discogs_duration(&d)),
+                        ..Default::default()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let list = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Ok(Some(ReleaseInfo {
+        source: Source::Discogs,
+        id: v.get("id").map(|x| x.to_string()).unwrap_or_default(),
+        title: s(&v, "title").unwrap_or_default(),
+        album_artist: v
+            .get("artists")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(|a| s(a, "name"))
+            .map(|n| discogs_name(&n)),
+        first_release: first_year.map(|y| y.to_string()),
+        release_date: s(&v, "released"),
+        label: v
+            .get("labels")
+            .and_then(Value::as_array)
+            .and_then(|l| l.first())
+            .and_then(|l| s(l, "name"))
+            .map(|n| discogs_name(&n)),
+        genres: [list("genres"), list("styles")].concat(),
+        release_types: list("formats"),
+        cover_url: None, // Discogs images may not be reused; covers come from Apple and Deezer.
+        cover_px: None,
+        tracks,
+    }))
+}
+
+// --- AcoustID (optional: needs an application key) -----------------------------------------
+
+/// What AcoustID recognises a recording as.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Identified {
+    pub score: f64,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub recording_id: String,
+}
+
+/// Identify a file by its acoustic fingerprint (compressed, base64url). Only the fingerprint
+/// and the duration are sent, never the audio.
+pub fn acoustid_lookup(
+    http: &Http,
+    key: &str,
+    duration_s: u64,
+    fingerprint: &str,
+) -> Result<Option<Identified>, NetError> {
+    let v = http.get_json(&format!(
+        "https://api.acoustid.org/v2/lookup?client={}&meta=recordings+releasegroups&duration={duration_s}&fingerprint={}",
+        enc(key),
+        enc(fingerprint)
+    ))?;
+    if s(&v, "status").as_deref() != Some("ok") {
+        return Err(NetError::Failed(
+            v.get("error")
+                .and_then(|e| s(e, "message"))
+                .unwrap_or_else(|| "AcoustID refused the request".into()),
+        ));
+    }
+    let best = v
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let score = r.get("score").and_then(Value::as_f64)?;
+            let rec = r.get("recordings")?.as_array()?.first()?;
+            Some(Identified {
+                score,
+                title: s(rec, "title")?,
+                artist: rec
+                    .get("artists")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| s(x, "name"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .filter(|a| !a.is_empty())?,
+                album: rec
+                    .get("releasegroups")
+                    .and_then(Value::as_array)
+                    .and_then(|g| g.first())
+                    .and_then(|g| s(g, "title")),
+                recording_id: s(rec, "id").unwrap_or_default(),
+            })
+        })
+        .max_by(|a, b| a.score.total_cmp(&b.score));
+    Ok(best.filter(|b| b.score >= 0.8))
 }

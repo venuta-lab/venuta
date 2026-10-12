@@ -180,7 +180,7 @@ fn main() -> Result<()> {
             if r.aliases.artists.is_empty() {
                 r.aliases = engine::rules::bootstrap_aliases(&lib);
             }
-            r.save(&rules).map_err(anyhow::Error::msg)?;
+            r.save_missing(&rules).map_err(anyhow::Error::msg)?;
             println!(
                 "rules in {}: {} aliases, {} category rules",
                 rules.display(),

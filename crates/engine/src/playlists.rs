@@ -739,6 +739,7 @@ mod tests {
             meta: Default::default(),
             fetched_lyrics: Default::default(),
             pairs: Default::default(),
+            identities: Default::default(),
         }
     }
 
