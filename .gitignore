@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / UI
+node_modules/
+dist/
+.vite/
+
+# Tauri
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# Local data never committed
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+/fixtures/generated/
+/scratch/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
