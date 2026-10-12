@@ -28,6 +28,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 unicode-normalization = "0.1.25"
 tempfile = "3.27.0"
 symphonia = { version = "0.6.1", default-features = false, features = ["flac"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "rayon"] }
 
 [profile.release]
 lto = "thin"

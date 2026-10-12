@@ -4,8 +4,11 @@
 //! apply step (not yet built), and that step always writes a temp copy, verifies the audio
 //! is untouched, then renames.
 
+pub mod art;
+pub mod audit;
 pub mod error;
 pub mod index;
+pub mod library;
 pub mod media;
 pub mod paths;
 pub mod scan;

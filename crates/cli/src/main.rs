@@ -22,6 +22,14 @@ struct Cli {
 enum Command {
     /// Scan a library folder into the index (read-only on the library)
     Scan { root: PathBuf },
+    /// Scan, then report library health (read-only)
+    Health { root: PathBuf },
+    /// Make (cached) cover thumbnails for every album; prints their paths as JSON
+    Covers {
+        root: PathBuf,
+        #[arg(long, default_value_t = 320)]
+        size: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -55,6 +63,56 @@ fn main() -> Result<()> {
                 );
                 println!("time:       {} ms", report.elapsed_ms);
             }
+        }
+        Command::Health { root } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let mut index = Index::open(&db, &root_key)?;
+            engine::scan(&mut index, &root)?;
+            let started = std::time::Instant::now();
+            let lib = engine::library::Library::load(&index)?;
+            let report = engine::audit::run(&lib);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                let s = &report.summary;
+                println!(
+                    "{} tracks in {} albums, {:.1} hours, {:.1} GB. {} tracks healthy. ({} ms)",
+                    s.tracks,
+                    s.albums,
+                    s.hours,
+                    s.bytes as f64 / 1e9,
+                    s.healthy_tracks,
+                    started.elapsed().as_millis()
+                );
+                for i in report.issues.iter() {
+                    println!(
+                        "\n[{:?}] {}: {} tracks in {} albums",
+                        i.severity,
+                        i.title,
+                        i.tracks,
+                        i.albums.len()
+                    );
+                    for e in i.examples.iter().take(3) {
+                        println!("    {e}");
+                    }
+                }
+            }
+        }
+        Command::Covers { root, size } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let index = Index::open(&db, &root_key)?;
+            let lib = engine::library::Library::load(&index)?;
+            let dirs: Vec<String> = lib.album_summaries().into_iter().map(|a| a.dir).collect();
+            let started = std::time::Instant::now();
+            let thumbs = engine::art::thumbnails(&root, lib.cover_requests(&dirs), size);
+            eprintln!(
+                "{} thumbnails in {} ms",
+                thumbs.len(),
+                started.elapsed().as_millis()
+            );
+            println!("{}", serde_json::to_string_pretty(&thumbs)?);
         }
     }
     Ok(())

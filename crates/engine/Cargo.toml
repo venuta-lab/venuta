@@ -19,6 +19,7 @@ serde_json.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
 symphonia.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

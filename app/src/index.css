@@ -1,44 +1,99 @@
 @import "tailwindcss";
 
-/* Calm, neutral palette. Follows the OS light/dark setting. */
+/*
+  Glass over your own artwork. The window itself is translucent (acrylic / Liquid Glass);
+  a blurred mosaic of the library's covers sits behind frosted panels, and the accent colour
+  is taken from the artwork in focus.
+*/
 @theme {
-  --color-canvas: #f7f7f5;
-  --color-panel: #ffffff;
-  --color-line: #e6e5e1;
-  --color-ink: #1d1d1b;
-  --color-muted: #6b6a66;
-  --color-accent: #3d5afe;
-  --color-ok: #2e7d32;
-  --color-warn: #b26a00;
-  --color-bad: #c62828;
-  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --color-ink: #f3f1ee;
+  --color-glass: rgb(255 255 255 / 0.06);
+  --color-glass-strong: rgb(255 255 255 / 0.1);
+  --color-edge: rgb(255 255 255 / 0.1);
+  --color-scrim: rgb(9 9 12 / 0.42);
+  --color-problem: #ff8a80;
+  --color-fix: #ffd180;
+  --color-note: #b3c7ff;
+  --color-accent: var(--accent);
+  --font-sans: "Sora Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --radius-glass: 22px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-canvas: #151514;
-    --color-panel: #1c1c1b;
-    --color-line: #2c2c2a;
-    --color-ink: #ecebe7;
-    --color-muted: #9c9b96;
-    --color-accent: #8c9eff;
-    --color-ok: #81c784;
-    --color-warn: #ffb74d;
-    --color-bad: #ef9a9a;
-  }
+/* Registered so the accent can glide from one cover's colour to the next. */
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a6b8ff;
+}
+
+:root {
+  --accent: #a6b8ff;
+  color-scheme: dark;
+  transition: --accent 700ms ease;
 }
 
 html,
 body,
 #root {
   height: 100%;
+  background: transparent;
 }
 
 body {
   margin: 0;
-  background: var(--color-canvas);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+  overflow: hidden;
+}
+
+/* Frosted panel: the one surface style used everywhere. */
+.glass {
+  background: var(--color-glass);
+  border: 1px solid var(--color-edge);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 20px 50px -20px rgb(0 0 0 / 0.45);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+
+
+
+/* Slow drift of the backdrop canvas: transform only, so it runs on the compositor. */
+@keyframes backdrop-drift {
+  0% {
+    transform: scale(1.25) translate3d(-2%, -1.5%, 0);
+  }
+  50% {
+    transform: scale(1.32) translate3d(2%, 1.5%, 0);
+  }
+  100% {
+    transform: scale(1.25) translate3d(-2%, -1.5%, 0);
+  }
+}
+
+.backdrop-drift {
+  transform: scale(1.25);
+  animation: backdrop-drift 90s ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-drift {
+    animation: none;
+  }
 }

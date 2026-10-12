@@ -1,146 +1,209 @@
-import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { engineVersion, scanLibrary, type ScanReport } from './lib/engine'
+import { Backdrop } from './components/Backdrop'
+import { Rail, type Section } from './components/Rail'
+import { TitleBar } from './components/TitleBar'
+import {
+  IconBrowse,
+  IconCards,
+  IconHealth,
+  IconIncoming,
+  IconPlaylists,
+  IconReview,
+} from './components/Icons'
+import { inApp, libraryHealth, scanLibrary, type HealthReport } from './lib/engine'
+import { coverFor, loadCovers, setAccent } from './lib/covers'
+import { LibraryScreen } from './screens/LibraryScreen'
+import { BrowseScreen } from './screens/BrowseScreen'
+import { SoonScreen } from './screens/SoonScreen'
 
-const SECTIONS = [
-  { id: 'library', label: 'Library', ready: true },
-  { id: 'browse', label: 'Browse', ready: false },
-  { id: 'review', label: 'Review', ready: false },
-  { id: 'incoming', label: 'Incoming', ready: false },
-  { id: 'playlists', label: 'Playlists', ready: false },
-  { id: 'cards', label: 'Cards', ready: false },
-] as const
+const SECTIONS: Section[] = [
+  { id: 'library', label: 'Library', icon: IconHealth, ready: true },
+  { id: 'browse', label: 'Browse', icon: IconBrowse, ready: true },
+  { id: 'review', label: 'Review', icon: IconReview, ready: false },
+  { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: false },
+  { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: false },
+  { id: 'cards', label: 'Cards', icon: IconCards, ready: false },
+]
 
 const ROOT_KEY = 'library-root'
-
-function readStoredRoot(): string {
-  try {
-    return localStorage.getItem(ROOT_KEY) ?? ''
-  } catch {
-    return ''
-  }
+const store = {
+  get: () => {
+    try {
+      return localStorage.getItem(ROOT_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  },
+  set: (v: string) => {
+    try {
+      localStorage.setItem(ROOT_KEY, v)
+    } catch {
+      // Not remembered this time; harmless.
+    }
+  },
 }
 
 export default function App() {
-  const [version, setVersion] = useState('')
-  const [root, setRoot] = useState(readStoredRoot)
-  const [report, setReport] = useState<ScanReport | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [root, setRoot] = useState(() => store.get() || (inApp() ? '' : 'D:/Collection'))
+  const [report, setReport] = useState<HealthReport | null>(null)
+  const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [active, setActive] = useState('library')
+  const [direction, setDirection] = useState(1)
+  const [backdrop, setBackdrop] = useState<string[]>([])
 
-  useEffect(() => {
-    engineVersion()
-      .then(setVersion)
-      .catch(() => setVersion('?'))
+  const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
+    try {
+      if (rescan) {
+        setBusy('Scanning your library…')
+        await scanLibrary(dir)
+      }
+      setBusy('Checking library health…')
+      let r = await libraryHealth(dir)
+      // A library that was never indexed reads as empty: scan it once, then report.
+      if (!rescan && r.summary.tracks === 0) {
+        setBusy('Scanning your library…')
+        await scanLibrary(dir)
+        r = await libraryHealth(dir)
+      }
+      setReport(r)
+      setError('')
+      setBusy('')
+      // Covers: a spread of albums for the backdrop first, then everything for the wall.
+      const dirs = r.albums.filter((a) => a.cover_track).map((a) => a.dir)
+      const step = Math.max(1, Math.floor(dirs.length / 24))
+      const spread = dirs.filter((_, i) => i % step === 0).slice(0, 24)
+      await loadCovers(dir, spread)
+      const loaded = spread.map((d) => coverFor(d)).filter((c) => !!c)
+      setBackdrop(loaded.map((c) => c.src))
+      setAccent(loaded.find((c) => c.accent)?.accent)
+      await loadCovers(dir, dirs)
+    } catch (e) {
+      setBusy('')
+      setError(String(e))
+    }
   }, [])
 
-  async function chooseRoot() {
-    const picked = await open({ directory: true, title: 'Choose your music library folder' })
-    if (typeof picked !== 'string') return
-    setRoot(picked)
-    setReport(null)
-    try {
-      localStorage.setItem(ROOT_KEY, picked)
-    } catch {
-      // Storage unavailable: the choice is just not remembered.
-    }
-  }
+  // On launch, show the last library straight from its index.
+  useEffect(() => {
+    if (root) void refresh(root, false)
+  }, [root, refresh])
 
-  async function scan() {
-    if (!root) return
-    setBusy(true)
-    setError('')
-    try {
-      setReport(await scanLibrary(root))
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="flex h-full">
-      <nav className="flex w-52 shrink-0 flex-col border-r border-line bg-panel px-3 py-4">
-        <div className="px-2 pb-6 text-sm font-semibold tracking-tight">Music Librarian</div>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            disabled={!s.ready}
-            className={`rounded-md px-2 py-1.5 text-left text-sm ${
-              s.id === 'library'
-                ? 'bg-canvas font-medium'
-                : 'text-muted disabled:cursor-default disabled:opacity-50'
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
-        <div className="mt-auto px-2 text-xs text-muted">engine {version}</div>
-      </nav>
-
-      <main className="flex-1 overflow-auto px-10 py-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
-        <p className="mt-1 text-sm text-muted">
-          Scanning only reads your files. Nothing in the library is changed.
-        </p>
-
-        <div className="mt-6 flex items-center gap-3 rounded-lg border border-line bg-panel p-4">
-          <div className="min-w-0 flex-1">
-            <div className="text-xs uppercase tracking-wide text-muted">Library folder</div>
-            <div className="truncate text-sm">{root || 'Not chosen yet'}</div>
-          </div>
-          <button
-            onClick={chooseRoot}
-            className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-canvas"
-          >
-            Choose…
-          </button>
-          <button
-            onClick={scan}
-            disabled={!root || busy}
-            className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-          >
-            {busy ? 'Scanning…' : 'Scan'}
-          </button>
-        </div>
-
-        {error && (
-          <div className="mt-4 rounded-md border border-bad/40 px-4 py-3 text-sm text-bad">{error}</div>
-        )}
-
-        {report && (
-          <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Audio files" value={report.audio_files} />
-            <Stat label="All files seen" value={report.files_seen} />
-            <Stat
-              label="Changes since last scan"
-              value={report.added + report.changed + report.removed}
-              note={`${report.added} added · ${report.changed} changed · ${report.removed} removed`}
-            />
-            <Stat
-              label="Scan time"
-              value={`${report.elapsed_ms} ms`}
-              note={report.read_errors ? `${report.read_errors} unreadable files` : 'No read errors'}
-              tone={report.read_errors ? 'bad' : 'ok'}
-            />
-          </div>
-        )}
-      </main>
-    </div>
+  const go = useCallback(
+    (id: string) => {
+      const from = SECTIONS.findIndex((s) => s.id === active)
+      const to = SECTIONS.findIndex((s) => s.id === id)
+      if (to < 0 || to === from) return
+      setDirection(to > from ? 1 : -1)
+      setActive(id)
+    },
+    [active],
   )
-}
 
-function Stat(props: { label: string; value: number | string; note?: string; tone?: 'ok' | 'bad' }) {
-  const toneClass =
-    props.tone === 'bad' ? 'text-bad' : props.tone === 'ok' ? 'text-ok' : 'text-muted'
+  // Ctrl+1..6 jumps between sections.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return
+      const n = Number(e.key)
+      if (n >= 1 && n <= SECTIONS.length) {
+        e.preventDefault()
+        go(SECTIONS[n - 1].id)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [go])
+
+  // Two-finger horizontal swipe on a trackpad moves to the next/previous section.
+  const swipe = useRef({ acc: 0, lock: 0 })
+  const onWheel = (e: React.WheelEvent) => {
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.5) return
+    const s = swipe.current
+    const now = performance.now()
+    if (now < s.lock) return
+    s.acc += e.deltaX
+    if (Math.abs(s.acc) > 160) {
+      const i = SECTIONS.findIndex((x) => x.id === active)
+      const next = SECTIONS[i + (s.acc > 0 ? 1 : -1)]
+      s.acc = 0
+      s.lock = now + 650
+      if (next) go(next.id)
+    }
+  }
+
+  async function chooseRoot() {
+    const picked = inApp()
+      ? await open({ directory: true, title: 'Choose your music library folder' })
+      : null
+    if (typeof picked !== 'string') return
+    store.set(picked)
+    setReport(null)
+    setBackdrop([])
+    setRoot(picked)
+    refresh(picked, true)
+  }
+
+  const screen = (() => {
+    switch (active) {
+      case 'library':
+        return (
+          <LibraryScreen
+            root={root}
+            report={report}
+            busy={busy}
+            onChoose={chooseRoot}
+            onRescan={() => refresh(root, true)}
+          />
+        )
+      case 'browse':
+        return <BrowseScreen albums={report?.albums ?? []} />
+      default:
+        return <SoonScreen section={SECTIONS.find((s) => s.id === active)!} />
+    }
+  })()
+
   return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <div className="text-xs uppercase tracking-wide text-muted">{props.label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">
-        {typeof props.value === 'number' ? props.value.toLocaleString() : props.value}
+    <div className="relative flex h-full flex-col" onWheel={onWheel}>
+      <Backdrop covers={backdrop} />
+      <TitleBar />
+      <div className="relative z-10 flex min-h-0 flex-1">
+        <Rail sections={SECTIONS} active={active} onSelect={go} />
+        <main className="relative min-w-0 flex-1 overflow-hidden">
+          <AnimatePresence mode="popLayout" custom={direction} initial={false}>
+            <motion.div
+              key={active}
+              custom={direction}
+              variants={{
+                enter: (d: number) => ({ x: d * 70, opacity: 0, scale: 0.985 }),
+                center: { x: 0, opacity: 1, scale: 1 },
+                exit: (d: number) => ({ x: d * -70, opacity: 0, scale: 0.985 }),
+              }}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+              className="no-scrollbar absolute inset-0 overflow-y-auto px-10"
+            >
+              {screen}
+            </motion.div>
+          </AnimatePresence>
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ y: 40, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 40, opacity: 0 }}
+                className="glass absolute bottom-5 left-1/2 max-w-[640px] -translate-x-1/2 rounded-2xl px-5 py-3 text-[13px]"
+              >
+                <span className="text-problem">Couldn’t read the library. </span>
+                <span className="text-ink/75">{error}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
       </div>
-      {props.note && <div className={`mt-1 text-xs ${toneClass}`}>{props.note}</div>}
     </div>
   )
 }
