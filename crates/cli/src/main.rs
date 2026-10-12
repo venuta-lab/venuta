@@ -36,6 +36,17 @@ enum Command {
         #[arg(long)]
         only: Option<String>,
     },
+    /// Build a new library at TARGET from the plan (copies; the source is never written)
+    Apply {
+        root: PathBuf,
+        rules: PathBuf,
+        target: PathBuf,
+        /// Only albums whose folder contains this text
+        #[arg(long)]
+        only: Option<String>,
+    },
+    /// Remove everything an apply run created, using its journal
+    Undo { journal: PathBuf },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
     Covers {
         root: PathBuf,
@@ -201,6 +212,30 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+        Command::Apply {
+            root,
+            rules,
+            target,
+            only,
+        } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let index = Index::open(&db, &root_key)?;
+            let lib = engine::library::Library::load(&index)?;
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let mut plan = engine::plan::build(&lib, &r);
+            if let Some(o) = &only {
+                plan.albums.retain(|a| a.id.contains(o.as_str()));
+            }
+            let progress = engine::apply::ApplyProgress::default();
+            let report = engine::apply::apply(&plan.albums, &root, &target, &progress, &|_, _| {})
+                .map_err(anyhow::Error::msg)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Undo { journal } => {
+            let n = engine::apply::undo(&journal).map_err(anyhow::Error::msg)?;
+            println!("removed {n} files");
         }
         Command::Covers { root, size } => {
             let root_key = paths::canonical_root_string(&root);
