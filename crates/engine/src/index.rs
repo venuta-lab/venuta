@@ -7,7 +7,11 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::Path;
 
-const SCHEMA_VERSION: i32 = 2;
+/// Latest schema version; `migrate` applies every step up to it.
+pub const SCHEMA_VERSION: i32 = 2;
+
+/// An album folder and its tracks as `(file id, relative path)`.
+pub type AlbumTracks = (String, Vec<(i64, String)>);
 
 /// v2: results of the deep check, stamped with the file's size/mtime when analysed so a
 /// changed file is analysed again.
@@ -143,12 +147,11 @@ impl Index {
                 tx.commit()?;
             }
         }
-        debug_assert!(SCHEMA_VERSION == 2);
         Ok(())
     }
 
     /// Albums (folder → tracks) with at least one FLAC never analysed or changed since.
-    pub fn quality_todo(&self) -> Result<Vec<(String, Vec<(i64, String)>)>> {
+    pub fn quality_todo(&self) -> Result<Vec<AlbumTracks>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.id, f.path,
                     (q.file_id IS NULL OR q.size != f.size OR q.mtime_ns != f.mtime_ns) AS stale
