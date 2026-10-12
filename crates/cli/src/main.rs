@@ -54,6 +54,16 @@ enum Command {
     IncomingPlan { library: PathBuf, rules: PathBuf },
     /// Import every ready album from LIBRARY/_Incoming into the library
     IncomingImport { library: PathBuf, rules: PathBuf },
+    /// Set up a card (or any folder) to receive the library
+    CardSetup {
+        card: PathBuf,
+        name: String,
+        /// Top-level library folders to include (default: everything)
+        #[arg(long)]
+        include: Vec<String>,
+    },
+    /// Mirror the library onto a set-up card
+    CardSync { library: PathBuf, card: PathBuf },
     /// Look up albums online (MusicBrainz, Apple, Deezer) and missing lyrics (LRCLIB)
     Lookup { root: PathBuf, rules: PathBuf },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
@@ -293,6 +303,37 @@ fn main() -> Result<()> {
             let report = engine::intake::import(&library, &plan.albums, &progress, &|_, _| {})
                 .map_err(anyhow::Error::msg)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::CardSetup {
+            card,
+            name,
+            include,
+        } => {
+            let c = engine::sync::setup_card(&card, &name, include, false)
+                .map_err(anyhow::Error::msg)?;
+            println!("card {} ({}) ready", c.name, c.id);
+        }
+        Command::CardSync { library, card } => {
+            let mut idx = Index::open(
+                &paths::index_path_for(&library),
+                &paths::canonical_root_string(&library),
+            )?;
+            engine::scan(&mut idx, &library)?;
+            let plan = engine::sync::plan(&library, &card).map_err(anyhow::Error::msg)?;
+            eprintln!(
+                "plan: {} copy ({} MB), {} patch, {} move, {} adopt, {} delete, {} unchanged",
+                plan.copy,
+                plan.bytes_to_copy / 1_000_000,
+                plan.patch,
+                plan.moves,
+                plan.adopt,
+                plan.delete,
+                plan.unchanged
+            );
+            let progress = engine::sync::SyncProgress::default();
+            let report = engine::sync::run(&library, &card, &plan, &progress, &|_, _, _| {})
+                .map_err(anyhow::Error::msg)?;
+            println!("{}", serde_json::to_string(&report)?);
         }
         Command::Lookup { root, rules } => {
             let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;

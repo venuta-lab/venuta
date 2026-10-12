@@ -16,6 +16,9 @@ import {
   cancelDeepCheck,
   cancelLookup,
   deepCheck,
+  ejectCard,
+  listCards,
+  syncCard,
   lookupOnline,
   inApp,
   libraryHealth,
@@ -28,6 +31,7 @@ import { BrowseScreen } from './screens/BrowseScreen'
 import { SoonScreen } from './screens/SoonScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
 import { IncomingScreen } from './screens/IncomingScreen'
+import { CardsScreen } from './screens/CardsScreen'
 
 const SECTIONS: Section[] = [
   { id: 'library', label: 'Library', icon: IconHealth, ready: true },
@@ -35,7 +39,7 @@ const SECTIONS: Section[] = [
   { id: 'review', label: 'Review', icon: IconReview, ready: true },
   { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: true },
   { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: false },
-  { id: 'cards', label: 'Cards', icon: IconCards, ready: false },
+  { id: 'cards', label: 'Cards', icon: IconCards, ready: true },
 ]
 
 const ROOT_KEY = 'library-root'
@@ -99,6 +103,31 @@ export default function App() {
       setError(String(e))
     }
   }, [])
+
+  // Cards set to sync on insert: sync when they appear, whatever screen is open.
+  const present = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    if (!inApp() || !root) return
+    const t = window.setInterval(async () => {
+      const cards = await listCards().catch(() => [])
+      const now = new Set(cards.filter((c) => c.card).map((c) => c.volume.root))
+      const before = present.current
+      present.current = now
+      if (!before) return // first look: only react to cards inserted from now on
+      for (const c of cards) {
+        if (!c.card?.auto_sync || before.has(c.volume.root)) continue
+        setNotice(`Syncing ${c.card.name}…`)
+        try {
+          const r = await syncCard(root, c.volume.root, () => {})
+          await ejectCard(c.volume.root).catch(() => {})
+          setNotice(`${c.card.name} is up to date (${r.copied} copied, ${r.patched} updated, ${r.deleted} removed) and safe to remove.`)
+        } catch (e) {
+          setError(String(e))
+        }
+      }
+    }, 5000)
+    return () => window.clearInterval(t)
+  }, [root])
 
   // On launch, show the last library straight from its index.
   useEffect(() => {
@@ -209,6 +238,8 @@ export default function App() {
         return <BrowseScreen root={root} albums={report?.albums ?? []} />
       case 'review':
         return <ReviewScreen root={root} />
+      case 'cards':
+        return <CardsScreen root={root} />
       case 'incoming':
         return <IncomingScreen root={root} onImported={() => void refresh(root, false)} />
       default:

@@ -28,6 +28,15 @@ struct Jobs {
     /// The last incoming plan, same reason.
     incoming_plan: Mutex<Option<(String, Plan)>>,
     lookup: Mutex<Option<Arc<engine::enrich::EnrichProgress>>>,
+    /// Running card syncs, by card root.
+    syncs: Mutex<BTreeMap<String, Arc<engine::sync::SyncProgress>>>,
+}
+
+#[derive(Clone, Serialize)]
+struct SyncProgressMsg {
+    done: usize,
+    total: usize,
+    bytes: u64,
 }
 
 fn rules() -> CmdResult<Rules> {
@@ -520,6 +529,96 @@ fn incoming_count(root: String) -> usize {
         .count()
 }
 
+/// Attached cards (set up or not) and their state.
+#[tauri::command]
+async fn list_cards() -> CmdResult<Vec<engine::sync::CardStatus>> {
+    blocking(|| Ok(engine::sync::cards())).await
+}
+
+/// Top-level folders of the library, for choosing what a card carries.
+#[tauri::command]
+fn library_folders(root: String) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('_') && !n.starts_with('.'))
+        .collect();
+    v.sort();
+    v
+}
+
+#[tauri::command]
+fn setup_card(
+    card: String,
+    name: String,
+    include: Vec<String>,
+    auto_sync: bool,
+) -> CmdResult<engine::sync::CardConfig> {
+    engine::sync::setup_card(Path::new(&card), &name, include, auto_sync)
+}
+
+/// What a sync would do, without doing it.
+#[tauri::command]
+async fn plan_card(root: String, card: String) -> CmdResult<engine::sync::SyncPlan> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let mut index = open_index(&rootp)?;
+        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        engine::sync::plan(&rootp, Path::new(&card))
+    })
+    .await
+}
+
+/// Mirror the library onto a card. Progress streams over `on_progress`.
+#[tauri::command]
+async fn sync_card(
+    root: String,
+    card: String,
+    on_progress: Channel<SyncProgressMsg>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<engine::sync::SyncReport> {
+    let progress = Arc::new(engine::sync::SyncProgress::default());
+    {
+        let mut syncs = jobs.syncs.lock().map_err(|e| e.to_string())?;
+        if syncs.contains_key(&card) {
+            return Err("This card is already syncing.".into());
+        }
+        syncs.insert(card.clone(), progress.clone());
+    }
+    let (p, c) = (progress.clone(), card.clone());
+    let result = blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let mut index = open_index(&rootp)?;
+        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        let plan = engine::sync::plan(&rootp, Path::new(&c))?;
+        engine::sync::run(&rootp, Path::new(&c), &plan, &p, &|done, total, bytes| {
+            let _ = on_progress.send(SyncProgressMsg { done, total, bytes });
+        })
+    })
+    .await;
+    if let Ok(mut syncs) = jobs.syncs.lock() {
+        syncs.remove(&card);
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_sync(card: String, jobs: State<'_, Jobs>) {
+    if let Ok(syncs) = jobs.syncs.lock()
+        && let Some(p) = syncs.get(&card)
+    {
+        p.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+#[tauri::command]
+async fn eject_card(card: String) -> CmdResult<()> {
+    blocking(move || engine::volumes::eject(Path::new(&card))).await
+}
+
 #[derive(Serialize)]
 struct TrackRow {
     path: String,
@@ -670,7 +769,14 @@ pub fn run() {
             incoming_lookup,
             incoming_import,
             add_to_incoming,
-            incoming_count
+            incoming_count,
+            list_cards,
+            library_folders,
+            setup_card,
+            plan_card,
+            sync_card,
+            cancel_sync,
+            eject_card
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

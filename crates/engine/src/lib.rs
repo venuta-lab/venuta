@@ -23,6 +23,8 @@ pub mod rules;
 pub mod scan;
 pub mod settings;
 pub mod spectrogram;
+pub mod sync;
+pub mod volumes;
 
 pub use error::{Error, Result};
 pub use index::Index;

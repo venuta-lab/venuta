@@ -347,3 +347,74 @@ export const incomingImport = (root: string, albums: string[], onProgress: (d: n
   withProgress<ApplyReport>('incoming_import', { root, albums }, onProgress)
 export const addToIncoming = (root: string, paths: string[]) => invoke<number>('add_to_incoming', { root, paths })
 export const incomingCount = (root: string) => (inApp() ? invoke<number>('incoming_count', { root }) : Promise.resolve(0))
+
+// --- SD cards --------------------------------------------------------------------------
+
+export interface Volume {
+  root: string
+  label: string
+  filesystem: string
+  serial: number
+  removable: boolean
+  total_bytes: number
+  free_bytes: number
+}
+
+export interface CardConfig {
+  id: string
+  name: string
+  folder: string
+  include: string[]
+  auto_sync: boolean
+  created_at: number
+}
+
+export interface CardStatus {
+  volume: Volume
+  card: CardConfig | null
+  last_sync: number | null
+  files: number
+}
+
+export interface SyncPlan {
+  card: CardConfig
+  copy: number
+  patch: number
+  moves: number
+  adopt: number
+  delete: number
+  unchanged: number
+  bytes_to_copy: number
+  bytes_freed: number
+  free_bytes: number
+  fits: boolean
+}
+
+export interface SyncReport {
+  copied: number
+  patched: number
+  moved: number
+  adopted: number
+  deleted: number
+  bytes_written: number
+  errors: [string, string][]
+  cancelled: boolean
+  elapsed_ms: number
+}
+
+export const listCards = () => (inApp() ? invoke<CardStatus[]>('list_cards') : Promise.resolve([] as CardStatus[]))
+export const libraryFolders = (root: string) =>
+  inApp() ? invoke<string[]>('library_folders', { root }) : Promise.resolve([] as string[])
+export const setupCard = (card: string, name: string, include: string[], autoSync: boolean) =>
+  invoke<CardConfig>('setup_card', { card, name, include, autoSync })
+export const planCard = (root: string, card: string) => invoke<SyncPlan>('plan_card', { root, card })
+export function syncCard(root: string, card: string, onProgress: (d: number, t: number, bytes: number) => void) {
+  const channel = new Channel<{ done: number; total: number; bytes: number }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total, m.bytes)
+  return invoke<SyncReport>('sync_card', { root, card, onProgress: channel })
+}
+export const cancelSync = (card: string) => invoke<void>('cancel_sync', { card })
+export const ejectCard = (card: string) => invoke<void>('eject_card', { card })
+
+export const gb = (bytes: number) =>
+  bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
