@@ -90,6 +90,8 @@ pub struct Library {
     pub tracks: Vec<Track>,
     /// Paths of `.lrc` sidecars, for lyrics checks.
     pub lyrics_files: std::collections::HashSet<String>,
+    /// Image files (e.g. cover.jpg) per album folder: (relative path, bytes).
+    pub images: HashMap<String, Vec<(String, u64)>>,
 }
 
 impl Library {
@@ -189,9 +191,24 @@ impl Library {
             stmt.query_map([], |r| r.get::<_, String>(0))?
                 .collect::<rusqlite::Result<_>>()?
         };
+        let mut images: HashMap<String, Vec<(String, u64)>> = HashMap::new();
+        {
+            let mut stmt = conn.prepare("SELECT path, size FROM files WHERE kind = 'image'")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+            })?;
+            for row in rows {
+                let (path, size) = row?;
+                images
+                    .entry(parent_dir(&path).to_owned())
+                    .or_default()
+                    .push((path, size));
+            }
+        }
         Ok(Self {
             tracks,
             lyrics_files,
+            images,
         })
     }
 

@@ -11,7 +11,9 @@ pub mod index;
 pub mod library;
 pub mod media;
 pub mod paths;
+pub mod plan;
 pub mod quality;
+pub mod rules;
 pub mod scan;
 pub mod spectrogram;
 

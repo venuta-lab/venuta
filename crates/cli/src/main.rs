@@ -26,6 +26,16 @@ enum Command {
     Health { root: PathBuf },
     /// Decode every new or changed track: integrity, quality suspicions, loudness (read-only)
     Deepcheck { root: PathBuf },
+    /// Write starter rules (aliases from the library, default layout) without overwriting existing files
+    RulesInit { root: PathBuf, rules: PathBuf },
+    /// Show what the planner would change (read-only)
+    Plan {
+        root: PathBuf,
+        rules: PathBuf,
+        /// Only albums whose folder contains this text
+        #[arg(long)]
+        only: Option<String>,
+    },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
     Covers {
         root: PathBuf,
@@ -122,6 +132,75 @@ fn main() -> Result<()> {
                 report.elapsed_ms as f64 / 1000.0,
                 if report.cancelled { " (cancelled)" } else { "" }
             );
+        }
+        Command::RulesInit { root, rules } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let index = Index::open(&db, &root_key)?;
+            let lib = engine::library::Library::load(&index)?;
+            let mut r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            if r.aliases.artists.is_empty() {
+                r.aliases = engine::rules::bootstrap_aliases(&lib);
+            }
+            r.save(&rules).map_err(anyhow::Error::msg)?;
+            println!(
+                "rules in {}: {} aliases, {} category rules",
+                rules.display(),
+                r.aliases.artists.len(),
+                r.categories.rules.len()
+            );
+        }
+        Command::Plan { root, rules, only } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let index = Index::open(&db, &root_key)?;
+            let lib = engine::library::Library::load(&index)?;
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let started = std::time::Instant::now();
+            let mut plan = engine::plan::build(&lib, &r);
+            let elapsed = started.elapsed().as_millis();
+            if let Some(o) = &only {
+                plan.albums.retain(|a| a.id.contains(o.as_str()));
+            }
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                use engine::plan::{AlbumAction, Confidence};
+                let count =
+                    |c: Confidence| plan.albums.iter().filter(|a| a.confidence == c).count();
+                let quarantine = plan
+                    .albums
+                    .iter()
+                    .filter(|a| matches!(a.action, AlbumAction::Quarantine { .. }))
+                    .count();
+                println!(
+                    "{} albums planned in {elapsed} ms: {} high, {} medium, {} low confidence; {} set aside as duplicates; {} questions",
+                    plan.albums.len(),
+                    count(Confidence::High),
+                    count(Confidence::Medium),
+                    count(Confidence::Low),
+                    quarantine,
+                    plan.questions.len()
+                );
+                for q in &plan.questions {
+                    println!("  ? {}", q.text);
+                }
+                for a in plan.albums.iter().take(if only.is_some() { 50 } else { 3 }) {
+                    println!("\n{}  [{:?}]\n  -> {}", a.id, a.confidence, a.target_dir);
+                    for n in &a.notes {
+                        println!("  ! {n}");
+                    }
+                    for c in &a.changes {
+                        println!(
+                            "  {:<22} {:?} -> {:?}  ({:?}) {}",
+                            c.field, c.before, c.after, c.confidence, c.reason
+                        );
+                    }
+                    if let Some(t) = a.tracks.first() {
+                        println!("  e.g. {}", t.target);
+                    }
+                }
+            }
         }
         Command::Covers { root, size } => {
             let root_key = paths::canonical_root_string(&root);
