@@ -2,12 +2,13 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AlbumSummary } from '../lib/engine'
+import { AlbumEditor } from './AlbumEditor'
 import { setAccent, useCovers } from '../lib/covers'
 
 const spring = { type: 'spring', stiffness: 300, damping: 30 } as const
 
 /** Album wall. Click a cover and it lifts out into a detail view (shared-element transition). */
-export function BrowseScreen(props: { albums: AlbumSummary[] }) {
+export function BrowseScreen(props: { root: string; albums: AlbumSummary[] }) {
   const cover = useCovers(320)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<AlbumSummary | null>(null)
@@ -76,7 +77,7 @@ export function BrowseScreen(props: { albums: AlbumSummary[] }) {
       {createPortal(
         <AnimatePresence>
           {selected && (
-            <AlbumDetail album={selected} src={cover(selected.dir)?.src} onClose={() => setSelected(null)} />
+            <AlbumEditor root={props.root} album={selected} src={cover(selected.dir)?.src} onClose={() => setSelected(null)} />
           )}
         </AnimatePresence>,
         document.body,
@@ -85,50 +86,3 @@ export function BrowseScreen(props: { albums: AlbumSummary[] }) {
   )
 }
 
-function AlbumDetail(props: { album: AlbumSummary; src?: string; onClose: () => void }) {
-  const a = props.album
-  const minutes = Math.round(a.duration_ms / 60000)
-  return (
-    <motion.div
-      className="fixed inset-0 z-40 grid place-items-center p-10"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={props.onClose}
-    >
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-md" />
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        className="glass relative flex w-full max-w-[900px] items-center gap-10 rounded-[28px] p-8"
-        initial={{ y: 30, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 20, opacity: 0 }}
-        transition={spring}
-        drag="y"
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={0.4}
-        onDragEnd={(_, info) => {
-          if (Math.abs(info.offset.y) > 120) props.onClose()
-        }}
-      >
-        <motion.div
-          layoutId={`cover-${a.dir}`}
-          className="aspect-square w-[340px] shrink-0 overflow-hidden rounded-2xl shadow-2xl shadow-black/50"
-          transition={spring}
-        >
-          {props.src && <img src={props.src} alt="" draggable={false} className="h-full w-full object-cover" />}
-        </motion.div>
-        <div className="min-w-0">
-          <h2 className="text-[36px] font-semibold leading-tight tracking-[-0.03em]">{a.title}</h2>
-          <p className="mt-2 text-[17px] text-ink/75">{a.album_artist}</p>
-          <p className="mt-6 text-[14px] text-ink/55">
-            {a.year ? `Released ${a.year}. ` : ''}
-            {a.tracks} tracks, {minutes} minutes.
-          </p>
-          <p className="mt-1 break-all text-[12px] text-ink/40">{a.dir}</p>
-          <p className="mt-8 text-[12px] text-ink/40">Swipe down or click outside to close.</p>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}

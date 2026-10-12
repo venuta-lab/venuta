@@ -11,6 +11,9 @@ pub struct Settings {
     pub rules_dir: Option<String>,
     /// Where the migrated library is built.
     pub new_library: Option<String>,
+    /// The owner confirmed they have a backup; required before editing files in place.
+    #[serde(default)]
+    pub backup_confirmed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

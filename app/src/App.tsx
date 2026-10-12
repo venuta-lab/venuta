@@ -182,7 +182,7 @@ export default function App() {
           />
         )
       case 'browse':
-        return <BrowseScreen albums={report?.albums ?? []} />
+        return <BrowseScreen root={root} albums={report?.albums ?? []} />
       case 'review':
         return <ReviewScreen root={root} />
       default:

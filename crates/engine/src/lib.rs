@@ -7,6 +7,7 @@
 pub mod apply;
 pub mod art;
 pub mod audit;
+pub mod edit;
 pub mod error;
 pub mod index;
 pub mod library;

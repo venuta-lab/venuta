@@ -351,6 +351,125 @@ async fn undo_run(journal: String) -> CmdResult<usize> {
     blocking(move || engine::apply::undo(Path::new(&journal))).await
 }
 
+#[derive(Serialize)]
+struct TrackRow {
+    path: String,
+    disc: u32,
+    track: u32,
+    title: String,
+    artist: String,
+    composer: String,
+    lyricist: String,
+    stars: u8,
+    duration_ms: u64,
+    sample_rate: u32,
+    bit_depth: u8,
+}
+
+#[derive(Serialize)]
+struct AlbumDetail {
+    album: String,
+    album_artist: String,
+    original_year: String,
+    genre: String,
+    composer: String,
+    lyricist: String,
+    tracks: Vec<TrackRow>,
+}
+
+/// Tracks and editable album fields for one album folder.
+#[tauri::command]
+async fn album_detail(root: String, dir: String) -> CmdResult<AlbumDetail> {
+    blocking(move || {
+        let index = open_index(Path::new(&root))?;
+        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let mut tracks: Vec<&engine::library::Track> =
+            lib.tracks.iter().filter(|t| t.dir == dir).collect();
+        let num = |t: &engine::library::Track, k: &str| {
+            t.first(k)
+                .and_then(|v| v.split('/').next()?.trim().parse::<u32>().ok())
+                .unwrap_or(0)
+        };
+        tracks.sort_by_key(|t| (num(t, "DISCNUMBER"), num(t, "TRACKNUMBER"), t.path.clone()));
+        let common = |k: &str| {
+            let first = tracks
+                .first()
+                .and_then(|t| t.tags.get(k))
+                .map(|v| v.join("; "))
+                .unwrap_or_default();
+            let same = tracks
+                .iter()
+                .all(|t| t.tags.get(k).map(|v| v.join("; ")).unwrap_or_default() == first);
+            if same { first } else { String::new() }
+        };
+        let joined = |t: &engine::library::Track, k: &str| {
+            t.tags.get(k).map(|v| v.join("; ")).unwrap_or_default()
+        };
+        Ok(AlbumDetail {
+            album: common("ALBUM"),
+            album_artist: common("ALBUMARTIST"),
+            original_year: {
+                let y = common("ORIGINALYEAR");
+                if y.is_empty() {
+                    common("DATE").chars().take(4).collect()
+                } else {
+                    y
+                }
+            },
+            genre: common("GENRE"),
+            composer: common("COMPOSER"),
+            lyricist: common("LYRICIST"),
+            tracks: tracks
+                .iter()
+                .map(|t| TrackRow {
+                    path: t.path.clone(),
+                    disc: num(t, "DISCNUMBER"),
+                    track: num(t, "TRACKNUMBER"),
+                    title: t.first("TITLE").unwrap_or_default().to_owned(),
+                    artist: joined(t, "ARTIST"),
+                    composer: joined(t, "COMPOSER"),
+                    lyricist: joined(t, "LYRICIST"),
+                    stars: t
+                        .first("RATING")
+                        .map(engine::edit::rating_to_stars)
+                        .unwrap_or(0),
+                    duration_ms: t.duration_ms,
+                    sample_rate: t.sample_rate,
+                    bit_depth: t.bit_depth,
+                })
+                .collect(),
+        })
+    })
+    .await
+}
+
+/// Edit tags in place (the owner's own changes). Requires the one-time backup confirmation.
+#[tauri::command]
+async fn edit_tags(
+    root: String,
+    edits: Vec<engine::edit::TagEdit>,
+) -> CmdResult<engine::edit::EditReport> {
+    if !settings_with_defaults().backup_confirmed {
+        return Err("BACKUP_NOT_CONFIRMED".into());
+    }
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let report = engine::edit::edit_in_place(&rootp, &edits)?;
+        // Refresh the index so every screen sees the change.
+        let mut index = open_index(&rootp)?;
+        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        Ok(report)
+    })
+    .await
+}
+
+#[tauri::command]
+fn confirm_backup() -> CmdResult<()> {
+    let mut s = settings_with_defaults();
+    s.backup_confirmed = true;
+    engine::settings::save(&s)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -372,7 +491,10 @@ pub fn run() {
             apply_approved,
             cancel_apply,
             list_runs,
-            undo_run
+            undo_run,
+            album_detail,
+            edit_tags,
+            confirm_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

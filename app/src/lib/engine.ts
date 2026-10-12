@@ -231,3 +231,77 @@ export const FIELD_NAMES: Record<string, string> = {
   LYRICS: 'Lyrics',
   UNSYNCEDLYRICS: 'Unsynced lyrics',
 }
+
+// --- Album detail & in-place edits ----------------------------------------------------
+
+export interface TrackRow {
+  path: string
+  disc: number
+  track: number
+  title: string
+  artist: string
+  composer: string
+  lyricist: string
+  stars: number
+  duration_ms: number
+  sample_rate: number
+  bit_depth: number
+}
+
+export interface AlbumDetail {
+  album: string
+  album_artist: string
+  original_year: string
+  genre: string
+  composer: string
+  lyricist: string
+  tracks: TrackRow[]
+}
+
+export interface TagEdit {
+  file: string
+  set: [string, string[]][]
+}
+
+export interface EditReport {
+  changed: number
+  unchanged: number
+  errors: [string, string][]
+  journal: string | null
+}
+
+export async function albumDetail(root: string, dir: string): Promise<AlbumDetail> {
+  if (inApp()) return invoke<AlbumDetail>('album_detail', { root, dir })
+  // Outside the app: build a read-only view from the review snapshot.
+  const plan = await dev<Review['plan']>('review.json')
+  const a = plan.albums.find((x) => x.id === dir)
+  return {
+    album: a?.title ?? '',
+    album_artist: a?.album_artist ?? '',
+    original_year: a?.target_dir.match(/(\d{4}) - /)?.[1] ?? '',
+    genre: '',
+    composer: '',
+    lyricist: '',
+    tracks: (a?.files ?? []).map((f, i) => ({
+      path: `${dir}/${f}`,
+      disc: 1,
+      track: i + 1,
+      title: f.replace(/^\d+-?\d* - /, '').replace(/\.\w+$/, ''),
+      artist: '',
+      composer: '',
+      lyricist: '',
+      stars: 0,
+      duration_ms: 0,
+      sample_rate: 0,
+      bit_depth: 0,
+    })),
+  }
+}
+
+/** Rejects with message BACKUP_NOT_CONFIRMED until the owner confirms a backup once. */
+export const editTags = (root: string, edits: TagEdit[]) =>
+  inApp()
+    ? invoke<EditReport>('edit_tags', { root, edits })
+    : Promise.reject(new Error('Edits are saved by the desktop app.'))
+
+export const confirmBackup = () => invoke<void>('confirm_backup')
