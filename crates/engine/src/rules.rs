@@ -293,6 +293,53 @@ mod erased {
     }
 }
 
+/// Record the owner's answer to "are A and B the same artist?" in `aliases.toml`.
+/// `keep` is the spelling to use when they are the same; `None` means they are different people.
+pub fn answer_same_artist(dir: &Path, a: &str, b: &str, keep: Option<&str>) -> Result<(), String> {
+    let mut rules = Rules::load(dir)?;
+    match keep {
+        None => rules.aliases.distinct.push([a.to_owned(), b.to_owned()]),
+        Some(keep) => {
+            let other = if name_key(keep) == name_key(a) { b } else { a };
+            // Gather both entries' spellings into the kept one.
+            let mut spellings: Vec<String> = vec![other.to_owned()];
+            rules.aliases.artists.retain(|al| {
+                let hit = name_key(&al.name) == name_key(other)
+                    || (name_key(&al.name) != name_key(keep)
+                        && al.variants.iter().any(|v| name_key(v) == name_key(other)));
+                if hit {
+                    spellings.push(al.name.clone());
+                    spellings.extend(al.variants.iter().cloned());
+                }
+                !hit
+            });
+            let entry = match rules
+                .aliases
+                .artists
+                .iter_mut()
+                .find(|al| name_key(&al.name) == name_key(keep))
+            {
+                Some(e) => e,
+                None => {
+                    rules.aliases.artists.push(Alias {
+                        name: keep.to_owned(),
+                        variants: Vec::new(),
+                    });
+                    rules.aliases.artists.last_mut().expect("just pushed")
+                }
+            };
+            for s in spellings {
+                if name_key(&s) != name_key(&entry.name)
+                    && !entry.variants.iter().any(|v| name_key(v) == name_key(&s))
+                {
+                    entry.variants.push(s);
+                }
+            }
+        }
+    }
+    rules.save(dir)
+}
+
 /// Starter aliases from the library itself: every spelling of every credited name (album
 /// artist, composer, lyricist, and the artist folders above album folders), grouped by
 /// `name_key`. The canonical spelling is the most common one in tags, never ALL CAPS.
@@ -440,6 +487,15 @@ soundtrack = true
             .unwrap();
         assert!(c.soundtrack);
         assert!(r.category_for("03_English/Pink_Floyd/1975_Wish").is_none());
+
+        // "Same artist?" answers edit aliases.toml.
+        answer_same_artist(dir.path(), "Pritam", "Pritam Chakraborty", Some("Pritam")).unwrap();
+        let merged = Rules::load(dir.path()).unwrap();
+        assert_eq!(merged.canonical("Pritam Chakraborty"), Some("Pritam"));
+        answer_same_artist(dir.path(), "The Local Train", "The Local Music Train", None).unwrap();
+        let distinct = Rules::load(dir.path()).unwrap();
+        assert!(distinct.is_distinct("The Local Music Train", "The Local Train"));
+        assert_eq!(distinct.canonical("A. R. Rahman"), Some("A.R. Rahman")); // untouched
 
         // Round trip through save/load keeps everything.
         r.save(dir.path()).unwrap();

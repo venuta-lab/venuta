@@ -35,6 +35,9 @@ enum Command {
         /// Only albums whose folder contains this text
         #[arg(long)]
         only: Option<String>,
+        /// With --json: print the compact view the Review screen uses
+        #[arg(long)]
+        view: bool,
     },
     /// Build a new library at TARGET from the plan (copies; the source is never written)
     Apply {
@@ -161,7 +164,12 @@ fn main() -> Result<()> {
                 r.categories.rules.len()
             );
         }
-        Command::Plan { root, rules, only } => {
+        Command::Plan {
+            root,
+            rules,
+            only,
+            view,
+        } => {
             let root_key = paths::canonical_root_string(&root);
             let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
             let index = Index::open(&db, &root_key)?;
@@ -173,7 +181,9 @@ fn main() -> Result<()> {
             if let Some(o) = &only {
                 plan.albums.retain(|a| a.id.contains(o.as_str()));
             }
-            if cli.json {
+            if cli.json && view {
+                println!("{}", serde_json::to_string(&plan.view())?);
+            } else if cli.json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
                 use engine::plan::{AlbumAction, Confidence};

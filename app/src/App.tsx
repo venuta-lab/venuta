@@ -24,11 +24,12 @@ import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { LibraryScreen } from './screens/LibraryScreen'
 import { BrowseScreen } from './screens/BrowseScreen'
 import { SoonScreen } from './screens/SoonScreen'
+import { ReviewScreen } from './screens/ReviewScreen'
 
 const SECTIONS: Section[] = [
   { id: 'library', label: 'Library', icon: IconHealth, ready: true },
   { id: 'browse', label: 'Browse', icon: IconBrowse, ready: true },
-  { id: 'review', label: 'Review', icon: IconReview, ready: false },
+  { id: 'review', label: 'Review', icon: IconReview, ready: true },
   { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: false },
   { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: false },
   { id: 'cards', label: 'Cards', icon: IconCards, ready: false },
@@ -182,6 +183,8 @@ export default function App() {
         )
       case 'browse':
         return <BrowseScreen albums={report?.albums ?? []} />
+      case 'review':
+        return <ReviewScreen root={root} />
       default:
         return <SoonScreen section={SECTIONS.find((s) => s.id === active)!} />
     }

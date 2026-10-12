@@ -100,6 +100,59 @@ pub struct Plan {
     pub questions: Vec<Question>,
 }
 
+/// What the Review screen needs about an album: everything except per-track tag lists,
+/// which can run to megabytes (lyrics) and stay in the engine.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlbumView {
+    pub id: String,
+    pub title: String,
+    pub album_artist: String,
+    pub target_dir: String,
+    pub action: AlbumAction,
+    pub confidence: Confidence,
+    pub notes: Vec<String>,
+    pub changes: Vec<FieldChange>,
+    pub art: ArtPlan,
+    pub tracks: usize,
+    /// Track file names in the new library, in order.
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanView {
+    pub albums: Vec<AlbumView>,
+    pub questions: Vec<Question>,
+}
+
+impl Plan {
+    pub fn view(&self) -> PlanView {
+        PlanView {
+            albums: self
+                .albums
+                .iter()
+                .map(|a| AlbumView {
+                    id: a.id.clone(),
+                    title: a.title.clone(),
+                    album_artist: a.album_artist.clone(),
+                    target_dir: a.target_dir.clone(),
+                    action: a.action.clone(),
+                    confidence: a.confidence,
+                    notes: a.notes.clone(),
+                    changes: a.changes.clone(),
+                    art: a.art.clone(),
+                    tracks: a.tracks.len(),
+                    files: a
+                        .tracks
+                        .iter()
+                        .map(|t| t.target.rsplit('/').next().unwrap_or(&t.target).to_owned())
+                        .collect(),
+                })
+                .collect(),
+            questions: self.questions.clone(),
+        }
+    }
+}
+
 /// Embedded art larger than this is downscaled for players.
 pub const EMBED_MAX_PX: u32 = 1000;
 

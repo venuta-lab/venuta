@@ -98,3 +98,136 @@ export const albumSpectrogram = (root: string, dir: string) =>
 
 /** Issues whose evidence is best seen as a spectrogram. */
 export const SPECTRAL_ISSUES = new Set(['limited_highs', 'upsampled_hires', 'padded_24bit', 'damaged_audio'])
+
+// --- Review & build -------------------------------------------------------------------
+
+export type Confidence = 'low' | 'medium' | 'high'
+export type Decision = 'approved' | 'skipped'
+
+export interface FieldChange {
+  field: string
+  before: string[]
+  after: string[]
+  reason: string
+  confidence: Confidence
+}
+
+export interface AlbumView {
+  id: string
+  title: string
+  album_artist: string
+  target_dir: string
+  action: { kind: 'migrate' } | { kind: 'quarantine'; duplicate_of: string }
+  confidence: Confidence
+  notes: string[]
+  changes: FieldChange[]
+  art: { kind: 'keep' | 'missing' } | { kind: 'reencode'; max_px: number }
+  tracks: number
+  files: string[]
+}
+
+export interface Question {
+  id: string
+  text: string
+  a: string
+  b: string
+}
+
+export interface Settings {
+  rules_dir: string | null
+  new_library: string | null
+}
+
+export interface Review {
+  plan: { albums: AlbumView[]; questions: Question[] }
+  decisions: Record<string, Decision>
+  settings: Settings
+}
+
+export interface ApplyReport {
+  albums: number
+  tracks_written: number
+  tracks_skipped: number
+  quarantined_albums: number
+  errors: { album: string; file: string; message: string }[]
+  journal: string
+  cancelled: boolean
+  elapsed_ms: number
+}
+
+export interface Run {
+  journal: string
+  started_ms: number
+  target: string
+  files: number
+}
+
+// Outside the app, decisions live in memory so the screen can still be tried.
+const devDecisions: Record<string, Decision> = {}
+
+export const review = (root: string): Promise<Review> =>
+  inApp()
+    ? invoke<Review>('review', { root })
+    : dev<Review['plan']>('review.json').then((plan) => ({
+        plan,
+        decisions: { ...devDecisions },
+        settings: { rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music' },
+      }))
+
+export const setDecisions = (root: string, changes: Record<string, Decision | null>) => {
+  if (inApp()) return invoke<Record<string, Decision>>('set_decisions', { root, changes })
+  for (const [k, v] of Object.entries(changes)) {
+    if (v) devDecisions[k] = v
+    else delete devDecisions[k]
+  }
+  return Promise.resolve({ ...devDecisions })
+}
+
+export const answerQuestion = (root: string, a: string, b: string, keep: string | null) =>
+  inApp()
+    ? invoke<Review>('answer_question', { root, a, b, keep })
+    : Promise.reject(new Error('Answers are saved by the desktop app.'))
+
+export const setSettings = (settings: Settings) =>
+  inApp() ? invoke<void>('set_settings', { settings }) : Promise.resolve()
+
+export function applyApproved(root: string, onProgress: (done: number, total: number) => void) {
+  if (!inApp()) return Promise.reject(new Error('The library is built by the desktop app.'))
+  const channel = new Channel<{ done: number; total: number }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total)
+  return invoke<ApplyReport>('apply_approved', { root, onProgress: channel })
+}
+
+export const cancelApply = () => (inApp() ? invoke<void>('cancel_apply') : Promise.resolve())
+export const listRuns = () => (inApp() ? invoke<Run[]>('list_runs') : Promise.resolve([] as Run[]))
+export const undoRun = (journal: string) => invoke<number>('undo_run', { journal })
+
+/** Friendly names for tag fields in the Review screen. */
+export const FIELD_NAMES: Record<string, string> = {
+  ALBUM: 'Album',
+  ALBUMARTIST: 'Album artist',
+  ARTIST: 'Artists (display)',
+  ARTISTS: 'Artists (each)',
+  COMPOSER: 'Composer',
+  LYRICIST: 'Lyricist',
+  CREDITS: 'Other credits',
+  TITLE: 'Title',
+  GENRE: 'Genre',
+  LANGUAGE: 'Language',
+  CATEGORY: 'Category',
+  RELEASETYPE: 'Release type',
+  ORIGINALYEAR: 'Original year',
+  ORIGINALDATE: 'Original date',
+  BARCODE: 'Barcode',
+  UPC: 'UPC',
+  TRACKTOTAL: 'Track total',
+  TOTALTRACKS: 'Track total (alt.)',
+  DISCTOTAL: 'Disc total',
+  TOTALDISCS: 'Disc total (alt.)',
+  REPLAYGAIN_TRACK_GAIN: 'Track volume level',
+  REPLAYGAIN_TRACK_PEAK: 'Track peak',
+  REPLAYGAIN_ALBUM_GAIN: 'Album volume level',
+  REPLAYGAIN_ALBUM_PEAK: 'Album peak',
+  LYRICS: 'Lyrics',
+  UNSYNCEDLYRICS: 'Unsynced lyrics',
+}

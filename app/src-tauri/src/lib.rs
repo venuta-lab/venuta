@@ -1,12 +1,17 @@
 //! Desktop shell. Commands are thin wrappers that run engine work off the UI thread and
 //! return serialisable results; all logic lives in the `engine` crate.
 
+use engine::apply::{ApplyProgress, ApplyReport};
 use engine::art::CoverThumb;
 use engine::audit::HealthReport;
 use engine::library::Library;
+use engine::plan::{Plan, PlanView};
 use engine::quality::{DeepCheckReport, Progress};
+use engine::rules::Rules;
+use engine::settings::{Decision, Settings};
 use engine::{Index, ScanReport, paths};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -17,6 +22,45 @@ use tauri::ipc::Channel;
 #[derive(Default)]
 struct Jobs {
     deep_check: Mutex<Option<Arc<Progress>>>,
+    apply: Mutex<Option<Arc<ApplyProgress>>>,
+    /// The last plan built, kept here because it is too large to send to the UI.
+    plan: Mutex<Option<(String, Plan)>>,
+}
+
+#[derive(Serialize)]
+struct Review {
+    plan: PlanView,
+    decisions: BTreeMap<String, Decision>,
+    settings: Settings,
+}
+
+#[derive(Serialize)]
+struct Run {
+    journal: String,
+    started_ms: u64,
+    target: String,
+    files: usize,
+}
+
+fn settings_with_defaults() -> Settings {
+    let mut s = engine::settings::load();
+    if s.rules_dir.is_none() {
+        s.rules_dir = Some(
+            paths::app_data_dir()
+                .join("rules")
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    s
+}
+
+fn build_plan(root: &Path) -> CmdResult<Plan> {
+    let index = open_index(root)?;
+    let lib = Library::load(&index).map_err(|e| e.to_string())?;
+    let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+    let rules = Rules::load(&rules_dir)?;
+    Ok(engine::plan::build(&lib, &rules))
 }
 
 #[derive(Clone, Serialize)]
@@ -154,6 +198,159 @@ async fn album_spectrogram(root: String, dir: String) -> CmdResult<String> {
     .await
 }
 
+#[tauri::command]
+fn get_settings() -> Settings {
+    settings_with_defaults()
+}
+
+#[tauri::command]
+fn set_settings(settings: Settings) -> CmdResult<()> {
+    engine::settings::save(&settings)
+}
+
+/// Build the plan for a library and return what the Review screen shows.
+#[tauri::command]
+async fn review(root: String, jobs: State<'_, Jobs>) -> CmdResult<Review> {
+    let r = root.clone();
+    let plan = blocking(move || build_plan(Path::new(&r))).await?;
+    let view = plan.view();
+    *jobs.plan.lock().map_err(|e| e.to_string())? = Some((root.clone(), plan));
+    Ok(Review {
+        plan: view,
+        decisions: engine::settings::load_decisions(Path::new(&root)),
+        settings: settings_with_defaults(),
+    })
+}
+
+#[tauri::command]
+fn set_decisions(
+    root: String,
+    changes: BTreeMap<String, Option<Decision>>,
+) -> CmdResult<BTreeMap<String, Decision>> {
+    let root = PathBuf::from(root);
+    let mut d = engine::settings::load_decisions(&root);
+    for (album, decision) in changes {
+        match decision {
+            Some(x) => d.insert(album, x),
+            None => d.remove(&album),
+        };
+    }
+    engine::settings::save_decisions(&root, &d)?;
+    Ok(d)
+}
+
+/// "Are A and B the same artist?" `keep` is the spelling to use, or null for "different".
+#[tauri::command]
+async fn answer_question(
+    root: String,
+    a: String,
+    b: String,
+    keep: Option<String>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<Review> {
+    let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+    engine::rules::answer_same_artist(&rules_dir, &a, &b, keep.as_deref())?;
+    review(root, jobs).await
+}
+
+/// Build the approved albums into the new library. Progress streams over `on_progress`.
+#[tauri::command]
+async fn apply_approved(
+    root: String,
+    on_progress: Channel<DeepProgress>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<ApplyReport> {
+    let settings = settings_with_defaults();
+    let target = settings
+        .new_library
+        .ok_or("Choose where the new library should go first.")?;
+    let decisions = engine::settings::load_decisions(Path::new(&root));
+    let albums: Vec<engine::plan::AlbumPlan> = {
+        let guard = jobs.plan.lock().map_err(|e| e.to_string())?;
+        let (plan_root, plan) = guard
+            .as_ref()
+            .ok_or("Open Review first so the plan is up to date.")?;
+        if *plan_root != root {
+            return Err("The plan is for a different library; open Review again.".into());
+        }
+        plan.albums
+            .iter()
+            .filter(|a| decisions.get(&a.id) == Some(&Decision::Approved))
+            .cloned()
+            .collect()
+    };
+    if albums.is_empty() {
+        return Err("No albums are approved yet.".into());
+    }
+    let progress = Arc::new(ApplyProgress::default());
+    {
+        let mut slot = jobs.apply.lock().map_err(|e| e.to_string())?;
+        if slot.is_some() {
+            return Err("The library is already being built.".into());
+        }
+        *slot = Some(progress.clone());
+    }
+    let p = progress.clone();
+    let result = blocking(move || {
+        engine::apply::apply(
+            &albums,
+            Path::new(&root),
+            Path::new(&target),
+            &p,
+            &|done, total| {
+                let _ = on_progress.send(DeepProgress { done, total });
+            },
+        )
+    })
+    .await;
+    if let Ok(mut slot) = jobs.apply.lock() {
+        *slot = None;
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_apply(jobs: State<'_, Jobs>) {
+    if let Ok(slot) = jobs.apply.lock()
+        && let Some(p) = slot.as_ref()
+    {
+        p.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Past build runs that can still be undone, newest first.
+#[tauri::command]
+fn list_runs() -> Vec<Run> {
+    let dir = engine::apply::journal_dir();
+    let mut runs: Vec<Run> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with("-apply.jsonl") {
+                return None;
+            }
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            let first: serde_json::Value = serde_json::from_str(text.lines().next()?).ok()?;
+            Some(Run {
+                journal: e.path().to_string_lossy().into_owned(),
+                started_ms: name.split('-').next()?.parse().ok()?,
+                target: first.get("target")?.as_str()?.to_owned(),
+                files: text.lines().count().saturating_sub(1),
+            })
+        })
+        .filter(|r| r.files > 0)
+        .collect();
+    runs.sort_by_key(|r| std::cmp::Reverse(r.started_ms));
+    runs
+}
+
+#[tauri::command]
+async fn undo_run(journal: String) -> CmdResult<usize> {
+    blocking(move || engine::apply::undo(Path::new(&journal))).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -166,7 +363,16 @@ pub fn run() {
             album_covers,
             deep_check,
             cancel_deep_check,
-            album_spectrogram
+            album_spectrogram,
+            get_settings,
+            set_settings,
+            review,
+            set_decisions,
+            answer_question,
+            apply_approved,
+            cancel_apply,
+            list_runs,
+            undo_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

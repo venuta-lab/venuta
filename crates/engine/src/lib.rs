@@ -16,6 +16,7 @@ pub mod plan;
 pub mod quality;
 pub mod rules;
 pub mod scan;
+pub mod settings;
 pub mod spectrogram;
 
 pub use error::{Error, Result};
