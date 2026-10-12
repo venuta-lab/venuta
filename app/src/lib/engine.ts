@@ -413,14 +413,18 @@ export interface EnrichReport {
   elapsed_ms: number
 }
 
-function withProgress<T>(cmd: string, args: Record<string, unknown>, onProgress: (d: number, t: number) => void) {
+function withProgress<T>(
+  cmd: string,
+  args: Record<string, unknown>,
+  onProgress: (d: number, t: number, note?: string) => void,
+) {
   if (!inApp()) return Promise.reject(new Error('This runs in the desktop app.'))
-  const channel = new Channel<{ done: number; total: number }>()
-  channel.onmessage = (m) => onProgress(m.done, m.total)
+  const channel = new Channel<{ done: number; total: number; note?: string }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total, m.note)
   return invoke<T>(cmd, { ...args, onProgress: channel })
 }
 
-export const lookupOnline = (root: string, onProgress: (d: number, t: number) => void) =>
+export const lookupOnline = (root: string, onProgress: (d: number, t: number, note?: string) => void) =>
   withProgress<EnrichReport>('lookup_online', { root }, onProgress)
 export const cancelLookup = () => (inApp() ? invoke<void>('cancel_lookup') : Promise.resolve())
 

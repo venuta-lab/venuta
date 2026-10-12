@@ -233,7 +233,7 @@ function CoverStrip(props: {
 }
 
 export function DeepProgressBar(props: {
-  deep: { done: number; total: number }
+  deep: { done: number; total: number; note?: string }
   label: string
   unit: string
   onCancel: () => void
@@ -253,6 +253,11 @@ export function DeepProgressBar(props: {
           <div className="text-[13.5px] text-ink/85">
             {total ? `${props.label}: ${fmt(done)} of ${fmt(total)} ${props.unit}` : 'Getting ready…'}
           </div>
+          {props.deep.note && (
+            <motion.div key={props.deep.note} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} className="mt-0.5 truncate text-[12.5px] text-ink/55">
+              {props.deep.note}
+            </motion.div>
+          )}
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
             <motion.div
               className="h-full rounded-full"

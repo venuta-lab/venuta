@@ -41,7 +41,12 @@ function itemFor(d: PlanDecision, choice: string): AnswerItem {
 }
 
 /** Everything waiting for you: questions, what was handled for you, and new music. */
-export function InboxScreen(props: { root: string; onImported: () => void; onCount: (n: number) => void }) {
+export function InboxScreen(props: {
+  root: string
+  onImported: () => void
+  onCount: (n: number) => void
+  onSwitchLibrary: (path: string) => void
+}) {
   const [tab, setTab] = useState<'library' | 'new'>('library')
   const [data, setData] = useState<Review | null>(null)
   const [error, setError] = useState('')
@@ -180,7 +185,7 @@ export function InboxScreen(props: { root: string; onImported: () => void; onCou
             onChoose={(d, c) => void answer([{ id: d.id, choice: c }])}
           />
           <Changes root={props.root} data={data} onChanged={setData} />
-          <BuildBar root={props.root} data={data} />
+          <BuildBar root={props.root} data={data} onSwitch={props.onSwitchLibrary} />
         </>
       )}
     </div>
@@ -659,7 +664,7 @@ function Changes(props: { root: string; data: Review; onChanged: (r: Review) => 
 
 // --- Build ---------------------------------------------------------------------------------
 
-function BuildBar(props: { root: string; data: Review }) {
+function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) => void }) {
   const [building, setBuilding] = useState<{ done: number; total: number } | null>(null)
   const [result, setResult] = useState<ApplyReport | null>(null)
   const [error, setError] = useState('')
@@ -685,6 +690,17 @@ function BuildBar(props: { root: string; data: Review }) {
   return (
     <section aria-label="Build" className="mt-10">
       {result && <BuildResult report={result} onDismiss={() => setResult(null)} />}
+      {result && target && result.tracks_written + result.tracks_skipped > 0 && (
+        <div className="glass mt-3 flex flex-wrap items-center gap-4 rounded-[22px] px-6 py-4">
+          <div className="min-w-0 flex-1 text-[13.5px] text-ink/75">
+            Your new library is ready in {target}. Switch to it to browse, sync cards and add new music there from now on. You can
+            switch back any time in Settings.
+          </div>
+          <button onClick={() => props.onSwitch(target)} className="rounded-full bg-accent px-5 py-2 text-[13.5px] font-medium text-on-accent">
+            Switch to the new library
+          </button>
+        </div>
+      )}
       <AnimatePresence>
         {building && <DeepProgressBar deep={building} label="Building your library" unit="songs" onCancel={() => void cancelApply()} />}
       </AnimatePresence>

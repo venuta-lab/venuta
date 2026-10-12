@@ -36,6 +36,7 @@ import { CardsScreen } from './screens/CardsScreen'
 import { PlaylistsScreen } from './screens/PlaylistsScreen'
 import { ActivityScreen } from './screens/ActivityScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
+import { SetupScreen } from './screens/SetupScreen'
 
 const ROOT_KEY = 'library-root'
 const store = {
@@ -69,11 +70,13 @@ export default function App() {
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
-  const [lookup, setLookup] = useState<{ done: number; total: number } | null>(null)
+  const [lookup, setLookup] = useState<{ done: number; total: number; note?: string } | null>(null)
   const [notice, setNotice] = useState('')
   const [palette, setPalette] = useState(false)
   const [sheet, setSheet] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
+  // The guided set-up: shown until a music folder is chosen, and on request.
+  const [setup, setSetup] = useState(() => !store.get() && inApp())
   const search = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
@@ -164,7 +167,7 @@ export default function App() {
   async function runLookup() {
     setLookup({ done: 0, total: 0 })
     try {
-      const r = await lookupOnline(root, (done, total) => setLookup({ done, total }))
+      const r = await lookupOnline(root, (done, total, note) => setLookup({ done, total, note }))
       setNotice(
         r.cancelled
           ? 'Stopped. What was found is kept; look up again to continue.'
@@ -180,11 +183,15 @@ export default function App() {
   async function chooseRoot() {
     const picked = inApp() ? await open({ directory: true, title: 'Choose the folder that holds your music' }) : null
     if (typeof picked !== 'string') return
-    store.set(picked)
+    openLibrary(picked)
+  }
+
+  function openLibrary(path: string) {
+    store.set(path)
     setReport(null)
     setBackdrop([])
-    setRoot(picked)
-    refresh(picked, true)
+    setRoot(path)
+    void refresh(path, true)
   }
 
   const toggleTheme = useCallback(() => setPrefs({ theme: resolvedTheme() === 'dark' ? 'light' : 'dark' }), [])
@@ -227,6 +234,7 @@ export default function App() {
       { id: 'lookup', group: 'Actions', label: 'Look up details online', keywords: 'musicbrainz covers lyrics credits years', run: () => void runLookup() },
       { id: 'rescan', group: 'Actions', label: 'Rescan your music', keywords: 'refresh reload', run: () => void refresh(root, true) },
       { id: 'choose', group: 'Actions', label: 'Choose the folder with your music', keywords: 'library open', run: () => void chooseRoot() },
+      { id: 'setup', group: 'Actions', label: 'Set up your library', keywords: 'first run guide wizard start migrate', run: () => setSetup(true) },
       { id: 'shortcuts', group: 'Help', label: 'Show keyboard shortcuts', keys: '?', run: () => setSheet(true) },
       {
         id: 'theme-toggle',
@@ -357,6 +365,22 @@ export default function App() {
   ]
 
   const screen = (() => {
+    if (setup && active !== 'settings')
+      return (
+        <SetupScreen
+          root={root}
+          report={report}
+          busy={busy}
+          lookup={lookup}
+          onChooseMusic={chooseRoot}
+          onLookup={runLookup}
+          onCancelLookup={() => void cancelLookup()}
+          onDone={() => {
+            setSetup(false)
+            go('inbox')
+          }}
+        />
+      )
     if (!root && active !== 'settings') return <EmptyState onChoose={chooseRoot} />
     switch (active) {
       case 'music':
@@ -412,7 +436,18 @@ export default function App() {
           />
         )
       case 'inbox':
-        return <InboxScreen root={root} onImported={() => void refresh(root, false)} onCount={setInboxCount} />
+        return (
+          <InboxScreen
+            root={root}
+            onImported={() => void refresh(root, false)}
+            onCount={setInboxCount}
+            onSwitchLibrary={(path) => {
+              openLibrary(path)
+              go('music')
+              setNotice(`Now showing your new library in ${path}.`)
+            }}
+          />
+        )
       case 'playlists':
         return <PlaylistsScreen root={root} />
       case 'devices':
@@ -430,7 +465,15 @@ export default function App() {
         <Backdrop covers={backdrop} />
         <TitleBar onPalette={() => setPalette(true)} />
         <div className="relative z-10 flex min-h-0 flex-1">
-          <Rail top={top} bottom={bottom} active={active} onSelect={(id) => go(id as Place)} />
+          <Rail
+            top={top}
+            bottom={bottom}
+            active={setup ? '' : active}
+            onSelect={(id) => {
+              setSetup(false)
+              go(id as Place)
+            }}
+          />
           <main className="relative min-w-0 flex-1 overflow-hidden">
             <AnimatePresence mode="popLayout" custom={direction} initial={false}>
               <motion.div

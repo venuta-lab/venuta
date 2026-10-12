@@ -66,8 +66,10 @@ async fn run_lookup(
     }
     let p = progress.clone();
     let result = blocking(move || {
+        let notes = p.clone();
         job(&p, &|done, total| {
-            let _ = on_progress.send(DeepProgress { done, total });
+            let note = notes.note.lock().map(|n| n.clone()).unwrap_or_default();
+            let _ = on_progress.send(DeepProgress { done, total, note });
         })
     })
     .await;
@@ -123,6 +125,9 @@ fn build_plan(root: &Path) -> CmdResult<Plan> {
 struct DeepProgress {
     done: usize,
     total: usize,
+    /// What is happening, in words (online lookups only).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    note: String,
 }
 
 /// Errors cross the IPC boundary as plain messages.
@@ -209,7 +214,11 @@ async fn deep_check(
         let mut index = open_index(&root)?;
         engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
         engine::quality::run(&mut index, &root, &p, &|done, total| {
-            let _ = on_progress.send(DeepProgress { done, total });
+            let _ = on_progress.send(DeepProgress {
+                done,
+                total,
+                note: String::new(),
+            });
         })
         .map_err(|e| e.to_string())
     })
@@ -390,7 +399,11 @@ async fn build_library(
             Path::new(&target),
             &p,
             &|done, total| {
-                let _ = on_progress.send(DeepProgress { done, total });
+                let _ = on_progress.send(DeepProgress {
+                    done,
+                    total,
+                    note: String::new(),
+                });
             },
         )
     })
@@ -629,7 +642,11 @@ async fn incoming_import(
     let p = progress.clone();
     let result = blocking(move || {
         engine::intake::import(Path::new(&root), &chosen, &p, &|done, total| {
-            let _ = on_progress.send(DeepProgress { done, total });
+            let _ = on_progress.send(DeepProgress {
+                done,
+                total,
+                note: String::new(),
+            });
         })
     })
     .await;

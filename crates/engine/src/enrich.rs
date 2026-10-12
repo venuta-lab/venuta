@@ -48,6 +48,8 @@ pub struct EnrichProgress {
     pub done: AtomicUsize,
     pub total: AtomicUsize,
     pub cancel: AtomicBool,
+    /// What was found last, in words ("Rockstar: found on MusicBrainz"), for a live story.
+    pub note: std::sync::Mutex<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -285,6 +287,27 @@ pub fn run(
         tx.commit()?;
     }
 
+    // Album titles and song titles, to say what was found in words.
+    let album_titles: HashMap<String, String> = lib
+        .albums()
+        .into_iter()
+        .map(|(d, ts)| {
+            let t = crate::library::most_common(ts.iter().filter_map(|t| t.first("ALBUM")))
+                .unwrap_or_else(|| d.rsplit('/').next().unwrap_or(d).replace('_', " "));
+            (d.to_owned(), t)
+        })
+        .collect();
+    let song_titles: HashMap<i64, String> = lib
+        .tracks
+        .iter()
+        .filter_map(|t| Some((t.id, t.first("TITLE")?.to_owned())))
+        .collect();
+    let say = |text: String| {
+        if let Ok(mut n) = progress.note.lock() {
+            *n = text;
+        }
+    };
+
     // --- One thread per source; results flow back here and are saved as they arrive ------
     let (tx, rx) = mpsc::channel::<Msg>();
     std::thread::scope(|scope| {
@@ -436,6 +459,38 @@ pub fn run(
         let conn = index.conn_mut();
         for msg in rx {
             done += 1;
+            match &msg {
+                Msg::Release { dir, which, info } => {
+                    let source = match *which {
+                        "mb" => "MusicBrainz",
+                        "apple" => "Apple",
+                        "discogs" => "Discogs",
+                        _ => "Deezer",
+                    };
+                    let title = album_titles
+                        .get(dir)
+                        .cloned()
+                        .unwrap_or_else(|| dir.clone());
+                    say(if info.is_some() {
+                        format!("{title}: found on {source}")
+                    } else {
+                        format!("{title}: not on {source}")
+                    });
+                }
+                Msg::Lyrics { file_id, found } => {
+                    if found.is_some() {
+                        say(format!(
+                            "Synced lyrics for {}",
+                            song_titles.get(file_id).cloned().unwrap_or_default()
+                        ));
+                    }
+                }
+                Msg::Identity { found: Some(i), .. } => say(format!(
+                    "Recognised {} – {} by its sound",
+                    i.artist, i.title
+                )),
+                _ => {}
+            }
             match msg {
                 Msg::Release { dir, which, info } => {
                     if info.is_some() {
