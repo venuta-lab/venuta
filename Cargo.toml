@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+repository = "https://github.com/aakashkore/music-librarian"  # placeholder until named
+
+[workspace.dependencies]
+engine = { path = "crates/engine" }
+lofty = "0.25.4"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+blake3 = "1.8.7"
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+walkdir = "2.5.0"
+rayon = "1.12.0"
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+clap = { version = "4.6.7", features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+unicode-normalization = "0.1.25"
+tempfile = "3.27.0"
+symphonia = { version = "0.6.1", default-features = false, features = ["flac"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
