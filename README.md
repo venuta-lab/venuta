@@ -14,3 +14,16 @@ No AI at runtime, no accounts, no paid services, never downloads music.
 > Built for one person's library first, shared as-is in case it helps you. No support promised.
 
 Status: pre-alpha. See [docs/PLAN.md](docs/PLAN.md) for the design and [docs/research](docs/research) for the sources behind it.
+
+## Development
+
+Requirements: Rust (stable), Node 24 + pnpm 10, and on Windows the MSVC C++ build tools and WebView2.
+
+```bash
+cargo test                                  # engine + cli tests
+cargo run -p cli -- scan <library-folder>   # headless scan (read-only)
+pnpm --dir app install
+pnpm --dir app tauri dev                    # desktop app with hot reload
+```
+
+Layout: `crates/engine` (all logic, no UI) · `crates/cli` (headless binary `librarian`) · `app/` (Tauri shell + React UI) · `docs/` (plan, research, decision records).

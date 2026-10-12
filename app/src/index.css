@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* Calm, neutral palette. Follows the OS light/dark setting. */
+@theme {
+  --color-canvas: #f7f7f5;
+  --color-panel: #ffffff;
+  --color-line: #e6e5e1;
+  --color-ink: #1d1d1b;
+  --color-muted: #6b6a66;
+  --color-accent: #3d5afe;
+  --color-ok: #2e7d32;
+  --color-warn: #b26a00;
+  --color-bad: #c62828;
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #151514;
+    --color-panel: #1c1c1b;
+    --color-line: #2c2c2a;
+    --color-ink: #ecebe7;
+    --color-muted: #9c9b96;
+    --color-accent: #8c9eff;
+    --color-ok: #81c784;
+    --color-warn: #ffb74d;
+    --color-bad: #ef9a9a;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
