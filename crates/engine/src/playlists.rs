@@ -652,13 +652,12 @@ pub fn evaluate(lib: &Library, rule: &SmartRule, mtimes: &HashMap<i64, i64>) -> 
     out.into_iter().map(|t| t.path.clone()).collect()
 }
 
-/// Write every smart playlist from its rule.
-pub fn refresh_smart(
-    library_root: &Path,
+/// Each smart rule with the tracks it selects right now. Reads only.
+pub fn evaluate_all(
     rules_dir: &Path,
     lib: &Library,
     index: &crate::Index,
-) -> Result<usize, String> {
+) -> Result<Vec<(SmartRule, Vec<String>)>, String> {
     let mut mtimes = HashMap::new();
     {
         let mut stmt = index
@@ -672,12 +671,27 @@ pub fn refresh_smart(
             mtimes.insert(row.0, row.1);
         }
     }
-    let rules = load_smart(rules_dir);
-    for r in &rules {
-        let paths = evaluate(lib, r, &mtimes);
-        write(library_root, lib, &r.name, &paths, true)?;
+    Ok(load_smart(rules_dir)
+        .into_iter()
+        .map(|r| {
+            let paths = evaluate(lib, &r, &mtimes);
+            (r, paths)
+        })
+        .collect())
+}
+
+/// Write every smart playlist from its rule.
+pub fn refresh_smart(
+    library_root: &Path,
+    rules_dir: &Path,
+    lib: &Library,
+    index: &crate::Index,
+) -> Result<usize, String> {
+    let all = evaluate_all(rules_dir, lib, index)?;
+    for (r, paths) in &all {
+        write(library_root, lib, &r.name, paths, true)?;
     }
-    Ok(rules.len())
+    Ok(all.len())
 }
 
 #[cfg(test)]

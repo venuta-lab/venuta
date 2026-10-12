@@ -253,6 +253,12 @@ fn get_settings() -> Settings {
     settings_with_defaults()
 }
 
+/// Whether a folder can hold the new library: empty, or one this app built.
+#[tauri::command]
+fn check_new_library(root: String, target: String) -> CmdResult<()> {
+    engine::apply::check_target(Path::new(&root), Path::new(&target))
+}
+
 #[tauri::command]
 fn set_settings(settings: Settings) -> CmdResult<()> {
     engine::settings::save(&settings)
@@ -636,6 +642,10 @@ fn wantlist_path() -> PathBuf {
 struct PlaylistsView {
     playlists: Vec<engine::playlists::PlaylistSummary>,
     smart: Vec<engine::playlists::SmartRule>,
+    /// How many songs each smart rule selects right now.
+    smart_counts: BTreeMap<String, usize>,
+    /// Where playlists are saved (the folder may not exist yet).
+    folder: String,
     wanted: Vec<engine::playlists::WantedAlbum>,
     apple_ready: bool,
 }
@@ -648,12 +658,23 @@ async fn playlists(root: String) -> CmdResult<PlaylistsView> {
         let (index, lib) = load_lib(&rootp)?;
         let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
         engine::playlists::ensure_default_smart(&rules_dir)?;
-        engine::playlists::repair_all(&rootp, &lib);
-        engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index)?;
+        // Opening the screen only writes into a library that already has playlists; the first
+        // one is always made by something you do (new playlist, import, saving a rule).
+        let folder = engine::playlists::folder(&rootp);
+        if folder.is_dir() {
+            engine::playlists::repair_all(&rootp, &lib);
+            engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index)?;
+        }
+        let evaluated = engine::playlists::evaluate_all(&rules_dir, &lib, &index)?;
         let s = settings_with_defaults();
         Ok(PlaylistsView {
             playlists: engine::playlists::list(&rootp, &lib),
-            smart: engine::playlists::load_smart(&rules_dir),
+            smart_counts: evaluated
+                .iter()
+                .map(|(r, p)| (r.name.clone(), p.len()))
+                .collect(),
+            smart: evaluated.into_iter().map(|(r, _)| r).collect(),
+            folder: folder.to_string_lossy().into_owned(),
             wanted: std::fs::read_to_string(wantlist_path())
                 .ok()
                 .and_then(|t| serde_json::from_str(&t).ok())
@@ -704,10 +725,17 @@ fn playlist_rename(root: String, from: String, to: String) -> CmdResult<()> {
     engine::playlists::rename(Path::new(&root), &from, &to)
 }
 
+/// Save a smart rule and write its playlist (and the other smart ones) into the library.
 #[tauri::command]
-fn smart_save(rule: engine::playlists::SmartRule) -> CmdResult<()> {
-    let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
-    engine::playlists::save_smart(&rules_dir, &rule)
+async fn smart_save(root: String, rule: engine::playlists::SmartRule) -> CmdResult<()> {
+    blocking(move || {
+        let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+        engine::playlists::save_smart(&rules_dir, &rule)?;
+        let rootp = PathBuf::from(&root);
+        let (index, lib) = load_lib(&rootp)?;
+        engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index).map(|_| ())
+    })
+    .await
 }
 
 /// Bring your Apple Music playlists over: matched tracks become playlists, the rest the want-list.
@@ -932,6 +960,7 @@ pub fn run() {
             album_spectrogram,
             get_settings,
             set_settings,
+            check_new_library,
             review,
             set_decisions,
             answer_question,

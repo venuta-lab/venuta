@@ -108,10 +108,17 @@ pub fn apply(
     on_progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<ApplyReport, String> {
     let started = std::time::Instant::now();
-    if same_path(source_root, target_root) {
-        return Err("The new library must be a different folder from the current one.".into());
-    }
+    check_target(source_root, target_root)?;
     std::fs::create_dir_all(target_root).map_err(|e| e.to_string())?;
+    let marker = target_root.join(LIBRARY_MARKER);
+    if !marker.exists() {
+        std::fs::write(
+            &marker,
+            "A library built by Music Librarian.
+",
+        )
+        .map_err(|e| e.to_string())?;
+    }
     let journal = Journal::create(&journal_dir()).map_err(|e| e.to_string())?;
     journal.record(&JournalEntry::Begin {
         source: source_root.to_string_lossy().into(),
@@ -556,9 +563,80 @@ fn file_len(p: &Path) -> Option<u64> {
     std::fs::metadata(p).ok().map(|m| m.len())
 }
 
+/// Marks a folder as a library this app built, so later builds may add to it.
+pub const LIBRARY_MARKER: &str = ".music-librarian-library";
+
+/// The new library must be its own folder: not the current one, not inside it (or around it),
+/// and either empty or one this app built. A folder of other music is never mixed in.
+pub fn check_target(source_root: &Path, target_root: &Path) -> Result<(), String> {
+    if same_path(source_root, target_root) {
+        return Err("The new library must be a different folder from the current one.".into());
+    }
+    let (src, dst) = (resolve(source_root), resolve(target_root));
+    if dst.starts_with(&src) || src.starts_with(&dst) {
+        return Err(
+            "The new library can't be inside the current one, or the other way round.".into(),
+        );
+    }
+    let has_other_files = std::fs::read_dir(target_root)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    if has_other_files && !target_root.join(LIBRARY_MARKER).exists() {
+        return Err(format!(
+            "{} already has files that this app didn't put there. Choose an empty folder for the new library.",
+            target_root.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The canonical form of a path that may not exist yet: its nearest existing parent,
+/// canonicalised, plus the rest (so both sides of a comparison use the same form).
+fn resolve(p: &Path) -> PathBuf {
+    let mut base = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut rest = Vec::new();
+    while !base.exists() {
+        match base.file_name() {
+            Some(n) => rest.push(n.to_owned()),
+            None => break,
+        }
+        base.pop();
+    }
+    let mut out = std::fs::canonicalize(&base).unwrap_or(base);
+    out.extend(rest.iter().rev());
+    out
+}
+
 fn same_path(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    #[test]
+    fn new_library_must_be_empty_or_ours_and_not_nested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("Collection");
+        std::fs::create_dir_all(&src).unwrap();
+        assert!(check_target(&src, &src).is_err());
+        assert!(check_target(&src, &src.join("New")).is_err());
+        assert!(check_target(&src, tmp.path()).is_err());
+
+        let fresh = tmp.path().join("Music");
+        assert!(
+            check_target(&src, &fresh).is_ok(),
+            "a folder that doesn't exist yet"
+        );
+        std::fs::create_dir_all(&fresh).unwrap();
+        assert!(check_target(&src, &fresh).is_ok(), "an empty folder");
+        std::fs::write(fresh.join("old.flac"), b"x").unwrap();
+        assert!(check_target(&src, &fresh).is_err(), "someone else's music");
+        std::fs::write(fresh.join(LIBRARY_MARKER), b"").unwrap();
+        assert!(check_target(&src, &fresh).is_ok(), "a library we built");
     }
 }

@@ -76,7 +76,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
       <aside className="no-scrollbar w-[280px] shrink-0 overflow-y-auto">
         <h1 className="text-[34px] font-semibold tracking-[-0.03em]">Playlists</h1>
         <p className="mt-2 text-[12.5px] leading-relaxed text-ink/55">
-          Saved as .m3u8 files in your library, so every player and card can use them.
+          Saved as .m3u8 files in {data?.folder || 'your library'}, so every player and card can use them.
         </p>
 
         <div className="glass mt-5 rounded-2xl p-4">
@@ -108,7 +108,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
             <NavItem key={s.name} active={view?.kind === 'smart' && view.name === s.name} onClick={() => setView({ kind: 'smart', name: s.name })}>
               <span className="text-[var(--accent)]">✦</span>
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
-              <span className="text-[11.5px] text-ink/40">{data.playlists.find((p) => p.name === s.name)?.tracks ?? 0}</span>
+              <span className="text-[11.5px] text-ink/40">{data.smart_counts[s.name] ?? 0}</span>
             </NavItem>
           ))}
         </Section>
@@ -362,7 +362,7 @@ function SmartEditor(props: { root: string; rule: SmartRule; onSaved: () => void
         songs (empty for no limit)
       </label>
       <div className="mt-5 flex items-center gap-3">
-        <PillButton onClick={async () => { await smartSave(rule); setStatus('Saved. The playlist was rewritten.'); props.onSaved() }} accent>
+        <PillButton onClick={async () => { await smartSave(props.root, rule); setStatus('Saved. The playlist was rewritten.'); props.onSaved() }} accent>
           Save rule
         </PillButton>
         <span className="text-[12.5px] text-ink/55">{status}</span>

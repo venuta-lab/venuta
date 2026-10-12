@@ -419,6 +419,8 @@ export const ejectCard = (card: string) => invoke<void>('eject_card', { card })
 export const gb = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
 
+export const checkNewLibrary = (root: string, target: string) => invoke<void>('check_new_library', { root, target })
+
 // --- Playlists, Apple import, want-list -------------------------------------------------
 
 export interface PlaylistSummary {
@@ -463,6 +465,8 @@ export interface WantedAlbum {
 export interface PlaylistsView {
   playlists: PlaylistSummary[]
   smart: SmartRule[]
+  smart_counts: Record<string, number>
+  folder: string
   wanted: WantedAlbum[]
   apple_ready: boolean
 }
@@ -477,14 +481,14 @@ export interface ImportReport {
 export const playlists = (root: string) =>
   inApp()
     ? invoke<PlaylistsView>('playlists', { root })
-    : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], wanted: [], apple_ready: false })
+    : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], smart_counts: {}, folder: '', wanted: [], apple_ready: false })
 export const playlistTracks = (root: string, name: string) => invoke<PlaylistEntry[]>('playlist_tracks', { root, name })
 export const playlistSave = (root: string, name: string, paths: string[]) =>
   invoke<void>('playlist_save', { root, name, paths })
 export const playlistDelete = (root: string, name: string) => invoke<void>('playlist_delete', { root, name })
 export const playlistRename = (root: string, from: string, to: string) =>
   invoke<void>('playlist_rename', { root, from, to })
-export const smartSave = (rule: SmartRule) => invoke<void>('smart_save', { rule })
+export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_save', { root, rule })
 export const appleImport = (root: string) => invoke<ImportReport>('apple_import', { root })
 export const setApple = (library: string | null, key: string | null) => invoke<void>('set_apple', { library, key })
 export const ratePlaylist = (root: string, name: string, stars: number) =>

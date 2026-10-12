@@ -5,6 +5,7 @@ import {
   answerQuestion,
   applyApproved,
   cancelApply,
+  checkNewLibrary,
   FIELD_NAMES,
   inApp,
   listRuns,
@@ -88,6 +89,13 @@ export function ReviewScreen({ root }: { root: string }) {
     if (!inApp() || !data) return
     const picked = await open({ directory: true, title: 'Where should the new library be built?' })
     if (typeof picked !== 'string') return
+    try {
+      await checkNewLibrary(root, picked)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    setError('')
     const settings = { ...data.settings, new_library: picked }
     await setSettings(settings)
     setData({ ...data, settings })
