@@ -263,15 +263,18 @@ export function ReviewScreen({ root }: { root: string }) {
   )
 }
 
-function AlbumRow(props: {
+export function AlbumRow(props: {
   album: AlbumView
   decision?: Decision
   open: boolean
   onToggle: () => void
   onDecide: (d: Decision | null) => void
+  /** Thumbnail size; incoming albums use their own so their covers never mix with the library's. */
+  coverSize?: number
+  approveLabel?: string
 }) {
   const { album: a, open } = props
-  const cover = useCovers(320)(a.id)
+  const cover = useCovers(props.coverSize ?? 320)(a.id)
   const approved = props.decision === 'approved'
   const aside = a.action.kind === 'quarantine'
   return (
@@ -294,7 +297,7 @@ function AlbumRow(props: {
         </span>
         <Toggle
           on={approved}
-          label={aside ? 'Set aside' : 'Approve'}
+          label={aside ? 'Set aside' : (props.approveLabel ?? 'Approve')}
           onChange={(on) => props.onDecide(on ? 'approved' : null)}
         />
         <motion.button

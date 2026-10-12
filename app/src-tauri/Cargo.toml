@@ -18,5 +18,6 @@ engine.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
+walkdir.workspace = true
 tauri = { version = "2.12.3", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.8"

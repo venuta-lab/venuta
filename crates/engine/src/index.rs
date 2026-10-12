@@ -8,7 +8,26 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Latest schema version; `migrate` applies every step up to it.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
+
+/// v3: online lookups. One row per album folder (normalised results per source, JSON) and
+/// per track for lyrics, so lookups resume and are never repeated needlessly.
+const SCHEMA_V3: &str = r#"
+CREATE TABLE album_meta (
+    dir        TEXT PRIMARY KEY,
+    barcode    TEXT,
+    mb         TEXT,
+    apple      TEXT,
+    deezer     TEXT,
+    fetched_at INTEGER NOT NULL,
+    error      TEXT
+);
+CREATE TABLE track_lyrics (
+    file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    found      TEXT,
+    checked_at INTEGER NOT NULL
+);
+"#;
 
 /// An album folder and its tracks as `(file id, relative path)`.
 pub type AlbumTracks = (String, Vec<(i64, String)>);
@@ -139,7 +158,7 @@ impl Index {
         let version: i32 = self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
-        for (target, sql) in [(1, SCHEMA_V1), (2, SCHEMA_V2)] {
+        for (target, sql) in [(1, SCHEMA_V1), (2, SCHEMA_V2), (3, SCHEMA_V3)] {
             if version < target {
                 let tx = self.conn.transaction()?;
                 tx.execute_batch(sql)?;
@@ -349,5 +368,10 @@ impl Index {
     /// Read-only access for queries elsewhere in the engine (audit, reports).
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Write access for engine modules that keep their own tables (lookups, lyrics).
+    pub fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 }

@@ -14,7 +14,9 @@ import {
 } from './components/Icons'
 import {
   cancelDeepCheck,
+  cancelLookup,
   deepCheck,
+  lookupOnline,
   inApp,
   libraryHealth,
   scanLibrary,
@@ -25,12 +27,13 @@ import { LibraryScreen } from './screens/LibraryScreen'
 import { BrowseScreen } from './screens/BrowseScreen'
 import { SoonScreen } from './screens/SoonScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
+import { IncomingScreen } from './screens/IncomingScreen'
 
 const SECTIONS: Section[] = [
   { id: 'library', label: 'Library', icon: IconHealth, ready: true },
   { id: 'browse', label: 'Browse', icon: IconBrowse, ready: true },
   { id: 'review', label: 'Review', icon: IconReview, ready: true },
-  { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: false },
+  { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: true },
   { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: false },
   { id: 'cards', label: 'Cards', icon: IconCards, ready: false },
 ]
@@ -62,6 +65,8 @@ export default function App() {
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
+  const [lookup, setLookup] = useState<{ done: number; total: number } | null>(null)
+  const [notice, setNotice] = useState('')
 
   const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
     try {
@@ -154,6 +159,22 @@ export default function App() {
     }
   }
 
+  async function runLookup() {
+    setLookup({ done: 0, total: 0 })
+    try {
+      const r = await lookupOnline(root, (done, total) => setLookup({ done, total }))
+      setNotice(
+        r.cancelled
+          ? 'Lookup stopped. What was found is kept; run it again to continue.'
+          : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} covers from Apple) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} tracks. Open Review to see what changes.`,
+      )
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLookup(null)
+    }
+  }
+
   async function chooseRoot() {
     const picked = inApp()
       ? await open({ directory: true, title: 'Choose your music library folder' })
@@ -179,12 +200,17 @@ export default function App() {
             deep={deep}
             onDeepCheck={runDeepCheck}
             onCancelDeep={() => void cancelDeepCheck()}
+            lookup={lookup}
+            onLookup={runLookup}
+            onCancelLookup={() => void cancelLookup()}
           />
         )
       case 'browse':
         return <BrowseScreen root={root} albums={report?.albums ?? []} />
       case 'review':
         return <ReviewScreen root={root} />
+      case 'incoming':
+        return <IncomingScreen root={root} onImported={() => void refresh(root, false)} />
       default:
         return <SoonScreen section={SECTIONS.find((s) => s.id === active)!} />
     }
@@ -214,6 +240,19 @@ export default function App() {
             >
               {screen}
             </motion.div>
+          </AnimatePresence>
+          <AnimatePresence>
+            {notice && !error && (
+              <motion.div
+                initial={{ y: 40, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 40, opacity: 0 }}
+                onClick={() => setNotice('')}
+                className="glass absolute bottom-5 left-1/2 max-w-[680px] -translate-x-1/2 cursor-pointer rounded-2xl px-5 py-3 text-[13px] text-ink/85"
+              >
+                {notice}
+              </motion.div>
+            )}
           </AnimatePresence>
           <AnimatePresence>
             {error && (

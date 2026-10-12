@@ -25,6 +25,47 @@ struct Jobs {
     apply: Mutex<Option<Arc<ApplyProgress>>>,
     /// The last plan built, kept here because it is too large to send to the UI.
     plan: Mutex<Option<(String, Plan)>>,
+    /// The last incoming plan, same reason.
+    incoming_plan: Mutex<Option<(String, Plan)>>,
+    lookup: Mutex<Option<Arc<engine::enrich::EnrichProgress>>>,
+}
+
+fn rules() -> CmdResult<Rules> {
+    Rules::load(&PathBuf::from(
+        settings_with_defaults().rules_dir.unwrap_or_default(),
+    ))
+}
+
+/// Run a lookup job with progress and cancellation (library or incoming).
+async fn run_lookup(
+    jobs: &Jobs,
+    on_progress: Channel<DeepProgress>,
+    job: impl FnOnce(
+        &engine::enrich::EnrichProgress,
+        &(dyn Fn(usize, usize) + Sync),
+    ) -> CmdResult<engine::enrich::EnrichReport>
+    + Send
+    + 'static,
+) -> CmdResult<engine::enrich::EnrichReport> {
+    let progress = Arc::new(engine::enrich::EnrichProgress::default());
+    {
+        let mut slot = jobs.lookup.lock().map_err(|e| e.to_string())?;
+        if slot.is_some() {
+            return Err("A lookup is already running.".into());
+        }
+        *slot = Some(progress.clone());
+    }
+    let p = progress.clone();
+    let result = blocking(move || {
+        job(&p, &|done, total| {
+            let _ = on_progress.send(DeepProgress { done, total });
+        })
+    })
+    .await;
+    if let Ok(mut slot) = jobs.lookup.lock() {
+        *slot = None;
+    }
+    result
 }
 
 #[derive(Serialize)]
@@ -351,6 +392,134 @@ async fn undo_run(journal: String) -> CmdResult<usize> {
     blocking(move || engine::apply::undo(Path::new(&journal))).await
 }
 
+/// Look the library's albums up online (credits, years, covers) and find missing lyrics.
+#[tauri::command]
+async fn lookup_online(
+    root: String,
+    on_progress: Channel<DeepProgress>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<engine::enrich::EnrichReport> {
+    let r = rules()?;
+    run_lookup(&jobs, on_progress, move |p, cb| {
+        engine::enrich::run_for_root(Path::new(&root), &r, p, cb)
+    })
+    .await
+}
+
+#[tauri::command]
+fn cancel_lookup(jobs: State<'_, Jobs>) {
+    if let Ok(slot) = jobs.lookup.lock()
+        && let Some(p) = slot.as_ref()
+    {
+        p.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+#[derive(Serialize)]
+struct IncomingView {
+    folder: String,
+    plan: PlanView,
+}
+
+/// Scan and plan what is waiting in the incoming folder.
+#[tauri::command]
+async fn incoming(root: String, jobs: State<'_, Jobs>) -> CmdResult<IncomingView> {
+    let r = rules()?;
+    let rr = root.clone();
+    let plan =
+        blocking(move || engine::intake::plan(Path::new(&rr), &r).map_err(|e| e.to_string()))
+            .await?;
+    let view = plan.view();
+    *jobs.incoming_plan.lock().map_err(|e| e.to_string())? = Some((root.clone(), plan));
+    Ok(IncomingView {
+        folder: engine::intake::incoming_dir(Path::new(&root))
+            .to_string_lossy()
+            .into_owned(),
+        plan: view,
+    })
+}
+
+#[tauri::command]
+async fn incoming_lookup(
+    root: String,
+    on_progress: Channel<DeepProgress>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<engine::enrich::EnrichReport> {
+    let r = rules()?;
+    run_lookup(&jobs, on_progress, move |p, cb| {
+        engine::intake::lookup(Path::new(&root), &r, p, cb)
+    })
+    .await
+}
+
+/// Import the chosen incoming albums into the library.
+#[tauri::command]
+async fn incoming_import(
+    root: String,
+    albums: Vec<String>,
+    on_progress: Channel<DeepProgress>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<ApplyReport> {
+    let chosen: Vec<engine::plan::AlbumPlan> = {
+        let guard = jobs.incoming_plan.lock().map_err(|e| e.to_string())?;
+        let (plan_root, plan) = guard.as_ref().ok_or("Open Incoming first.")?;
+        if *plan_root != root {
+            return Err("The incoming plan is for a different library.".into());
+        }
+        plan.albums
+            .iter()
+            .filter(|a| albums.contains(&a.id))
+            .cloned()
+            .collect()
+    };
+    if chosen.is_empty() {
+        return Err("Choose albums to import.".into());
+    }
+    let progress = Arc::new(ApplyProgress::default());
+    {
+        let mut slot = jobs.apply.lock().map_err(|e| e.to_string())?;
+        if slot.is_some() {
+            return Err("Something is already being written.".into());
+        }
+        *slot = Some(progress.clone());
+    }
+    let p = progress.clone();
+    let result = blocking(move || {
+        engine::intake::import(Path::new(&root), &chosen, &p, &|done, total| {
+            let _ = on_progress.send(DeepProgress { done, total });
+        })
+    })
+    .await;
+    if let Ok(mut slot) = jobs.apply.lock() {
+        *slot = None;
+    }
+    result
+}
+
+/// Copy dropped files or folders into the incoming folder.
+#[tauri::command]
+async fn add_to_incoming(root: String, paths: Vec<String>) -> CmdResult<usize> {
+    blocking(move || {
+        let sources: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        engine::intake::add(Path::new(&root), &sources)
+    })
+    .await
+}
+
+/// Cheap check for the incoming screen: how many audio files are waiting.
+#[tauri::command]
+fn incoming_count(root: String) -> usize {
+    let dir = engine::intake::incoming_dir(Path::new(&root));
+    walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .flatten()
+        .filter(|e| {
+            e.file_type().is_file() && engine::media::FileKind::from_path(e.path()).is_audio()
+        })
+        .count()
+}
+
 #[derive(Serialize)]
 struct TrackRow {
     path: String,
@@ -494,7 +663,14 @@ pub fn run() {
             undo_run,
             album_detail,
             edit_tags,
-            confirm_backup
+            confirm_backup,
+            lookup_online,
+            cancel_lookup,
+            incoming,
+            incoming_lookup,
+            incoming_import,
+            add_to_incoming,
+            incoming_count
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

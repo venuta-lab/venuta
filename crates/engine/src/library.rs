@@ -92,6 +92,10 @@ pub struct Library {
     pub lyrics_files: std::collections::HashSet<String>,
     /// Image files (e.g. cover.jpg) per album folder: (relative path, bytes).
     pub images: HashMap<String, Vec<(String, u64)>>,
+    /// Online lookup results per album folder (empty until "Look up online" has run).
+    pub meta: HashMap<String, crate::enrich::AlbumMeta>,
+    /// Validated synced lyrics found online, per track id.
+    pub fetched_lyrics: HashMap<i64, crate::providers::LyricsFound>,
 }
 
 impl Library {
@@ -209,6 +213,8 @@ impl Library {
             tracks,
             lyrics_files,
             images,
+            meta: crate::enrich::load_album_meta(index)?,
+            fetched_lyrics: crate::enrich::load_lyrics(index)?,
         })
     }
 

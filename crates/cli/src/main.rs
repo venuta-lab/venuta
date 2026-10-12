@@ -50,6 +50,12 @@ enum Command {
     },
     /// Remove everything an apply run created, using its journal
     Undo { journal: PathBuf },
+    /// Plan the albums waiting in LIBRARY/_Incoming (scans and looks them up first)
+    IncomingPlan { library: PathBuf, rules: PathBuf },
+    /// Import every ready album from LIBRARY/_Incoming into the library
+    IncomingImport { library: PathBuf, rules: PathBuf },
+    /// Look up albums online (MusicBrainz, Apple, Deezer) and missing lyrics (LRCLIB)
+    Lookup { root: PathBuf, rules: PathBuf },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
     Covers {
         root: PathBuf,
@@ -241,6 +247,64 @@ fn main() -> Result<()> {
             let progress = engine::apply::ApplyProgress::default();
             let report = engine::apply::apply(&plan.albums, &root, &target, &progress, &|_, _| {})
                 .map_err(anyhow::Error::msg)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::IncomingPlan { library, rules } => {
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let lp = engine::enrich::EnrichProgress::default();
+            let look = engine::intake::lookup(&library, &r, &lp, &|_, _| {})
+                .map_err(anyhow::Error::msg)?;
+            eprintln!(
+                "looked up {} albums ({} MusicBrainz, {} Apple, {} Deezer matches), {} lyrics found",
+                look.albums_looked_up,
+                look.musicbrainz_matches,
+                look.apple_matches,
+                look.deezer_matches,
+                look.lyrics_found
+            );
+            let plan = engine::intake::plan(&library, &r)?;
+            for a in &plan.albums {
+                println!(
+                    "
+{} [{:?}] {:?}
+  -> {}",
+                    a.id, a.confidence, a.action, a.target_dir
+                );
+                for n in &a.notes {
+                    println!("  ! {n}");
+                }
+                for c in &a.changes {
+                    println!(
+                        "  {:<22} {:?} -> {:?}  {}",
+                        c.field,
+                        c.before.iter().take(2).collect::<Vec<_>>(),
+                        c.after.iter().take(2).collect::<Vec<_>>(),
+                        c.reason
+                    );
+                }
+            }
+        }
+        Command::IncomingImport { library, rules } => {
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let mut plan = engine::intake::plan(&library, &r)?;
+            plan.albums
+                .retain(|a| matches!(a.action, engine::plan::AlbumAction::Migrate));
+            let progress = engine::apply::ApplyProgress::default();
+            let report = engine::intake::import(&library, &plan.albums, &progress, &|_, _| {})
+                .map_err(anyhow::Error::msg)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Lookup { root, rules } => {
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let progress = engine::enrich::EnrichProgress::default();
+            let last = std::sync::atomic::AtomicUsize::new(0);
+            let report = engine::enrich::run_for_root(&root, &r, &progress, &|done, total| {
+                let step = (total / 20).max(1);
+                if done / step != last.swap(done, std::sync::atomic::Ordering::Relaxed) / step {
+                    eprintln!("  {done} / {total}");
+                }
+            })
+            .map_err(anyhow::Error::msg)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Undo { journal } => {

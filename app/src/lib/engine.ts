@@ -305,3 +305,45 @@ export const editTags = (root: string, edits: TagEdit[]) =>
     : Promise.reject(new Error('Edits are saved by the desktop app.'))
 
 export const confirmBackup = () => invoke<void>('confirm_backup')
+
+// --- Online lookups & Incoming --------------------------------------------------------
+
+export interface EnrichReport {
+  albums_looked_up: number
+  albums_without_barcode: number
+  musicbrainz_matches: number
+  apple_matches: number
+  deezer_matches: number
+  lyrics_checked: number
+  lyrics_found: number
+  errors: string[]
+  cancelled: boolean
+  elapsed_ms: number
+}
+
+function withProgress<T>(cmd: string, args: Record<string, unknown>, onProgress: (d: number, t: number) => void) {
+  if (!inApp()) return Promise.reject(new Error('This runs in the desktop app.'))
+  const channel = new Channel<{ done: number; total: number }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total)
+  return invoke<T>(cmd, { ...args, onProgress: channel })
+}
+
+export const lookupOnline = (root: string, onProgress: (d: number, t: number) => void) =>
+  withProgress<EnrichReport>('lookup_online', { root }, onProgress)
+export const cancelLookup = () => (inApp() ? invoke<void>('cancel_lookup') : Promise.resolve())
+
+export interface IncomingView {
+  folder: string
+  plan: { albums: AlbumView[]; questions: Question[] }
+}
+
+export const incoming = (root: string): Promise<IncomingView> =>
+  inApp()
+    ? invoke<IncomingView>('incoming', { root })
+    : Promise.resolve({ folder: `${root}/_Incoming`, plan: { albums: [], questions: [] } })
+export const incomingLookup = (root: string, onProgress: (d: number, t: number) => void) =>
+  withProgress<EnrichReport>('incoming_lookup', { root }, onProgress)
+export const incomingImport = (root: string, albums: string[], onProgress: (d: number, t: number) => void) =>
+  withProgress<ApplyReport>('incoming_import', { root, albums }, onProgress)
+export const addToIncoming = (root: string, paths: string[]) => invoke<number>('add_to_incoming', { root, paths })
+export const incomingCount = (root: string) => (inApp() ? invoke<number>('incoming_count', { root }) : Promise.resolve(0))

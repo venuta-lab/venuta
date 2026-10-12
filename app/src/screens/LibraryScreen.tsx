@@ -25,6 +25,9 @@ export function LibraryScreen(props: {
   report: HealthReport | null
   busy: string
   deep: { done: number; total: number } | null
+  lookup: { done: number; total: number } | null
+  onLookup: () => void
+  onCancelLookup: () => void
   onChoose: () => void
   onRescan: () => void
   onDeepCheck: () => void
@@ -60,6 +63,13 @@ export function LibraryScreen(props: {
             <IconFolder />
           </PillButton>
           <PillButton
+            onClick={props.onLookup}
+            disabled={!!busy || !!props.lookup}
+            title="Find original years, composer and lyricist credits, sharper covers and missing lyrics online. Changes nothing until you approve it in Review."
+          >
+            Look up online
+          </PillButton>
+          <PillButton
             onClick={props.onDeepCheck}
             disabled={!!busy || !!deep}
             title="Decode every new or changed track: integrity, quality and loudness. Changes nothing."
@@ -79,7 +89,14 @@ export function LibraryScreen(props: {
         </div>
       </header>
 
-      <AnimatePresence>{deep && <DeepProgressBar deep={deep} onCancel={props.onCancelDeep} />}</AnimatePresence>
+      <AnimatePresence>
+        {deep && <DeepProgressBar deep={deep} label="Deep check" unit="tracks" onCancel={props.onCancelDeep} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {props.lookup && (
+          <DeepProgressBar deep={props.lookup} label="Looking up online" unit="steps" onCancel={props.onCancelLookup} />
+        )}
+      </AnimatePresence>
 
       {report && <FormatBar formats={report.summary.formats} total={report.summary.tracks} />}
 
@@ -211,7 +228,12 @@ function CoverStrip(props: {
   )
 }
 
-function DeepProgressBar(props: { deep: { done: number; total: number }; onCancel: () => void }) {
+export function DeepProgressBar(props: {
+  deep: { done: number; total: number }
+  label: string
+  unit: string
+  onCancel: () => void
+}) {
   const { done, total } = props.deep
   const pct = total ? (done / total) * 100 : 0
   return (
@@ -225,7 +247,7 @@ function DeepProgressBar(props: { deep: { done: number; total: number }; onCance
       <div className="glass mt-6 flex items-center gap-4 rounded-2xl px-5 py-3.5">
         <div className="flex-1">
           <div className="text-[13.5px] text-ink/85">
-            {total ? `Deep check: ${fmt(done)} of ${fmt(total)} tracks` : 'Preparing the deep check…'}
+            {total ? `${props.label}: ${fmt(done)} of ${fmt(total)} ${props.unit}` : 'Getting ready…'}
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
             <motion.div

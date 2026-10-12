@@ -83,6 +83,8 @@ pub struct AlbumPlan {
     pub art: ArtPlan,
     /// Source image to copy as `cover.jpg` (the largest available), if any.
     pub cover_from: Option<String>,
+    /// A sharper cover to download (Apple up to 3000 px, else Deezer 1400 px).
+    pub cover_url: Option<String>,
     pub tracks: Vec<TrackPlan>,
 }
 
@@ -191,9 +193,27 @@ fn plan_album(
         }
     };
 
-    let rule = rules.category_for(dir);
+    // Online lookups (if "Look up online" has run).
+    let meta = lib.meta.get(dir);
+    let mb = meta.and_then(|m| m.mb.as_ref());
+
+    // Your category rules decide; failing that, the catalogue genre suggests one.
+    let (rule_owned, rule_inferred) = match rules.category_for(dir) {
+        Some(r) => (Some(r.clone()), false),
+        None => {
+            let i = infer_category(meta);
+            let inferred = i.is_some();
+            (i, inferred)
+        }
+    };
+    let rule = rule_owned.as_ref();
     if rule.is_none() {
-        notes.push("No category rule matches this folder; it is filed under Unsorted.".into());
+        notes.push("No category rule matches this folder and the catalogues didn't say; it is filed under Unsorted.".into());
+    } else if rule_inferred {
+        notes.push(format!(
+            "Filed under {} from the catalogue genre. Add a category rule to decide this yourself.",
+            rule.map(|r| r.category.as_str()).unwrap_or_default()
+        ));
     }
     let category = rule.map(|r| r.category.as_str()).unwrap_or("Unsorted");
     let subfolder = rule.and_then(|r| r.subfolder.as_deref()).unwrap_or("");
@@ -207,14 +227,25 @@ fn plan_album(
         .unwrap_or("")
         .replace('_', " ");
     // Soundtracks: the composer folder decides, for the whole album.
-    let soundtrack_artist: Option<(String, Confidence)> = (soundtrack && !folder_artist.is_empty())
-        .then(|| match rules.canonical(&folder_artist) {
+    // Composer as credited by the catalogues, for soundtracks without a composer folder.
+    let catalogue_artist = mb.and_then(|r| r.album_artist.clone()).or_else(|| {
+        meta.and_then(|m| m.apple.as_ref())
+            .and_then(|r| r.album_artist.clone())
+    });
+    let soundtrack_artist: Option<(String, Confidence)> = if soundtrack && rule_inferred {
+        catalogue_artist.map(|a| match rules.canonical(&a) {
+            Some(c) => (c.to_owned(), Confidence::High),
+            None => (tidy_name(&a), Confidence::Medium),
+        })
+    } else {
+        (soundtrack && !folder_artist.is_empty()).then(|| match rules.canonical(&folder_artist) {
             Some(c) => (c.to_owned(), Confidence::High),
             None if name_key(&folder_artist) == "variousartists" => {
                 ("Various Artists".to_owned(), Confidence::High)
             }
             None => (folder_artist.clone(), Confidence::Medium),
-        });
+        })
+    };
     // Everything else: each track's own album artist, because a folder of loose singles holds
     // many artists and albums.
     let artist_for = |t: &Track| -> (String, Confidence) {
@@ -322,6 +353,15 @@ fn plan_album(
             reason(&k, "Empty value.", Confidence::High);
         }
 
+        // This track on MusicBrainz: by ISRC, else by position, else by title.
+        let online = mb.and_then(|r| match_track(t, r, tracks.len()));
+        let online_composers: Vec<String> = online
+            .map(|o| dedupe(o.composers.iter().map(|n| canon(rules, n)).collect()))
+            .unwrap_or_default();
+        let online_lyricists: Vec<String> = online
+            .map(|o| dedupe(o.lyricists.iter().map(|n| canon(rules, n)).collect()))
+            .unwrap_or_default();
+
         // Album artist, credits.
         let (album_artist, aa_conf) = artist_for(t);
         if aa_conf < Confidence::High {
@@ -346,6 +386,24 @@ fn plan_album(
             },
             aa_conf,
         );
+        // Names now known as composer, lyricist or singer leave the unsorted list.
+        let known: HashSet<String> = online_composers
+            .iter()
+            .chain(&online_lyricists)
+            .cloned()
+            .chain(
+                t.first("ARTIST")
+                    .map(split_names)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|n| canon(rules, n)),
+            )
+            .map(|n| name_key(&n))
+            .collect();
+        let extra_credits: Vec<String> = extra_credits
+            .into_iter()
+            .filter(|n| !known.contains(&name_key(n)))
+            .collect();
         if !extra_credits.is_empty() && !tags.has("CREDITS") {
             tags.set("CREDITS", extra_credits.clone());
             reason(
@@ -366,7 +424,14 @@ fn plan_album(
                     .collect()
             })
             .unwrap_or_default();
-        if composers.is_empty() {
+        if !online_composers.is_empty() {
+            tags.set("COMPOSER", online_composers.clone());
+            reason(
+                "COMPOSER",
+                "Credited on MusicBrainz for this recording.",
+                Confidence::High,
+            );
+        } else if composers.is_empty() {
             if soundtrack && album_artist != "Various Artists" {
                 tags.set("COMPOSER", vec![album_artist.clone()]);
                 reason(
@@ -411,7 +476,14 @@ fn plan_album(
                 Confidence::High,
             );
         }
-        if let Some(l) = t.tags.get("LYRICIST") {
+        if !online_lyricists.is_empty() && !t.has("LYRICIST") {
+            tags.set("LYRICIST", online_lyricists.clone());
+            reason(
+                "LYRICIST",
+                "Credited on MusicBrainz for this recording.",
+                Confidence::High,
+            );
+        } else if let Some(l) = t.tags.get("LYRICIST") {
             let l: Vec<String> = dedupe(
                 l.iter()
                     .flat_map(|x| split_names(x))
@@ -453,8 +525,23 @@ fn plan_album(
             .first("ORIGINALYEAR")
             .or(t.first("ORIGINALDATE"))
             .and_then(|d| d.get(..4));
+        let mb_first = mb
+            .and_then(|r| r.first_release.as_deref())
+            .and_then(|d| d.get(..4));
         let original = match (existing_orig, &folder_year, &date_year) {
             (Some(o), _, _) => Some(o.to_owned()),
+            (None, _, _) if mb_first.is_some() => {
+                let y = mb_first.unwrap_or_default().to_owned();
+                let mut why = format!("MusicBrainz: first released in {y}.");
+                if folder_year.as_deref().is_some_and(|f| f != y) {
+                    why.push_str(&format!(
+                        " Your folder says {}.",
+                        folder_year.as_deref().unwrap_or("")
+                    ));
+                }
+                reason("ORIGINALYEAR", &why, Confidence::High);
+                Some(y)
+            }
             (None, Some(f), Some(d)) if f != d => {
                 reason(
                     "ORIGINALYEAR",
@@ -528,6 +615,32 @@ fn plan_album(
             reason(
                 "RELEASETYPE",
                 "Film and series albums are soundtracks.",
+                Confidence::High,
+            );
+        }
+
+        // Label and release type from the lookups, when the file has none.
+        let online_label = mb.and_then(|r| r.label.clone()).or_else(|| {
+            meta.and_then(|m| m.deezer.as_ref())
+                .and_then(|r| r.label.clone())
+        });
+        if !t.has("LABEL")
+            && let Some(l) = online_label
+        {
+            tags.set("LABEL", vec![l]);
+            reason(
+                "LABEL",
+                "Record label from MusicBrainz or Deezer.",
+                Confidence::High,
+            );
+        }
+        if let Some(r) = mb.filter(|r| !r.release_types.is_empty())
+            && !t.has("RELEASETYPE")
+        {
+            tags.set("RELEASETYPE", r.release_types.clone());
+            reason(
+                "RELEASETYPE",
+                "Release type from MusicBrainz.",
                 Confidence::High,
             );
         }
@@ -608,6 +721,17 @@ fn plan_album(
             }
         } else if synced {
             write_lrc = true;
+        } else if lyrics_tag.is_none()
+            && !t.has("UNSYNCEDLYRICS")
+            && let Some(found) = lib.fetched_lyrics.get(&t.id)
+        {
+            tags.set("LYRICS", vec![found.synced.clone()]);
+            write_lrc = true;
+            reason(
+                "LYRICS",
+                "Synced lyrics from LRCLIB, checked for timing, length and script.",
+                Confidence::High,
+            );
         }
         // UNSYNCEDLYRICS goes only when it is the same text as LYRICS; it may hold another script.
         if let (Some(l), Some(u)) = (lyrics_tag, t.first("UNSYNCEDLYRICS"))
@@ -701,7 +825,30 @@ fn plan_album(
     .unwrap_or_default();
     let raw_album = folder_album;
 
-    let art = if tracks.iter().all(|t| t.front_cover().is_none()) {
+    let best_embedded = tracks
+        .iter()
+        .filter_map(|t| t.front_cover())
+        .filter_map(|p| Some(p.width?.min(p.height?)))
+        .max()
+        .unwrap_or(0);
+    let cover_url = (best_embedded < crate::enrich::GOOD_ART_PX)
+        .then(|| {
+            meta.and_then(|m| m.apple.as_ref().or(m.deezer.as_ref()))
+                .and_then(|r| r.cover_url.clone())
+        })
+        .flatten();
+    if cover_url.is_some() {
+        needs_art_fix = true;
+        notes.push(format!(
+            "A sharper cover ({}) replaces the {best_embedded} px one.",
+            if meta.and_then(|m| m.apple.as_ref()).is_some() {
+                "Apple, up to 3000 px"
+            } else {
+                "Deezer, 1400 px"
+            }
+        ));
+    }
+    let art = if tracks.iter().all(|t| t.front_cover().is_none()) && cover_url.is_none() {
         ArtPlan::Missing
     } else if needs_art_fix {
         ArtPlan::Reencode {
@@ -728,6 +875,8 @@ fn plan_album(
         .unwrap_or(Confidence::High);
     if rule.is_none() {
         confidence = Confidence::Low;
+    } else if rule_inferred {
+        confidence = confidence.min(Confidence::Medium);
     }
     let action = match duplicate_of {
         Some(of) => {
@@ -757,8 +906,121 @@ fn plan_album(
         changes,
         art,
         cover_from,
+        cover_url,
         tracks: track_plans,
     }
+}
+
+/// A category from the catalogues' genres, used when no rule of yours matches. Apple files
+/// Hindi film music as "Bollywood" and has per-language Indian genres; MusicBrainz marks
+/// soundtracks.
+pub fn infer_category(
+    meta: Option<&crate::enrich::AlbumMeta>,
+) -> Option<crate::rules::CategoryRule> {
+    let m = meta?;
+    let genres: Vec<String> = [&m.apple, &m.deezer, &m.mb]
+        .iter()
+        .filter_map(|r| r.as_ref())
+        .flat_map(|r| r.genres.iter().map(|g| g.to_lowercase()))
+        .collect();
+    let has = |words: &[&str]| genres.iter().any(|g| words.iter().any(|w| g.contains(w)));
+    let rule = |category: &str,
+                language: Option<&str>,
+                genre: Option<&str>,
+                soundtrack: bool,
+                sub: Option<&str>| {
+        Some(crate::rules::CategoryRule {
+            pattern: String::new(),
+            category: category.to_owned(),
+            language: language.map(str::to_owned),
+            genre: genre.map(str::to_owned),
+            soundtrack,
+            subfolder: sub.map(str::to_owned),
+        })
+    };
+    for (word, lang) in [
+        ("bollywood", "hin"),
+        ("filmi", "hin"),
+        ("tamil", "tam"),
+        ("telugu", "tel"),
+        ("malayalam", "mal"),
+        ("kannada", "kan"),
+        ("marathi", "mar"),
+        ("bengali", "ben"),
+    ] {
+        if has(&[word]) {
+            return rule("Film & Series", Some(lang), Some("Filmi"), true, None);
+        }
+    }
+    if has(&["punjabi"]) {
+        return rule("Independent", Some("pan"), Some("Punjabi Pop"), false, None);
+    }
+    if has(&["ghazal", "sufi", "qawwali"]) {
+        return rule("Independent", Some("urd"), Some("Ghazal"), false, None);
+    }
+    if has(&["indian pop", "indie pop", "devotional"]) {
+        return rule("Independent", Some("hin"), Some("Indie Pop"), false, None);
+    }
+    if has(&["video game", "game"]) {
+        return rule("Scores", None, Some("Game Score"), false, Some("Games"));
+    }
+    if has(&["anime"]) {
+        return rule("International", Some("jpn"), Some("Anime"), false, None);
+    }
+    if has(&["j-pop"]) {
+        return rule("International", Some("jpn"), Some("J-Pop"), false, None);
+    }
+    if has(&["k-pop"]) {
+        return rule("International", Some("kor"), Some("K-Pop"), false, None);
+    }
+    if has(&["c-pop", "mandopop", "cantopop"]) {
+        return rule("International", Some("zho"), Some("C-Pop"), false, None);
+    }
+    if has(&["soundtrack", "film score"]) {
+        return rule("Scores", None, Some("Film Score"), false, Some("Film"));
+    }
+    if has(&[
+        "rock",
+        "pop",
+        "alternative",
+        "electronic",
+        "jazz",
+        "hip-hop",
+        "r&b",
+        "classical",
+        "folk",
+    ]) {
+        return rule("International", Some("eng"), None, false, None);
+    }
+    None
+}
+
+/// Find a track's entry in a looked-up release: ISRC first, then disc/track position when the
+/// track counts agree, then an exact title match.
+fn match_track<'a>(
+    t: &Track,
+    r: &'a crate::providers::ReleaseInfo,
+    album_tracks: usize,
+) -> Option<&'a crate::providers::TrackInfo> {
+    if let Some(isrc) = t.first("ISRC")
+        && let Some(hit) = r
+            .tracks
+            .iter()
+            .find(|o| o.isrc.iter().any(|i| i.eq_ignore_ascii_case(isrc)))
+    {
+        return Some(hit);
+    }
+    let num = |k: &str| t.first(k).and_then(parse_num);
+    if r.tracks.len() == album_tracks
+        && let Some(n) = num("TRACKNUMBER")
+    {
+        let d = num("DISCNUMBER").unwrap_or(1);
+        if let Some(hit) = r.tracks.iter().find(|o| o.number == n && o.disc == d) {
+            return Some(hit);
+        }
+    }
+    let key = name_key(t.first("TITLE")?);
+    r.tracks.iter().find(|o| name_key(&o.title) == key)
 }
 
 /// Album-level view of the per-track tag changes: distinct before/after values per field.
@@ -1252,6 +1514,50 @@ mod tests {
             ),
             "Interstellar [Expanded Edition]"
         );
+    }
+
+    #[test]
+    fn categories_from_catalogue_genres() {
+        use crate::enrich::AlbumMeta;
+        use crate::providers::{ReleaseInfo, Source};
+        let with = |genres: &[&str]| AlbumMeta {
+            apple: Some(ReleaseInfo {
+                source: Source::Apple,
+                id: String::new(),
+                title: String::new(),
+                album_artist: None,
+                first_release: None,
+                release_date: None,
+                label: None,
+                genres: genres.iter().map(|g| (*g).to_owned()).collect(),
+                release_types: vec![],
+                cover_url: None,
+                cover_px: None,
+                tracks: vec![],
+            }),
+            ..Default::default()
+        };
+        let c = infer_category(Some(&with(&["Bollywood"]))).unwrap();
+        assert_eq!(
+            (c.category.as_str(), c.language.as_deref(), c.soundtrack),
+            ("Film & Series", Some("hin"), true)
+        );
+        assert_eq!(
+            infer_category(Some(&with(&["Tamil"])))
+                .unwrap()
+                .language
+                .as_deref(),
+            Some("tam")
+        );
+        assert_eq!(
+            infer_category(Some(&with(&["Soundtrack"])))
+                .unwrap()
+                .subfolder
+                .as_deref(),
+            Some("Film")
+        );
+        assert!(infer_category(Some(&with(&["Spoken Word"]))).is_none());
+        assert!(infer_category(None).is_none());
     }
 
     #[test]

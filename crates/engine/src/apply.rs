@@ -124,6 +124,12 @@ pub fn apply(
     progress.done.store(0, Ordering::Relaxed);
     on_progress(0, total);
 
+    // Only needed when a plan asks for a sharper cover from a catalogue.
+    let http = albums
+        .iter()
+        .any(|a| a.cover_url.is_some())
+        .then(crate::net::Http::open)
+        .transpose()?;
     let errors = Mutex::new(Vec::new());
     let written = AtomicUsize::new(0);
     let skipped = AtomicUsize::new(0);
@@ -144,6 +150,7 @@ pub fn apply(
                 source_root,
                 target_root,
                 journal: &journal,
+                http: http.as_ref(),
             };
             let result = match &album.action {
                 AlbumAction::Migrate => {
@@ -179,6 +186,7 @@ struct AlbumCtx<'a> {
     source_root: &'a Path,
     target_root: &'a Path,
     journal: &'a Journal,
+    http: Option<&'a crate::net::Http>,
 }
 
 impl AlbumCtx<'_> {
@@ -199,8 +207,14 @@ impl AlbumCtx<'_> {
         skipped: &AtomicUsize,
     ) -> Result<(), Vec<ApplyError>> {
         let mut errors = Vec::new();
-        // The album's player-safe cover, made once and embedded in every track.
-        let original_cover = self.original_cover();
+        // The album's player-safe cover, made once and embedded in every track. A sharper
+        // catalogue cover is used when planned and it really is an image; otherwise the file's own.
+        let downloaded = self.album.cover_url.as_ref().and_then(|url| {
+            let bytes = self.http?.get_bytes(url).ok()?;
+            image::load_from_memory(&bytes).is_ok().then_some(bytes)
+        });
+        let used_download = downloaded.is_some();
+        let original_cover = downloaded.or_else(|| self.original_cover());
         let embedded = match (&self.album.art, &original_cover) {
             (ArtPlan::Reencode { max_px }, Some(bytes)) => match baseline_jpeg(bytes, *max_px) {
                 Ok(b) => Some(b),
@@ -235,9 +249,9 @@ impl AlbumCtx<'_> {
                 .target_root
                 .join(crate::library::parent_dir(&first.target));
             let cover_target = dir.join("cover.jpg");
-            let bytes = match &self.album.cover_from {
-                Some(rel) => std::fs::read(self.source_root.join(rel)).ok(),
-                None => original_cover.clone(),
+            let bytes = match (&self.album.cover_from, used_download) {
+                (Some(rel), false) => std::fs::read(self.source_root.join(rel)).ok(),
+                _ => original_cover.clone(),
             };
             if let Some(bytes) = bytes
                 && !cover_target.exists()
