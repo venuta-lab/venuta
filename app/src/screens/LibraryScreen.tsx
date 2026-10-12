@@ -32,6 +32,8 @@ export function LibraryScreen(props: {
   onRescan: () => void
   onDeepCheck: () => void
   onCancelDeep: () => void
+  /** Inside Music: the header, actions and progress are shown by Music itself. */
+  bare?: boolean
 }) {
   const { root, report, busy, deep } = props
   const [spectrum, setSpectrum] = useState<AlbumSummary | null>(null)
@@ -47,6 +49,7 @@ export function LibraryScreen(props: {
 
   return (
     <div className="mx-auto max-w-[920px] pb-16">
+      {!props.bare && (<>
       <header className="flex items-end gap-6 pt-6">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[56px] font-semibold leading-none tracking-[-0.035em]">{name}</h1>
@@ -67,14 +70,14 @@ export function LibraryScreen(props: {
             disabled={!!busy || !!props.lookup}
             title="Find original years, composer and lyricist credits, sharper covers and missing lyrics online. Changes nothing until you approve it in Review."
           >
-            Look up online
+            Look up details online
           </PillButton>
           <PillButton
             onClick={props.onDeepCheck}
             disabled={!!busy || !!deep}
             title="Decode every new or changed track: integrity, quality and loudness. Changes nothing."
           >
-            Deep check
+            Check quality
           </PillButton>
           <PillButton onClick={props.onRescan} disabled={!!busy} accent>
             <motion.span
@@ -90,14 +93,15 @@ export function LibraryScreen(props: {
       </header>
 
       <AnimatePresence>
-        {deep && <DeepProgressBar deep={deep} label="Deep check" unit="tracks" onCancel={props.onCancelDeep} />}
+        {deep && <DeepProgressBar deep={deep} label="Checking quality" unit="tracks" onCancel={props.onCancelDeep} />}
       </AnimatePresence>
       <AnimatePresence>
         {props.lookup && (
-          <DeepProgressBar deep={props.lookup} label="Looking up online" unit="steps" onCancel={props.onCancelLookup} />
+          <DeepProgressBar deep={props.lookup} label="Looking up details online" unit="steps" onCancel={props.onCancelLookup} />
         )}
       </AnimatePresence>
 
+      </>)}
       {report && <FormatBar formats={report.summary.formats} total={report.summary.tracks} />}
 
       {groups.map(({ s, issues }) => (
@@ -168,7 +172,7 @@ function IssueRow(props: {
             {issue.examples.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {issue.examples.slice(0, 6).map((e) => (
-                  <span key={e} className="rounded-full bg-white/[0.07] px-3 py-1 text-[12px] text-ink/80">
+                  <span key={e} className="rounded-full bg-ink/[0.07] px-3 py-1 text-[12px] text-ink/80">
                     {e}
                   </span>
                 ))}
@@ -211,7 +215,7 @@ function CoverStrip(props: {
               className={`w-[112px] shrink-0 ${props.onAlbum ? 'cursor-pointer' : ''}`}
               title={a ? `${a.title}  (${a.album_artist})` : d}
             >
-              <div className="aspect-square overflow-hidden rounded-xl bg-white/5 shadow-lg shadow-black/30">
+              <div className="aspect-square overflow-hidden rounded-xl bg-ink/5 shadow-lg shadow-black/30">
                 {c && <img src={c.src} alt="" className="h-full w-full object-cover" draggable={false} />}
               </div>
               <div className="mt-1.5 truncate text-[11.5px] text-ink/75">{a?.title ?? d}</div>
@@ -249,7 +253,7 @@ export function DeepProgressBar(props: {
           <div className="text-[13.5px] text-ink/85">
             {total ? `${props.label}: ${fmt(done)} of ${fmt(total)} ${props.unit}` : 'Getting ready…'}
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
             <motion.div
               className="h-full rounded-full"
               style={{ background: 'var(--accent)' }}
@@ -258,7 +262,7 @@ export function DeepProgressBar(props: {
             />
           </div>
         </div>
-        <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-white/10 hover:text-ink">
+        <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10 hover:text-ink">
           Stop
         </button>
       </div>
@@ -339,7 +343,7 @@ function FormatBar(props: { formats: HealthReport['summary']['formats']; total: 
   const shades = [0.9, 0.62, 0.42, 0.28, 0.18, 0.12]
   return (
     <div className="mt-8">
-      <div className="flex h-2.5 overflow-hidden rounded-full bg-white/5">
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-ink/5">
         {props.formats.map((f, i) => (
           <motion.div
             key={label(f)}
@@ -365,7 +369,7 @@ function FormatBar(props: { formats: HealthReport['summary']['formats']; total: 
   )
 }
 
-function EmptyState(props: { onChoose: () => void }) {
+export function EmptyState(props: { onChoose: () => void }) {
   return (
     <div className="grid h-full place-items-center">
       <div className="text-center">
@@ -400,7 +404,7 @@ export function PillButton(props: {
       disabled={props.disabled}
       title={props.title}
       className={`flex items-center gap-2 rounded-full px-4 py-2.5 text-[13.5px] font-medium disabled:opacity-60 ${
-        props.accent ? 'text-[#0d0d10]' : 'glass text-ink'
+        props.accent ? 'text-on-accent' : 'glass text-ink'
       }`}
       style={props.accent ? { background: 'var(--accent)' } : undefined}
     >

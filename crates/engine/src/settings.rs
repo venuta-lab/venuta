@@ -19,6 +19,13 @@ pub struct Settings {
     pub apple_library: Option<String>,
     #[serde(default)]
     pub apple_key: Option<String>,
+    /// AcoustID application key: identifies files without tags by their sound (optional).
+    #[serde(default)]
+    pub acoustid_key: Option<String>,
+    /// Discogs personal access token: credits and original years for releases MusicBrainz
+    /// lacks (optional).
+    #[serde(default)]
+    pub discogs_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

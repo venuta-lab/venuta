@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { albumCovers, assetUrl, type CoverThumb } from './engine'
+import { getPrefs, tuneAccent } from './prefs'
 
 export interface Cover {
   src: string
@@ -38,9 +39,10 @@ export function useCovers(size = 320) {
   return (dir: string) => cache.get(`${size}:${dir}`)
 }
 
-/** Move the app's accent colour smoothly (CSS handles the transition). */
+/** Move the app's accent colour smoothly (CSS handles the transition). A fixed accent wins. */
 export function setAccent(hex: string | null | undefined) {
-  if (hex) document.documentElement.style.setProperty('--accent', hex)
+  if (!hex || getPrefs().accentMode === 'fixed') return
+  document.documentElement.style.setProperty('--accent', tuneAccent(hex))
 }
 
 /** Cached cover for one album, if loaded. */

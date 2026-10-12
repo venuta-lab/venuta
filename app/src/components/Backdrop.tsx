@@ -51,7 +51,11 @@ export function Backdrop({ covers }: { covers: string[] }) {
   }, [key, covers])
 
   return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-500"
+      style={{ opacity: 'var(--backdrop-opacity)' }}
+    >
       <canvas
         ref={canvas}
         width={W}

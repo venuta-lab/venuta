@@ -151,7 +151,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
           className="flex cursor-grab justify-center pb-1 pt-3 active:cursor-grabbing"
           aria-hidden
         >
-          <span className="h-1.5 w-12 rounded-full bg-white/25" />
+          <span className="h-1.5 w-12 rounded-full bg-ink/25" />
         </div>
         <div className="flex min-h-0 gap-8 px-8 pb-8">
           <div className="w-[300px] shrink-0">
@@ -171,7 +171,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                     disabled={!inApp()}
                     placeholder={detail && !detail[f.key] ? 'Not set, or differs between tracks' : ''}
                     onChange={(e) => setFields((s) => ({ ...s, [f.key]: e.target.value }))}
-                    className={`rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13.5px] outline-none ring-1 ring-transparent placeholder:text-ink/30 focus:ring-[var(--accent)] ${
+                    className={`rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13.5px] outline-none ring-1 ring-transparent placeholder:text-ink/30 focus:ring-[var(--accent)] ${
                       fields[f.key] !== undefined ? 'ring-[color-mix(in_oklab,var(--accent)_60%,transparent)]' : ''
                     }`}
                   />
@@ -190,7 +190,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
               {detail?.tracks.map((t) => (
                 <div
                   key={t.path}
-                  className="group grid grid-cols-[36px_1fr_auto_auto] items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-white/[0.05]"
+                  className="group grid grid-cols-[36px_1fr_auto_auto] items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.05]"
                 >
                   <span className="text-right text-[13px] tabular-nums text-ink/45">
                     {t.disc > 1 ? `${t.disc}-` : ''}
@@ -201,8 +201,8 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                       value={titles[t.path] ?? t.title}
                       disabled={!inApp()}
                       onChange={(e) => setTitles((s) => ({ ...s, [t.path]: e.target.value }))}
-                      className={`w-full truncate rounded-md bg-transparent px-1 text-[14px] outline-none focus:bg-white/[0.06] ${
-                        titles[t.path] !== undefined ? 'text-[var(--accent)]' : ''
+                      className={`w-full truncate rounded-md bg-transparent px-1 text-[14px] outline-none focus:bg-ink/[0.06] ${
+                        titles[t.path] !== undefined ? 'text-accent-ink' : ''
                       }`}
                     />
                     {t.artist && <div className="truncate px-1 text-[12px] text-ink/45">{t.artist}</div>}
@@ -214,7 +214,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex items-center gap-3 border-t border-white/[0.06] pt-4">
+            <div className="mt-4 flex items-center gap-3 border-t border-ink/[0.06] pt-4">
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/55">
                 {status || (inApp() ? 'Edit any field or title. Ratings save as soon as you click.' : 'Editing works in the desktop app.')}
               </span>
@@ -227,14 +227,14 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                         setFields({})
                         setTitles({})
                       }}
-                      className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-white/10"
+                      className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-ink/10"
                     >
                       Discard
                     </button>
                     <motion.button
                       whileTap={{ scale: 0.96 }}
                       onClick={save}
-                      className="rounded-full px-5 py-2 text-[13.5px] font-medium text-[#0d0d10]"
+                      className="rounded-full px-5 py-2 text-[13.5px] font-medium text-on-accent"
                       style={{ background: 'var(--accent)' }}
                     >
                       Save {dirty} {dirty === 1 ? 'change' : 'changes'}
@@ -261,12 +261,12 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                   can be undone. Even so, keep a backup of this library somewhere else (another drive or SD card).
                 </p>
                 <div className="mt-6 flex justify-end gap-2">
-                  <button onClick={() => setAskBackup(null)} className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-white/10">
+                  <button onClick={() => setAskBackup(null)} className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-ink/10">
                     Not yet
                   </button>
                   <button
                     onClick={() => void askBackup()}
-                    className="rounded-full px-5 py-2 text-[13.5px] font-medium text-[#0d0d10]"
+                    className="rounded-full px-5 py-2 text-[13.5px] font-medium text-on-accent"
                     style={{ background: 'var(--accent)' }}
                   >
                     I have a backup
@@ -296,7 +296,7 @@ function Stars(props: { value: number; onRate: (n: number) => void; disabled?: b
           className={`px-[1px] text-[15px] leading-none transition-opacity ${
             props.value || hover ? '' : 'opacity-0 group-hover:opacity-100'
           }`}
-          style={{ color: n <= shown ? 'var(--accent)' : 'rgb(255 255 255 / 0.22)' }}
+          style={{ color: n <= shown ? 'var(--accent)' : 'color-mix(in oklab, var(--ink) 22%, transparent)' }}
           aria-label={`${n} stars`}
         >
           ★

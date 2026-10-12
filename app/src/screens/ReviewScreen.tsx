@@ -163,7 +163,7 @@ export function ReviewScreen({ root }: { root: string }) {
                     ? `Building: ${building.done.toLocaleString()} of ${building.total.toLocaleString()} tracks`
                     : 'Starting…'}
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
                   <motion.div
                     className="h-full rounded-full"
                     style={{ background: 'var(--accent)' }}
@@ -173,7 +173,7 @@ export function ReviewScreen({ root }: { root: string }) {
               </div>
               <button
                 onClick={() => void cancelApply()}
-                className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-white/10"
+                className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10"
               >
                 Stop
               </button>
@@ -215,7 +215,7 @@ export function ReviewScreen({ root }: { root: string }) {
                 <motion.span
                   layoutId="review-tab"
                   className="absolute inset-0 rounded-full"
-                  style={{ background: 'color-mix(in oklab, var(--accent) 28%, rgb(255 255 255 / 0.06))' }}
+                  style={{ background: 'color-mix(in oklab, var(--accent) 28%, color-mix(in oklab, var(--ink) 6%, transparent))' }}
                   transition={spring}
                 />
               )}
@@ -228,7 +228,7 @@ export function ReviewScreen({ root }: { root: string }) {
         {tab !== 'aside' && shown.length > 0 && (
           <button
             onClick={() => decide(Object.fromEntries(shown.map((a) => [a.id, 'approved' as Decision])))}
-            className="ml-auto rounded-full px-4 py-1.5 text-[13px] text-ink/75 hover:bg-white/10 hover:text-ink"
+            className="ml-auto rounded-full px-4 py-1.5 text-[13px] text-ink/75 hover:bg-ink/10 hover:text-ink"
           >
             Approve all {shown.length}
           </button>
@@ -236,7 +236,7 @@ export function ReviewScreen({ root }: { root: string }) {
         {tab === 'aside' && shown.length > 0 && (
           <button
             onClick={() => decide(Object.fromEntries(shown.map((a) => [a.id, 'approved' as Decision])))}
-            className="ml-auto rounded-full px-4 py-1.5 text-[13px] text-ink/75 hover:bg-white/10 hover:text-ink"
+            className="ml-auto rounded-full px-4 py-1.5 text-[13px] text-ink/75 hover:bg-ink/10 hover:text-ink"
           >
             Set all {shown.length} aside
           </button>
@@ -290,7 +290,7 @@ export function AlbumRow(props: {
       <div className="flex items-center gap-4 px-4 py-3">
         <motion.div
           onHoverStart={() => setAccent(cover?.accent)}
-          className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-white/5"
+          className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-ink/5"
         >
           {cover && <img src={cover.src} alt="" className="h-full w-full object-cover" draggable={false} />}
         </motion.div>
@@ -325,7 +325,7 @@ export function AlbumRow(props: {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="border-t border-white/[0.06] px-5 pb-5 pt-4"
+            className="border-t border-ink/[0.06] px-5 pb-5 pt-4"
           >
             {a.notes.map((n) => (
               <p key={n} className="mb-2 rounded-xl bg-[color-mix(in_oklab,var(--color-fix)_14%,transparent)] px-3.5 py-2 text-[13px] text-ink/85">
@@ -372,7 +372,7 @@ function FieldRow({ change: ch }: { change: AlbumView['changes'][number] }) {
         <div className="text-ink/85">{name}</div>
         {ch.confidence !== 'high' && <div className="text-[11px] text-fix">check this</div>}
       </div>
-      <div className="whitespace-pre-line break-words text-ink/50 line-through decoration-white/20">{list(ch.before)}</div>
+      <div className="whitespace-pre-line break-words text-ink/50 line-through decoration-ink/20">{list(ch.before)}</div>
       <div className="whitespace-pre-line break-words text-ink/90">
         {list(ch.after)}
         <div className="mt-0.5 text-[11.5px] text-ink/45 no-underline">{ch.reason}</div>
@@ -391,7 +391,7 @@ function Toggle(props: { on: boolean; label: string; onChange: (on: boolean) => 
     >
       <span
         className="relative h-6 w-10 rounded-full transition-colors"
-        style={{ background: props.on ? 'var(--accent)' : 'rgb(255 255 255 / 0.12)' }}
+        style={{ background: props.on ? 'var(--accent)' : 'color-mix(in oklab, var(--ink) 12%, transparent)' }}
       >
         <motion.span
           className="absolute top-1 h-4 w-4 rounded-full bg-white shadow"
@@ -409,7 +409,7 @@ function ChoiceButton(props: { onClick: () => void; children: React.ReactNode })
     <motion.button
       whileTap={{ scale: 0.96 }}
       onClick={props.onClick}
-      className="rounded-full bg-white/[0.08] px-4 py-1.5 text-[13px] hover:bg-white/[0.14]"
+      className="rounded-full bg-ink/[0.08] px-4 py-1.5 text-[13px] hover:bg-ink/[0.14]"
     >
       {props.children}
     </motion.button>
@@ -445,7 +445,7 @@ function BuildResult(props: { report: ApplyReport; onDismiss: () => void }) {
   )
 }
 
-function RunRow(props: { run: Run; onUndone: () => void }) {
+export function RunRow(props: { run: Run; onUndone: () => void }) {
   const [state, setState] = useState<'idle' | 'confirm' | 'working'>('idle')
   const when = new Date(props.run.started_ms).toLocaleString()
   return (
@@ -469,7 +469,7 @@ function RunRow(props: { run: Run; onUndone: () => void }) {
           >
             Undo build
           </button>
-          <button onClick={() => setState('idle')} className="rounded-full px-3 py-1.5 text-ink/60 hover:bg-white/10">
+          <button onClick={() => setState('idle')} className="rounded-full px-3 py-1.5 text-ink/60 hover:bg-ink/10">
             Keep
           </button>
         </>
@@ -477,7 +477,7 @@ function RunRow(props: { run: Run; onUndone: () => void }) {
         <button
           disabled={state === 'working'}
           onClick={() => setState('confirm')}
-          className="rounded-full px-3 py-1.5 text-ink/70 hover:bg-white/10"
+          className="rounded-full px-3 py-1.5 text-ink/70 hover:bg-ink/10"
         >
           {state === 'working' ? 'Undoing…' : 'Undo…'}
         </button>

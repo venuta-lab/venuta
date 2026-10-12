@@ -136,8 +136,8 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
         style={{
           borderStyle: 'dashed',
           borderWidth: 1.5,
-          borderColor: dragging ? 'var(--accent)' : 'rgb(255 255 255 / 0.22)',
-          background: dragging ? 'color-mix(in oklab, var(--accent) 16%, rgb(255 255 255 / 0.04))' : undefined,
+          borderColor: dragging ? 'var(--accent)' : 'color-mix(in oklab, var(--ink) 22%, transparent)',
+          background: dragging ? 'color-mix(in oklab, var(--accent) 16%, color-mix(in oklab, var(--ink) 4%, transparent))' : undefined,
         }}
       >
         <div
@@ -159,7 +159,7 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
           </PillButton>
           <button
             onClick={() => setSelected(Object.fromEntries(ready.map((a) => [a.id, true])))}
-            className="rounded-full px-4 py-2 text-[13px] text-ink/75 hover:bg-white/10"
+            className="rounded-full px-4 py-2 text-[13px] text-ink/75 hover:bg-ink/10"
           >
             Select all {ready.length}
           </button>

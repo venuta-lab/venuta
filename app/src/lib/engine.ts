@@ -136,7 +136,17 @@ export interface Question {
 export interface Settings {
   rules_dir: string | null
   new_library: string | null
+  backup_confirmed?: boolean
+  apple_library?: string | null
+  apple_key?: string | null
+  acoustid_key?: string | null
+  discogs_token?: string | null
 }
+
+export const getSettings = () =>
+  inApp()
+    ? invoke<Settings>('get_settings')
+    : Promise.resolve<Settings>({ rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music Library' })
 
 export interface Review {
   plan: { albums: AlbumView[]; questions: Question[] }

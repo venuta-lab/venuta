@@ -1,20 +1,25 @@
 @import "tailwindcss";
 
 /*
-  Glass over your own artwork. The window itself is translucent (acrylic / Liquid Glass);
-  a blurred mosaic of the library's covers sits behind frosted panels, and the accent colour
-  is taken from the artwork in focus.
+  Look and feel. Every colour is a token that follows three switches on <html>:
+    data-theme    dark | light
+    data-surface  glass | frosted | solid | amoled
+    data-backdrop on | off   (the blurred album artwork behind everything)
+  Components use the tokens only (text-ink/60, bg-ink/[0.06], border-edge, text-on-accent…),
+  so every screen works in every combination without its own rules.
 */
 @theme {
-  --color-ink: #f3f1ee;
-  --color-glass: rgb(255 255 255 / 0.06);
-  --color-glass-strong: rgb(255 255 255 / 0.1);
-  --color-edge: rgb(255 255 255 / 0.1);
-  --color-scrim: rgb(9 9 12 / 0.42);
-  --color-problem: #ff8a80;
-  --color-fix: #ffd180;
-  --color-note: #b3c7ff;
+  --color-ink: var(--ink);
+  --color-glass: var(--glass);
+  --color-edge: var(--edge);
+  --color-scrim: var(--scrim);
+  --color-problem: var(--problem);
+  --color-fix: var(--fix);
+  --color-good: var(--good);
+  --color-note: var(--note);
   --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
   --font-sans: "Sora Variable", "Segoe UI Variable", system-ui, sans-serif;
   --radius-glass: 22px;
 }
@@ -26,10 +31,93 @@
   initial-value: #a6b8ff;
 }
 
+/* Dark, glass: the default. */
 :root {
   --accent: #a6b8ff;
+  --ink: #f3f1ee;
+  --on-accent: #121014;
+  --accent-ink: var(--accent);
+  --problem: #ff8a80;
+  --fix: #ffd180;
+  --good: #8fe3b0;
+  --note: #b3c7ff;
+  --glass: rgb(255 255 255 / 0.06);
+  --edge: rgb(255 255 255 / 0.1);
+  --highlight: rgb(255 255 255 / 0.08);
+  --shadow: 0 20px 50px -20px rgb(0 0 0 / 0.45);
+  --blur: blur(28px) saturate(1.4);
+  --app-bg: transparent;
+  --scrim: rgb(9 9 12 / 0.42);
+  --popover: rgb(24 22 30 / 0.94);
+  --backdrop-opacity: 1;
   color-scheme: dark;
   transition: --accent 700ms ease;
+}
+
+:root[data-surface="frosted"] {
+  --glass: rgb(30 27 38 / 0.5);
+  --blur: blur(44px) saturate(1.6);
+  --app-bg: rgb(14 12 18 / 0.5);
+  --scrim: rgb(10 9 14 / 0.55);
+}
+
+:root[data-surface="solid"] {
+  --glass: #1c1a22;
+  --edge: rgb(255 255 255 / 0.07);
+  --blur: none;
+  --app-bg: #131117;
+  --backdrop-opacity: 0;
+}
+
+:root[data-surface="amoled"] {
+  --glass: #000;
+  --edge: rgb(255 255 255 / 0.12);
+  --highlight: transparent;
+  --shadow: none;
+  --blur: none;
+  --app-bg: #000;
+  --popover: #050505;
+  --backdrop-opacity: 0;
+}
+
+/* Light. The accent is darkened wherever it is used as text, so it stays readable. */
+:root[data-theme="light"] {
+  --ink: #1b1822;
+  --on-accent: #ffffff;
+  --accent-ink: color-mix(in oklab, var(--accent) 62%, #000);
+  --problem: #c62828;
+  --fix: #8a5a00;
+  --good: #1e7a46;
+  --note: #3451b2;
+  --glass: rgb(255 255 255 / 0.5);
+  --edge: rgb(20 16 30 / 0.09);
+  --highlight: rgb(255 255 255 / 0.7);
+  --shadow: 0 18px 44px -22px rgb(40 30 60 / 0.28);
+  --app-bg: rgb(247 245 251 / 0.35);
+  --scrim: rgb(250 248 253 / 0.55);
+  --popover: rgb(252 251 254 / 0.96);
+  color-scheme: light;
+}
+
+:root[data-theme="light"][data-surface="frosted"] {
+  --glass: rgb(255 255 255 / 0.66);
+  --app-bg: rgb(247 245 251 / 0.62);
+  --scrim: rgb(250 248 253 / 0.7);
+}
+
+/* AMOLED is a dark-only look; in light it behaves as Solid. */
+:root[data-theme="light"][data-surface="solid"],
+:root[data-theme="light"][data-surface="amoled"] {
+  --glass: #ffffff;
+  --edge: rgb(20 16 30 / 0.08);
+  --highlight: transparent;
+  --app-bg: #f3f1f6;
+  --popover: #ffffff;
+  --backdrop-opacity: 0;
+}
+
+:root[data-backdrop="off"] {
+  --backdrop-opacity: 0;
 }
 
 html,
@@ -42,22 +130,33 @@ body,
 body {
   margin: 0;
   color: var(--color-ink);
+  background: var(--app-bg);
   font-family: var(--font-sans);
   font-feature-settings: "tnum" 1;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
+  transition: background-color 300ms ease;
 }
 
-/* Frosted panel: the one surface style used everywhere. */
+/* Panel: the one surface style used everywhere. */
 .glass {
-  background: var(--color-glass);
-  border: 1px solid var(--color-edge);
-  backdrop-filter: blur(28px) saturate(1.4);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 20px 50px -20px rgb(0 0 0 / 0.45);
+    inset 0 1px 0 var(--highlight),
+    var(--shadow);
+}
+
+/* Menus, the palette and dialogs: nearly opaque so text over busy artwork stays readable. */
+.popover {
+  background: var(--popover);
+  border: 1px solid var(--edge);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  box-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.55);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -70,8 +169,15 @@ body {
   border-radius: 10px;
 }
 
-
-
+kbd {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: color-mix(in oklab, var(--ink) 70%, transparent);
+}
 
 /* Slow drift of the backdrop canvas: transform only, so it runs on the compositor. */
 @keyframes backdrop-drift {
@@ -90,6 +196,10 @@ body {
   transform: scale(1.25);
   animation: backdrop-drift 90s ease-in-out infinite;
   will-change: transform;
+}
+
+:root[data-motion="reduced"] .backdrop-drift {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

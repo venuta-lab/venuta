@@ -178,15 +178,15 @@ function CardTile(props: {
             {card?.auto_sync ? '. Syncs when inserted' : ''}
           </div>
         </div>
-        <button onClick={() => setEditing(!editing)} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/65 hover:bg-white/10">
+        <button onClick={() => setEditing(!editing)} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/65 hover:bg-ink/10">
           {editing ? 'Close' : 'Settings'}
         </button>
       </div>
 
       {/* Storage: used, what this sync adds, free. */}
       <div className="mt-4">
-        <div className="flex h-2.5 overflow-hidden rounded-full bg-white/[0.07]">
-          <div className="h-full bg-white/35" style={{ width: `${(used / Math.max(1, v.total_bytes)) * 100}%` }} />
+        <div className="flex h-2.5 overflow-hidden rounded-full bg-ink/[0.07]">
+          <div className="h-full bg-ink/35" style={{ width: `${(used / Math.max(1, v.total_bytes)) * 100}%` }} />
           <motion.div
             className="h-full"
             style={{ background: 'var(--accent)' }}
@@ -231,7 +231,7 @@ function CardTile(props: {
                 Not enough space. Choose fewer folders in Settings.
               </span>
             )}
-            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-white/10">
+            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
               Cancel
             </button>
           </>
@@ -242,11 +242,11 @@ function CardTile(props: {
               <div className="text-[13px] text-ink/80">
                 {b.total ? `Syncing: ${b.done.toLocaleString()} of ${b.total.toLocaleString()} changes, ${gb(b.bytes)} written` : 'Starting…'}
               </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
                 <motion.div className="h-full rounded-full" style={{ background: 'var(--accent)' }} animate={{ width: `${b.total ? (b.done / b.total) * 100 : 0}%` }} />
               </div>
             </div>
-            <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-white/10">
+            <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10">
               Stop
             </button>
           </div>
@@ -260,7 +260,7 @@ function CardTile(props: {
             <PillButton onClick={props.onEject} accent>
               Eject
             </PillButton>
-            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-white/10">
+            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
               Done
             </button>
           </>
@@ -306,10 +306,10 @@ function CardSettings(props: {
   const [include, setInclude] = useState<string[]>(props.include)
   const [auto, setAuto] = useState(props.autoSync)
   return (
-    <div className="mt-4 grid gap-3 border-t border-white/[0.06] pt-4">
+    <div className="mt-4 grid gap-3 border-t border-ink/[0.06] pt-4">
       <label className="grid max-w-[360px] gap-1">
         <span className="text-[11.5px] text-ink/50">Card name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13.5px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
+        <input value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13.5px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
       </label>
       <div>
         <div className="text-[11.5px] text-ink/50">What this card carries (none ticked means everything)</div>
@@ -321,7 +321,7 @@ function CardSettings(props: {
                 key={f}
                 onClick={() => setInclude(on ? include.filter((x) => x !== f) : [...include, f])}
                 className="rounded-full px-3 py-1.5 text-[12.5px]"
-                style={{ background: on ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'rgb(255 255 255 / 0.07)' }}
+                style={{ background: on ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'color-mix(in oklab, var(--ink) 7%, transparent)' }}
               >
                 {f}
               </button>

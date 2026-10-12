@@ -106,7 +106,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
         <Section title="Smart">
           {data?.smart.map((s) => (
             <NavItem key={s.name} active={view?.kind === 'smart' && view.name === s.name} onClick={() => setView({ kind: 'smart', name: s.name })}>
-              <span className="text-[var(--accent)]">✦</span>
+              <span className="text-accent-ink">✦</span>
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <span className="text-[11.5px] text-ink/40">{data.smart_counts[s.name] ?? 0}</span>
             </NavItem>
@@ -115,7 +115,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
         <Section title="Yours" action={<button onClick={() => setCreating('')} className="text-[12px] text-ink/60 hover:text-ink">+ New</button>}>
           {creating !== null && (
             <form onSubmit={(e) => { e.preventDefault(); void createPlaylist(creating) }} className="px-1 pb-1">
-              <input autoFocus value={creating} onChange={(e) => setCreating(e.target.value)} onBlur={() => !creating.trim() && setCreating(null)} onKeyDown={(e) => e.key === 'Escape' && setCreating(null)} placeholder="Name, then Enter" className="w-full rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
+              <input autoFocus value={creating} onChange={(e) => setCreating(e.target.value)} onBlur={() => !creating.trim() && setCreating(null)} onKeyDown={(e) => e.key === 'Escape' && setCreating(null)} placeholder="Name, then Enter" className="w-full rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
             </form>
           )}
           {own.filter((p) => !smartNames.has(p.name)).map((p) => (
@@ -171,7 +171,7 @@ function NavItem(props: { active: boolean; onClick: () => void; children: React.
       className={`relative flex items-center gap-2 rounded-xl px-3 py-2 text-left text-[13.5px] ${props.active ? 'text-ink' : 'text-ink/70 hover:text-ink'}`}
     >
       {props.active && (
-        <motion.span layoutId="pl-pill" transition={spring} className="absolute inset-0 rounded-xl" style={{ background: 'color-mix(in oklab, var(--accent) 24%, rgb(255 255 255 / 0.05))' }} />
+        <motion.span layoutId="pl-pill" transition={spring} className="absolute inset-0 rounded-xl" style={{ background: 'color-mix(in oklab, var(--accent) 24%, color-mix(in oklab, var(--ink) 5%, transparent))' }} />
       )}
       <span className="relative flex min-w-0 flex-1 items-center gap-2">{props.children}</span>
     </button>
@@ -186,7 +186,7 @@ function AppleSetup({ onSaved }: { onSaved: () => void }) {
         Your Apple Music library is read on this computer only. Enter its key once (16 characters; it is published in
         open-source Apple Music tools and not included here).
       </p>
-      <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="Library key" className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
+      <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="Library key" className="rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
       <PillButton onClick={async () => { await setApple(null, key.trim()); onSaved() }} disabled={key.trim().length !== 16}>
         Save key
       </PillButton>
@@ -251,10 +251,10 @@ function PlaylistEditor(props: { root: string; name: string; onChanged: () => vo
           }}
           className="min-w-0 flex-1 bg-transparent text-[30px] font-semibold tracking-[-0.03em] outline-none"
         />
-        <button onClick={rateAll} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/70 hover:bg-white/10" title="Give every unrated song here 4 stars">
+        <button onClick={rateAll} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/70 hover:bg-ink/10" title="Give every unrated song here 4 stars">
           Rate unrated ★★★★
         </button>
-        <button onClick={async () => { if (window.confirm(`Delete “${props.name}”? It is moved to _Quarantine, not destroyed.`)) { await playlistDelete(props.root, props.name); props.onGone() } }} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/60 hover:bg-white/10">
+        <button onClick={async () => { if (window.confirm(`Delete “${props.name}”? It is moved to _Quarantine, not destroyed.`)) { await playlistDelete(props.root, props.name); props.onGone() } }} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/60 hover:bg-ink/10">
           Delete
         </button>
       </div>
@@ -264,7 +264,7 @@ function PlaylistEditor(props: { root: string; name: string; onChanged: () => vo
       </p>
       <Reorder.Group axis="y" values={entries} onReorder={(v) => { setEntries(v); setDirty(true) }} className="mt-4 grid gap-1">
         {entries.map((e, i) => (
-          <Reorder.Item key={e.path || `missing-${i}-${e.title}`} value={e} className={`flex cursor-grab items-center gap-3 rounded-xl px-3 py-2 active:cursor-grabbing ${e.missing ? 'opacity-45' : 'hover:bg-white/[0.05]'}`} whileDrag={{ scale: 1.02, boxShadow: '0 12px 30px -10px rgb(0 0 0 / 0.5)' }}>
+          <Reorder.Item key={e.path || `missing-${i}-${e.title}`} value={e} className={`flex cursor-grab items-center gap-3 rounded-xl px-3 py-2 active:cursor-grabbing ${e.missing ? 'opacity-45' : 'hover:bg-ink/[0.05]'}`} whileDrag={{ scale: 1.02, boxShadow: '0 12px 30px -10px rgb(0 0 0 / 0.5)' }}>
             <span className="w-6 text-right text-[12px] tabular-nums text-ink/40">{i + 1}</span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[14px]">{e.title}</div>
@@ -320,7 +320,7 @@ function SmartEditor(props: { root: string; rule: SmartRule; onSaved: () => void
       <p className="mt-1 text-[13px] text-ink/55">A smart playlist rewrites itself from these rules whenever you open Playlists.</p>
       <div className="mt-5 flex items-center gap-2 text-[13.5px]">
         Songs matching
-        <select value={rule.match} onChange={(e) => setRule({ ...rule, match: e.target.value as 'all' | 'any' })} className="rounded-lg bg-white/[0.08] px-2 py-1 outline-none">
+        <select value={rule.match} onChange={(e) => setRule({ ...rule, match: e.target.value as 'all' | 'any' })} className="rounded-lg bg-ink/[0.08] px-2 py-1 outline-none">
           <option value="all">all</option>
           <option value="any">any</option>
         </select>
@@ -331,19 +331,19 @@ function SmartEditor(props: { root: string; rule: SmartRule; onSaved: () => void
           const f = FIELDS.find((x) => x.id === c.field) ?? FIELDS[0]
           return (
             <motion.div layout key={i} className="flex flex-wrap items-center gap-2">
-              <select value={c.field} onChange={(e) => { const nf = FIELDS.find((x) => x.id === e.target.value)!; set(i, { field: nf.id, op: nf.ops[0], value: nf.hint }) }} className="rounded-lg bg-white/[0.08] px-2 py-1.5 text-[13px] outline-none">
+              <select value={c.field} onChange={(e) => { const nf = FIELDS.find((x) => x.id === e.target.value)!; set(i, { field: nf.id, op: nf.ops[0], value: nf.hint }) }} className="rounded-lg bg-ink/[0.08] px-2 py-1.5 text-[13px] outline-none">
                 {FIELDS.map((x) => (
                   <option key={x.id} value={x.id}>{x.label}</option>
                 ))}
               </select>
               {f.ops[0] !== '' && (
                 <>
-                  <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} className="rounded-lg bg-white/[0.08] px-2 py-1.5 text-[13px] outline-none">
+                  <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} className="rounded-lg bg-ink/[0.08] px-2 py-1.5 text-[13px] outline-none">
                     {f.ops.map((o) => (
                       <option key={o} value={o}>{OP_LABEL[o]}</option>
                     ))}
                   </select>
-                  <input value={c.value} onChange={(e) => set(i, { value: e.target.value })} placeholder={f.hint} className="w-48 rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
+                  <input value={c.value} onChange={(e) => set(i, { value: e.target.value })} placeholder={f.hint} className="w-48 rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
                 </>
               )}
               <button onClick={() => setRule({ ...rule, conditions: rule.conditions.filter((_, j) => j !== i) })} className="px-2 text-ink/40 hover:text-ink" aria-label="Remove rule">
@@ -353,12 +353,12 @@ function SmartEditor(props: { root: string; rule: SmartRule; onSaved: () => void
           )
         })}
       </div>
-      <button onClick={() => setRule({ ...rule, conditions: [...rule.conditions, { field: 'rating', op: 'at_least', value: '4' }] })} className="mt-3 rounded-full px-3 py-1.5 text-[12.5px] text-ink/70 hover:bg-white/10">
+      <button onClick={() => setRule({ ...rule, conditions: [...rule.conditions, { field: 'rating', op: 'at_least', value: '4' }] })} className="mt-3 rounded-full px-3 py-1.5 text-[12.5px] text-ink/70 hover:bg-ink/10">
         + Add a rule
       </button>
       <label className="mt-4 flex items-center gap-2 text-[13px] text-ink/75">
         At most
-        <input type="number" min={0} value={rule.limit ?? ''} onChange={(e) => setRule({ ...rule, limit: e.target.value ? Number(e.target.value) : null })} className="w-24 rounded-lg bg-white/[0.06] px-3 py-1.5 outline-none" />
+        <input type="number" min={0} value={rule.limit ?? ''} onChange={(e) => setRule({ ...rule, limit: e.target.value ? Number(e.target.value) : null })} className="w-24 rounded-lg bg-ink/[0.06] px-3 py-1.5 outline-none" />
         songs (empty for no limit)
       </label>
       <div className="mt-5 flex items-center gap-3">
@@ -386,7 +386,7 @@ function WantList({ wanted }: { wanted: PlaylistsView['wanted'] }) {
       <div className="glass mt-5 inline-flex rounded-full p-1">
         {([1, 2, 3] as const).map((t) => (
           <button key={t} onClick={() => setTier(t)} className={`relative rounded-full px-4 py-1.5 text-[13px] ${tier === t ? 'text-ink' : 'text-ink/60'}`}>
-            {tier === t && <motion.span layoutId="tier-pill" transition={spring} className="absolute inset-0 rounded-full" style={{ background: 'color-mix(in oklab, var(--accent) 28%, rgb(255 255 255 / 0.06))' }} />}
+            {tier === t && <motion.span layoutId="tier-pill" transition={spring} className="absolute inset-0 rounded-full" style={{ background: 'color-mix(in oklab, var(--accent) 28%, color-mix(in oklab, var(--ink) 6%, transparent))' }} />}
             <span className="relative">
               {label[t]} <span className="text-ink/45">{wanted.filter((w) => w.tier === t).length}</span>
             </span>
@@ -395,7 +395,7 @@ function WantList({ wanted }: { wanted: PlaylistsView['wanted'] }) {
       </div>
       <div className="mt-4 grid gap-1">
         {shown.map((w) => (
-          <div key={w.album + w.artist} className="rounded-xl px-3 py-2.5 hover:bg-white/[0.05]">
+          <div key={w.album + w.artist} className="rounded-xl px-3 py-2.5 hover:bg-ink/[0.05]">
             <div className="flex items-baseline gap-3">
               <span className="min-w-0 flex-1 truncate text-[14px]">{w.album}</span>
               <span className="shrink-0 text-[12px] text-ink/45">{w.saved_tracks} saved</span>
@@ -436,7 +436,7 @@ export function AddToPlaylist({ root, paths }: { root: string; paths: string[] }
   if (!inApp() || !paths.length) return null
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-white/10">
+      <button onClick={() => setOpen(!open)} className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-ink/10">
         {done || 'Add to playlist'}
       </button>
       <AnimatePresence>
@@ -451,7 +451,7 @@ export function AddToPlaylist({ root, paths }: { root: string; paths: string[] }
           >
             <div className="no-scrollbar max-h-60 overflow-y-auto">
               {names.map((n) => (
-                <button key={n} onClick={() => add(n)} className="block w-full truncate rounded-lg px-3 py-1.5 text-left text-[13px] hover:bg-white/10">
+                <button key={n} onClick={() => add(n)} className="block w-full truncate rounded-lg px-3 py-1.5 text-left text-[13px] hover:bg-ink/10">
                   {n}
                 </button>
               ))}
@@ -461,9 +461,9 @@ export function AddToPlaylist({ root, paths }: { root: string; paths: string[] }
                 e.preventDefault()
                 if (fresh.trim()) void add(fresh.trim())
               }}
-              className="mt-1 border-t border-white/[0.06] pt-2"
+              className="mt-1 border-t border-ink/[0.06] pt-2"
             >
-              <input value={fresh} onChange={(e) => setFresh(e.target.value)} placeholder="New playlist name" className="w-full rounded-lg bg-white/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
+              <input value={fresh} onChange={(e) => setFresh(e.target.value)} placeholder="New playlist name" className="w-full rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
             </form>
           </motion.div>
         )}
