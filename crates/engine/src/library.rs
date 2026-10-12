@@ -235,6 +235,16 @@ impl Library {
         let albums = self.albums();
         dirs.iter()
             .filter_map(|d| {
+                // "track:<path>": that one track's art (a single from a folder of singles).
+                if let Some(path) = d.strip_prefix("track:") {
+                    let t = self.tracks.iter().find(|t| t.path == path)?;
+                    let pic = t.front_cover()?;
+                    return Some(crate::art::CoverRequest {
+                        dir: d.clone(),
+                        track_rel: t.path.clone(),
+                        data_hash: pic.data_hash.clone(),
+                    });
+                }
                 let tracks = albums.get(d.as_str())?;
                 let (track, pic) = tracks
                     .iter()

@@ -15,7 +15,7 @@ import {
   type IncomingView,
 } from '../lib/engine'
 import { loadCovers } from '../lib/covers'
-import { AlbumRow } from './ReviewScreen'
+import { AlbumRow } from '../components/AlbumRow'
 import { DeepProgressBar, PillButton } from './LibraryScreen'
 import { IconIncoming } from '../components/Icons'
 

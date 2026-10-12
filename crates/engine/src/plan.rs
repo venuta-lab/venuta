@@ -127,6 +127,8 @@ pub struct AlbumView {
     pub notes: Vec<String>,
     pub changes: Vec<FieldChange>,
     pub art: ArtPlan,
+    /// A sharper cover was found online and replaces the embedded one.
+    pub cover_upgrade: bool,
     pub tracks: usize,
     /// Track file names in the new library, in order.
     pub files: Vec<String>,
@@ -157,6 +159,7 @@ impl Plan {
                     notes: a.notes.clone(),
                     changes: a.changes.clone(),
                     art: a.art.clone(),
+                    cover_upgrade: a.cover_url.is_some(),
                     tracks: a.tracks.len(),
                     files: a
                         .tracks
@@ -1391,7 +1394,9 @@ pub fn sanitize(s: &str, max: usize) -> String {
 /// Remove soundtrack labels wherever they appear: "Interstellar (Original Motion Picture
 /// Soundtrack) [Expanded Edition]" becomes "Interstellar [Expanded Edition]".
 fn clean_album(album: &str, rules: &Rules) -> String {
-    let mut a = album.trim().to_owned();
+    // Uploads often name the album "Title | Artist Official": the part after "|" is not
+    // the album's name.
+    let mut a = album.split(" | ").next().unwrap_or(album).trim().to_owned();
     for suffix in &rules.titles.album_suffixes {
         let needle = suffix.trim().to_lowercase();
         if needle.is_empty() {
@@ -1714,6 +1719,10 @@ mod tests {
         assert_eq!(
             clean_album("Interstellar (Expanded Edition)", &rules),
             "Interstellar (Expanded Edition)"
+        );
+        assert_eq!(
+            clean_album("Love Songs | The Local Music Train Official", &rules),
+            "Love Songs"
         );
         assert_eq!(
             clean_title("Raanjhanaa (From \"Raanjhanaa\")", "Raanjhanaa"),

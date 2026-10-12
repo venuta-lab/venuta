@@ -15,8 +15,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tauri::State;
 use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
@@ -80,7 +80,10 @@ async fn run_lookup(
 #[derive(Serialize)]
 struct Review {
     plan: PlanView,
+    /// Albums you left out of the build (and old approvals), by album id.
     decisions: BTreeMap<String, Decision>,
+    /// Your answers to decisions, by decision id.
+    answers: engine::review::Answers,
     settings: Settings,
 }
 
@@ -105,12 +108,15 @@ fn settings_with_defaults() -> Settings {
     s
 }
 
+/// The plan for a library with your answers applied, comparing likely duplicates by decoding
+/// them first when needed.
 fn build_plan(root: &Path) -> CmdResult<Plan> {
     let index = open_index(root)?;
-    let lib = Library::load(&index).map_err(|e| e.to_string())?;
     let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
     let rules = Rules::load(&rules_dir)?;
-    Ok(engine::plan::build(&lib, &rules))
+    engine::plan::build_checked(&index, root, &rules)
+        .map(|(_, plan)| plan)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -266,7 +272,9 @@ fn set_settings(settings: Settings) -> CmdResult<()> {
 
 /// Build the plan for a library and return what the Review screen shows.
 #[tauri::command]
-async fn review(root: String, jobs: State<'_, Jobs>) -> CmdResult<Review> {
+async fn review(app: AppHandle, root: String, jobs: State<'_, Jobs>) -> CmdResult<Review> {
+    // Clips on question cards play your own files, so the music folder may be read.
+    let _ = app.asset_protocol_scope().allow_directory(&root, true);
     let r = root.clone();
     let plan = blocking(move || build_plan(Path::new(&r))).await?;
     let view = plan.view();
@@ -274,44 +282,66 @@ async fn review(root: String, jobs: State<'_, Jobs>) -> CmdResult<Review> {
     Ok(Review {
         plan: view,
         decisions: engine::settings::load_decisions(Path::new(&root)),
+        answers: engine::settings::load_answers(Path::new(&root)),
         settings: settings_with_defaults(),
     })
 }
 
-#[tauri::command]
-fn set_decisions(
-    root: String,
-    changes: BTreeMap<String, Option<Decision>>,
-) -> CmdResult<BTreeMap<String, Decision>> {
-    let root = PathBuf::from(root);
-    let mut d = engine::settings::load_decisions(&root);
-    for (album, decision) in changes {
-        match decision {
-            Some(x) => d.insert(album, x),
-            None => d.remove(&album),
-        };
-    }
-    engine::settings::save_decisions(&root, &d)?;
-    Ok(d)
+#[derive(serde::Deserialize)]
+struct AnswerItem {
+    id: String,
+    choice: String,
+    /// The two names, for "same artist?" (answers to it are saved in your aliases).
+    #[serde(default)]
+    a: Option<String>,
+    #[serde(default)]
+    b: Option<String>,
 }
 
-/// "Are A and B the same artist?" `keep` is the spelling to use, or null for "different".
+/// Answer one or more decisions (or approve handled ones), then plan again.
 #[tauri::command]
-async fn answer_question(
+async fn answer_decisions(
+    app: AppHandle,
     root: String,
-    a: String,
-    b: String,
-    keep: Option<String>,
+    items: Vec<AnswerItem>,
     jobs: State<'_, Jobs>,
 ) -> CmdResult<Review> {
+    let rootp = PathBuf::from(&root);
     let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
-    engine::rules::answer_same_artist(&rules_dir, &a, &b, keep.as_deref())?;
-    review(root, jobs).await
+    let mut answers = engine::settings::load_answers(&rootp);
+    for it in items {
+        if it.id.starts_with("same:") {
+            if let (Some(a), Some(b)) = (&it.a, &it.b) {
+                let keep = it.choice.strip_prefix("same:");
+                engine::rules::answer_same_artist(&rules_dir, a, b, keep)?;
+            }
+        } else {
+            answers.insert(it.id, it.choice);
+        }
+    }
+    engine::settings::save_answers(&rootp, &answers)?;
+    review(app, root, jobs).await
 }
 
-/// Build the approved albums into the new library. Progress streams over `on_progress`.
+/// Take back an answer, so the decision is asked (or handled) afresh.
 #[tauri::command]
-async fn apply_approved(
+async fn clear_answer(
+    app: AppHandle,
+    root: String,
+    id: String,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<Review> {
+    let rootp = PathBuf::from(&root);
+    let mut answers = engine::settings::load_answers(&rootp);
+    answers.remove(&id);
+    engine::settings::save_answers(&rootp, &answers)?;
+    review(app, root, jobs).await
+}
+
+/// Build the new library: every album except those you left out and those still waiting for
+/// an answer. Progress streams over `on_progress`.
+#[tauri::command]
+async fn build_library(
     root: String,
     on_progress: Channel<DeepProgress>,
     jobs: State<'_, Jobs>,
@@ -319,24 +349,24 @@ async fn apply_approved(
     let settings = settings_with_defaults();
     let target = settings
         .new_library
-        .ok_or("Choose where the new library should go first.")?;
-    let decisions = engine::settings::load_decisions(Path::new(&root));
+        .ok_or("Choose where the new library should go first (Settings, Music folders).")?;
+    let left_out = engine::settings::load_decisions(Path::new(&root));
     let albums: Vec<engine::plan::AlbumPlan> = {
         let guard = jobs.plan.lock().map_err(|e| e.to_string())?;
         let (plan_root, plan) = guard
             .as_ref()
-            .ok_or("Open Review first so the plan is up to date.")?;
+            .ok_or("Open the Inbox first so the plan is up to date.")?;
         if *plan_root != root {
-            return Err("The plan is for a different library; open Review again.".into());
+            return Err("The plan is for a different library; open the Inbox again.".into());
         }
         plan.albums
             .iter()
-            .filter(|a| decisions.get(&a.id) == Some(&Decision::Approved))
+            .filter(|a| a.waiting_on.is_empty() && left_out.get(&a.id) != Some(&Decision::Skipped))
             .cloned()
             .collect()
     };
     if albums.is_empty() {
-        return Err("No albums are approved yet.".into());
+        return Err("Every album is waiting for an answer or left out.".into());
     }
     let progress = Arc::new(ApplyProgress::default());
     {
@@ -363,6 +393,23 @@ async fn apply_approved(
         *slot = None;
     }
     result
+}
+
+#[tauri::command]
+fn set_decisions(
+    root: String,
+    changes: BTreeMap<String, Option<Decision>>,
+) -> CmdResult<BTreeMap<String, Decision>> {
+    let root = PathBuf::from(root);
+    let mut d = engine::settings::load_decisions(&root);
+    for (album, decision) in changes {
+        match decision {
+            Some(x) => d.insert(album, x),
+            None => d.remove(&album),
+        };
+    }
+    engine::settings::save_decisions(&root, &d)?;
+    Ok(d)
 }
 
 #[tauri::command]
@@ -962,9 +1009,10 @@ pub fn run() {
             set_settings,
             check_new_library,
             review,
+            answer_decisions,
+            clear_answer,
+            build_library,
             set_decisions,
-            answer_question,
-            apply_approved,
             cancel_apply,
             list_runs,
             undo_run,

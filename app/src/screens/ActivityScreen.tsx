@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listRuns, type Run } from '../lib/engine'
-import { RunRow } from './ReviewScreen'
+import { RunRow } from '../components/AlbumRow'
 
 /** Everything that changed, newest first, each with undo. */
 export function ActivityScreen() {

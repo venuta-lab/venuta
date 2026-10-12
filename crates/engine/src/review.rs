@@ -229,7 +229,20 @@ pub fn untagged(lib: &Library, answers: &Answers, plan: &Plan) -> Option<Decisio
                         .join(", "),
                 ),
             ],
-            songs: files.iter().map(|t| song(t)).collect(),
+            songs: files
+                .iter()
+                .map(|t| {
+                    let (artist, title) = names_from_file(&t.path);
+                    Song {
+                        title: match artist {
+                            Some(a) => format!("{a} – {title}"),
+                            None => title,
+                        },
+                        path: t.path.clone(),
+                        duration_ms: t.duration_ms,
+                    }
+                })
+                .collect(),
             choice: None,
         }],
         choices: vec![

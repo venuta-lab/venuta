@@ -114,6 +114,12 @@ export interface FieldChange {
 
 export interface AlbumView {
   id: string
+  /** The folder the songs come from. */
+  source_dir: string
+  /** Cover key: a folder, or "track:<path>" for one song's own art. */
+  cover: string
+  /** Questions this album waits for before it can be built. */
+  waiting_on: string[]
   title: string
   album_artist: string
   target_dir: string
@@ -122,15 +128,49 @@ export interface AlbumView {
   notes: string[]
   changes: FieldChange[]
   art: { kind: 'keep' | 'missing' } | { kind: 'reencode'; max_px: number }
+  cover_upgrade?: boolean
   tracks: number
   files: string[]
 }
 
-export interface Question {
+export type DecisionKind = 'duplicate_songs' | 'same_artist' | 'same_album' | 'year' | 'untagged'
+
+export interface DecisionSong {
+  title: string
+  path: string
+  duration_ms: number
+}
+
+export interface DecisionSide {
+  title: string
+  subtitle: string
+  covers: string[]
+  facts: { label: string; value: string }[]
+  songs: DecisionSong[]
+  choice: string | null
+}
+
+export interface PlanDecision {
   id: string
-  text: string
-  a: string
-  b: string
+  kind: DecisionKind
+  /** Handled automatically because the evidence proves it; already applied. */
+  auto: boolean
+  proof: string
+  answer: string | null
+  question: string
+  subject: string
+  sides: DecisionSide[]
+  choices: { id: string; label: string; hint: string }[]
+  suggested: string | null
+  why: string
+  albums: string[]
+}
+
+export interface AnswerItem {
+  id: string
+  choice: string
+  a?: string
+  b?: string
 }
 
 export interface Settings {
@@ -149,8 +189,10 @@ export const getSettings = () =>
     : Promise.resolve<Settings>({ rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music Library' })
 
 export interface Review {
-  plan: { albums: AlbumView[]; questions: Question[] }
+  plan: { albums: AlbumView[]; decisions: PlanDecision[] }
+  /** Albums left out of the build, by album id. */
   decisions: Record<string, Decision>
+  answers: Record<string, string>
   settings: Settings
 }
 
@@ -181,8 +223,24 @@ export const review = (root: string): Promise<Review> =>
     : dev<Review['plan']>('review.json').then((plan) => ({
         plan,
         decisions: { ...devDecisions },
-        settings: { rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music' },
+        answers: { ...devAnswers },
+        settings: { rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music Library' },
       }))
+
+const devAnswers: Record<string, string> = {}
+
+/** Answer decisions (or approve handled ones); returns the plan made again. */
+export const answerDecisions = (root: string, items: AnswerItem[]): Promise<Review> => {
+  if (inApp()) return invoke<Review>('answer_decisions', { root, items })
+  for (const i of items) devAnswers[i.id] = i.choice
+  return review(root)
+}
+
+export const clearAnswer = (root: string, id: string): Promise<Review> => {
+  if (inApp()) return invoke<Review>('clear_answer', { root, id })
+  delete devAnswers[id]
+  return review(root)
+}
 
 export const setDecisions = (root: string, changes: Record<string, Decision | null>) => {
   if (inApp()) return invoke<Record<string, Decision>>('set_decisions', { root, changes })
@@ -193,19 +251,16 @@ export const setDecisions = (root: string, changes: Record<string, Decision | nu
   return Promise.resolve({ ...devDecisions })
 }
 
-export const answerQuestion = (root: string, a: string, b: string, keep: string | null) =>
-  inApp()
-    ? invoke<Review>('answer_question', { root, a, b, keep })
-    : Promise.reject(new Error('Answers are saved by the desktop app.'))
 
 export const setSettings = (settings: Settings) =>
   inApp() ? invoke<void>('set_settings', { settings }) : Promise.resolve()
 
-export function applyApproved(root: string, onProgress: (done: number, total: number) => void) {
+/** Build the new library from every album that isn't left out or waiting for an answer. */
+export function buildLibrary(root: string, onProgress: (done: number, total: number) => void) {
   if (!inApp()) return Promise.reject(new Error('The library is built by the desktop app.'))
   const channel = new Channel<{ done: number; total: number }>()
   channel.onmessage = (m) => onProgress(m.done, m.total)
-  return invoke<ApplyReport>('apply_approved', { root, onProgress: channel })
+  return invoke<ApplyReport>('build_library', { root, onProgress: channel })
 }
 
 export const cancelApply = () => (inApp() ? invoke<void>('cancel_apply') : Promise.resolve())
@@ -216,8 +271,8 @@ export const undoRun = (journal: string) => invoke<number>('undo_run', { journal
 export const FIELD_NAMES: Record<string, string> = {
   ALBUM: 'Album',
   ALBUMARTIST: 'Album artist',
-  ARTIST: 'Artists (display)',
-  ARTISTS: 'Artists (each)',
+  ARTIST: 'Singers',
+  ARTISTS: 'Singers (list)',
   COMPOSER: 'Composer',
   LYRICIST: 'Lyricist',
   CREDITS: 'Other credits',
@@ -344,13 +399,13 @@ export const cancelLookup = () => (inApp() ? invoke<void>('cancel_lookup') : Pro
 
 export interface IncomingView {
   folder: string
-  plan: { albums: AlbumView[]; questions: Question[] }
+  plan: { albums: AlbumView[]; decisions: PlanDecision[] }
 }
 
 export const incoming = (root: string): Promise<IncomingView> =>
   inApp()
     ? invoke<IncomingView>('incoming', { root })
-    : Promise.resolve({ folder: `${root}/_Incoming`, plan: { albums: [], questions: [] } })
+    : Promise.resolve({ folder: `${root}/_Incoming`, plan: { albums: [], decisions: [] } })
 export const incomingLookup = (root: string, onProgress: (d: number, t: number) => void) =>
   withProgress<EnrichReport>('incoming_lookup', { root }, onProgress)
 export const incomingImport = (root: string, albums: string[], onProgress: (d: number, t: number) => void) =>
