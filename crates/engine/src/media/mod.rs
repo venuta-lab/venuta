@@ -1,6 +1,7 @@
 //! Reading facts out of media files. Read-only: nothing here ever writes to a file.
 
 mod flac;
+pub mod flac_layout;
 pub mod picture;
 
 use serde::{Deserialize, Serialize};
