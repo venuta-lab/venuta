@@ -5,6 +5,7 @@
 //!   * the audio fingerprint (STREAMINFO + every audio byte) is identical to the original;
 //!   * the tags read back exactly as a simple model predicts (keys, values, order);
 //!   * pictures read back as predicted.
+//!
 //! It also records file size / padding behaviour, and writes the expected final tags to JSON
 //! so an independent reader (mutagen) can verify the results.
 //!
