@@ -11,7 +11,7 @@ use engine::rules::Rules;
 use engine::settings::{Decision, Settings};
 use engine::{Index, ScanReport, paths};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -619,6 +619,185 @@ async fn eject_card(card: String) -> CmdResult<()> {
     blocking(move || engine::volumes::eject(Path::new(&card))).await
 }
 
+// --- Playlists -------------------------------------------------------------------------
+
+fn load_lib(root: &Path) -> CmdResult<(Index, Library)> {
+    let mut index = open_index(root)?;
+    engine::scan(&mut index, root).map_err(|e| e.to_string())?;
+    let lib = Library::load(&index).map_err(|e| e.to_string())?;
+    Ok((index, lib))
+}
+
+fn wantlist_path() -> PathBuf {
+    paths::app_data_dir().join("wantlist.json")
+}
+
+#[derive(Serialize)]
+struct PlaylistsView {
+    playlists: Vec<engine::playlists::PlaylistSummary>,
+    smart: Vec<engine::playlists::SmartRule>,
+    wanted: Vec<engine::playlists::WantedAlbum>,
+    apple_ready: bool,
+}
+
+/// Playlists in the library (repairing moved entries), smart rules and the want-list.
+#[tauri::command]
+async fn playlists(root: String) -> CmdResult<PlaylistsView> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (index, lib) = load_lib(&rootp)?;
+        let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+        engine::playlists::ensure_default_smart(&rules_dir)?;
+        engine::playlists::repair_all(&rootp, &lib);
+        engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index)?;
+        let s = settings_with_defaults();
+        Ok(PlaylistsView {
+            playlists: engine::playlists::list(&rootp, &lib),
+            smart: engine::playlists::load_smart(&rules_dir),
+            wanted: std::fs::read_to_string(wantlist_path())
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or_default(),
+            apple_ready: s.apple_key.is_some()
+                && s.apple_library
+                    .as_ref()
+                    .or(engine::apple::default_library_path()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .as_ref())
+                    .is_some(),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn playlist_tracks(
+    root: String,
+    name: String,
+) -> CmdResult<Vec<engine::playlists::PlaylistEntry>> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::playlists::read(&rootp, &lib, &name).map(|r| r.0)
+    })
+    .await
+}
+
+/// Create or replace a playlist with these library paths, in order.
+#[tauri::command]
+async fn playlist_save(root: String, name: String, paths: Vec<String>) -> CmdResult<()> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::playlists::write(&rootp, &lib, &name, &paths, false)
+    })
+    .await
+}
+
+#[tauri::command]
+fn playlist_delete(root: String, name: String) -> CmdResult<()> {
+    engine::playlists::delete(Path::new(&root), &name)
+}
+
+#[tauri::command]
+fn playlist_rename(root: String, from: String, to: String) -> CmdResult<()> {
+    engine::playlists::rename(Path::new(&root), &from, &to)
+}
+
+#[tauri::command]
+fn smart_save(rule: engine::playlists::SmartRule) -> CmdResult<()> {
+    let rules_dir = PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default());
+    engine::playlists::save_smart(&rules_dir, &rule)
+}
+
+/// Bring your Apple Music playlists over: matched tracks become playlists, the rest the want-list.
+#[tauri::command]
+async fn apple_import(root: String) -> CmdResult<engine::playlists::ImportReport> {
+    blocking(move || {
+        let s = settings_with_defaults();
+        let key = s
+            .apple_key
+            .ok_or("Enter your Apple Music library key in settings first.")?;
+        let file = s
+            .apple_library
+            .map(PathBuf::from)
+            .or_else(engine::apple::default_library_path)
+            .ok_or("Couldn't find your Apple Music library.")?;
+        let apple = engine::apple::read(&file, &key)?;
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let report = engine::playlists::import_apple(&rootp, &lib, &apple, "", true)?;
+        let _ = std::fs::write(
+            wantlist_path(),
+            serde_json::to_vec(&report.wanted).unwrap_or_default(),
+        );
+        // A copy you can open in a spreadsheet, next to your rules.
+        if let Some(meta) = s
+            .rules_dir
+            .as_ref()
+            .and_then(|r| Path::new(r).parent().map(Path::to_path_buf))
+        {
+            let _ = std::fs::write(
+                meta.join("wanted-albums.csv"),
+                engine::playlists::wanted_csv(&report.wanted),
+            );
+        }
+        Ok(report)
+    })
+    .await
+}
+
+#[tauri::command]
+fn set_apple(library: Option<String>, key: Option<String>) -> CmdResult<()> {
+    let mut s = settings_with_defaults();
+    if library.is_some() {
+        s.apple_library = library;
+    }
+    if key.is_some() {
+        s.apple_key = key;
+    }
+    engine::settings::save(&s)
+}
+
+/// Rate the songs of one playlist (e.g. Apple's Favourite Songs) that have no rating yet.
+#[tauri::command]
+async fn rate_playlist(
+    root: String,
+    name: String,
+    stars: u8,
+) -> CmdResult<engine::edit::EditReport> {
+    if !settings_with_defaults().backup_confirmed {
+        return Err("BACKUP_NOT_CONFIRMED".into());
+    }
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let (entries, _) = engine::playlists::read(&rootp, &lib, &name)?;
+        let unrated: HashSet<String> = lib
+            .tracks
+            .iter()
+            .filter(|t| t.first("RATING").is_none())
+            .map(|t| t.path.clone())
+            .collect();
+        let edits: Vec<engine::edit::TagEdit> = entries
+            .into_iter()
+            .filter(|e| !e.missing && unrated.contains(&e.path))
+            .map(|e| engine::edit::TagEdit {
+                file: e.path,
+                set: vec![(
+                    "RATING".into(),
+                    engine::edit::stars_to_rating(stars).into_iter().collect(),
+                )],
+            })
+            .collect();
+        let report = engine::edit::edit_in_place(&rootp, &edits)?;
+        let mut index = open_index(&rootp)?;
+        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        Ok(report)
+    })
+    .await
+}
+
 #[derive(Serialize)]
 struct TrackRow {
     path: String,
@@ -776,7 +955,16 @@ pub fn run() {
             plan_card,
             sync_card,
             cancel_sync,
-            eject_card
+            eject_card,
+            playlists,
+            playlist_tracks,
+            playlist_save,
+            playlist_delete,
+            playlist_rename,
+            smart_save,
+            apple_import,
+            set_apple,
+            rate_playlist
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

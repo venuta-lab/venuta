@@ -418,3 +418,74 @@ export const ejectCard = (card: string) => invoke<void>('eject_card', { card })
 
 export const gb = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
+
+// --- Playlists, Apple import, want-list -------------------------------------------------
+
+export interface PlaylistSummary {
+  name: string
+  file: string
+  smart: boolean
+  tracks: number
+  missing: number
+}
+
+export interface PlaylistEntry {
+  path: string
+  title: string
+  artist: string
+  duration_ms: number
+  audio_md5: string | null
+  missing: boolean
+}
+
+export interface Condition {
+  field: string
+  op: string
+  value: string
+}
+
+export interface SmartRule {
+  name: string
+  match: 'all' | 'any'
+  conditions: Condition[]
+  limit: number | null
+}
+
+export interface WantedAlbum {
+  album: string
+  artist: string
+  tier: 1 | 2 | 3
+  why: string
+  saved_tracks: number
+  playlists: string[]
+}
+
+export interface PlaylistsView {
+  playlists: PlaylistSummary[]
+  smart: SmartRule[]
+  wanted: WantedAlbum[]
+  apple_ready: boolean
+}
+
+export interface ImportReport {
+  playlists: { name: string; total: number; matched: number }[]
+  wanted: WantedAlbum[]
+  tracks_total: number
+  tracks_matched: number
+}
+
+export const playlists = (root: string) =>
+  inApp()
+    ? invoke<PlaylistsView>('playlists', { root })
+    : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], wanted: [], apple_ready: false })
+export const playlistTracks = (root: string, name: string) => invoke<PlaylistEntry[]>('playlist_tracks', { root, name })
+export const playlistSave = (root: string, name: string, paths: string[]) =>
+  invoke<void>('playlist_save', { root, name, paths })
+export const playlistDelete = (root: string, name: string) => invoke<void>('playlist_delete', { root, name })
+export const playlistRename = (root: string, from: string, to: string) =>
+  invoke<void>('playlist_rename', { root, from, to })
+export const smartSave = (rule: SmartRule) => invoke<void>('smart_save', { rule })
+export const appleImport = (root: string) => invoke<ImportReport>('apple_import', { root })
+export const setApple = (library: string | null, key: string | null) => invoke<void>('set_apple', { library, key })
+export const ratePlaylist = (root: string, name: string, stars: number) =>
+  invoke<EditReport>('rate_playlist', { root, name, stars })

@@ -32,13 +32,14 @@ import { SoonScreen } from './screens/SoonScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
 import { IncomingScreen } from './screens/IncomingScreen'
 import { CardsScreen } from './screens/CardsScreen'
+import { PlaylistsScreen } from './screens/PlaylistsScreen'
 
 const SECTIONS: Section[] = [
   { id: 'library', label: 'Library', icon: IconHealth, ready: true },
   { id: 'browse', label: 'Browse', icon: IconBrowse, ready: true },
   { id: 'review', label: 'Review', icon: IconReview, ready: true },
   { id: 'incoming', label: 'Incoming', icon: IconIncoming, ready: true },
-  { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: false },
+  { id: 'playlists', label: 'Playlists', icon: IconPlaylists, ready: true },
   { id: 'cards', label: 'Cards', icon: IconCards, ready: true },
 ]
 
@@ -238,6 +239,8 @@ export default function App() {
         return <BrowseScreen root={root} albums={report?.albums ?? []} />
       case 'review':
         return <ReviewScreen root={root} />
+      case 'playlists':
+        return <PlaylistsScreen root={root} />
       case 'cards':
         return <CardsScreen root={root} />
       case 'incoming':

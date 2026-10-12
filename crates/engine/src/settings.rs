@@ -14,6 +14,11 @@ pub struct Settings {
     /// The owner confirmed they have a backup; required before editing files in place.
     #[serde(default)]
     pub backup_confirmed: bool,
+    /// Your Apple Music library file and its key (entered by you; never shipped with the app).
+    #[serde(default)]
+    pub apple_library: Option<String>,
+    #[serde(default)]
+    pub apple_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

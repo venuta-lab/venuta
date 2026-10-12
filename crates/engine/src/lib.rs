@@ -4,6 +4,7 @@
 //! apply step (not yet built), and that step always writes a temp copy, verifies the audio
 //! is untouched, then renames.
 
+pub mod apple;
 pub mod apply;
 pub mod art;
 pub mod audit;
@@ -17,6 +18,7 @@ pub mod media;
 pub mod net;
 pub mod paths;
 pub mod plan;
+pub mod playlists;
 pub mod providers;
 pub mod quality;
 pub mod rules;

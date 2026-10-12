@@ -10,6 +10,8 @@ import {
   type TagEdit,
 } from '../lib/engine'
 
+import { AddToPlaylist } from './PlaylistsScreen'
+
 const spring = { type: 'spring', stiffness: 300, damping: 30 } as const
 
 type AlbumField = 'album' | 'album_artist' | 'original_year' | 'genre' | 'composer' | 'lyricist'
@@ -216,6 +218,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/55">
                 {status || (inApp() ? 'Edit any field or title. Ratings save as soon as you click.' : 'Editing works in the desktop app.')}
               </span>
+              {!dirty && <AddToPlaylist root={props.root} paths={detail?.tracks.map((t) => t.path) ?? []} />}
               <AnimatePresence>
                 {dirty > 0 && (
                   <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="flex gap-2">

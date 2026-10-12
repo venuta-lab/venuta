@@ -64,6 +64,14 @@ enum Command {
     },
     /// Mirror the library onto a set-up card
     CardSync { library: PathBuf, card: PathBuf },
+    /// Match your Apple Music playlists to the library (dry run unless --write)
+    AppleImport {
+        library: PathBuf,
+        musicdb: PathBuf,
+        key: String,
+        #[arg(long)]
+        write: bool,
+    },
     /// Look up albums online (MusicBrainz, Apple, Deezer) and missing lyrics (LRCLIB)
     Lookup { root: PathBuf, rules: PathBuf },
     /// Make (cached) cover thumbnails for every album; prints their paths as JSON
@@ -334,6 +342,39 @@ fn main() -> Result<()> {
             let report = engine::sync::run(&library, &card, &plan, &progress, &|_, _, _| {})
                 .map_err(anyhow::Error::msg)?;
             println!("{}", serde_json::to_string(&report)?);
+        }
+        Command::AppleImport {
+            library,
+            musicdb,
+            key,
+            write,
+        } => {
+            let idx = Index::open(
+                &paths::index_path_for(&library),
+                &paths::canonical_root_string(&library),
+            )?;
+            let lib = engine::library::Library::load(&idx)?;
+            let apple = engine::apple::read(&musicdb, &key).map_err(anyhow::Error::msg)?;
+            let r = engine::playlists::import_apple(&library, &lib, &apple, "", write)
+                .map_err(anyhow::Error::msg)?;
+            println!(
+                "{} of {} unique tracks matched",
+                r.tracks_matched, r.tracks_total
+            );
+            for p in &r.playlists {
+                println!("  {:28} {:4} / {}", p.name, p.matched, p.total);
+            }
+            let tiers = |n: u8| r.wanted.iter().filter(|w| w.tier == n).count();
+            println!(
+                "want-list: {} albums (tier 1: {}, tier 2: {}, tier 3: {})",
+                r.wanted.len(),
+                tiers(1),
+                tiers(2),
+                tiers(3)
+            );
+            for w in r.wanted.iter().take(8) {
+                println!("  T{} {} / {}: {}", w.tier, w.album, w.artist, w.why);
+            }
         }
         Command::Lookup { root, rules } => {
             let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
