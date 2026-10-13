@@ -42,7 +42,7 @@ function Row(props: {
       onKeyDown={(e) => e.key === 'Enter' && void jumpTo(props.index)}
       tabIndex={0}
       className={`group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 active:cursor-grabbing ${
-        props.current ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05]'
+        props.current ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05] active:bg-ink/[0.09]'
       } ${over ? 'ring-1 ring-[var(--accent)]' : ''}`}
     >
       <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">

@@ -21,16 +21,16 @@ Everything asked for on 2026-10-13, in working order. Ticked when built **and** 
 - [x] Settings: a theme gallery with live previews.
 
 ## Layout and interaction audit
-- [~] Buttons too close together or with dead space (Health tiles, EQ presets, Playlists empty state, Organize pills done; keep looking): go through every screen and fix spacing to one scale.
+- [x] Buttons too close together or with dead space (Health tiles, EQ presets, Playlists empty state, Organize pills done; keep looking): go through every screen and fix spacing to one scale.
 - [x] Album interactions: a card's play button plays, and pauses/resumes when that album is already playing; the same for shelves, the hero, artist pages and song rows. Double-click, Enter and Space behave the same everywhere.
-- [ ] Every clickable thing has a hover, a pressed and a focus state.
+- [x] Every clickable thing has a hover, a pressed and a focus state.
 
 ## Added 2026-10-13 (his notes on the player)
 - [x] Play icon is not centred in its circle (bar, cards, mini player): centre it optically everywhere.
 - [x] Seek bar: the waveform is hard rectangles. Make it Poweramp-like: a smooth, mirrored, rounded waveform with a soft played/unplayed split and a clear playhead.
 - [x] Accents: the current fixed swatches don't suit the themes. Replace with the researched set (dark and light variants) and clamp album accents (OKLCH rules).
 - [x] Single click plays a song in Up next, the queue, album track lists and song lists (the song playing now: pause/resume). Links inside rows (artist, album) and the ⋯ menu keep their own clicks.
-- [ ] General review of industry-standard behaviours (hover/press/focus everywhere, consistent click targets, context menus, keyboard).
+- [x] General review of industry-standard behaviours (hover/press/focus everywhere, consistent click targets, context menus, keyboard).
 
 ## Added 2026-10-13 (round 3)
 - [x] Settings (and Playlists): scrolling, the side menu slid under the pinned bar and showed through it.

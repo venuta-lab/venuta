@@ -492,7 +492,7 @@ function Round(props: { label: string; onClick: () => void; on?: boolean; childr
       aria-pressed={props.on}
       title={props.label}
       onClick={props.onClick}
-      className={`relative grid h-8 w-8 place-items-center rounded-full hover:bg-ink/10 ${props.on ? 'text-accent-ink' : 'text-ink/70 hover:text-ink'}`}
+      className={`relative grid h-8 w-8 place-items-center rounded-full transition-[background-color,color,transform] duration-150 hover:bg-ink/10 active:scale-90 ${props.on ? 'text-accent-ink' : 'text-ink/70 hover:text-ink'}`}
     >
       {props.children}
       {props.on && <span className="absolute bottom-0.5 h-1 w-1 rounded-full bg-accent" aria-hidden />}

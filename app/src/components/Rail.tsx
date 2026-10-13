@@ -27,7 +27,7 @@ export function Rail(props: {
         onClick={() => props.onSelect(s.id)}
         title={`${s.label}  (${s.keys})`}
         aria-current={on ? 'page' : undefined}
-        className={`rail-item relative flex w-[68px] flex-col items-center gap-1 rounded-[14px] py-2.5 text-[11px] font-medium transition-colors ${
+        className={`rail-item relative flex w-[68px] flex-col items-center gap-1 rounded-[14px] py-2.5 text-[11px] font-medium transition-[color,background-color,transform] duration-150 active:scale-[0.96] ${
           on ? 'text-ink' : 'text-ink/55 hover:bg-ink/[0.05] hover:text-ink/90'
         }`}
       >

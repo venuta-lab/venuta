@@ -147,7 +147,7 @@ export function MusicScreen({
                 onClick={() => {
                   setSelected(a)
                 }}
-                className={`group ${ROW} rounded-2xl py-2 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07]`}
+                className={`group ${ROW} rounded-2xl py-2 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07] active:bg-ink/[0.1]`}
               >
                 <motion.div layoutId={`cover-${a.dir}`} className="h-12 w-12 overflow-hidden rounded-[10px] bg-ink/[0.06] shadow-md shadow-black/25">
                   {c ? (

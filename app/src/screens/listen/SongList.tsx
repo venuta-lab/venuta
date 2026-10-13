@@ -177,7 +177,7 @@ const SongRow = memo(function SongRow(props: {
           props.onMove(i, e.key === 'ArrowDown' ? 1 : -1)
         }
       }}
-      className={`group absolute inset-x-0 grid ${COLS} scroll-mb-4 scroll-mt-16 items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] ${isNow ? 'text-accent-ink' : ''}`}
+      className={`group absolute inset-x-0 grid ${COLS} scroll-mb-4 scroll-mt-16 items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${isNow ? 'text-accent-ink' : ''}`}
       style={{ top: i * ROW, height: ROW }}
     >
       <button

@@ -114,7 +114,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                     move(i, e.key === 'ArrowDown' ? 1 : -1)
                   }
                 }}
-                className={`group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] ${
+                className={`group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${
                   isNow ? 'text-accent-ink' : ''
                 }`}
               >
