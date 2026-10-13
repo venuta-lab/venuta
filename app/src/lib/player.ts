@@ -278,10 +278,12 @@ const waves = new Map<string, number[]>()
 /** The playing song's shape for the seek bar (600 peaks, 0–255), once it's been read. */
 export function useWaveform(path: string | undefined): number[] | null {
   const [, tick] = useState(0)
+  // The engine says which folder the queue is in (after a restart nothing was played here yet).
+  const root = usePlayerValue((s) => s.root || queueRoot)
   useEffect(() => {
-    if (!path || waves.has(path) || !inApp()) return
+    if (!path || !root || waves.has(path) || !inApp()) return
     let live = true
-    invoke<number[]>('song_waveform', { root: queueRoot, path })
+    invoke<number[]>('song_waveform', { root, path })
       .then((w) => {
         waves.set(path, w)
         if (live) tick((n) => n + 1)
@@ -290,7 +292,7 @@ export function useWaveform(path: string | undefined): number[] | null {
     return () => {
       live = false
     }
-  }, [path])
+  }, [path, root])
   return path ? (waves.get(path) ?? null) : null
 }
 

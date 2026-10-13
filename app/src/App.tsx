@@ -1,4 +1,4 @@
-import { AnimatePresence, MotionConfig, motion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Backdrop } from './components/Backdrop'
@@ -122,6 +122,9 @@ export default function App() {
   const [queueOpen, setQueueOpen] = useState(false)
   // Counts choosing the open place again in the rail (it goes back to its start).
   const [again, setAgain] = useState(0)
+  // Each visit to a place is its own layout namespace: a sliding pill inside a page never
+  // flies in from where it was on an earlier visit.
+  const [visit, setVisit] = useState(0)
   const closeQueue = useCallback(() => setQueueOpen(false), [])
   const closeNow = useCallback(() => setNowOpen(false), [])
   const closeNotice = useCallback(() => setNotice(''), [])
@@ -251,6 +254,7 @@ export default function App() {
       const to = ORDER.indexOf(id)
       if (to < 0 || to === from) return
       setDirection(to > from ? 1 : -1)
+      setVisit((n) => n + 1)
       setActive(id)
     },
     [active],
@@ -699,7 +703,7 @@ export default function App() {
                 exit="exit"
                 className="thin-scroll absolute inset-0 overflow-y-auto overflow-x-hidden px-10"
               >
-                {screen}
+                <LayoutGroup id={`${active}-${visit}`}>{screen}</LayoutGroup>
               </motion.div>
             </AnimatePresence>
             </div>
