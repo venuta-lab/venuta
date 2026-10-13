@@ -33,10 +33,15 @@ undo a change made elsewhere; now only the changed fields are written.
 - [x] Levelling uses the measurements (tags first, then Venuta's own, so nothing is written to
       the files); Health's "Volume levelling" reaches 100%. Checked: 23 songs measured in 19 s
       in a debug build, the signal path says "Volume levelled (song, -10.9 dB)". His library
-      (D:Music) has no measurements yet: the first full run is his to start, in Health.
+      (D:\Music) has no measurements yet: the first full run is his to start, in Health.
 
 ## 3. Devices, end to end
-- [ ] Playlists go to cards, written the way each player reads them.
+- [x] Playlists go to cards, written the way each player reads them: each card gets its own
+      copy pointing at its own music folder (not assumed "Music"), with only the songs it
+      carries; empty ones stay off; Venuta's own lines are left out. The player test decides
+      the style: relative (default), from the top of the card, or none. Checked by syncing the
+      scratch library to a folder as a Poweramp card (36 entries, all resolve; re-sync changes
+      nothing; edits re-copy only that playlist).
 - [ ] The player test kit, run on his real cards (needs him and the cards).
 
 ## 4. Release and sharing

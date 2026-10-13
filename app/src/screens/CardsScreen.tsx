@@ -447,8 +447,8 @@ function findings(r: Record<string, boolean>): string[] {
   if (r.lyrics_tag === false && r.lyrics_file === true) out.push('It reads lyrics files only; the app always writes both, so lyrics will show.')
   if (r.lyrics_file === false && r.lyrics_bom === true) out.push('Its lyrics files need a byte-order mark. Tell me, and I will add that to its profile.')
   if (r.hindi === false) out.push('Devanagari shows as boxes: this player lacks the font. Song titles in Hindi will not be readable on it.')
-  if (r.playlist_relative === false && r.playlist_top === false) out.push('It reads no playlist files: use its favourites, or choose Echo Mini (no playlists are written).')
-  if (r.playlist_relative === false && r.playlist_top === true) out.push('Playlists need paths from the top of the card. Tell me, and I will add that to its profile.')
+  if (r.playlist_relative === false && r.playlist_top === false) out.push('It reads no playlist files, so none are written to this card; use its favourites instead.')
+  if (r.playlist_relative === false && r.playlist_top === true) out.push('It reads playlists only from the top of the card, so this card gets them there, with paths from the top.')
   if (r.year_original === false) out.push('It shows the date tag; the card copies put the original year there, so years will be right.')
   if (!out.length && Object.keys(r).length) out.push('Everything you checked works with the current profile.')
   return out

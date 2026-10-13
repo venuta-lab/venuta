@@ -126,9 +126,121 @@ struct Wanted {
     audio_md5: Option<String>,
     is_flac: bool,
     is_image: bool,
+    is_playlist: bool,
+    /// A playlist as this card gets it (see `card_playlist`).
+    text: Option<String>,
+}
+
+impl Wanted {
+    /// What a card copy depends on besides the source file: the player recipe for music and
+    /// covers, the card's own text for a playlist.
+    fn stamp(&self, recipe_stamp: Option<&str>) -> Option<String> {
+        match &self.text {
+            Some(t) => Some(format!("pl:{}", blake3::hash(t.as_bytes()).to_hex())),
+            None if self.is_flac || self.is_image => recipe_stamp.map(str::to_owned),
+            None => None,
+        }
+    }
+}
+
+/// A path with `.` and `..` worked out, "/"-separated (no file system access).
+fn lexical(p: &Path) -> String {
+    use std::path::Component;
+    let mut parts: Vec<String> = Vec::new();
+    let mut lead = String::new();
+    for c in p.components() {
+        match c {
+            Component::Prefix(x) => lead = x.as_os_str().to_string_lossy().replace('\\', "/"),
+            Component::RootDir => lead.push('/'),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.pop().is_none() {
+                    parts.push("..".into());
+                }
+            }
+            Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+        }
+    }
+    format!("{lead}{}", parts.join("/"))
+}
+
+/// A library playlist written for a card: each song as a path from where the playlist sits on
+/// the card (`prefix` + its path in the music folder), songs not on the card left out, and
+/// Venuta's own lines (wanted songs, checksums, where it came from) dropped, since players
+/// don't use them. None when none of its songs are on the card.
+fn card_playlist(
+    text: &str,
+    playlist_dir: &Path,
+    library_root: &Path,
+    on_card: &HashMap<String, String>,
+    prefix: &str,
+) -> Option<String> {
+    let root = format!("{}/", lexical(library_root).to_lowercase());
+    let mut out = String::new();
+    let mut pending: Vec<&str> = Vec::new();
+    let mut songs = 0;
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r').trim_start_matches('\u{feff}');
+        if line.trim().is_empty() || line.starts_with("#VENUTA-") {
+            continue;
+        }
+        if line.starts_with('#') {
+            if songs == 0
+                && (line.starts_with("#EXTM3U") || line.starts_with("#PLAYLIST"))
+                && pending.is_empty()
+            {
+                out.push_str(line);
+                out.push('\n');
+            } else {
+                pending.push(line);
+            }
+            continue;
+        }
+        let entry = line.replace('\\', "/");
+        let full = lexical(&playlist_dir.join(&entry)).to_lowercase();
+        let found = full.strip_prefix(&root).and_then(|rel| on_card.get(rel));
+        if let Some(rel) = found {
+            for p in pending.drain(..) {
+                out.push_str(p);
+                out.push('\n');
+            }
+            out.push_str(prefix);
+            out.push_str(rel);
+            out.push('\n');
+            songs += 1;
+        } else {
+            pending.clear();
+        }
+    }
+    (songs > 0).then_some(out)
+}
+
+/// How a card's player reads playlists, from its profile and your answers to the player test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaylistStyle {
+    /// In `Playlists/` beside the music folder, paths relative to the playlist.
+    Relative,
+    /// At the top of the card, paths from the top (the test found only these work).
+    FromTop,
+}
+
+fn playlist_style(cfg: &CardConfig) -> Option<PlaylistStyle> {
+    if !cfg.player.recipe().playlists {
+        return None;
+    }
+    let answer = |id: &str| cfg.test_results.get(id).copied();
+    match (answer("playlist_relative"), answer("playlist_top")) {
+        (Some(false), Some(true)) => Some(PlaylistStyle::FromTop),
+        (Some(false), Some(false)) => None,
+        _ => Some(PlaylistStyle::Relative),
+    }
 }
 
 fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Wanted>> {
+    let style = playlist_style(cfg);
+    let folder = cfg.folder.trim_matches('/');
+    // From the card's music folder up to the card's top.
+    let up = "../".repeat(folder.split('/').filter(|s| !s.is_empty()).count());
     let index = crate::Index::open(
         &crate::paths::index_path_for(library_root),
         &crate::paths::canonical_root_string(library_root),
@@ -143,6 +255,8 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
             rel: r.get::<_, String>(0)?,
             is_flac: kind == "flac",
             is_image: kind == "image",
+            is_playlist: kind == "playlist",
+            text: None,
             size: r.get::<_, i64>(2)? as u64,
             mtime_ns: r.get(3)?,
             audio_md5: r.get::<_, Option<String>>(4)?.filter(|m| !m.is_empty()),
@@ -158,7 +272,7 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
         }
         // Playlists always travel (unless the player reads none); everything else follows the
         // card's selection.
-        if top == "playlists" && !cfg.player.recipe().playlists {
+        if top == "playlists" && style.is_none() {
             continue;
         }
         if !include.is_empty() && !include.contains(&top) && top != "playlists" {
@@ -170,8 +284,8 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
     // music folder too (`../Playlists/` from it), so their `../Music/…` entries resolve.
     let beside = crate::playlists::folder(library_root);
     if crate::paths::home_of(library_root).is_some()
-        && cfg.player.recipe().playlists
-        && !cfg.folder.trim().is_empty()
+        && style.is_some()
+        && !folder.is_empty()
         && let Ok(dir) = std::fs::read_dir(&beside)
     {
         for e in dir.flatten() {
@@ -187,16 +301,56 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
                 .map(|d| d.as_nanos() as i64)
                 .unwrap_or_default();
             out.push(Wanted {
-                rel: format!("../{}/{name}", crate::playlists::FOLDER),
+                rel: match style {
+                    Some(PlaylistStyle::FromTop) => format!("{up}{name}"),
+                    _ => format!("{up}{}/{name}", crate::playlists::FOLDER),
+                },
                 size: meta.len(),
                 mtime_ns,
                 audio_md5: None,
                 is_flac: false,
                 is_image: false,
+                is_playlist: true,
+                text: None,
             });
         }
     }
-    Ok(out)
+    // Playlists are written for this card: pointing at its music folder, holding only the
+    // songs it carries. One with none of them stays off the card.
+    let on_card: HashMap<String, String> = out
+        .iter()
+        .filter(|w| !w.is_playlist)
+        .map(|w| (w.rel.to_lowercase(), w.rel.clone()))
+        .collect();
+    let mut kept = Vec::with_capacity(out.len());
+    for mut w in out {
+        if w.is_playlist {
+            let src = library_root.join(&w.rel);
+            let prefix = match style {
+                Some(PlaylistStyle::FromTop) => format!("{folder}/"),
+                _ if w.rel.starts_with("../") => format!("../{folder}/"),
+                _ => "../".repeat(w.rel.matches('/').count()),
+            };
+            // The library file: in-library playlists live beside Music/, whatever the card does.
+            let src = if w.rel.starts_with("../") {
+                crate::playlists::folder(library_root)
+                    .join(w.rel.rsplit('/').next().unwrap_or(&w.rel))
+            } else {
+                src
+            };
+            let Ok(text) = std::fs::read_to_string(&src) else {
+                continue;
+            };
+            let dir = src.parent().unwrap_or(library_root);
+            let Some(card) = card_playlist(&text, dir, library_root, &on_card, &prefix) else {
+                continue;
+            };
+            w.size = card.len() as u64;
+            w.text = Some(card);
+        }
+        kept.push(w);
+    }
+    Ok(kept)
 }
 
 // --- The manifest on the card -----------------------------------------------------------------
@@ -341,8 +495,9 @@ pub fn plan(library_root: &Path, card_root: &Path) -> Result<SyncPlan, String> {
     };
     let stamp = stamp_for(&cfg);
     for w in &wanted {
-        let applies = w.is_flac || w.is_image;
-        let same_recipe = |h: &Held| !applies || h.recipe.as_deref() == stamp.as_deref();
+        let want = w.stamp(stamp.as_deref());
+        let applies = w.is_flac || w.is_image || w.text.is_some();
+        let same_recipe = |h: &Held| !applies || h.recipe == want;
         match held.get(&w.rel) {
             Some(h)
                 if h.source_size == w.size
@@ -352,7 +507,11 @@ pub fn plan(library_root: &Path, card_root: &Path) -> Result<SyncPlan, String> {
             {
                 p.unchanged += 1
             }
-            Some(h) if w.is_image && !same_recipe(h) && music.join(&w.rel).exists() => {
+            Some(h)
+                if (w.is_image || w.text.is_some())
+                    && !same_recipe(h)
+                    && music.join(&w.rel).exists() =>
+            {
                 p.copy += 1;
                 p.bytes_to_copy += w.size;
                 ops.push(Op::Copy(w.clone()));
@@ -501,13 +660,7 @@ pub fn run(
     cleanup_parts(&music);
     let recipe = plan.card.player.recipe();
     let stamp = stamp_for(&plan.card);
-    let stamp_of = |w: &Wanted| {
-        if w.is_flac || w.is_image {
-            stamp.as_deref()
-        } else {
-            None
-        }
-    };
+    let stamp_of = |w: &Wanted| w.stamp(stamp.as_deref());
     let total = plan.ops.len();
     progress.total.store(total, Ordering::Relaxed);
     let mut r = SyncReport::default();
@@ -548,7 +701,7 @@ pub fn run(
                 // Same audio; bring the tags up to date if they differ.
                 let written = patch_for(&library_root.join(&to.rel), &dst, &recipe)?;
                 r.bytes_written += written;
-                record(&conn, to, stamp_of(to))?;
+                record(&conn, to, stamp_of(to).as_deref())?;
                 if *from_foreign {
                     r.adopted += 1
                 } else {
@@ -560,13 +713,13 @@ pub fn run(
                 .and_then(|n| {
                     r.bytes_written += n;
                     r.copied += 1;
-                    record(&conn, w, stamp_of(w))
+                    record(&conn, w, stamp_of(w).as_deref())
                 }),
             Op::Patch(w) => patch_for(&library_root.join(&w.rel), &music.join(&w.rel), &recipe)
                 .and_then(|n| {
                     r.bytes_written += n;
                     r.patched += 1;
-                    record(&conn, w, stamp_of(w))
+                    record(&conn, w, stamp_of(w).as_deref())
                 }),
         };
         if let Err(e) = result {
@@ -592,6 +745,13 @@ fn stamp_for(cfg: &CardConfig) -> Option<String> {
 
 /// A new copy on the card, written for its player.
 fn copy_for(src: &Path, dst: &Path, w: &Wanted, r: &crate::device::Recipe) -> Result<u64, String> {
+    if let Some(text) = &w.text {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        write_atomic(dst, text.as_bytes())?;
+        return Ok(text.len() as u64);
+    }
     if r.transform && w.is_flac {
         return write_card_flac(src, dst, r);
     }
@@ -883,6 +1043,58 @@ pub fn save_test_results(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_player_test_decides_how_playlists_are_written() {
+        let mut cfg: CardConfig =
+            toml::from_str("id = \"x\"\nname = \"Card\"\nplayer = \"poweramp\"").unwrap();
+        assert_eq!(playlist_style(&cfg), Some(PlaylistStyle::Relative));
+        cfg.test_results.insert("playlist_relative".into(), false);
+        cfg.test_results.insert("playlist_top".into(), true);
+        assert_eq!(playlist_style(&cfg), Some(PlaylistStyle::FromTop));
+        cfg.test_results.insert("playlist_top".into(), false);
+        assert_eq!(playlist_style(&cfg), None);
+        cfg.test_results.clear();
+        cfg.player = crate::device::Player::EchoMini;
+        assert_eq!(playlist_style(&cfg), None);
+    }
+
+    #[test]
+    fn card_playlists_point_at_the_cards_folder_and_skip_songs_not_on_it() {
+        let library = Path::new("D:/Lib/Music");
+        let text = "#EXTM3U\n#PLAYLIST:Road\n#VENUTA-SOURCE:Spotify 2026-10-13\n#EXTINF:224,Daler Mehndi - Garda\n#VENUTA-MD5:ABC\n../Music/Film/Atrangi Re (2021)/01 - Garda.flac\n#VENUTA-WANT:{\"title\":\"Kun\"}\n#EXTINF:200,X - Left out\n../Music/Pop/Other/01.flac\n#EXTINF:187,Arijit - Tumhein\n../Music/film/atrangi re (2021)/05 - Tumhein.flac\n";
+        let on_card: HashMap<String, String> = [
+            "Film/Atrangi Re (2021)/01 - Garda.flac",
+            "Film/Atrangi Re (2021)/05 - Tumhein.flac",
+        ]
+        .into_iter()
+        .map(|p| (p.to_lowercase(), p.to_owned()))
+        .collect();
+        // A library playlist beside Music/, onto a card whose music folder is "Venuta".
+        let out = card_playlist(
+            text,
+            &library.join("../Playlists"),
+            library,
+            &on_card,
+            "../Venuta/",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "#EXTM3U\n#PLAYLIST:Road\n#EXTINF:224,Daler Mehndi - Garda\n../Venuta/Film/Atrangi Re (2021)/01 - Garda.flac\n#EXTINF:187,Arijit - Tumhein\n../Venuta/Film/Atrangi Re (2021)/05 - Tumhein.flac\n"
+        );
+        // Nothing of it on the card: no playlist at all.
+        assert!(
+            card_playlist(
+                text,
+                &library.join("../Playlists"),
+                library,
+                &HashMap::new(),
+                "../Venuta/"
+            )
+            .is_none()
+        );
+    }
 
     fn block(last: bool, kind: u8, body: &[u8]) -> Vec<u8> {
         let len = (body.len() as u32).to_be_bytes();
