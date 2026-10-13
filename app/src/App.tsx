@@ -36,6 +36,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { track } from './lib/jobs'
+import * as player from './lib/player'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
@@ -339,6 +340,29 @@ export default function App() {
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
+      { id: 'play-toggle', group: 'Player', label: 'Play or pause', keys: 'Space', keywords: 'resume stop', run: () => void player.toggle() },
+      { id: 'play-next', group: 'Player', label: 'Next song', keys: 'Ctrl+→', keywords: 'skip forward', run: () => void player.next() },
+      { id: 'play-prev', group: 'Player', label: 'Previous song', keys: 'Ctrl+←', keywords: 'back', run: () => void player.previous() },
+      {
+        id: 'play-shuffle',
+        group: 'Player',
+        label: 'Shuffle on or off',
+        keywords: 'random order',
+        run: () => void player.setShuffle(!player.getPlayer().shuffle),
+      },
+      { id: 'play-now', group: 'Player', label: 'Open Now Playing', keywords: 'big cover full', run: () => setNowOpen(true) },
+      { id: 'play-queue', group: 'Player', label: 'Show the queue', keys: 'Q', keywords: 'up next', run: () => setQueueOpen(true) },
+      {
+        id: 'play-lyrics',
+        group: 'Player',
+        label: 'Show lyrics',
+        keys: 'L',
+        keywords: 'words karaoke',
+        run: () => {
+          setNowPanel('lyrics')
+          setNowOpen(true)
+        },
+      },
       {
         id: 'quality',
         group: 'Actions',

@@ -1758,6 +1758,7 @@ pub fn run() {
             playback::player_output,
             playback::song_lyrics,
             playback::player_resume,
+            playback::player_verify,
             listening::listening_summary,
             tidy_preview,
             tidy_apply,

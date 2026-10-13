@@ -18,6 +18,8 @@ import {
   type OutputChoices,
   type PlayerState,
   type Signal,
+  type Verification,
+  verifyCurrent,
 } from '../../lib/player'
 import {
   IconExpand,
@@ -224,6 +226,7 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
 /** From the file to the device, step by step. */
 export function SignalPath(props: { signal: Signal | null }) {
   const s = props.signal
+  const [check, setCheck] = useState<{ state: 'running' } | { state: 'done'; v: Verification } | { state: 'error'; message: string } | null>(null)
   if (!s) return <p className="text-ink/55">Play something to see where the sound goes.</p>
   const out = s.output
   const outLabel =
@@ -249,6 +252,33 @@ export function SignalPath(props: { signal: Signal | null }) {
           </li>
         ))}
       </ol>
+      {s.source.codec === 'FLAC' && (
+        <div className="mt-4 rounded-xl bg-ink/[0.05] px-3 py-2.5 text-[12px]">
+          {!check && (
+            <button
+              onClick={() => {
+                setCheck({ state: 'running' })
+                verifyCurrent()
+                  .then((v) => setCheck({ state: 'done', v }))
+                  .catch((e) => setCheck({ state: 'error', message: e instanceof Error ? e.message : String(e) }))
+              }}
+              className="text-accent-ink hover:underline"
+            >
+              Check that this song comes out exactly as stored
+            </button>
+          )}
+          {check?.state === 'running' && <span className="text-ink/60">Playing it through into memory and comparing…</span>}
+          {check?.state === 'done' &&
+            (check.v.bit_perfect ? (
+              <span className="text-good">
+                Verified: every sample matches the fingerprint stored in the file (MD5 {check.v.file_md5.slice(0, 8)}…).
+              </span>
+            ) : (
+              <span className="text-problem">The samples don't match the file's fingerprint; the file may be damaged.</span>
+            ))}
+          {check?.state === 'error' && <span className="text-ink/60">{check.message}</span>}
+        </div>
+      )}
     </div>
   )
 }

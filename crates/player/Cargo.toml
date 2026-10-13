@@ -10,9 +10,8 @@ rust-version.workspace = true
 symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "vorbis", "ogg"] }
 serde = { workspace = true }
 rand = "0.9"
+md-5 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.19"
 
-[dev-dependencies]
-md-5 = "0.10"

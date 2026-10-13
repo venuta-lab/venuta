@@ -106,8 +106,12 @@ export const toItem = (t: CatalogTrack): QueueItem => ({
 const call = (cmd: string, args: Record<string, unknown> = {}) =>
   inApp() ? invoke(cmd, args).catch((e) => set({ ...state, error: String(e) })) : Promise.resolve()
 
+/** The folder the queue's songs are in. */
+let queueRoot = ''
+
 /** Play these songs from `index`, replacing the queue. */
 export function play(root: string, tracks: CatalogTrack[], index = 0, from = '') {
+  queueRoot = root
   const items = tracks.map(toItem)
   // Show it at once; the engine confirms within a moment.
   set({ ...state, queue: items, index, playing: true, position_ms: 0, from, error: '' })
@@ -190,5 +194,22 @@ let resumedFor = ''
 export function resumePlayer(root: string) {
   if (!inApp() || !root || resumedFor === root || state.queue.length) return
   resumedFor = root
+  queueRoot = root
   invoke('player_resume', { root }).catch(() => {})
+}
+
+export interface Verification {
+  bit_perfect: boolean
+  bits: number
+  rate: number
+  frames: number
+  file_md5: string
+  output_md5: string
+}
+
+/** Check that the song playing now comes out bit-perfect (FLAC: against its own fingerprint). */
+export function verifyCurrent(): Promise<Verification> {
+  const song = current(state)
+  if (!song) return Promise.reject(new Error('Play a song first.'))
+  return invoke<Verification>('player_verify', { root: queueRoot, path: song.path })
 }

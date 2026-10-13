@@ -98,6 +98,7 @@ impl Tracker {
         index: i64,
         position_ms: u64,
         from: &str,
+        volume: f32,
     ) {
         if self.conn.is_none() {
             self.conn = open().ok();
@@ -109,7 +110,7 @@ impl Tracker {
                 params![q],
             );
         }
-        let place = serde_json::json!({ "root": root, "index": index, "position_ms": position_ms, "from": from });
+        let place = serde_json::json!({ "root": root, "index": index, "position_ms": position_ms, "from": from, "volume": volume });
         let _ = c.execute(
             "INSERT OR REPLACE INTO state (k, v) VALUES ('place', ?1)",
             params![place.to_string()],

@@ -95,7 +95,7 @@ impl Playback {
             let media = self.media.clone();
             let root = self.root.clone();
             let mut tracker = crate::listening::Tracker::default();
-            let mut saved: (i64, bool, u64) = (-2, false, 0);
+            let mut saved: (i64, bool, u64, u32) = (-2, false, 0, 0);
             let (id, exclusive) = self.output.lock().map_err(|e| e.to_string())?.clone();
             // The current song and play state, to tell the media overlay only when they change.
             let mut last: (Option<String>, bool, u64) = (None, false, 0);
@@ -119,7 +119,12 @@ impl Playback {
                         );
                         // Where you were: when the queue, song or play state changes, and every
                         // ten seconds of playing.
-                        let mark = (index, s.playing, s.position_ms / 10_000);
+                        let mark = (
+                            index,
+                            s.playing,
+                            s.position_ms / 10_000,
+                            (s.volume * 100.0) as u32,
+                        );
                         if !folder.is_empty() && (s.queue.is_some() || mark != saved) {
                             let q = s.queue.as_ref().and_then(|q| serde_json::to_string(q).ok());
                             tracker.save_place(
@@ -128,6 +133,7 @@ impl Playback {
                                 index,
                                 s.position_ms,
                                 &s.from,
+                                s.volume,
                             );
                             saved = mark;
                         }
@@ -290,6 +296,10 @@ pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, Stri
             .unwrap_or_default()
             .to_owned(),
     })?;
+    // The volume you left it at, too.
+    if let Some(v) = place.get("volume").and_then(|v| v.as_f64()) {
+        pb.send(Cmd::Volume(v as f32))?;
+    }
     Ok(true)
 }
 
@@ -537,4 +547,17 @@ mod tests {
             ]
         );
     }
+}
+
+/// Prove a FLAC plays bit-perfect: through the player into memory, against the file's own
+/// fingerprint of its samples.
+#[tauri::command]
+pub async fn player_verify(
+    root: String,
+    path: String,
+) -> Result<player::verify::Verification, String> {
+    let file = PathBuf::from(root).join(path);
+    tauri::async_runtime::spawn_blocking(move || player::verify::verify_bit_perfect(&file))
+        .await
+        .map_err(|e| e.to_string())?
 }
