@@ -148,3 +148,17 @@ YouTube Music window, Spotify remote control, playlist import/export, cards.
   24/96.
 - Every UI step is checked in the running app, with screenshots, in dark and light themes.
 - Nothing ever writes to `D:\Collection`. Listening data stays inside `.venuta`.
+
+## Progress (night of 2026-10-13)
+
+| Step | State | Notes |
+|---|---|---|
+| 1. Rename + home | Done | Music (listening) and Metadata; Home, Albums, Artists, Songs, album and artist pages, search |
+| 2. Engine core | Done | `crates/player`: gapless and sample-exact (tested); real FLACs match their STREAMINFO MD5 (16/44.1, 24/48, 24/96, 24/44.1) |
+| 3. Real output | Done | WASAPI exclusive on the Realtek: 16/44.1 at 16-bit, 24/48 and 24/96 at 24-in-32, MP3 at 24-bit; shared fallback. Checked at volume 0 (silent) |
+| 4. App wiring | Done | Commands and status stream, media keys and the Windows overlay, picking up where you left off |
+| 5. Bar + queue | Done | Bar on every screen, queue drawer (drag to reorder), keyboard shortcuts, palette commands |
+| 6. Now Playing | Done | Big cover, synced lyrics (click to seek), up next, signal path |
+| 7. Listening data | Done | Plays (half the song or 4 min), Jump back in, Most played, resume (paused, same song, position, volume) |
+| 8. Options | Partly | Output device and exclusive/shared in the badge. ReplayGain waits until loudness is measured for the library (only 18 songs have it) |
+| 9. Polish | Ongoing | Bit-perfect check in the app; light theme checked; waveform seek bar next |
