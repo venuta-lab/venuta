@@ -25,6 +25,9 @@ pub struct QueueItem {
     pub bit_depth: u16,
     pub sample_rate: u32,
     pub lyrics: bool,
+    /// ReplayGain from the tags.
+    #[serde(default)]
+    pub rg: player::dsp::Gain,
     /// The file on disk (the open folder joined with `path`).
     #[serde(skip)]
     pub file: PathBuf,
@@ -33,6 +36,9 @@ pub struct QueueItem {
 impl Item for QueueItem {
     fn path(&self) -> &Path {
         &self.file
+    }
+    fn gain(&self) -> player::dsp::Gain {
+        self.rg
     }
 }
 
@@ -50,6 +56,9 @@ pub struct WindowStatus {
     signal: Option<Signal>,
     from: String,
     error: String,
+    sound: player::dsp::Sound,
+    stop_after_current: bool,
+    sleep_in_s: Option<u64>,
 }
 
 /// What the Windows media overlay (and media keys) show.
@@ -179,10 +188,18 @@ impl Playback {
                             signal: s.signal,
                             from: s.from,
                             error: s.error,
+                            sound: s.sound,
+                            stop_after_current: s.stop_after_current,
+                            sleep_in_s: s.sleep_in_s,
                         });
                     }
                 },
             ));
+            if let Some(sound) = crate::listening::saved_sound()
+                && let Some(p) = slot.as_ref()
+            {
+                p.send(Cmd::Sound(sound));
+            }
         }
         Ok(f(slot.as_ref().expect("just made")))
     }
@@ -263,6 +280,27 @@ fn resolve(root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
             it
         })
         .collect()
+}
+
+/// The sound tools: equalizer, bass and treble, preamp, levelling, limiter. Kept with your
+/// library, so they're the same next time.
+#[tauri::command]
+pub fn player_sound(sound: player::dsp::Sound, pb: State<'_, Playback>) -> Result<(), String> {
+    crate::listening::save_sound(&sound);
+    pb.send(Cmd::Sound(sound))
+}
+
+#[tauri::command]
+pub fn player_stop_after(on: bool, pb: State<'_, Playback>) -> Result<(), String> {
+    pb.send(Cmd::StopAfterCurrent(on))
+}
+
+/// Pause after `minutes` (fading out the last ten seconds); `None` cancels.
+#[tauri::command]
+pub fn player_sleep(minutes: Option<f64>, pb: State<'_, Playback>) -> Result<(), String> {
+    pb.send(Cmd::SleepIn(minutes.map(|m| {
+        std::time::Duration::from_secs_f64((m * 60.0).max(0.0))
+    })))
 }
 
 /// Pick up where you left off in this folder: the saved queue, on the song and at the place

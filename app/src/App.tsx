@@ -110,7 +110,7 @@ export default function App() {
   const [listenAlbum, setListenAlbum] = useState<string | null>(null)
   // The player's big view (and which side panel) and the queue drawer.
   const [nowOpen, setNowOpen] = useState(false)
-  const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal'>('lyrics')
+  const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal' | 'sound'>('lyrics')
   const [queueOpen, setQueueOpen] = useState(false)
   const closeQueue = useCallback(() => setQueueOpen(false), [])
   const closeNow = useCallback(() => setNowOpen(false), [])
@@ -351,6 +351,16 @@ export default function App() {
         run: () => void player.setShuffle(!player.getPlayer().shuffle),
       },
       { id: 'play-now', group: 'Player', label: 'Open Now Playing', keywords: 'big cover full', run: () => setNowOpen(true) },
+      {
+        id: 'play-sound',
+        group: 'Player',
+        label: 'Sound: equalizer, levelling, sleep timer',
+        keywords: 'eq bass treble replaygain limiter sleep timer stop after',
+        run: () => {
+          setNowPanel('sound')
+          setNowOpen(true)
+        },
+      },
       { id: 'play-queue', group: 'Player', label: 'Show the queue', keys: 'Q', keywords: 'up next', run: () => setQueueOpen(true) },
       {
         id: 'play-lyrics',

@@ -281,6 +281,9 @@ impl Device for WasapiDevice {
         r.write_to_device(frames, bytes, None)
             .map_err(|e| format!("The sound output stopped ({e})."))
     }
+    fn latency_frames(&self) -> usize {
+        self.buffer_frames
+    }
     fn start(&mut self) -> Result<(), String> {
         self.client
             .as_ref()

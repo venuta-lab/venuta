@@ -6,6 +6,7 @@ import { inApp } from '../../lib/engine'
 import { clock, current, jumpTo, seek, sourceLabel, usePlayer, useWaveform } from '../../lib/player'
 import { IconClose } from '../Icons'
 import { SeekBar, SignalPath } from './NowPlayingBar'
+import { SoundPanel } from './SoundPanel'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
@@ -115,7 +116,7 @@ function UpNext() {
   )
 }
 
-type Panel = 'lyrics' | 'next' | 'signal'
+type Panel = 'lyrics' | 'next' | 'signal' | 'sound'
 
 /** The song, large: cover, words, what's next and how it reaches you. */
 export function NowPlaying(props: { open: boolean; root: string; panel: Panel; onPanel: (p: Panel) => void; onClose: () => void; onAlbum: (dir: string) => void }) {
@@ -203,6 +204,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                   [
                     ['lyrics', 'Lyrics'],
                     ['next', 'Up next'],
+                    ['sound', 'Sound'],
                     ['signal', 'Signal'],
                   ] as const
                 ).map(([id, label]) => (
@@ -223,6 +225,11 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                 {props.panel === 'next' && (
                   <div className="h-full overflow-y-auto">
                     <UpNext />
+                  </div>
+                )}
+                {props.panel === 'sound' && (
+                  <div className="no-scrollbar h-full overflow-y-auto">
+                    <SoundPanel />
                   </div>
                 )}
                 {props.panel === 'signal' && (

@@ -5,7 +5,8 @@
 //! reopened for it. Status (position, what's playing, the signal path) goes out about ten
 //! times a second, and the queue whenever it changes.
 
-use crate::decode::{Source, SourceFormat};
+use crate::decode::{FileInfo, Source, SourceFormat};
+use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
 use crate::queue::{Queue, Repeat};
 use serde::Serialize;
@@ -18,6 +19,10 @@ use std::time::{Duration, Instant};
 /// Something the queue holds: anything with a file to play.
 pub trait Item: Clone + Send + 'static {
     fn path(&self) -> &Path;
+    /// ReplayGain values from the song's tags, if any.
+    fn gain(&self) -> Gain {
+        Gain::default()
+    }
 }
 
 impl Item for PathBuf {
@@ -63,6 +68,12 @@ pub enum Cmd<T> {
     Remove(usize),
     Move(usize, usize),
     Output(OutputChoice),
+    /// The sound tools (equalizer, levelling…).
+    Sound(Sound),
+    /// Stop when the playing song ends, instead of going on.
+    StopAfterCurrent(bool),
+    /// Fade out and pause after this long (`None`: cancel).
+    SleepIn(Option<Duration>),
     /// Send the whole status again, queue included (a new window listening).
     Refresh,
     Quit,
@@ -74,7 +85,12 @@ pub struct Signal {
     pub device: String,
     pub mode: Mode,
     pub source: SourceFormat,
+    pub file: FileInfo,
     pub output: DeviceFormat,
+    /// Decoded ahead, waiting to play.
+    pub buffer_ms: u32,
+    /// Held by the device before you hear it.
+    pub latency_ms: f32,
     pub bit_perfect: bool,
     /// What changes the samples, in words ("Volume at 60%").
     pub steps: Vec<String>,
@@ -94,6 +110,10 @@ pub struct Status<T: Serialize> {
     pub signal: Option<Signal>,
     pub from: String,
     pub error: String,
+    pub sound: Sound,
+    pub stop_after_current: bool,
+    /// Seconds until the sleep timer pauses playback.
+    pub sleep_in_s: Option<u64>,
 }
 
 pub struct Player<T> {
@@ -138,6 +158,9 @@ struct Segment {
     /// Frames already sent to the device, counted from `start_frame`.
     played: u64,
     start_frame: u64,
+    gain: Gain,
+    /// The sound tools for this song (made when it starts playing).
+    chain: Option<Chain>,
 }
 
 impl Segment {
@@ -168,6 +191,9 @@ struct Engine<T: Item + Serialize> {
     on_status: Box<dyn FnMut(Status<T>) + Send>,
     last_status: Instant,
     paused_at: Option<Instant>,
+    sound: Sound,
+    stop_after_current: bool,
+    sleep_at: Option<Instant>,
     scratch: Vec<i32>,
     mapped: Vec<i32>,
     bytes: Vec<u8>,
@@ -191,6 +217,9 @@ impl<T: Item + Serialize> Engine<T> {
             on_status,
             last_status: Instant::now(),
             paused_at: None,
+            sound: Sound::default(),
+            stop_after_current: false,
+            sleep_at: None,
             scratch: Vec::new(),
             mapped: Vec::new(),
             bytes: Vec::new(),
@@ -319,6 +348,15 @@ impl<T: Item + Serialize> Engine<T> {
                 self.release();
                 self.choice = choice;
             }
+            Cmd::Sound(s) => {
+                self.sound = s;
+                // Every song makes its tools again with the new settings.
+                for seg in &mut self.segs {
+                    seg.chain = None;
+                }
+            }
+            Cmd::StopAfterCurrent(on) => self.stop_after_current = on,
+            Cmd::SleepIn(d) => self.sleep_at = d.map(|d| Instant::now() + d),
             Cmd::Refresh => self.queue_changed = true,
             Cmd::Quit => {}
         }
@@ -364,6 +402,8 @@ impl<T: Item + Serialize> Engine<T> {
                         ended: false,
                         played: 0,
                         start_frame,
+                        gain: item.gain(),
+                        chain: None,
                     });
                     return;
                 }
@@ -467,6 +507,8 @@ impl<T: Item + Serialize> Engine<T> {
                         ended: false,
                         played: 0,
                         start_frame: 0,
+                        gain: item.gain(),
+                        chain: None,
                     }),
                     // It will be reported when its turn comes.
                     Err(_) => return Ok(()),
@@ -514,7 +556,20 @@ impl<T: Item + Serialize> Engine<T> {
                 break;
             };
             let n = (want - frames).min(front.frames());
+            let at = taken.len();
             taken.extend(front.samples.drain(..n * src_ch));
+            if front.chain.is_none() {
+                front.chain = Some(Chain::new(
+                    &self.sound,
+                    &front.gain,
+                    fmt.rate,
+                    fmt.channels,
+                    dev_fmt.valid_bits,
+                ));
+            }
+            if let Some(c) = front.chain.as_mut() {
+                c.process(&mut taken[at..], fmt.channels);
+            }
             front.played += n as u64;
             frames += n;
             if frames >= want {
@@ -534,6 +589,13 @@ impl<T: Item + Serialize> Engine<T> {
             }
             // This song is over: on to the next.
             self.segs.pop_front();
+            if self.stop_after_current {
+                // Stop here, with the next song ready.
+                self.stop_after_current = false;
+                let _ = self.queue.advance();
+                self.segs.clear();
+                break;
+            }
             if self.queue.advance().is_none() {
                 self.queue.index = self.queue.index.or(Some(0));
                 break;
@@ -554,7 +616,20 @@ impl<T: Item + Serialize> Engine<T> {
         // Silence for the rest of the period (end of the queue, or before a format change).
         taken.resize(want * src_ch, 0);
         output::remap(&taken, fmt.channels, dev_fmt.channels, &mut self.mapped);
-        output::encode(&self.mapped, &dev_fmt, self.volume, &mut self.bytes);
+        // The sleep timer fades the last ten seconds out, then pauses.
+        let mut fade = 1.0f32;
+        if let Some(at) = self.sleep_at {
+            let left = at.saturating_duration_since(Instant::now()).as_secs_f32();
+            if left <= 0.0 {
+                self.sleep_at = None;
+                taken.iter_mut().for_each(|x| *x = 0);
+                self.segs.truncate(1);
+                self.set_playing(false);
+                return Ok(());
+            }
+            fade = (left / 10.0).min(1.0);
+        }
+        output::encode(&self.mapped, &dev_fmt, self.volume * fade, &mut self.bytes);
         let dev = self.device.as_mut().expect("opened");
         dev.write(&self.bytes, want)?;
         if !self.started {
@@ -602,7 +677,12 @@ impl<T: Item + Serialize> Engine<T> {
         let dev = self.device.as_ref()?;
         let src = seg.source.format.clone();
         let mode = dev.mode();
-        let mut steps = Vec::new();
+        let mut steps: Vec<String> = seg
+            .chain
+            .as_ref()
+            .map(|c| c.steps.clone())
+            .unwrap_or_default();
+        let processed = seg.chain.as_ref().is_some_and(|c| c.active);
         if mode == Mode::Shared {
             steps.push("Mixed by Windows (shared mode), which may resample".into());
         }
@@ -615,10 +695,15 @@ impl<T: Item + Serialize> Engine<T> {
         if !src.lossless {
             steps.push(format!("Decoded from {}", src.codec));
         }
+        let buffered: usize = self.segs.iter().map(Segment::frames).sum();
+        let rate = src.rate.max(1) as f32;
         Some(Signal {
             device: dev.name(),
             mode,
-            bit_perfect: output::bit_perfect(&src, &dev_fmt, mode, self.volume),
+            file: seg.source.info.clone(),
+            buffer_ms: (buffered as f32 * 1000.0 / rate) as u32,
+            latency_ms: dev.latency_frames() as f32 * 1000.0 / dev_fmt.rate.max(1) as f32,
+            bit_perfect: !processed && output::bit_perfect(&src, &dev_fmt, mode, self.volume),
             source: src,
             output: dev_fmt,
             steps,
@@ -647,6 +732,11 @@ impl<T: Item + Serialize> Engine<T> {
             signal: self.signal(),
             from: self.from.clone(),
             error: self.error.clone(),
+            sound: self.sound.clone(),
+            stop_after_current: self.stop_after_current,
+            sleep_in_s: self
+                .sleep_at
+                .map(|t| t.saturating_duration_since(Instant::now()).as_secs()),
         };
         self.queue_changed = false;
         (self.on_status)(status);

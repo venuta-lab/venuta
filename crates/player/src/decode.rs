@@ -27,6 +27,16 @@ pub struct SourceFormat {
     pub codec: String,
 }
 
+/// About the file itself (not its sound): for the audio info.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FileInfo {
+    pub size_bytes: u64,
+    /// Average bitrate over the whole file, in kbit/s.
+    pub bitrate_kbps: u32,
+    /// The decoder that turns it into samples.
+    pub decoder: String,
+}
+
 pub struct Source {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
@@ -34,6 +44,7 @@ pub struct Source {
     pub format: SourceFormat,
     /// Length in frames, when the file says.
     pub frames: Option<u64>,
+    pub info: FileInfo,
     /// Frames to drop from the next decoded output (to land exactly on a seek target).
     skip: u64,
 }
@@ -95,6 +106,17 @@ impl Source {
             codec = "ALAC".into();
         }
         let lossless = matches!(codec.as_str(), "FLAC" | "ALAC" | "WAV" | "AIFF");
+        let size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let rate_hz = u64::from(params.sample_rate.unwrap_or(44_100).max(1));
+        let bitrate_kbps = frames
+            .filter(|&f| f > 0)
+            .map(|f| (size_bytes * 8 * rate_hz / f / 1000) as u32)
+            .unwrap_or(0);
+        let info = FileInfo {
+            size_bytes,
+            bitrate_kbps,
+            decoder: format!("symphonia {} decoder", codec),
+        };
         let format = SourceFormat {
             rate: params.sample_rate.unwrap_or(44_100),
             channels: params
@@ -117,6 +139,7 @@ impl Source {
             track_id,
             format,
             frames,
+            info,
             skip: 0,
         })
     }

@@ -52,6 +52,10 @@ pub trait Device {
     /// Wait until the device wants more, then say how many frames.
     fn wait(&mut self) -> Result<usize, String>;
     fn write(&mut self, bytes: &[u8], frames: usize) -> Result<(), String>;
+    /// Frames the device holds before you hear them (its buffer): the output latency.
+    fn latency_frames(&self) -> usize {
+        0
+    }
     fn start(&mut self) -> Result<(), String>;
     fn stop(&mut self) -> Result<(), String>;
     /// Let go of the device (other apps can use it).

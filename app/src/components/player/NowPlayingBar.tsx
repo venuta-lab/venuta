@@ -264,26 +264,59 @@ export function SignalPath(props: { signal: Signal | null }) {
   const [check, setCheck] = useState<{ state: 'running' } | { state: 'done'; v: Verification } | { state: 'error'; message: string } | null>(null)
   if (!s) return <p className="text-ink/55">Play something to see where the sound goes.</p>
   const out = s.output
-  const outLabel =
+  const khz = (r: number) => `${r % 1000 ? (r / 1000).toFixed(1) : r / 1000} kHz`
+  const channels = s.source.channels === 1 ? 'mono' : s.source.channels === 2 ? 'stereo' : `${s.source.channels} channels`
+  const mb = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`)
+  const outFormat =
     out.kind === 'float'
-      ? `32-bit float, ${out.rate / 1000} kHz`
-      : `${out.valid_bits}-bit${out.container_bits !== out.valid_bits ? ` in ${out.container_bits}` : ''}, ${out.rate / 1000} kHz`
-  const rows: [string, string][] = [
-    ['File', `${s.source.codec}, ${s.source.lossless ? `${s.source.bits}-bit, ` : ''}${s.source.rate / 1000} kHz, ${s.source.channels === 1 ? 'mono' : s.source.channels === 2 ? 'stereo' : `${s.source.channels} channels`}`],
-    ...s.steps.map((x) => ['Change', x] as [string, string]),
-    ['Output', `${s.mode === 'exclusive' ? 'Exclusive' : s.mode === 'shared' ? 'Shared' : 'Memory'}, ${outLabel}`],
-    ['Device', s.device],
+      ? `32-bit float, ${khz(out.rate)}`
+      : `${out.valid_bits}-bit${out.container_bits !== out.valid_bits ? ` in ${out.container_bits}` : ''}, ${khz(out.rate)}`
+  const stages: { name: string; lines: string[]; warn?: boolean }[] = [
+    {
+      name: 'File',
+      lines: [
+        `${s.source.codec}${s.source.lossless ? `, ${s.source.bits}-bit` : ''}, ${khz(s.source.rate)}, ${channels}`,
+        [s.file.bitrate_kbps ? `${s.file.bitrate_kbps.toLocaleString('en-IN')} kbit/s` : '', s.file.size_bytes ? mb(s.file.size_bytes) : '']
+          .filter(Boolean)
+          .join(', '),
+      ].filter(Boolean),
+    },
+    { name: 'Decoder', lines: [s.file.decoder, `${(s.buffer_ms / 1000).toFixed(1)} s decoded ahead`] },
+    {
+      name: 'Processing',
+      lines: s.steps.length ? s.steps : ['Nothing changes the samples'],
+      warn: s.steps.length > 0,
+    },
+    {
+      name: 'Output',
+      lines: [
+        `${s.mode === 'exclusive' ? 'WASAPI exclusive' : s.mode === 'shared' ? 'WASAPI shared (Windows mixer)' : 'Memory'}`,
+        `${outFormat}${s.latency_ms ? `, ${s.latency_ms.toFixed(1)} ms latency` : ''}`,
+      ],
+    },
+    { name: 'Device', lines: [s.device] },
   ]
   return (
     <div>
       <div className={`text-[14px] font-medium ${s.bit_perfect ? 'text-good' : 'text-ink'}`}>
         {s.bit_perfect ? 'Bit-perfect: the device gets the exact samples in the file' : 'The sound is changed on the way'}
       </div>
-      <ol className="mt-3 grid gap-2">
-        {rows.map(([k, v], i) => (
-          <li key={i} className="flex gap-3">
-            <span className={`w-14 shrink-0 ${k === 'Change' ? 'text-fix' : 'text-ink/45'}`}>{k}</span>
-            <span className="text-ink/85">{v}</span>
+      <ol className="mt-3">
+        {stages.map((st, i) => (
+          <li key={st.name} className="relative flex gap-3 pb-3 last:pb-0">
+            {/* The chain: a dot per stage, joined by a line. */}
+            <span className="relative flex w-3 shrink-0 justify-center" aria-hidden>
+              <span className={`mt-1.5 h-2.5 w-2.5 rounded-full ${st.warn ? 'bg-fix' : i === stages.length - 1 && s.bit_perfect ? 'bg-good' : 'bg-ink/35'}`} />
+              {i < stages.length - 1 && <span className="absolute top-5 bottom-[-2px] w-px bg-ink/15" />}
+            </span>
+            <span className="min-w-0">
+              <span className={`block text-[11.5px] ${st.warn ? 'text-fix' : 'text-ink/45'}`}>{st.name}</span>
+              {st.lines.map((l) => (
+                <span key={l} className="block text-ink/85">
+                  {l}
+                </span>
+              ))}
+            </span>
           </li>
         ))}
       </ol>

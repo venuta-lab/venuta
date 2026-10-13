@@ -118,6 +118,24 @@ impl Tracker {
     }
 }
 
+/// Keep the sound tools' settings.
+pub fn save_sound(sound: &player::dsp::Sound) {
+    if let (Ok(c), Ok(v)) = (open(), serde_json::to_string(sound)) {
+        let _ = c.execute(
+            "INSERT OR REPLACE INTO state (k, v) VALUES ('sound', ?1)",
+            params![v],
+        );
+    }
+}
+
+pub fn saved_sound() -> Option<player::dsp::Sound> {
+    let c = open().ok()?;
+    let v: String = c
+        .query_row("SELECT v FROM state WHERE k = 'sound'", [], |r| r.get(0))
+        .ok()?;
+    serde_json::from_str(&v).ok()
+}
+
 /// Where you were: the queue, the song and position in it.
 pub fn saved_place() -> Option<(serde_json::Value, serde_json::Value)> {
     let c = open().ok()?;

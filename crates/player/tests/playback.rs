@@ -183,3 +183,78 @@ fn tempdir() -> PathBuf {
     std::fs::create_dir_all(&d).unwrap();
     d
 }
+
+/// Play to memory with commands sent first; returns what came out and the last status.
+fn play_with(items: Vec<PathBuf>, before: Vec<Cmd<PathBuf>>) -> (Captured, Status<PathBuf>) {
+    let captured = Arc::new(Mutex::new(Captured::default()));
+    let (tx, rx) = channel::<Status<PathBuf>>();
+    let player = Player::spawn(OutputChoice::Memory(captured.clone()), move |s| {
+        let _ = tx.send(s);
+    });
+    for c in before {
+        player.send(c);
+    }
+    player.send(Cmd::Set {
+        items,
+        index: 0,
+        start_ms: 0,
+        play: true,
+        from: String::new(),
+    });
+    let mut was = false;
+    let last = loop {
+        let s = rx.recv_timeout(Duration::from_secs(10)).expect("status");
+        was |= s.playing;
+        if was && !s.playing {
+            break s;
+        }
+    };
+    drop(player);
+    (
+        Arc::try_unwrap(captured)
+            .ok()
+            .unwrap()
+            .into_inner()
+            .unwrap(),
+        last,
+    )
+}
+
+#[test]
+fn stop_after_this_song_stops_with_the_next_one_ready() {
+    let dir = tempdir();
+    let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+    wav(&a, 44_100, 16, 2, 9_000, pattern(6, 16));
+    wav(&b, 44_100, 16, 2, 9_000, pattern(7, 16));
+    let (got, last) = play_with(vec![a, b], vec![Cmd::StopAfterCurrent(true)]);
+    let v = values(&got.bytes, 16);
+    let want = expected(9_000, 2, pattern(6, 16));
+    assert_eq!(&v[..want.len()], &want[..]);
+    assert!(
+        v[want.len()..].iter().all(|&x| x == 0),
+        "nothing of the second song"
+    );
+    assert_eq!(last.index, Some(1), "the next song is ready");
+    assert!(!last.stop_after_current, "and the switch resets");
+}
+
+#[test]
+fn a_sound_tool_changes_the_output_and_says_so() {
+    use player::dsp::Sound;
+    let dir = tempdir();
+    let a = dir.join("eq.wav");
+    wav(&a, 48_000, 24, 2, 12_000, pattern(8, 24));
+    let sound = Sound {
+        bass_db: 6.0,
+        ..Sound::default()
+    };
+    let (got, last) = play_with(vec![a], vec![Cmd::Sound(sound)]);
+    let v = values(&got.bytes, 24);
+    let want = expected(12_000, 2, pattern(8, 24));
+    assert_ne!(
+        &v[..want.len()],
+        &want[..],
+        "the bass boost changed the samples"
+    );
+    assert_eq!(last.sound.bass_db, 6.0);
+}

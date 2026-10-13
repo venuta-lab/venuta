@@ -753,6 +753,20 @@ struct CatalogTrack {
     lyrics: bool,
     /// Your rating, 0–5.
     stars: u8,
+    /// ReplayGain from the tags (dB, and peaks 0–1), for volume levelling.
+    rg: player::dsp::Gain,
+}
+
+/// "-6.52 dB" → -6.52.
+fn tag_number(v: Option<&str>) -> Option<f32> {
+    v.and_then(|s| {
+        s.trim()
+            .trim_end_matches("dB")
+            .trim_end_matches("db")
+            .trim()
+            .parse()
+            .ok()
+    })
 }
 
 /// Every song in the open folder, for the Music home.
@@ -812,6 +826,12 @@ async fn music_catalog(root: String) -> CmdResult<Vec<CatalogTrack>> {
                             .first("RATING")
                             .map(engine::edit::rating_to_stars)
                             .unwrap_or(0),
+                        rg: player::dsp::Gain {
+                            track_db: tag_number(t.first("REPLAYGAIN_TRACK_GAIN")),
+                            album_db: tag_number(t.first("REPLAYGAIN_ALBUM_GAIN")),
+                            track_peak: tag_number(t.first("REPLAYGAIN_TRACK_PEAK")),
+                            album_peak: tag_number(t.first("REPLAYGAIN_ALBUM_PEAK")),
+                        },
                     }
                 })
                 .collect();
@@ -1760,6 +1780,9 @@ pub fn run() {
             playback::player_resume,
             playback::player_verify,
             playback::song_waveform,
+            playback::player_sound,
+            playback::player_stop_after,
+            playback::player_sleep,
             listening::listening_summary,
             tidy_preview,
             tidy_apply,

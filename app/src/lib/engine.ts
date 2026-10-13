@@ -744,6 +744,15 @@ export interface CatalogTrack {
   category: string
   lyrics: boolean
   stars: number
+  /** ReplayGain from the tags. */
+  rg: Gain
+}
+
+export interface Gain {
+  track_db: number | null
+  album_db: number | null
+  track_peak: number | null
+  album_peak: number | null
 }
 
 export const musicCatalog = (root: string) =>

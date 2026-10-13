@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { inApp, type CatalogTrack } from './engine'
+import { inApp, type CatalogTrack, type Gain } from './engine'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -22,6 +22,32 @@ export interface QueueItem {
   bit_depth: number
   sample_rate: number
   lyrics: boolean
+  rg: Gain
+}
+
+/** The sound tools (all off by default: bit-perfect). dB values. */
+export interface Sound {
+  eq: boolean
+  bands: number[]
+  preset: string
+  preamp_db: number
+  bass_db: number
+  treble_db: number
+  leveling: 'off' | 'track' | 'album'
+  leveling_preamp_db: number
+  limiter: boolean
+}
+
+export const SOUND_OFF: Sound = {
+  eq: false,
+  bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  preset: 'Flat',
+  preamp_db: 0,
+  bass_db: 0,
+  treble_db: 0,
+  leveling: 'off',
+  leveling_preamp_db: 0,
+  limiter: true,
 }
 
 /** Where the sound goes and what happens on the way (for the badge and the signal path). */
@@ -30,6 +56,12 @@ export interface Signal {
   /** "exclusive": straight to the device, at the song's own format. "shared": via Windows' mixer. */
   mode: 'exclusive' | 'shared' | 'memory'
   source: { rate: number; channels: number; bits: number; lossless: boolean; codec: string }
+  /** About the file: size, average bitrate, the decoder. */
+  file: { size_bytes: number; bitrate_kbps: number; decoder: string }
+  /** Decoded ahead, waiting to play. */
+  buffer_ms: number
+  /** Held by the device before you hear it. */
+  latency_ms: number
   output: { rate: number; channels: number; container_bits: number; valid_bits: number; kind: 'int' | 'float' }
   /** Nothing changes the samples on the way. */
   bit_perfect: boolean
@@ -53,6 +85,10 @@ export interface PlayerState {
   from: string
   /** The last problem, in words (a file that couldn't be opened…). */
   error: string
+  sound: Sound
+  stop_after_current: boolean
+  /** Seconds until the sleep timer pauses. */
+  sleep_in_s: number | null
 }
 
 const idle: PlayerState = {
@@ -67,6 +103,9 @@ const idle: PlayerState = {
   signal: null,
   from: '',
   error: '',
+  sound: SOUND_OFF,
+  stop_after_current: false,
+  sleep_in_s: null,
 }
 
 let state: PlayerState = idle
@@ -101,6 +140,7 @@ export const toItem = (t: CatalogTrack): QueueItem => ({
   bit_depth: t.bit_depth,
   sample_rate: t.sample_rate,
   lyrics: t.lyrics,
+  rg: t.rg,
 })
 
 const call = (cmd: string, args: Record<string, unknown> = {}) =>
@@ -233,3 +273,11 @@ export function useWaveform(path: string | undefined): number[] | null {
   }, [path])
   return path ? (waves.get(path) ?? null) : null
 }
+
+export const setSound = (sound: Sound) => {
+  set({ ...state, sound })
+  return call('player_sound', { sound })
+}
+export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
+/** Pause after `minutes` (null cancels). */
+export const setSleep = (minutes: number | null) => call('player_sleep', { minutes })

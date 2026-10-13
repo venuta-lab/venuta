@@ -1,6 +1,7 @@
 //! Venuta player: bit-perfect, gapless playback of your own files.
 
 pub mod decode;
+pub mod dsp;
 pub mod engine;
 pub mod output;
 pub mod queue;
