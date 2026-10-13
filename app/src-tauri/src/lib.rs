@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+mod accounts;
 mod desktop;
 mod listening;
 mod playback;
@@ -2084,7 +2085,9 @@ pub fn run() {
     builder
         .manage(Jobs::default())
         .manage(playback::Playback::default())
+        .manage(accounts::Accounts::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -2188,6 +2191,12 @@ pub fn run() {
             want_remove,
             desktop::set_close_action,
             updates::update_check,
+            accounts::spotify_status,
+            accounts::spotify_connect,
+            accounts::spotify_cancel,
+            accounts::spotify_disconnect,
+            accounts::spotify_playlists,
+            accounts::spotify_read,
             updates::update_install,
             playlist_shelf,
             wanted_export,

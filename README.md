@@ -22,8 +22,10 @@ There is no AI at runtime, no account and no paid service, and the app never dow
 - **Looks up** original years, composers, lyricists, sharper covers and synced lyrics from free
   public sources.
 - **Checks the sound**: damaged files, lossy sources, fake hi-res, and loudness for levelling.
-- **Brings your playlists over** from Spotify, Apple Music, YouTube Music, Deezer, TIDAL and
-  others, matched to your files; songs you don't have keep their place until you do.
+- **Brings your playlists over** from Spotify (sign in, or a file), Apple Music, YouTube Music,
+  Deezer, TIDAL and others, matched to your files; songs you don't have keep their place until
+  you do. Signing in to Spotify uses your own free Spotify app (steps in Settings, Online
+  sources) and your browser; Venuta never sees your password.
 - **Writes SD cards** for the player that reads them (Poweramp, Snowsky Disc, Echo Mini,
   Astell&Kern), changing only what changed.
 

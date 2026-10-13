@@ -61,4 +61,9 @@ read" screen with Try again. Health's Tools panel ran off the window when its te
 
 ## 5. Online sources (later)
 - [ ] Your own server (Navidrome / OpenSubsonic).
-- [ ] Direct playlist import from Spotify, TIDAL, YouTube (needs developer keys from him).
+- [x] Spotify: sign in (OAuth 2.0 + PKCE, system browser, loopback, tokens in Credential
+      Manager; docs/decisions/0005) and pick playlists to import. Checked end to end against a
+      stand-in Spotify: PKCE proof verified, paging, episodes skipped, followed playlists held back,
+      token refresh after a restart with the rotated refresh token, a revoked sign-in forgotten.
+      Not yet with his real account (needs his Client ID).
+- [ ] TIDAL and YouTube Music the same way (the OAuth part is shared).

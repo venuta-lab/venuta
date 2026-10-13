@@ -2,7 +2,19 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { importApply, importPreview, type ImportChoice, type ImportDone, type PlaylistItem, type PreviewItem, type PreviewPlaylist } from '../../lib/engine'
+import {
+  importApply,
+  importPreview,
+  spotifyPlaylists,
+  spotifyRead,
+  type ImportChoice,
+  type ImportDone,
+  type PlaylistItem,
+  type PreviewItem,
+  type PreviewPlaylist,
+  type SpotifyPlaylist,
+} from '../../lib/engine'
+import { SpotifyAccount, useSpotifyStatus } from '../../components/SpotifyAccount'
 import { clock } from '../../lib/player'
 import { Detail, Segmented, Switch } from '../../components/ui'
 import { playlistsChanged } from '../../components/AddToPlaylist'
@@ -15,7 +27,7 @@ const SOURCES: { id: SourceId; name: string; need: string; steps: React.ReactNod
   {
     id: 'spotify',
     name: 'Spotify',
-    need: 'Your account data, or an Exportify file',
+    need: 'Sign in, or an export file',
     accept: ['json', 'csv'],
     steps: [
       <>
@@ -121,6 +133,23 @@ export function ImportSheet(props: {
     })
     try {
       const r = await importPreview(root, files, deezer, apple)
+      setLists(r.lists)
+      setProblems(r.problems)
+      setPicks(r.lists.map((l) => ({ include: l.items.length > 0, name: l.name, replace: false, rejected: new Set() })))
+      setStep({ at: 'review' })
+    } catch (e) {
+      setProblems([e instanceof Error ? e.message : String(e)])
+      setStep({ at: 'pick' })
+    }
+  }
+
+  /** Playlists read from your Spotify account, matched like any import. */
+  async function readSpotify(chosen: SpotifyPlaylist[]) {
+    setProblems([])
+    const songs = chosen.reduce((n, p) => n + p.songs, 0)
+    setStep({ at: 'reading', what: `Reading ${plural(chosen.length, 'playlist')} (${plural(songs, 'song')}) from Spotify and matching every song to your library…` })
+    try {
+      const r = await spotifyRead(root, chosen)
       setLists(r.lists)
       setProblems(r.problems)
       setPicks(r.lists.map((l) => ({ include: l.items.length > 0, name: l.name, replace: false, rejected: new Set() })))
@@ -287,6 +316,13 @@ export function ImportSheet(props: {
                     const s = SOURCES.find((x) => x.id === source)!
                     return (
                       <>
+                        {source === 'spotify' && (
+                          <div className="mb-5 border-b border-edge pb-5">
+                            <SpotifyAccount compact />
+                            <SpotifyPicker onRead={(c) => void readSpotify(c)} />
+                            <p className="mt-4 text-[12.5px] font-medium text-ink/55">Or from a file</p>
+                          </div>
+                        )}
                         <ol className="grid gap-2.5 text-[13.5px] leading-relaxed text-ink/75">
                           {s.steps.map((t, i) => (
                             <li key={i} className="flex gap-3">
@@ -439,6 +475,88 @@ export function ImportSheet(props: {
         )}
       </AnimatePresence>
     </Detail>
+  )
+}
+
+/** Your Spotify playlists to choose from, once you are signed in. */
+function SpotifyPicker(props: { onRead: (chosen: SpotifyPlaylist[]) => void }) {
+  const [status] = useSpotifyStatus()
+  const [lists, setLists] = useState<SpotifyPlaylist[] | null>(null)
+  const [chosen, setChosen] = useState<Set<string>>(new Set())
+  const [problem, setProblem] = useState('')
+  const connected = !!status?.connected
+  useEffect(() => {
+    if (!connected) {
+      setLists(null)
+      return
+    }
+    let live = true
+    setProblem('')
+    spotifyPlaylists()
+      .then((l) => {
+        if (!live) return
+        setLists(l)
+        setChosen(new Set(l.filter((p) => p.readable).map((p) => p.id)))
+      })
+      .catch((e) => live && setProblem(e instanceof Error ? e.message : String(e)))
+    return () => {
+      live = false
+    }
+  }, [connected])
+  if (!connected) return null
+  if (problem) return <p className="mt-3 text-[12.5px] text-problem">{problem}</p>
+  if (!lists)
+    return (
+      <div className="mt-4 grid gap-1.5" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="shimmer h-10 rounded-xl" />
+        ))}
+      </div>
+    )
+  const readable = lists.filter((p) => p.readable)
+  const picked = lists.filter((p) => chosen.has(p.id))
+  const toggle = (id: string) =>
+    setChosen((c) => {
+      const n = new Set(c)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-3 text-[12.5px] text-ink/60">
+        <span className="flex-1">{plural(lists.length, 'playlist')} on Spotify</span>
+        <button onClick={() => setChosen(new Set(readable.map((p) => p.id)))} className="btn-ghost btn-sm">
+          All
+        </button>
+        <button onClick={() => setChosen(new Set())} className="btn-ghost btn-sm">
+          None
+        </button>
+      </div>
+      <div className="fade-y thin-scroll mt-1 grid max-h-[320px] gap-0.5 overflow-y-auto" role="group" aria-label="Spotify playlists">
+        {lists.map((p) => (
+          <label
+            key={p.id}
+            className={`flex items-center gap-3 rounded-xl px-2 py-1.5 ${p.readable ? 'cursor-pointer hover:bg-ink/[0.05]' : 'opacity-55'}`}
+            title={p.readable ? undefined : "Spotify shares the songs only of playlists you made or collaborate on. Use an Exportify file for this one."}
+          >
+            <input type="checkbox" checked={chosen.has(p.id)} disabled={!p.readable} onChange={() => toggle(p.id)} className="h-4 w-4 accent-[var(--accent)]" />
+            <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-md bg-ink/[0.08] text-[14px]">
+              {p.image ? <img src={p.image} alt="" className="h-full w-full object-cover" /> : p.id === 'liked' ? '♥' : '♪'}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13.5px]">{p.name}</span>
+              <span className="block truncate text-[12px] text-ink/50">
+                {p.readable ? plural(p.songs, 'song') : `${p.owner}'s playlist: Spotify doesn't share its songs`}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <button onClick={() => props.onRead(picked)} disabled={!picked.length} className="btn-primary mt-3">
+        {picked.length ? `Read ${plural(picked.length, 'playlist')}` : 'Choose playlists to read'}
+      </button>
+    </div>
   )
 }
 

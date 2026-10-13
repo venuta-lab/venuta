@@ -40,6 +40,9 @@ pub struct Settings {
     /// are asked, the first time you close it.
     #[serde(default)]
     pub close_action: Option<String>,
+    /// Your Spotify app's Client ID (not a secret), for signing in to read playlists.
+    #[serde(default)]
+    pub spotify_client_id: Option<String>,
 }
 
 /// The free online sources, each on unless switched off.

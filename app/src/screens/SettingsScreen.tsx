@@ -15,6 +15,7 @@ import { resolvedTheme, setPrefs, surfaceShown, usePrefs, type Prefs } from '../
 import { ACCENTS, STYLES, styleInfo, tuneAccent, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
+import { SpotifyAccount } from '../components/SpotifyAccount'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
@@ -468,8 +469,11 @@ function Online() {
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Online sources</h2>
       <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Looking up details online uses MusicBrainz, Apple's catalogue, Deezer and LRCLIB, which need no key. The keys
-        below are optional and add more. They stay on this computer and are never written next to your library.
+        below are optional and add more. They are kept in your library's own settings (its .venuta folder), on this
+        computer, and are never sent anywhere but the service they belong to.
       </p>
+      <h3 className="mt-6 text-[15px] font-semibold">Accounts</h3>
+      <SpotifyAccount />
       {(
         [
           ['musicbrainz', 'MusicBrainz', 'Original years, composers and lyricists, release types. Free and open (CC0).'],

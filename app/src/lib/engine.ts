@@ -198,6 +198,8 @@ export interface Settings {
   appearance?: Record<string, unknown> | null
   /** What closing the window does: keep playing in the tray, or quit. Unset until asked. */
   close_action?: 'tray' | 'quit' | null
+  /** Your Spotify app's Client ID (not a secret), for signing in. */
+  spotify_client_id?: string | null
 }
 
 export interface HomeInfo {
@@ -321,6 +323,35 @@ export const setDecisions = (root: string, changes: Record<string, Decision | nu
   return Promise.resolve({ ...devDecisions })
 }
 
+
+// --- Signed-in services (Spotify) --------------------------------------------------------------
+
+export interface AccountStatus {
+  /** A Client ID is set. */
+  ready: boolean
+  connected: boolean
+  name: string | null
+}
+
+export interface SpotifyPlaylist {
+  id: string
+  name: string
+  owner: string
+  songs: number
+  /** Spotify shares the songs only of playlists you made or collaborate on. */
+  readable: boolean
+  image: string | null
+}
+
+export const spotifyStatus = () =>
+  inApp() ? invoke<AccountStatus>('spotify_status') : Promise.resolve<AccountStatus>({ ready: false, connected: false, name: null })
+/** Opens Spotify in the browser and waits (up to five minutes) for you to agree. */
+export const spotifyConnect = () => invoke<string>('spotify_connect')
+export const spotifyCancel = () => invoke<void>('spotify_cancel')
+export const spotifyDisconnect = () => invoke<void>('spotify_disconnect')
+export const spotifyPlaylists = () => invoke<SpotifyPlaylist[]>('spotify_playlists')
+export const spotifyRead = (root: string, chosen: SpotifyPlaylist[]) =>
+  invoke<{ lists: PreviewPlaylist[]; problems: string[] }>('spotify_read', { root, chosen })
 
 /** Remember what closing the window does; `now` also does it. */
 export const setCloseAction = (action: 'tray' | 'quit', now: boolean) => invoke<void>('set_close_action', { action, now })

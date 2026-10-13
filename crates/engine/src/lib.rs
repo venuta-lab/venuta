@@ -4,6 +4,7 @@
 //! apply step (not yet built), and that step always writes a temp copy, verifies the audio
 //! is untouched, then renames.
 
+pub mod accounts;
 pub mod apple;
 pub mod apply;
 pub mod art;

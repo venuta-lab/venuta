@@ -19,6 +19,7 @@ rusqlite.workspace = true
 player = { path = "../../crates/player" }
 serde.workspace = true
 serde_json.workspace = true
+ureq.workspace = true
 blake3.workspace = true
 walkdir.workspace = true
 tauri = { version = "2.12.3", features = ["protocol-asset", "tray-icon"] }
@@ -27,3 +28,4 @@ souvlaki = "0.8"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-opener = "2"
