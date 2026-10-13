@@ -66,7 +66,7 @@ function Row(props: {
   )
 }
 
-/** What's playing and what comes next: drag to reorder, double-click to play, × to remove. */
+/** What's playing and what comes next: click to play, drag to reorder, × to remove. */
 export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   const s = usePlayer()
   const dragging = useRef<number | null>(null)
@@ -78,7 +78,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     const t = window.setTimeout(() => {
       const box = list.current
       const el = box?.querySelector<HTMLElement>('[data-current="true"]')
-      if (box && el) box.scrollTop = el.offsetTop - box.clientHeight / 2 + el.offsetHeight / 2
+      // Near the top, with the song before it still in sight: the drawer is about what comes next.
+      if (box && el) box.scrollTop = Math.max(0, el.offsetTop - el.offsetHeight - 8)
     }, 60)
     return () => window.clearTimeout(t)
   }, [props.open])

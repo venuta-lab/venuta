@@ -116,7 +116,7 @@ export function SoundPanel() {
       </p>
 
       <Card title="Equalizer" right={<Switch label="Equalizer" on={draft.eq} onChange={(eq) => change({ ...draft, eq })} />}>
-        <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+        <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(90deg,#000_calc(100%-36px),transparent)]">
           {PRESETS.map(([name, bands]) => (
             <button
               key={name}

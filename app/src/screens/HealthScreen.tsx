@@ -110,7 +110,7 @@ export function HealthScreen(props: {
 
   const stack = (dirs: string[]) => (
     <div className="flex -space-x-2.5">
-      {dirs.slice(0, 4).map((d) => {
+      {dirs.slice(0, 3).map((d) => {
         const c = cover(d)
         return (
           <div key={d} className="h-9 w-9 overflow-hidden rounded-lg bg-ink/[0.1] shadow-md shadow-black/25 ring-2 ring-[var(--glass)]">
@@ -118,9 +118,9 @@ export function HealthScreen(props: {
           </div>
         )
       })}
-      {dirs.length > 4 && (
+      {dirs.length > 3 && (
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-ink/[0.12] text-[11px] text-ink/70 ring-2 ring-[var(--glass)]">
-          +{dirs.length - 4}
+          +{dirs.length - 3}
         </div>
       )}
     </div>
@@ -210,27 +210,31 @@ export function HealthScreen(props: {
                   ? `${d.after}% after you build${d.left.length ? `; ${fmt(d.left.length)} still without` : ''}`
                   : `${fmt(d.missing.length)} albums without`}
             </div>
-            <div className="mt-auto flex items-center gap-2 pt-3">
-              {d.left.length > 0 && stack(d.left)}
-              <span className="flex-1" />
-              {d.left.length > 0 && (
-                <button
-                  onClick={() =>
-                    setSheet({
-                      title: `${d.label}: ${fmt(d.left.length)} albums still without`,
-                      text:
-                        d.fix === 'lookup'
-                          ? 'Looking up details online may find these. You can also add them yourself: open an album and edit it.'
-                          : 'Open an album to add this yourself.',
-                      albums: d.left,
-                    })
-                  }
-                  className="btn-ghost btn-sm"
-                >
+            {/* The albums still without it, and the way to them: one row, one click. */}
+            <div className="min-h-3 flex-1" />
+            {d.left.length > 0 && (
+              <button
+                onClick={() =>
+                  setSheet({
+                    title: `${d.label}: ${fmt(d.left.length)} albums still without`,
+                    text:
+                      d.fix === 'lookup'
+                        ? 'Looking up details online may find these. You can also add them yourself: open an album and edit it.'
+                        : 'Open an album to add this yourself.',
+                    albums: d.left,
+                  })
+                }
+                className="group/see -mx-2 flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.06]"
+              >
+                {stack(d.left)}
+                <span className="ml-auto flex items-center gap-1 text-[12.5px] font-medium text-ink/65 group-hover/see:text-ink">
                   See albums
-                </button>
-              )}
-            </div>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+                    <path d="m9 6 6 6-6 6" />
+                  </svg>
+                </span>
+              </button>
+            )}
           </section>
         ))}
       </div>

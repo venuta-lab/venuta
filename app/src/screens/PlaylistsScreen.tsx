@@ -122,6 +122,9 @@ export function PlaylistsScreen({ root }: { root: string }) {
               <input autoFocus value={creating} onChange={(e) => setCreating(e.target.value)} onBlur={() => !creating.trim() && setCreating(null)} onKeyDown={(e) => e.key === 'Escape' && setCreating(null)} placeholder="Name, then Enter" className="w-full rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
             </form>
           )}
+          {own.filter((p) => !smartNames.has(p.name)).length === 0 && creating === null && (
+            <p className="px-3 py-1.5 text-[12.5px] text-ink/45">None yet. New makes one; Apple Music brings yours over.</p>
+          )}
           {own.filter((p) => !smartNames.has(p.name)).map((p) => (
             <NavItem key={p.name} active={view?.kind === 'playlist' && view.name === p.name} onClick={() => setView({ kind: 'playlist', name: p.name })}>
               <span className="min-w-0 flex-1 truncate">{p.name}</span>
