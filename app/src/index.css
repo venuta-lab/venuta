@@ -49,6 +49,8 @@
   --app-bg: transparent;
   --scrim: rgb(9 9 12 / 0.42);
   --popover: rgb(24 22 30 / 0.94);
+  /* Fully opaque, for full views laid over everything (Now Playing). */
+  --solid: #17151c;
   --backdrop-opacity: 1;
   color-scheme: dark;
   transition: --accent 700ms ease;
@@ -71,6 +73,7 @@
 
 :root[data-surface="amoled"] {
   --glass: #000;
+  --solid: #000;
   --edge: rgb(255 255 255 / 0.12);
   --highlight: transparent;
   --shadow: none;
@@ -96,6 +99,7 @@
   --app-bg: rgb(247 245 251 / 0.35);
   --scrim: rgb(250 248 253 / 0.55);
   --popover: rgb(252 251 254 / 0.96);
+  --solid: #f6f4f9;
   color-scheme: light;
 }
 

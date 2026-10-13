@@ -146,7 +146,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
         >
           {/* The cover, blurred and large, behind everything. */}
           {/* A solid base, so nothing behind shows through, whatever the surface setting. */}
-          <div className="absolute inset-0 bg-[var(--popover)]" aria-hidden />
+          <div className="absolute inset-0 bg-[var(--solid)]" aria-hidden />
           {art && (
             <motion.img
               key={art.src}
