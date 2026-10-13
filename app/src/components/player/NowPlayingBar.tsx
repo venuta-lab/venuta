@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import {
   clock,
@@ -19,6 +19,7 @@ import {
   type PlayerState,
   type Signal,
   type Verification,
+  useWaveform,
   verifyCurrent,
 } from '../../lib/player'
 import {
@@ -42,7 +43,36 @@ const typing = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
 
 /** Drag or click to move through the song; hover shows where you'd land. */
-export function SeekBar(props: { position: number; duration: number; className?: string }) {
+/** The song's shape: bars, dim ahead and accent-coloured behind where you are. */
+function Wave(props: { wave: number[]; pct: number; height: number }) {
+  // About one bar per 4 px of a 600 px bar: fold the 600 peaks to 150.
+  const bars = useMemo(() => {
+    const n = 150
+    return Array.from({ length: n }, (_, i) => {
+      const a = Math.floor((i * props.wave.length) / n)
+      const b = Math.max(a + 1, Math.floor(((i + 1) * props.wave.length) / n))
+      return Math.max(...props.wave.slice(a, b)) / 255
+    })
+  }, [props.wave])
+  const shape = (
+    <>
+      {bars.map((v, i) => {
+        const h = Math.max(0.08, v) * props.height
+        return <rect key={i} x={i * 4 + 0.5} y={(props.height - h) / 2} width={2.6} height={h} rx={1.3} />
+      })}
+    </>
+  )
+  return (
+    <svg viewBox={`0 0 600 ${props.height}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden>
+      <g className="fill-ink/20">{shape}</g>
+      <g className="fill-accent" style={{ clipPath: `inset(0 ${100 - props.pct}% 0 0)` }}>
+        {shape}
+      </g>
+    </svg>
+  )
+}
+
+export function SeekBar(props: { position: number; duration: number; className?: string; wave?: number[] | null; waveHeight?: number }) {
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -82,16 +112,21 @@ export function SeekBar(props: { position: number; duration: number; className?:
           setDrag(null)
         }}
         onPointerLeave={() => setHover(null)}
-        className="group relative h-5 flex-1 cursor-pointer touch-none"
+        className="group relative flex-1 cursor-pointer touch-none"
+        style={{ height: props.wave ? (props.waveHeight ?? 22) : 20 }}
       >
-        <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 overflow-hidden rounded-full bg-ink/12 transition-[height] group-hover:h-[6px]">
-          <div
-            className={`h-full rounded-full bg-accent ${drag === null ? 'transition-[width] duration-150 ease-linear' : ''}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+        {props.wave ? (
+          <Wave wave={props.wave} pct={pct} height={props.waveHeight ?? 22} />
+        ) : (
+          <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 overflow-hidden rounded-full bg-ink/12 transition-[height] group-hover:h-[6px]">
+            <div
+              className={`h-full rounded-full bg-accent ${drag === null ? 'transition-[width] duration-150 ease-linear' : ''}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        )}
         <div
-          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${props.wave ? 'hidden' : ''} ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           style={{ left: `${pct}%` }}
         />
         {hover !== null && drag === null && props.duration > 0 && (
@@ -359,6 +394,7 @@ export function NowPlayingBar(props: {
   useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
   const art = song ? cover(song.dir) : undefined
   const duration = s.duration_ms || song?.duration_ms || 0
+  const wave = useWaveform(song?.path)
   return (
     <AnimatePresence initial={false}>
       {song && (
@@ -441,7 +477,7 @@ export function NowPlayingBar(props: {
                 {s.repeat === 'one' ? <IconRepeatOne /> : <IconRepeat />}
               </Round>
             </div>
-            <SeekBar position={s.position_ms} duration={duration} className="w-full max-w-[560px]" />
+            <SeekBar position={s.position_ms} duration={duration} wave={wave} className="w-full max-w-[560px]" />
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">

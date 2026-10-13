@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { inApp, type CatalogTrack } from './engine'
 
 /*
@@ -212,4 +212,24 @@ export function verifyCurrent(): Promise<Verification> {
   const song = current(state)
   if (!song) return Promise.reject(new Error('Play a song first.'))
   return invoke<Verification>('player_verify', { root: queueRoot, path: song.path })
+}
+
+const waves = new Map<string, number[]>()
+/** The playing song's shape for the seek bar (600 peaks, 0–255), once it's been read. */
+export function useWaveform(path: string | undefined): number[] | null {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!path || waves.has(path) || !inApp()) return
+    let live = true
+    invoke<number[]>('song_waveform', { root: queueRoot, path })
+      .then((w) => {
+        waves.set(path, w)
+        if (live) tick((n) => n + 1)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [path])
+  return path ? (waves.get(path) ?? null) : null
 }

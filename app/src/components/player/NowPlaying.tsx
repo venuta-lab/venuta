@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, current, jumpTo, seek, sourceLabel, usePlayer } from '../../lib/player'
+import { clock, current, jumpTo, seek, sourceLabel, usePlayer, useWaveform } from '../../lib/player'
 import { IconClose } from '../Icons'
 import { SeekBar, SignalPath } from './NowPlayingBar'
 
@@ -132,6 +132,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
     return () => window.removeEventListener('keydown', esc)
   }, [open, onClose])
   const duration = s.duration_ms || song?.duration_ms || 0
+  const wave = useWaveform(song?.path)
   return (
     <AnimatePresence>
       {open && song && (
@@ -183,7 +184,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                 <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
                   {song.album}
                 </button>
-                <SeekBar position={s.position_ms} duration={duration} className="mt-6" />
+                <SeekBar position={s.position_ms} duration={duration} wave={wave} waveHeight={38} className="mt-6" />
                 {s.signal && (
                   <button
                     onClick={() => props.onPanel('signal')}

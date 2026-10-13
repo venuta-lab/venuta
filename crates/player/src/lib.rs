@@ -7,3 +7,4 @@ pub mod queue;
 pub mod verify;
 #[cfg(windows)]
 pub mod wasapi_out;
+pub mod waveform;

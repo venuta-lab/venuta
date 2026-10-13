@@ -561,3 +561,35 @@ pub async fn player_verify(
         .await
         .map_err(|e| e.to_string())?
 }
+
+/// A song's shape for the seek bar (600 peaks, 0–255), made once and kept in `.venuta/waves`.
+#[tauri::command]
+pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = PathBuf::from(root).join(path);
+        let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
+        let stamp = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let key = blake3::hash(
+            format!("{}|{}|{stamp}|600", file.to_string_lossy(), meta.len()).as_bytes(),
+        )
+        .to_hex();
+        let dir = engine::paths::app_data_dir().join("waves");
+        let cached = dir.join(format!("{}.bin", &key[..24]));
+        if let Ok(b) = std::fs::read(&cached)
+            && b.len() == 600
+        {
+            return Ok(b);
+        }
+        let w = player::waveform::waveform(&file, 600)?;
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(&cached, &w);
+        Ok(w)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

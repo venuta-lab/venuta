@@ -1759,6 +1759,7 @@ pub fn run() {
             playback::song_lyrics,
             playback::player_resume,
             playback::player_verify,
+            playback::song_waveform,
             listening::listening_summary,
             tidy_preview,
             tidy_apply,
