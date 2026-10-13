@@ -131,7 +131,7 @@ fn read_tags(path: &Path) -> Result<Vec<(String, String)>, String> {
 }
 
 /// Replace a file's tags without ever risking its audio.
-fn write_safely(path: &Path, tags: &[(String, String)]) -> Result<(), String> {
+pub(crate) fn write_safely(path: &Path, tags: &[(String, String)]) -> Result<(), String> {
     let mut part = path.as_os_str().to_owned();
     part.push(".part");
     let part = PathBuf::from(part);

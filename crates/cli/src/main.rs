@@ -50,6 +50,15 @@ enum Command {
     },
     /// Remove everything an apply run created, using its journal
     Undo { journal: PathBuf },
+    /// Bring a library's Music folder in line with the rules, in place (preview unless --apply)
+    Tidy {
+        root: PathBuf,
+        rules: PathBuf,
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Put back everything a tidy run did, using its journal
+    TidyUndo { journal: PathBuf },
     /// Plan the albums waiting in LIBRARY/_Incoming (scans and looks them up first)
     IncomingPlan { library: PathBuf, rules: PathBuf },
     /// Import every ready album from LIBRARY/_Incoming into the library
@@ -398,6 +407,47 @@ fn main() -> Result<()> {
             })
             .map_err(anyhow::Error::msg)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::Tidy { root, rules, apply } => {
+            let root_key = paths::canonical_root_string(&root);
+            let db = cli.db.unwrap_or_else(|| paths::index_path_for(&root));
+            let mut index = Index::open(&db, &root_key)?;
+            engine::scan(&mut index, &root)?;
+            let r = engine::rules::Rules::load(&rules).map_err(anyhow::Error::msg)?;
+            let (_, plan) = engine::plan::build_checked(&index, &root, &r)?;
+            if apply {
+                let progress = engine::apply::ApplyProgress::default();
+                let report = engine::tidy::apply(&root, &plan, &[], &progress, &|_, _| {})
+                    .map_err(anyhow::Error::msg)?;
+                engine::scan(&mut index, &root)?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                let p = engine::tidy::preview(&root, &plan);
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&p)?);
+                } else {
+                    println!(
+                        "{} albums would change: {} songs moved, {} retagged, {} blocked",
+                        p.albums.len(),
+                        p.moves,
+                        p.retags,
+                        p.blocked
+                    );
+                    for a in p.albums.iter().take(10) {
+                        println!(
+                            "  {} -> {}  {:?} {}",
+                            a.from_dir,
+                            a.to_dir,
+                            a.fields,
+                            a.blocked.as_deref().unwrap_or("")
+                        );
+                    }
+                }
+            }
+        }
+        Command::TidyUndo { journal } => {
+            let n = engine::tidy::undo(&journal).map_err(anyhow::Error::msg)?;
+            println!("undid {n} steps");
         }
         Command::Undo { journal } => {
             let n = engine::apply::undo(&journal).map_err(anyhow::Error::msg)?;
