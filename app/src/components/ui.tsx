@@ -170,7 +170,7 @@ export function Page(props: {
     <div className={`pb-16 ${props.className ?? ''}`}>
       <header className={`${PAGE} flex flex-wrap items-end gap-x-6 gap-y-3 pb-5 pt-7`}>
         <div className="min-w-0 flex-1">
-          <h1 className="text-[40px] font-semibold leading-[1.05] tracking-[-0.035em]">{props.title}</h1>
+          <h1 className="title text-[40px] leading-[1.05]">{props.title}</h1>
           {props.line && <div className="mt-2 max-w-[70ch] text-[14px] leading-relaxed text-ink/60">{props.line}</div>}
         </div>
         {props.actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{props.actions}</div>}
@@ -245,7 +245,7 @@ export function Detail(props: {
             maskImage: 'radial-gradient(120% 90% at 30% 0%, #000 30%, transparent 75%)',
           }}
         >
-          <img src={props.glow} alt="" className="h-full w-full scale-125 object-cover blur-3xl saturate-150" />
+          <img src={props.glow} alt="" className="h-full w-full scale-125 object-cover" style={{ filter: "blur(64px) saturate(1.5) var(--art-tint)" }} />
         </div>
       )}
       <div className={`sticky top-0 z-20 -mx-10 px-10 transition-[background-color,box-shadow] duration-200 ${stuck ? 'bar' : ''}`}>
@@ -263,7 +263,7 @@ export function Detail(props: {
             className="flex min-w-0 flex-1 items-center gap-3"
             aria-hidden={!titled}
           >
-            <span className="truncate text-[15px] font-semibold tracking-[-0.01em]">{props.title}</span>
+            <span className="title truncate text-[15px]">{props.title}</span>
             {titled && props.tools}
           </motion.div>
         </div>

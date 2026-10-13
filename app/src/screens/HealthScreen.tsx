@@ -300,7 +300,7 @@ export function HealthScreen(props: {
 function Section(props: { title: string; text?: string }) {
   return (
     <div className="mb-3 mt-10">
-      <h2 className="text-[17px] font-semibold tracking-[-0.01em]">{props.title}</h2>
+      <h2 className="title text-[17px]">{props.title}</h2>
       {props.text && <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-ink/55">{props.text}</p>}
     </div>
   )

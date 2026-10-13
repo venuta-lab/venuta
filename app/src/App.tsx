@@ -2,6 +2,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Backdrop } from './components/Backdrop'
+import { ThemeFx } from './components/ThemeFx'
 import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
@@ -658,6 +659,7 @@ export default function App() {
     <MotionConfig reducedMotion={motionSetting(prefs)}>
       <div className="relative flex h-full flex-col" onWheel={onWheel}>
         <NowBackdrop covers={backdrop} focus={nowOpen} />
+        <ThemeFx />
         <TitleBar onPalette={() => setPalette(true)} />
         <div className="relative z-10 flex min-h-0 flex-1">
           <Rail

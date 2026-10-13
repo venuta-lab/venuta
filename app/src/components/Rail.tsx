@@ -27,18 +27,14 @@ export function Rail(props: {
         onClick={() => props.onSelect(s.id)}
         title={`${s.label}  (${s.keys})`}
         aria-current={on ? 'page' : undefined}
-        className={`relative flex w-[68px] flex-col items-center gap-1 rounded-2xl py-2.5 text-[11px] transition-colors ${
-          on ? 'text-ink' : 'text-ink/55 hover:text-ink/85'
+        className={`rail-item relative flex w-[68px] flex-col items-center gap-1 rounded-[14px] py-2.5 text-[11px] font-medium transition-colors ${
+          on ? 'text-ink' : 'text-ink/55 hover:bg-ink/[0.05] hover:text-ink/90'
         }`}
       >
         {on && (
           <motion.span
             layoutId="rail-pill"
-            className="absolute inset-0 rounded-2xl"
-            style={{
-              background: 'color-mix(in oklab, var(--accent) 26%, color-mix(in oklab, var(--ink) 6%, transparent))',
-              boxShadow: 'inset 0 1px 0 var(--highlight)',
-            }}
+            className="rail-pill absolute inset-0 rounded-[14px]"
             transition={{ type: 'spring', stiffness: 420, damping: 34 }}
           />
         )}
@@ -57,7 +53,7 @@ export function Rail(props: {
   return (
     <nav
       aria-label="Sections"
-      className="glass relative z-20 mb-3 ml-3 flex w-[84px] shrink-0 flex-col items-center gap-1 rounded-[var(--radius-glass)] py-3"
+      className="rail relative z-20 mb-3 ml-3 flex w-[84px] shrink-0 flex-col items-center gap-1 py-2"
     >
       {props.top.map(item)}
       <div className="flex-1" />

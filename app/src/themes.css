@@ -1,0 +1,876 @@
+/*
+  Themes. Every colour, surface, shape and typeface is a token; screens use only the tokens.
+  Switches on <html> (set by lib/prefs.ts):
+    data-style     venuta | neo-tokyo | thermoptic | sync-ratio | layer-zero | bounty | skin99
+    data-theme     dark | light           (Venuta and Bounty Session; the others are dark)
+    data-surface   glass | frosted | solid | amoled   (Venuta only)
+    data-backdrop  on | off
+  A theme preview (Settings) uses the same blocks through [data-preview="…"].
+  Spec and sources: docs/research/06-themes-and-design.md.
+*/
+
+/* Registered so the accent can glide from one cover's colour to the next. */
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #5aa8ff;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Venuta, dark glass: the default (and the base every other theme overrides).              */
+/* ---------------------------------------------------------------------------------------- */
+:root,
+[data-preview="venuta"] {
+  --accent: #5aa8ff;
+  --on-accent: #0b0c10;
+  --accent-ink: var(--accent);
+  --accent-2: var(--accent);
+  --ink: #f3f4f7;
+  --problem: #ff6b78;
+  --fix: #ffb547;
+  --good: #3ddc97;
+  --note: #8cb8ff;
+
+  --app-bg: rgb(11 12 16 / 0.35);
+  --app-image: none;
+  --solid: #111216;
+  /* The album backdrop: how much of it shows, how it's treated, and what keeps it calm. */
+  --backdrop-opacity: 0.8;
+  --backdrop-filter: none;
+  /* Album art used as light inside a page (empty: as it is). */
+  --art-tint: ;
+  --scrim: rgb(11 12 16 / 0.36);
+  --vignette: radial-gradient(120% 90% at 50% 35%, transparent 55%, rgb(0 0 0 / 0.5));
+
+  /* Panels on a page: a tint, no blur (only the blurred backdrop is behind them). */
+  --glass: rgb(255 255 255 / 0.045);
+  --edge: rgb(255 255 255 / 0.08);
+  --edge-strong: rgb(255 255 255 / 0.14);
+  --highlight: rgb(255 255 255 / 0.09);
+  --shadow: 0 8px 24px -6px rgb(0 0 0 / 0.5);
+  --shadow-e3: 0 24px 64px -12px rgb(0 0 0 / 0.65);
+  --blur: blur(28px) saturate(1.7);
+  /* Over content: menus, the palette, drawers, dialogs. */
+  --blur-over: blur(40px) saturate(1.8);
+  --popover: rgb(26 28 36 / 0.82);
+  /* A bar pinned over scrolling content. */
+  --bar: rgb(11 12 16 / 0.6);
+  --bar-blur: blur(20px) saturate(1.6);
+  --bar-edge: rgb(255 255 255 / 0.07);
+
+  /* The rail (base layer) and its active pill. */
+  --rail-bg: rgb(20 22 28 / 0.52);
+  --rail-blur: blur(28px) saturate(1.7);
+  --rail-edge: rgb(255 255 255 / 0.08);
+  --rail-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.45);
+  --pill-bg: color-mix(in oklab, var(--accent) 22%, rgb(255 255 255 / 0.04));
+  --pill-ink: var(--ink);
+  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+  /* The player bar. */
+  --np-bg: rgb(22 24 31 / 0.66);
+  --np-blur: blur(32px) saturate(1.8);
+  --np-edge: rgb(255 255 255 / 0.09);
+  --np-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.5);
+
+  /* Shape and type. */
+  --r-rail: 20px;
+  --r-np: 22px;
+  --font-ui: "Sora Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-readout: var(--font-ui);
+  --title-weight: 600;
+  --title-tracking: -0.035em;
+  --title-case: none;
+  --label-case: none;
+  color-scheme: dark;
+  transition: --accent 600ms ease;
+}
+
+:root[data-style="venuta"][data-surface="frosted"] {
+  /* Mica-like: near-opaque, only faintly tinted by the cover; the rail has no panel of its own. */
+  --app-bg: #202020;
+  --solid: #202020;
+  --backdrop-opacity: 0.2;
+  --scrim: rgb(32 32 32 / 0.8);
+  --vignette: none;
+  --ink: #ffffff;
+  --glass: rgb(58 58 58 / 0.3);
+  --edge: rgb(255 255 255 / 0.07);
+  --highlight: rgb(255 255 255 / 0.06);
+  --shadow: 0 2px 6px rgb(0 0 0 / 0.18);
+  --popover: rgb(44 44 44 / 0.88);
+  --blur-over: blur(30px) saturate(1.25);
+  --bar: rgb(32 32 32 / 0.86);
+  --rail-bg: transparent;
+  --rail-blur: none;
+  --rail-edge: transparent;
+  --rail-shadow: none;
+  --pill-bg: rgb(255 255 255 / 0.07);
+  --pill-shadow: inset 3px 0 0 var(--accent);
+  --np-bg: rgb(44 44 44 / 0.88);
+  --np-blur: blur(30px) saturate(1.25);
+  --np-edge: rgb(255 255 255 / 0.07);
+  --np-shadow: 0 8px 16px rgb(0 0 0 / 0.26);
+  --problem: #ff99a4;
+  --fix: #fce100;
+  --good: #6ccb5f;
+}
+
+:root[data-style="venuta"][data-surface="solid"] {
+  --app-bg: #111216;
+  --solid: #111216;
+  --backdrop-opacity: 0;
+  --ink: #edeef2;
+  --glass: #1b1d23;
+  --edge: #2a2d35;
+  --edge-strong: #363a44;
+  --highlight: rgb(255 255 255 / 0.04);
+  --shadow: 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --blur: none;
+  --blur-over: none;
+  --bar-blur: none;
+  --popover: #22242b;
+  --bar: #111216;
+  --bar-edge: #2a2d35;
+  --rail-bg: #17181d;
+  --rail-blur: none;
+  --rail-edge: #23252c;
+  --np-bg: #1b1d23;
+  --np-blur: none;
+  --np-edge: #2a2d35;
+}
+
+:root[data-style="venuta"][data-surface="amoled"] {
+  --app-bg: #000;
+  --solid: #000;
+  --backdrop-opacity: 0;
+  --ink: #ffffff;
+  --glass: #0a0a0b;
+  --edge: rgb(255 255 255 / 0.1);
+  --edge-strong: rgb(255 255 255 / 0.18);
+  --highlight: transparent;
+  --shadow: none;
+  --shadow-e3: none;
+  --blur: none;
+  --blur-over: none;
+  --popover: #121214;
+  --bar: rgb(0 0 0 / 0.86);
+  --bar-blur: blur(16px);
+  --bar-edge: rgb(255 255 255 / 0.1);
+  --rail-bg: #000;
+  --rail-blur: none;
+  --rail-edge: rgb(255 255 255 / 0.1);
+  --rail-shadow: none;
+  --pill-shadow: none;
+  --np-bg: #0a0a0b;
+  --np-blur: none;
+  --np-edge: rgb(255 255 255 / 0.12);
+  --np-shadow: none;
+}
+
+/* Light. The accent is darker wherever it's text, so it stays readable. */
+:root[data-style="venuta"][data-theme="light"] {
+  --ink: #0f1117;
+  --on-accent: #ffffff;
+  --accent-ink: color-mix(in oklab, var(--accent) 78%, #000);
+  --problem: #c42b1c;
+  --fix: #9d5d00;
+  --good: #0f8a5f;
+  --note: #1f66d1;
+  --app-bg: rgb(238 240 244 / 0.4);
+  --solid: #eef0f4;
+  --backdrop-opacity: 0.5;
+  --scrim: rgb(244 245 248 / 0.5);
+  --vignette: radial-gradient(120% 90% at 50% 35%, transparent 60%, rgb(238 240 244 / 0.7));
+  --glass: rgb(255 255 255 / 0.6);
+  --edge: rgb(16 20 32 / 0.08);
+  --edge-strong: rgb(16 20 32 / 0.14);
+  --highlight: rgb(255 255 255 / 0.9);
+  --shadow: 0 8px 24px -8px rgb(16 20 40 / 0.16);
+  --shadow-e3: 0 24px 60px -12px rgb(16 20 40 / 0.24);
+  --popover: rgb(255 255 255 / 0.84);
+  --bar: rgb(246 247 250 / 0.72);
+  --bar-edge: rgb(16 20 32 / 0.07);
+  --rail-bg: rgb(255 255 255 / 0.58);
+  --rail-edge: rgb(16 20 32 / 0.08);
+  --rail-shadow: 0 8px 24px -10px rgb(16 20 40 / 0.18);
+  --pill-bg: color-mix(in oklab, var(--accent) 16%, rgb(255 255 255 / 0.6));
+  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --np-bg: rgb(255 255 255 / 0.72);
+  --np-edge: rgb(16 20 32 / 0.08);
+  --np-shadow: 0 8px 24px -8px rgb(16 20 40 / 0.18);
+  color-scheme: light;
+}
+:root[data-style="venuta"][data-theme="light"][data-surface="frosted"] {
+  --app-bg: #f3f3f3;
+  --solid: #f3f3f3;
+  --backdrop-opacity: 0.16;
+  --scrim: rgb(243 243 243 / 0.82);
+  --vignette: none;
+  --ink: #1b1b1b;
+  --glass: rgb(255 255 255 / 0.5);
+  --edge: rgb(0 0 0 / 0.06);
+  --highlight: rgb(255 255 255 / 0.7);
+  --shadow: 0 2px 6px rgb(0 0 0 / 0.06);
+  --popover: rgb(252 252 252 / 0.88);
+  --bar: rgb(243 243 243 / 0.86);
+  --rail-bg: transparent;
+  --rail-blur: none;
+  --rail-edge: transparent;
+  --rail-shadow: none;
+  --pill-bg: rgb(0 0 0 / 0.045);
+  --pill-shadow: inset 3px 0 0 var(--accent);
+  --np-bg: rgb(252 252 252 / 0.9);
+  --np-edge: rgb(0 0 0 / 0.06);
+  --np-shadow: 0 8px 16px rgb(0 0 0 / 0.12);
+  --problem: #c42b1c;
+  --fix: #9d5d00;
+  --good: #0f7b0f;
+}
+/* AMOLED is a dark-only look; in light it behaves as Solid. */
+:root[data-style="venuta"][data-theme="light"][data-surface="solid"],
+:root[data-style="venuta"][data-theme="light"][data-surface="amoled"] {
+  --app-bg: #f6f7f9;
+  --solid: #f6f7f9;
+  --backdrop-opacity: 0;
+  --ink: #12141a;
+  --glass: #ffffff;
+  --edge: #dde0e6;
+  --edge-strong: #c9cdd5;
+  --highlight: transparent;
+  --blur: none;
+  --blur-over: none;
+  --bar-blur: none;
+  --popover: #ffffff;
+  --bar: #f6f7f9;
+  --bar-edge: #dde0e6;
+  --rail-bg: #eceef2;
+  --rail-blur: none;
+  --rail-edge: #dde0e6;
+  --rail-shadow: none;
+  --np-bg: #ffffff;
+  --np-blur: none;
+  --np-edge: #dde0e6;
+}
+
+:root[data-backdrop="off"] {
+  --backdrop-opacity: 0;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Neo-Tokyo: red bike light-trails through a neon night city (after Akira, 1988).          */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="neo-tokyo"],
+[data-preview="neo-tokyo"] {
+  --art-tint: grayscale(1) contrast(1.3) brightness(0.55) sepia(1) saturate(5) hue-rotate(-45deg);
+  --accent: #da1d1f;
+  --on-accent: #ffffff;
+  --accent-ink: #ff4a3d;
+  --accent-2: #35d0e8;
+  --ink: #f2ebdd;
+  --problem: #ff4a3d;
+  --fix: #ff8a1f;
+  --good: #3ddc97;
+  --note: #35d0e8;
+  --app-bg: #07090f;
+  --app-image: linear-gradient(180deg, #0a0e1a 0 62%, #07090f 62%);
+  --solid: #07090f;
+  --backdrop-opacity: 0.22;
+  --backdrop-filter: grayscale(1) contrast(1.3) brightness(0.55) sepia(1) saturate(5) hue-rotate(-45deg);
+  --scrim: rgb(7 9 15 / 0.45);
+  --vignette: radial-gradient(130% 100% at 50% 30%, transparent 50%, rgb(0 0 0 / 0.7));
+  --glass: rgb(20 27 51 / 0.55);
+  --edge: rgb(242 235 221 / 0.1);
+  --edge-strong: rgb(242 235 221 / 0.18);
+  --highlight: transparent;
+  --shadow: 6px 6px 0 rgb(0 0 0 / 0.6);
+  --shadow-e3: 10px 10px 0 rgb(0 0 0 / 0.6);
+  --blur: none;
+  --blur-over: none;
+  --popover: #121830;
+  --bar: rgb(7 9 15 / 0.92);
+  --bar-blur: none;
+  --bar-edge: #da1d1f;
+  --rail-bg: #0d1120;
+  --rail-blur: none;
+  --rail-edge: rgb(218 29 31 / 0.6);
+  --rail-shadow: 6px 6px 0 rgb(0 0 0 / 0.55);
+  --pill-bg: #da1d1f;
+  --pill-ink: #f2ebdd;
+  --pill-shadow: 0 0 14px rgb(255 42 42 / 0.45);
+  --np-bg: #0d1120;
+  --np-blur: none;
+  --np-edge: rgb(242 235 221 / 0.1);
+  --np-shadow: 6px 6px 0 rgb(0 0 0 / 0.6), inset 3px 0 0 #da1d1f;
+  --r-rail: 2px;
+  --r-np: 2px;
+  --font-display: "Dela Gothic One", var(--font-ui);
+  --font-readout: "Barlow Condensed", var(--font-ui);
+  --title-weight: 400;
+  --title-tracking: 0.01em;
+  --title-case: uppercase;
+  --label-case: none;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Thermoptic: rain-damp teal megacity and terminal-green data (after Ghost in the Shell).   */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="thermoptic"],
+[data-preview="thermoptic"] {
+  --art-tint: grayscale(1) contrast(1.2) brightness(0.55) sepia(0.6) hue-rotate(115deg) saturate(2.2);
+  --accent: #48f59a;
+  --on-accent: #03110a;
+  --accent-ink: #48f59a;
+  --accent-2: #6e8fa6;
+  --ink: #d6e6e4;
+  --problem: #ff5a4e;
+  --fix: #e8a33b;
+  --good: #48f59a;
+  --note: #6e8fa6;
+  --app-bg: #050b0c;
+  --app-image: radial-gradient(120% 80% at 80% 0%, rgb(30 85 82 / 0.35), transparent 60%);
+  --solid: #050b0c;
+  --backdrop-opacity: 0.3;
+  --backdrop-filter: grayscale(1) contrast(1.2) brightness(0.55) sepia(0.6) hue-rotate(115deg) saturate(2.2);
+  --scrim: rgb(5 11 12 / 0.45);
+  --vignette: radial-gradient(130% 100% at 50% 40%, transparent 50%, rgb(0 0 0 / 0.7));
+  --glass: rgb(30 85 82 / 0.12);
+  --edge: rgb(72 245 154 / 0.14);
+  --edge-strong: rgb(72 245 154 / 0.28);
+  --highlight: transparent;
+  --shadow: 0 16px 40px -12px rgb(0 0 0 / 0.7);
+  --blur: blur(20px) saturate(1.2);
+  --blur-over: blur(24px) saturate(1.2);
+  --popover: rgb(8 20 21 / 0.9);
+  --bar: rgb(5 11 12 / 0.82);
+  --bar-blur: blur(16px);
+  --bar-edge: rgb(72 245 154 / 0.14);
+  --rail-bg: rgb(10 26 27 / 0.72);
+  --rail-blur: blur(20px) saturate(1.2);
+  --rail-edge: rgb(72 245 154 / 0.14);
+  --rail-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.7);
+  --pill-bg: rgb(72 245 154 / 0.08);
+  --pill-ink: #48f59a;
+  --pill-shadow: inset 0 0 0 1px rgb(72 245 154 / 0.55), 0 0 18px rgb(72 245 154 / 0.12);
+  --np-bg: rgb(10 26 27 / 0.82);
+  --np-blur: blur(24px);
+  --np-edge: rgb(72 245 154 / 0.18);
+  --np-shadow: 0 0 0 1px rgb(72 245 154 / 0.06), 0 16px 40px -12px rgb(0 0 0 / 0.7);
+  --r-rail: 6px;
+  --r-np: 6px;
+  --font-display: "Chakra Petch", var(--font-ui);
+  --font-readout: "Share Tech Mono", ui-monospace, monospace;
+  --title-weight: 600;
+  --title-tracking: 0.02em;
+  --title-case: uppercase;
+  --label-case: none;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Sync Ratio: emergency orange, cockpit purple, white serif title cards (after Evangelion). */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="sync-ratio"],
+[data-preview="sync-ratio"] {
+  --art-tint: grayscale(1) brightness(0.5) sepia(1) hue-rotate(220deg) saturate(2);
+  --accent: #f66e25;
+  --on-accent: #0b0a10;
+  --accent-ink: #ff8a4c;
+  --accent-2: #8bd450;
+  --ink: #f3efe6;
+  --problem: #ff2d3a;
+  --fix: #f6e201;
+  --good: #8bd450;
+  --note: #b49ae0;
+  --app-bg: #0b0a10;
+  --app-image: none;
+  --solid: #0b0a10;
+  --backdrop-opacity: 0.12;
+  --backdrop-filter: grayscale(1) brightness(0.5) sepia(1) hue-rotate(220deg) saturate(2);
+  --scrim: rgb(11 10 16 / 0.5);
+  --vignette: radial-gradient(130% 100% at 50% 40%, transparent 50%, rgb(0 0 0 / 0.7));
+  --glass: #1d1a2f;
+  --edge: rgb(246 110 37 / 0.28);
+  --edge-strong: rgb(246 110 37 / 0.5);
+  --highlight: transparent;
+  --shadow: 0 0 0 1px #000, 0 12px 30px -10px rgb(0 0 0 / 0.8);
+  --blur: none;
+  --blur-over: none;
+  --popover: #241f38;
+  --bar: #0b0a10;
+  --bar-blur: none;
+  --bar-edge: rgb(246 110 37 / 0.6);
+  --rail-bg: #15121f;
+  --rail-blur: none;
+  --rail-edge: rgb(246 110 37 / 0.35);
+  --rail-shadow: 0 0 0 1px #000;
+  --pill-bg: rgb(115 79 154 / 0.45);
+  --pill-ink: #f3efe6;
+  --pill-shadow: inset 3px 0 0 #f66e25;
+  --np-bg: #15121f;
+  --np-blur: none;
+  --np-edge: rgb(246 110 37 / 0.4);
+  --np-shadow: 0 0 0 1px #000, 0 12px 30px -10px rgb(0 0 0 / 0.8);
+  --r-rail: 0px;
+  --r-np: 0px;
+  --font-display: "Shippori Mincho B1", serif;
+  --font-readout: "DSEG7 Classic", ui-monospace, monospace;
+  --title-weight: 800;
+  --title-tracking: -0.02em;
+  --title-case: uppercase;
+  --label-case: uppercase;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Layer Zero: blue-grey stillness and shadows full of red static (after Lain).             */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="layer-zero"],
+[data-preview="layer-zero"] {
+  --art-tint: grayscale(1) brightness(0.6) contrast(1.1);
+  --accent: #9cc3e6;
+  --on-accent: #0a0c10;
+  --accent-ink: #9cc3e6;
+  --accent-2: #c8193c;
+  --ink: #e4e7ec;
+  --problem: #e2364e;
+  --fix: #e6c26e;
+  --good: #7fd1ae;
+  --note: #9cc3e6;
+  --app-bg: #0a0c10;
+  --app-image: linear-gradient(180deg, #10141c 0, #0a0c10 220px);
+  --solid: #0a0c10;
+  --backdrop-opacity: 0.14;
+  --backdrop-filter: grayscale(1) brightness(0.6) contrast(1.1);
+  --scrim: rgb(10 12 16 / 0.5);
+  --vignette: radial-gradient(130% 100% at 50% 40%, transparent 55%, rgb(0 0 0 / 0.6));
+  --glass: #141821;
+  --edge: rgb(228 231 236 / 0.09);
+  --edge-strong: rgb(228 231 236 / 0.18);
+  --highlight: transparent;
+  --shadow: none;
+  --blur: none;
+  --blur-over: none;
+  --popover: #1a1f2a;
+  --bar: rgb(10 12 16 / 0.94);
+  --bar-blur: none;
+  --bar-edge: rgb(228 231 236 / 0.09);
+  --rail-bg: #10131a;
+  --rail-blur: none;
+  --rail-edge: rgb(228 231 236 / 0.09);
+  --rail-shadow: none;
+  --pill-bg: rgb(156 195 230 / 0.07);
+  --pill-ink: #e4e7ec;
+  --pill-shadow: inset 2px 0 0 #9cc3e6;
+  --np-bg: #10131a;
+  --np-blur: none;
+  --np-edge: rgb(228 231 236 / 0.1);
+  --np-shadow: none;
+  --r-rail: 0px;
+  --r-np: 0px;
+  --font-ui: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "IBM Plex Mono", ui-monospace, monospace;
+  --font-readout: "IBM Plex Mono", ui-monospace, monospace;
+  --title-weight: 500;
+  --title-tracking: -0.01em;
+  --title-case: lowercase;
+  --label-case: lowercase;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Bounty Session: ink silhouettes on colour blocks, paper and a horn section (after Bebop). */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="bounty"],
+[data-preview="bounty"] {
+  --art-tint: grayscale(1) contrast(1.4) brightness(1.1);
+  --accent: #2f6db5;
+  --on-accent: #ffffff;
+  --accent-ink: #2f6db5;
+  --accent-2: #e85a8c;
+  --block: #2f6db5;
+  --ink: #111111;
+  --problem: #d13b2e;
+  --fix: #c98a00;
+  --good: #3fa66a;
+  --note: #2f6db5;
+  --app-bg: #efe6d2;
+  --app-image: none;
+  --solid: #efe6d2;
+  --backdrop-opacity: 0;
+  --scrim: transparent;
+  --vignette: none;
+  --glass: #f7f0e1;
+  --edge: #111111;
+  --edge-strong: #111111;
+  --highlight: transparent;
+  --shadow: 4px 4px 0 #111111;
+  --shadow-e3: 6px 6px 0 #111111;
+  --blur: none;
+  --blur-over: none;
+  --popover: #fff9ec;
+  --bar: #efe6d2;
+  --bar-blur: none;
+  --bar-edge: #111111;
+  --rail-bg: #111111;
+  --rail-blur: none;
+  --rail-edge: #111111;
+  --rail-shadow: 4px 4px 0 rgb(17 17 17 / 0.25);
+  --pill-bg: var(--block);
+  --pill-ink: #ffffff;
+  --pill-shadow: none;
+  --np-bg: #111111;
+  --np-blur: none;
+  --np-edge: #111111;
+  --np-shadow: 4px 4px 0 rgb(17 17 17 / 0.3);
+  --r-rail: 0px;
+  --r-np: 0px;
+  --font-display: "Big Shoulders Display", var(--font-ui);
+  --font-readout: "Courier Prime", ui-monospace, monospace;
+  --title-weight: 900;
+  --title-tracking: 0.01em;
+  --title-case: uppercase;
+  --label-case: none;
+  color-scheme: light;
+}
+/* The night session: ink paper, cream type. */
+:root[data-style="bounty"][data-theme="dark"] {
+  --ink: #efe6d2;
+  --app-bg: #121212;
+  --solid: #121212;
+  --glass: #1b1b1b;
+  --edge: #efe6d2;
+  --edge-strong: #efe6d2;
+  --shadow: 4px 4px 0 rgb(0 0 0 / 0.8);
+  --popover: #1e1e1e;
+  --bar: #121212;
+  --bar-edge: #efe6d2;
+  --rail-bg: #000000;
+  --np-bg: #000000;
+  --accent-ink: #79a8e6;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Skin '99: brushed gunmetal, bevels and a green LCD (after Y2K-era skinned players).       */
+/* ---------------------------------------------------------------------------------------- */
+:root[data-style="skin99"],
+[data-preview="skin99"] {
+  --art-tint: grayscale(1) brightness(0.6);
+  --accent: #00e000;
+  --on-accent: #031203;
+  --accent-ink: #3cff3c;
+  --accent-2: #f0e000;
+  --ink: #dde2ec;
+  --problem: #f01000;
+  --fix: #f0e000;
+  --good: #00e000;
+  --note: #8c93a6;
+  --app-bg: #1e2129;
+  --app-image: linear-gradient(180deg, #262a33, #1a1d24);
+  --solid: #1e2129;
+  --backdrop-opacity: 0;
+  --scrim: transparent;
+  --vignette: none;
+  --glass: #262a33;
+  --edge: #14161c;
+  --edge-strong: #0d0f14;
+  --highlight: #8c93a6;
+  --shadow: 0 2px 0 #0d0f14;
+  --blur: none;
+  --blur-over: none;
+  --popover: #323744;
+  --bar: #2b2f3a;
+  --bar-blur: none;
+  --bar-edge: #14161c;
+  --rail-bg: #2b2f3a;
+  --rail-blur: none;
+  --rail-edge: #14161c;
+  --rail-shadow: inset 1px 1px 0 #5a6070, inset -1px -1px 0 #14161c, 0 2px 0 #0d0f14;
+  --pill-bg: #23262f;
+  --pill-ink: #dde2ec;
+  --pill-shadow: inset 1px 1px 0 #14161c, inset -1px -1px 0 #5a6070;
+  --np-bg: #2b2f3a;
+  --np-blur: none;
+  --np-edge: #14161c;
+  --np-shadow: inset 1px 1px 0 #5a6070, inset -1px -1px 0 #14161c, 0 2px 0 #0d0f14;
+  --r-rail: 2px;
+  --r-np: 2px;
+  --font-display: "Silkscreen", var(--font-ui);
+  --font-readout: "DSEG7 Classic", ui-monospace, monospace;
+  --title-weight: 400;
+  --title-tracking: 0.02em;
+  --title-case: uppercase;
+  --label-case: uppercase;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Pieces every theme styles through tokens.                                                 */
+/* ---------------------------------------------------------------------------------------- */
+
+/* The rail (base layer). */
+.rail {
+  background: var(--rail-bg);
+  backdrop-filter: var(--rail-blur);
+  box-shadow:
+    inset 0 0 0 1px var(--rail-edge),
+    var(--rail-shadow);
+  border-radius: var(--r-rail);
+}
+.rail-pill {
+  background: var(--pill-bg);
+  box-shadow: var(--pill-shadow);
+}
+.rail-item[aria-current="page"] {
+  color: var(--pill-ink);
+}
+
+/* The player bar. */
+.np {
+  background: var(--np-bg);
+  backdrop-filter: var(--np-blur);
+  box-shadow:
+    inset 0 0 0 1px var(--np-edge),
+    inset 0 1px 0 var(--highlight),
+    var(--np-shadow);
+  border-radius: var(--r-np);
+}
+
+/* Titles and readouts take the theme's typefaces. */
+.title {
+  font-family: var(--font-display);
+  font-weight: var(--title-weight);
+  letter-spacing: var(--title-tracking);
+  text-transform: var(--title-case);
+}
+.readout {
+  font-family: var(--font-readout);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Sharp themes: corners become hard (a cap on every rounded thing, except true dots). */
+:root:is([data-style="neo-tokyo"], [data-style="sync-ratio"], [data-style="layer-zero"], [data-style="bounty"], [data-style="skin99"])
+  :is([class*="rounded"], .btn, .btn-primary, .btn-ghost, .glass, .popover):not(.keep-round) {
+  border-radius: 2px !important;
+}
+:root[data-style="thermoptic"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-["], .glass, .popover):not(.keep-round) {
+  border-radius: 6px !important;
+}
+:root[data-style="thermoptic"] :is(.btn, .btn-primary, .btn-ghost, [class*="rounded-full"], [class*="rounded-xl"], [class*="rounded-lg"]):not(.keep-round) {
+  border-radius: 3px !important;
+}
+
+/* ---- Neo-Tokyo */
+:root[data-style="neo-tokyo"] :is(.np, .popover) {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+:root[data-style="neo-tokyo"] .bar {
+  box-shadow: inset 0 -2px 0 #da1d1f;
+}
+:root[data-style="neo-tokyo"] :is(.btn-primary, .btn) {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: "Barlow Condensed", var(--font-ui);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* ---- Thermoptic: HUD corner brackets on the active and focused. */
+:root[data-style="thermoptic"] :is(.rail-pill, .np) {
+  background-image:
+    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a),
+    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a),
+    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a);
+  background-size:
+    8px 1px, 1px 8px, 8px 1px, 1px 8px, 8px 1px, 1px 8px, 8px 1px, 1px 8px;
+  background-position:
+    0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-color: var(--pill-bg);
+}
+:root[data-style="thermoptic"] .np {
+  background-color: var(--np-bg);
+}
+:root[data-style="thermoptic"] :is(.btn-primary, .btn) {
+  font-family: "Chakra Petch", var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+}
+
+/* ---- Sync Ratio: title cards are compressed, labels are condensed capitals. */
+:root[data-style="sync-ratio"] h1.title {
+  transform: scaleX(0.84);
+  transform-origin: left;
+}
+:root[data-style="sync-ratio"] :is(.btn-primary, .btn, .btn-ghost, [role="tab"], [role="radio"]) {
+  font-family: "Barlow Condensed", var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+:root[data-style="sync-ratio"] .bar {
+  box-shadow: inset 0 -1px 0 #f66e25;
+}
+
+/* ---- Layer Zero: page titles in Major Mono; a red static pixel line under the player. */
+:root[data-style="layer-zero"] h1.title {
+  font-family: "Major Mono Display", "IBM Plex Mono", monospace;
+  font-weight: 400;
+}
+:root[data-style="layer-zero"] .np {
+  box-shadow:
+    inset 0 0 0 1px var(--np-edge),
+    inset 0 -2px 0 rgb(200 25 60 / 0.55);
+}
+
+/* ---- Bounty Session: ink borders, hard offset shadows, cut-in buttons. */
+:root[data-style="bounty"] :is(.glass, .popover) {
+  border: 2px solid var(--edge);
+}
+:root[data-style="bounty"] :is(.btn, .btn-primary) {
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  font-family: "Big Shoulders Display", var(--font-ui);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 15px;
+}
+:root[data-style="bounty"] :is(.btn, .btn-primary):active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+:root[data-style="bounty"] .rail {
+  color: #efe6d2;
+  --ink: #efe6d2;
+}
+:root[data-style="bounty"] .np {
+  color: #efe6d2;
+  --ink: #efe6d2;
+}
+
+/* ---- Skin '99: bevelled buttons and an LCD well in the player bar. */
+:root[data-style="skin99"] :is(.btn, .btn-primary, .btn-ghost, .glass) {
+  box-shadow:
+    inset 1px 1px 0 #8c93a6,
+    inset -1px -1px 0 #14161c;
+}
+:root[data-style="skin99"] :is(.btn, .btn-primary, .btn-ghost):active:not(:disabled) {
+  box-shadow:
+    inset 1px 1px 0 #14161c,
+    inset -1px -1px 0 #8c93a6;
+  transform: none;
+}
+:root[data-style="skin99"] :is(.btn, .btn-ghost) {
+  background: linear-gradient(#4a5060, #2b2f3a);
+  color: #dde2ec;
+  font-family: "Silkscreen", var(--font-ui);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+:root[data-style="skin99"] .btn-primary {
+  background: linear-gradient(#3a3f4c, #23262f);
+  color: #00e000;
+  font-family: "Silkscreen", var(--font-ui);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+:root[data-style="skin99"] .rail,
+:root[data-style="skin99"] .np {
+  background-image:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.03) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #3a3f4c, #2b2f3a);
+}
+:root[data-style="skin99"] .lcd {
+  background: #050805;
+  box-shadow:
+    inset 1px 1px 0 #14161c,
+    inset -1px -1px 0 #5a6070;
+  color: #00e000;
+}
+
+/*
+  Tailwind's colour utilities (text-ink/60, bg-accent…) read --color-* tokens resolved at the
+  root. Anything that re-themes a part of the page (a preview card, Bounty's dark rail) maps
+  them again locally so they follow its own tokens.
+*/
+[data-preview],
+:root[data-style="bounty"] :is(.rail, .np) {
+  --color-ink: var(--ink);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
+  --color-glass: var(--glass);
+  --color-edge: var(--edge);
+  --color-scrim: var(--scrim);
+  --color-problem: var(--problem);
+  --color-fix: var(--fix);
+  --color-good: var(--good);
+  --color-note: var(--note);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}
+
+/* A filtered backdrop (the retro treatments) stays still: a moving filtered layer would be
+   re-filtered every frame. */
+:root:not([data-style="venuta"]) .backdrop-drift {
+  animation: none;
+}
+
+/* ---- Effects (components/ThemeFx.tsx) */
+@keyframes fx-trail {
+  from {
+    transform: translateX(-70vw);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(130vw);
+    opacity: 0;
+  }
+}
+.fx-trail {
+  transform: translateX(-70vw);
+  animation: fx-trail 380ms cubic-bezier(0.2, 0.9, 0.1, 1) forwards;
+}
+@keyframes fx-rain {
+  to {
+    transform: translateY(960px);
+  }
+}
+.fx-rain {
+  animation: fx-rain 120s linear infinite;
+  will-change: transform;
+}
+@keyframes fx-static {
+  0% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-37px, 23px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+.fx-static {
+  inset: -60px !important;
+  animation: fx-static 160ms steps(2) infinite;
+}
+:root[data-motion="reduced"] :is(.fx-rain, .fx-static, .fx-trail) {
+  animation: none;
+}
+@keyframes fx-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.fx-blink {
+  animation: fx-blink 1s steps(1) infinite;
+}

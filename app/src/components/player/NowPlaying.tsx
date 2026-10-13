@@ -179,7 +179,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                 {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
               </motion.div>
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
-                <h2 className="truncate text-[26px] font-semibold tracking-[-0.02em]">{song.title}</h2>
+                <h2 className="title truncate text-[26px]">{song.title}</h2>
                 <p className="mt-1 truncate text-[15px] text-ink/65">{song.artists.join(', ') || song.album_artist}</p>
                 <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
                   {song.album}

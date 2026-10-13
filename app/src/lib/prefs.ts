@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
+import { accentByName, styleInfo, type Style } from './themes'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -11,31 +12,23 @@ export type AccentMode = 'album' | 'fixed'
 export type Motion = 'full' | 'reduced' | 'system'
 
 export interface Prefs {
+  /** The theme: Venuta (glass, follows the album) or one of the retro looks. */
+  style: Style
   theme: Theme
   surface: Surface
   accentMode: AccentMode
+  /** A fixed accent's name (see ACCENTS in lib/themes.ts); also the fallback for grey covers. */
   accent: string
   backdrop: boolean
   motion: Motion
 }
 
-/** Fixed accents, each readable on both themes (light darkens it for text). */
-export const ACCENTS: { name: string; hex: string }[] = [
-  { name: 'Amber', hex: '#f0a85a' },
-  { name: 'Rose', hex: '#ec6a95' },
-  { name: 'Violet', hex: '#9c88ff' },
-  { name: 'Periwinkle', hex: '#a6b8ff' },
-  { name: 'Sky', hex: '#5aaef0' },
-  { name: 'Teal', hex: '#3fc2a8' },
-  { name: 'Lime', hex: '#a3d65a' },
-  { name: 'Coral', hex: '#ff8a65' },
-]
-
 const DEFAULTS: Prefs = {
+  style: 'venuta',
   theme: 'dark',
   surface: 'glass',
   accentMode: 'album',
-  accent: '#a6b8ff',
+  accent: 'Azure',
   backdrop: true,
   motion: 'system',
 }
@@ -47,10 +40,15 @@ const listeners = new Set<(p: Prefs) => void>()
 function load(): Prefs {
   try {
     const raw = localStorage.getItem(KEY)
-    return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Prefs>) } : DEFAULTS
+    return raw ? upgrade({ ...DEFAULTS, ...(JSON.parse(raw) as Partial<Prefs>) }) : DEFAULTS
   } catch {
     return DEFAULTS
   }
+}
+
+/** Older saves kept the accent as a colour; the accents are named now. */
+function upgrade(p: Prefs): Prefs {
+  return p.accent.startsWith('#') ? { ...p, accent: 'Azure' } : p
 }
 
 export const getPrefs = () => current
@@ -73,11 +71,13 @@ export function setPrefs(change: Partial<Prefs>, opts: { save?: boolean } = {}) 
 
 /** Take the look saved with the library (on start), without saving it straight back. */
 export function adoptPrefs(saved: Partial<Prefs> | null | undefined) {
-  if (saved) setPrefs({ ...DEFAULTS, ...saved }, { save: false })
+  if (saved) setPrefs(upgrade({ ...DEFAULTS, ...saved }), { save: false })
 }
 
 /** The theme actually showing ("system" resolved). */
 export function resolvedTheme(p = current): 'dark' | 'light' {
+  // The retro looks are one palette each (Bounty Session has a day and a night).
+  if (!styleInfo(p.style).modes) return 'dark'
   if (p.theme !== 'system') return p.theme
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
@@ -86,11 +86,19 @@ export function applyPrefs() {
   const p = current
   const el = document.documentElement
   const theme = resolvedTheme(p)
+  el.dataset.style = p.style
   el.dataset.theme = theme
   el.dataset.surface = p.surface
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
   el.dataset.motion = p.motion === 'reduced' ? 'reduced' : 'full'
-  if (p.accentMode === 'fixed') el.style.setProperty('--accent', p.accent)
+  if (p.style !== 'venuta') {
+    // The retro themes bring their own accent (Bounty's follows the album, in its blocks).
+    el.style.removeProperty('--accent')
+    if (p.style !== 'bounty') el.style.removeProperty('--block')
+  } else {
+    // Fixed, or the fallback until an album's colour arrives.
+    el.style.setProperty('--accent', fixedAccent(p))
+  }
   // The window's own glass (acrylic) follows the theme too.
   if (inApp()) {
     import('@tauri-apps/api/window')
@@ -126,38 +134,20 @@ export function usePrefs(): Prefs {
 export const motionSetting = (p: Prefs) =>
   p.motion === 'reduced' ? 'always' : p.motion === 'full' ? 'never' : 'user'
 
-/*
-  Album colours vary wildly; keep the accent inside a band that reads on the current theme.
-*/
-export function tuneAccent(hex: string): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return hex
-  const n = parseInt(m[1], 16)
-  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255)
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  let h = 0
-  const l = (max + min) / 2
-  const d = max - min
-  let s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
-  if (d !== 0) {
-    if (max === r) h = ((g - b) / d) % 6
-    else if (max === g) h = (b - r) / d + 2
-    else h = (r - g) / d + 4
-    h *= 60
-    if (h < 0) h += 360
+/** The chosen fixed accent, in the version for the theme showing. */
+export function fixedAccent(p = current): string {
+  const a = accentByName(p.accent)
+  return resolvedTheme(p) === 'light' ? a.light : a.dark
+}
+
+// Development builds only: lets the screenshot scripts try a look without saving it.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __venutaPrefs: unknown }).__venutaPrefs = {
+    get: () => current,
+    try: (change: Partial<Prefs>) => {
+      current = { ...current, ...change }
+      applyPrefs()
+      listeners.forEach((l) => l(current))
+    },
   }
-  const light = resolvedTheme() === 'light'
-  const L = Math.min(Math.max(l, light ? 0.5 : 0.64), light ? 0.62 : 0.8)
-  s = Math.max(s, 0.45)
-  const c = (1 - Math.abs(2 * L - 1)) * s
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
-  const mm = L - c / 2
-  const [r1, g1, b1] =
-    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
-  const to = (v: number) =>
-    Math.round((v + mm) * 255)
-      .toString(16)
-      .padStart(2, '0')
-  return `#${to(r1)}${to(g1)}${to(b1)}`
 }

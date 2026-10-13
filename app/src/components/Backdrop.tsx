@@ -53,7 +53,7 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
     <div
       aria-hidden
       className="pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-500"
-      style={{ opacity: 'var(--backdrop-opacity)' }}
+      style={{ opacity: 'var(--backdrop-opacity)', filter: 'var(--backdrop-filter)' }}
     >
       <canvas
         ref={canvas}
@@ -71,6 +71,7 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
         }}
       />
       <div className="absolute inset-0 bg-scrim" />
+      <div className="absolute inset-0" style={{ background: 'var(--vignette)' }} />
     </div>
   )
 }

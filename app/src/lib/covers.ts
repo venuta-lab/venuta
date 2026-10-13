@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { albumCovers, assetUrl, type CoverThumb } from './engine'
-import { getPrefs, tuneAccent } from './prefs'
+import { fixedAccent, getPrefs, resolvedTheme } from './prefs'
+import { colourDistance, nearestBlock, tuneAccent } from './themes'
 
 export interface Cover {
   src: string
@@ -49,10 +50,26 @@ export function useCovers(size = 320) {
   return (dir: string) => cache.get(`${size}:${dir}`)
 }
 
-/** Move the app's accent colour smoothly (CSS handles the transition). A fixed accent wins. */
+let shown = ''
+/**
+ * Move the app's accent to an album's colour (CSS glides it over 600 ms). A fixed accent wins;
+ * the retro themes keep their palette (Bounty Session snaps it to its colour blocks). A grey
+ * cover falls back to your fixed accent, and a change too small to notice is skipped.
+ */
 export function setAccent(hex: string | null | undefined) {
-  if (!hex || getPrefs().accentMode === 'fixed') return
-  document.documentElement.style.setProperty('--accent', tuneAccent(hex))
+  const p = getPrefs()
+  const root = document.documentElement.style
+  if (p.style === 'bounty') {
+    const block = nearestBlock(hex ?? '')
+    root.setProperty('--block', block)
+    root.setProperty('--accent', block)
+    return
+  }
+  if (!hex || p.style !== 'venuta' || p.accentMode === 'fixed') return
+  const next = tuneAccent(hex, resolvedTheme(p) === 'light') ?? fixedAccent(p)
+  if (shown && root.getPropertyValue('--accent').trim() === shown && colourDistance(shown, next) < 0.06) return
+  shown = next
+  root.setProperty('--accent', next)
 }
 
 /** Cached cover for one album, if loaded. */

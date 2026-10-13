@@ -215,7 +215,7 @@ export function Shelf(props: {
   return (
     <section className={props.spaced === false ? '' : 'mt-10'}>
       <div className="mb-3.5 flex items-baseline gap-3">
-        <h2 className="text-[19px] font-semibold tracking-[-0.02em]">{props.title}</h2>
+        <h2 className="title text-[19px]">{props.title}</h2>
         <span className="text-[12.5px] text-ink/50">{props.albums.length.toLocaleString('en-IN')}</span>
         {props.onSeeAll && (
           <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">

@@ -11,7 +11,8 @@ import {
   setSettings,
   type Settings,
 } from '../lib/engine'
-import { ACCENTS, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
+import { resolvedTheme, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
+import { ACCENTS, STYLES, styleInfo, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
@@ -110,75 +111,105 @@ function Segmented<T extends string>(props: {
 function LookAndFeel() {
   const p = usePrefs()
   const set = (c: Partial<Prefs>) => setPrefs(c)
+  const info = styleInfo(p.style)
+  const light = resolvedTheme(p) === 'light'
   return (
     <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Look and feel</h2>
+      <h2 className="title text-[22px]">Look and feel</h2>
       <p className="mt-1 text-[13px] text-ink/55">Changes apply as you choose them.</p>
-      <Row title="Theme" hint="Light and dark both keep the glass.">
-        <Segmented
-          id="theme"
-          value={p.theme}
-          onChange={(theme) => set({ theme })}
-          options={[
-            { value: 'light', label: 'Light' },
-            { value: 'dark', label: 'Dark' },
-            { value: 'system', label: 'Match Windows' },
-          ]}
-        />
-      </Row>
-      <Row
-        title="Surface"
-        hint="Glass shows the desktop through the window. Frosted is softer. Solid is opaque and fastest. AMOLED is true black, for dark only."
-      >
-        <Segmented
-          id="surface"
-          value={p.surface}
-          onChange={(surface) => set({ surface })}
-          options={[
-            { value: 'glass', label: 'Glass' },
-            { value: 'frosted', label: 'Frosted' },
-            { value: 'solid', label: 'Solid' },
-            { value: 'amoled', label: 'AMOLED', disabled: p.theme === 'light' },
-          ]}
-        />
-      </Row>
-      <Row title="Accent colour" hint="From the album you are looking at, or one colour of your choice.">
-        <Segmented
-          id="accent"
-          value={p.accentMode}
-          onChange={(accentMode) => {
-            set({ accentMode })
-            if (accentMode === 'fixed') document.documentElement.style.setProperty('--accent', p.accent)
-          }}
-          options={[
-            { value: 'album', label: 'From the album' },
-            { value: 'fixed', label: 'Fixed' },
-          ]}
-        />
-      </Row>
-      <Row title="Fixed accent" hint="Used when the accent is fixed.">
-        <div role="radiogroup" aria-label="Fixed accent" className="flex flex-wrap gap-2">
-          {ACCENTS.map((a) => {
-            const on = p.accent === a.hex
-            return (
-              <button
-                key={a.hex}
-                role="radio"
-                aria-checked={on}
-                aria-label={a.name}
-                title={a.name}
-                onClick={() => set({ accent: a.hex, accentMode: 'fixed' })}
-                className="grid h-8 w-8 place-items-center rounded-full"
-                style={{ background: a.hex, boxShadow: on ? '0 0 0 2px var(--app-bg), 0 0 0 4px ' + a.hex : 'none' }}
-              />
-            )
-          })}
-        </div>
-      </Row>
-      <Row title="Album background" hint="The blurred artwork behind everything. Not shown with Solid or AMOLED.">
-        <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
-      </Row>
-      <Row title="Motion" hint="Reduced keeps fades and drops springs, slides and the drifting background.">
+
+      <div role="radiogroup" aria-label="Theme" className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
+        {STYLES.map((s) => (
+          <ThemeCard key={s.id} style={s} on={p.style === s.id} onPick={() => set({ style: s.id })} />
+        ))}
+      </div>
+      <p className="mt-3 text-[12.5px] leading-relaxed text-ink/55">{info.line}</p>
+
+      {info.modes && (
+        <Row title={p.style === 'bounty' ? 'Session' : 'Mode'} hint={p.style === 'bounty' ? 'Day is ink on paper; night is paper on ink.' : undefined}>
+          <Segmented
+            id="theme"
+            value={p.theme}
+            onChange={(theme) => set({ theme })}
+            options={
+              p.style === 'bounty'
+                ? [
+                    { value: 'light', label: 'Day' },
+                    { value: 'dark', label: 'Night' },
+                    { value: 'system', label: 'Match Windows' },
+                  ]
+                : [
+                    { value: 'light', label: 'Light' },
+                    { value: 'dark', label: 'Dark' },
+                    { value: 'system', label: 'Match Windows' },
+                  ]
+            }
+          />
+        </Row>
+      )}
+      {p.style === 'venuta' && (
+        <>
+          <Row
+            title="Surface"
+            hint="Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only."
+          >
+            <Segmented
+              id="surface"
+              value={p.surface}
+              onChange={(surface) => set({ surface })}
+              options={[
+                { value: 'glass', label: 'Glass' },
+                { value: 'frosted', label: 'Frosted' },
+                { value: 'solid', label: 'Solid' },
+                { value: 'amoled', label: 'AMOLED', disabled: light },
+              ]}
+            />
+          </Row>
+          <Row title="Accent colour" hint="From the album you're looking at or playing, or always the colour you pick below.">
+            <Segmented
+              id="accent"
+              value={p.accentMode}
+              onChange={(accentMode) => set({ accentMode })}
+              options={[
+                { value: 'album', label: 'From the album' },
+                { value: 'fixed', label: 'Fixed' },
+              ]}
+            />
+          </Row>
+          <Row
+            title={p.accentMode === 'fixed' ? 'Accent' : 'When a cover has no colour'}
+            hint={p.accentMode === 'fixed' ? undefined : 'Black-and-white and grey covers use this one.'}
+          >
+            <div role="radiogroup" aria-label="Accent" className="flex flex-wrap gap-2">
+              {ACCENTS.map((a) => {
+                const on = p.accent === a.name
+                const hex = light ? a.light : a.dark
+                return (
+                  <button
+                    key={a.name}
+                    role="radio"
+                    aria-checked={on}
+                    aria-label={a.name}
+                    title={a.name}
+                    onClick={() => set({ accent: a.name })}
+                    className="keep-round grid h-8 w-8 place-items-center rounded-full transition-transform hover:scale-110"
+                    style={{ background: hex, boxShadow: on ? `0 0 0 2px var(--solid), 0 0 0 4px ${hex}` : 'inset 0 0 0 1px rgb(0 0 0 / 0.15)' }}
+                  />
+                )
+              })}
+            </div>
+          </Row>
+        </>
+      )}
+      {p.style !== 'bounty' && p.style !== 'skin99' && (
+        <Row
+          title="Album background"
+          hint={p.style === 'venuta' ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}
+        >
+          <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
+        </Row>
+      )}
+      <Row title="Motion" hint="Reduced keeps fades and drops springs, slides, the drifting background and the themes' moving effects.">
         <Segmented
           id="motion"
           value={p.motion}
@@ -191,6 +222,66 @@ function LookAndFeel() {
         />
       </Row>
     </div>
+  )
+}
+
+/** A theme as a small live window: its rail, title, covers and player, in its own tokens. */
+function ThemeCard(props: { style: StyleInfo; on: boolean; onPick: () => void }) {
+  const s = props.style
+  return (
+    <button role="radio" aria-checked={props.on} onClick={props.onPick} className="group text-left transition-transform duration-200 hover:-translate-y-0.5">
+      <div
+        data-preview={s.id}
+        className={`keep-round relative aspect-[16/10] overflow-hidden rounded-xl transition-shadow ${
+          props.on ? 'shadow-[0_0_0_2px_var(--color-accent)]' : 'shadow-[0_0_0_1px_var(--edge)] group-hover:shadow-[0_0_0_1px_var(--edge-strong)]'
+        }`}
+        style={{ backgroundColor: 'var(--app-bg)', backgroundImage: 'var(--app-image)' }}
+      >
+        {s.id === 'venuta' && (
+          <div
+            aria-hidden
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(70% 80% at 20% 20%, #c0602e 0, transparent 60%), radial-gradient(60% 70% at 85% 70%, #2d4f8a 0, transparent 65%), #14121a',
+              filter: 'blur(8px) saturate(1.3)',
+              opacity: 0.85,
+            }}
+          />
+        )}
+        <div className="rail absolute bottom-1.5 left-1.5 top-1.5 flex w-[14%] flex-col items-center gap-1.5 pt-2" style={{ borderRadius: 'min(var(--r-rail), 8px)' }}>
+          <span className="rail-pill h-[13%] w-[70%]" style={{ borderRadius: 'min(var(--r-rail), 6px)' }} />
+          <span className="keep-round h-1 w-[45%] rounded-full bg-ink/25" />
+          <span className="keep-round h-1 w-[45%] rounded-full bg-ink/25" />
+        </div>
+        <div className="absolute left-[21%] right-2 top-2">
+          <div className="title truncate text-[15px] leading-tight text-ink">Music</div>
+          <div className="mt-1.5 flex gap-1.5">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="aspect-square flex-1"
+                style={{
+                  borderRadius: 'min(var(--r-np), 6px)',
+                  background: i === 0 ? 'color-mix(in oklab, var(--accent) 55%, var(--glass))' : 'var(--glass)',
+                  boxShadow: 'inset 0 0 0 1px var(--edge)',
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="np absolute bottom-1.5 left-[21%] right-1.5 flex h-[19%] items-center gap-1.5 px-2" style={{ borderRadius: 'min(var(--r-np), 8px)' }}>
+          <span className="keep-round h-[55%] shrink-0 rounded-full bg-accent" style={{ aspectRatio: '1' }} />
+          <span className="keep-round h-[3px] flex-1 rounded-full bg-ink/20">
+            <span className="keep-round block h-full w-2/5 rounded-full bg-accent" />
+          </span>
+        </div>
+      </div>
+      <div className="mt-2 flex items-baseline gap-2 px-0.5">
+        <span className={`text-[13.5px] font-medium ${props.on ? 'text-ink' : 'text-ink/80'}`}>{s.name}</span>
+        {props.on && <span className="text-[11.5px] text-accent-ink">In use</span>}
+      </div>
+    </button>
   )
 }
 

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./themes.css";
 
 /*
   Look and feel. Every colour is a token that follows three switches on <html>:
@@ -20,124 +21,8 @@
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-on-accent: var(--on-accent);
-  --font-sans: "Sora Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-sans: var(--font-ui);
   --radius-glass: 22px;
-}
-
-/* Registered so the accent can glide from one cover's colour to the next. */
-@property --accent {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #a6b8ff;
-}
-
-/* Dark, glass: the default. */
-:root {
-  --accent: #a6b8ff;
-  --ink: #f3f1ee;
-  --on-accent: #121014;
-  --accent-ink: var(--accent);
-  --problem: #ff8a80;
-  --fix: #ffd180;
-  --good: #8fe3b0;
-  --note: #b3c7ff;
-  --glass: rgb(255 255 255 / 0.06);
-  --edge: rgb(255 255 255 / 0.1);
-  --highlight: rgb(255 255 255 / 0.08);
-  --shadow: 0 20px 50px -20px rgb(0 0 0 / 0.45);
-  --blur: blur(28px) saturate(1.4);
-  /* Layers over content (bars, menus, drawers, dialogs) blur what's beneath them. */
-  --blur-over: blur(36px) saturate(1.6);
-  --app-bg: transparent;
-  --scrim: rgb(9 9 12 / 0.42);
-  --popover: rgb(26 23 32 / 0.86);
-  /* A bar pinned over scrolling content. */
-  --bar: rgb(24 21 30 / 0.62);
-  --bar-edge: rgb(255 255 255 / 0.07);
-  /* Fully opaque, for full views laid over everything (Now Playing). */
-  --solid: #17151c;
-  --backdrop-opacity: 1;
-  color-scheme: dark;
-  transition: --accent 700ms ease;
-}
-
-:root[data-surface="frosted"] {
-  --glass: rgb(30 27 38 / 0.5);
-  --blur: blur(44px) saturate(1.6);
-  --app-bg: rgb(14 12 18 / 0.5);
-  --scrim: rgb(10 9 14 / 0.55);
-  --bar: rgb(22 19 28 / 0.74);
-}
-
-:root[data-surface="solid"] {
-  --glass: #1c1a22;
-  --edge: rgb(255 255 255 / 0.07);
-  --blur: none;
-  --blur-over: none;
-  --app-bg: #131117;
-  --popover: #201d27;
-  --bar: #131117;
-  --backdrop-opacity: 0;
-}
-
-:root[data-surface="amoled"] {
-  --glass: #000;
-  --solid: #000;
-  --edge: rgb(255 255 255 / 0.12);
-  --highlight: transparent;
-  --shadow: none;
-  --blur: none;
-  --blur-over: none;
-  --app-bg: #000;
-  --popover: #0b0b0b;
-  --bar: #000;
-  --bar-edge: rgb(255 255 255 / 0.1);
-  --backdrop-opacity: 0;
-}
-
-/* Light. The accent is darkened wherever it is used as text, so it stays readable. */
-:root[data-theme="light"] {
-  --ink: #1b1822;
-  --on-accent: #17141c;
-  --accent-ink: color-mix(in oklab, var(--accent) 62%, #000);
-  --problem: #c62828;
-  --fix: #8a5a00;
-  --good: #1e7a46;
-  --note: #3451b2;
-  --glass: rgb(255 255 255 / 0.5);
-  --edge: rgb(20 16 30 / 0.09);
-  --highlight: rgb(255 255 255 / 0.7);
-  --shadow: 0 18px 44px -22px rgb(40 30 60 / 0.28);
-  --app-bg: rgb(247 245 251 / 0.35);
-  --scrim: rgb(250 248 253 / 0.55);
-  --popover: rgb(252 251 254 / 0.84);
-  --bar: rgb(248 246 251 / 0.7);
-  --bar-edge: rgb(20 16 30 / 0.07);
-  --solid: #f6f4f9;
-  color-scheme: light;
-}
-
-:root[data-theme="light"][data-surface="frosted"] {
-  --glass: rgb(255 255 255 / 0.66);
-  --app-bg: rgb(247 245 251 / 0.62);
-  --scrim: rgb(250 248 253 / 0.7);
-  --bar: rgb(248 246 251 / 0.8);
-}
-
-/* AMOLED is a dark-only look; in light it behaves as Solid. */
-:root[data-theme="light"][data-surface="solid"],
-:root[data-theme="light"][data-surface="amoled"] {
-  --glass: #ffffff;
-  --edge: rgb(20 16 30 / 0.08);
-  --highlight: transparent;
-  --app-bg: #f3f1f6;
-  --popover: #ffffff;
-  --bar: #f3f1f6;
-  --backdrop-opacity: 0;
-}
-
-:root[data-backdrop="off"] {
-  --backdrop-opacity: 0;
 }
 
 html,
@@ -150,7 +35,8 @@ body,
 body {
   margin: 0;
   color: var(--color-ink);
-  background: var(--app-bg);
+  background-color: var(--app-bg);
+  background-image: var(--app-image);
   font-family: var(--font-sans);
   font-feature-settings: "tnum" 1;
   -webkit-font-smoothing: antialiased;
@@ -179,7 +65,7 @@ body {
 
 .bar {
   background: var(--bar);
-  backdrop-filter: var(--blur-over);
+  backdrop-filter: var(--bar-blur);
   box-shadow:
     0 1px 0 var(--bar-edge),
     0 14px 30px -20px rgb(0 0 0 / 0.4);

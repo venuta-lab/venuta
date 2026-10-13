@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
+import { usePrefs } from '../../lib/prefs'
 import {
   clock,
   miniPlayer,
@@ -120,7 +121,77 @@ function Wave(props: { wave: number[]; pct: number; height: number }) {
   )
 }
 
+/** The retro themes' seek bars (research §3): each its own track and playhead. */
+function ThemedTrack({ style, pct }: { style: string; pct: number }) {
+  if (style === 'sync-ratio') {
+    const lit = Math.round((pct / 100) * 24)
+    return (
+      <div className="absolute inset-x-0 top-1/2 flex h-[10px] -translate-y-1/2 gap-[2px]">
+        {Array.from({ length: 24 }, (_, i) => (
+          <span
+            key={i}
+            className="flex-1"
+            style={{ background: i < lit ? (pct > 90 ? '#f66e25' : '#8bd450') : 'rgb(246 110 37 / 0.14)' }}
+          />
+        ))}
+      </div>
+    )
+  }
+  if (style === 'layer-zero')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-px bg-ink/25" />
+        <div className="absolute left-0 top-1/2 h-px bg-accent" style={{ width: `${pct}%` }} />
+        <span className="fx-blink absolute top-1/2 -translate-y-1/2 text-[15px] leading-none text-accent" style={{ left: `${pct}%` }}>
+          ▌
+        </span>
+      </>
+    )
+  if (style === 'thermoptic')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 bg-ink/15" />
+        {Array.from({ length: 11 }, (_, i) => (
+          <span key={i} className="absolute top-1/2 h-[6px] w-px -translate-y-1/2 bg-ink/30" style={{ left: `${i * 10}%` }} />
+        ))}
+        <div className="absolute left-0 top-1/2 h-[2px] -translate-y-1/2 bg-accent shadow-[0_0_8px_var(--accent)]" style={{ width: `${pct}%` }} />
+        <span className="absolute top-1/2 h-[12px] w-px -translate-y-1/2 bg-accent" style={{ left: `${pct}%` }} />
+      </>
+    )
+  if (style === 'bounty')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[6px] -translate-y-1/2 border-2 border-ink" />
+        <div className="absolute left-0 top-1/2 h-[6px] -translate-y-1/2 bg-accent" style={{ width: `${pct}%` }} />
+        <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-ink bg-[var(--app-bg)]" style={{ left: `${pct}%` }} />
+      </>
+    )
+  if (style === 'skin99')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[6px] -translate-y-1/2 bg-[#14161c] shadow-[inset_1px_1px_0_#0d0f14,inset_-1px_-1px_0_#5a6070]" />
+        <div className="absolute left-px top-1/2 h-[4px] -translate-y-1/2 bg-accent" style={{ width: `calc(${pct}% - 2px)` }} />
+        <span
+          className="absolute top-1/2 h-[10px] w-[28px] -translate-x-1/2 -translate-y-1/2 bg-[linear-gradient(#5a6070,#3a3f4c)] shadow-[inset_1px_1px_0_#8c93a6,inset_-1px_-1px_0_#14161c]"
+          style={{ left: `${pct}%` }}
+        />
+      </>
+    )
+  // Neo-Tokyo: a red bar whose fill trails a fading streak behind the playhead.
+  return (
+    <>
+      <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 bg-ink/12" />
+      <div
+        className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2"
+        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #da1d1f 0, #da1d1f calc(100% - 40px), #ff6a4a)' }}
+      />
+      <span className="absolute top-1/2 h-[6px] w-[14px] -translate-x-1/2 -translate-y-1/2 bg-[#ff4a3d] shadow-[0_0_12px_rgb(255_42_42/0.6)]" style={{ left: `${pct}%` }} />
+    </>
+  )
+}
+
 export function SeekBar(props: { position: number; duration: number; className?: string; wave?: number[] | null; waveHeight?: number }) {
+  const style = usePrefs().style
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -133,7 +204,7 @@ export function SeekBar(props: { position: number; duration: number; className?:
   const pct = props.duration ? Math.min(100, (shown / props.duration) * 100) : 0
   return (
     <div className={`flex items-center gap-3 text-[11.5px] tabular-nums text-ink/55 ${props.className ?? ''}`}>
-      <span className="w-10 text-right">{clock(shown)}</span>
+      <span className="readout w-10 text-right">{clock(shown)}</span>
       <div
         ref={bar}
         role="slider"
@@ -161,9 +232,11 @@ export function SeekBar(props: { position: number; duration: number; className?:
         }}
         onPointerLeave={() => setHover(null)}
         className="group relative flex-1 cursor-pointer touch-none"
-        style={{ height: props.wave ? (props.waveHeight ?? 22) : 20 }}
+        style={{ height: style === 'venuta' && props.wave ? (props.waveHeight ?? 22) : 20 }}
       >
-        {props.wave ? (
+        {style !== 'venuta' ? (
+          <ThemedTrack style={style} pct={pct} />
+        ) : props.wave ? (
           <Wave wave={props.wave} pct={pct} height={props.waveHeight ?? 22} />
         ) : (
           <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 overflow-hidden rounded-full bg-ink/12 transition-[height] group-hover:h-[6px]">
@@ -174,7 +247,7 @@ export function SeekBar(props: { position: number; duration: number; className?:
           </div>
         )}
         <div
-          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${props.wave ? 'hidden' : ''} ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${props.wave || style !== 'venuta' ? 'hidden' : ''} ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           style={{ left: `${pct}%` }}
         />
         {hover !== null && drag === null && props.duration > 0 && (
@@ -186,7 +259,7 @@ export function SeekBar(props: { position: number; duration: number; className?:
           </div>
         )}
       </div>
-      <span className="w-10">{clock(props.duration)}</span>
+      <span className="readout w-10">{clock(props.duration)}</span>
     </div>
   )
 }
@@ -488,7 +561,7 @@ export function NowPlayingBar(props: {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 90, opacity: 0 }}
           transition={spring}
-          className="glass relative z-30 mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] items-center gap-6 rounded-[22px] px-4 py-3"
+          className="np relative z-30 mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] items-center gap-6 px-4 py-3"
         >
           {/* Shown large in Now Playing while that is open, so it steps aside here. */}
           <motion.div

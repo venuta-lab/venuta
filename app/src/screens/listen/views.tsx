@@ -120,7 +120,8 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
           aria-hidden
           src={cover.src}
           alt=""
-          className="pointer-events-none absolute inset-0 h-full w-full scale-150 object-cover opacity-45 blur-3xl"
+          className="pointer-events-none absolute inset-0 h-full w-full scale-150 object-cover opacity-45"
+          style={{ filter: "blur(64px) var(--art-tint)" }}
         />
       )}
       <div className="relative flex flex-wrap items-center gap-7">
@@ -142,7 +143,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
         </button>
         <div className="min-w-[240px] flex-1">
           <p className="text-[13px] text-ink/60">{label}</p>
-          <h2 className="mt-1.5 text-[30px] font-semibold leading-[1.1] tracking-[-0.03em]">
+          <h2 className="title mt-1.5 text-[30px] leading-[1.1]">
             <button onClick={() => nav.openAlbum(a.dir, 'hero')} className="rounded-md text-left hover:underline">
               {a.title}
             </button>
@@ -259,7 +260,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
           animate={{ opacity: 1, y: 0 }}
           transition={spring}
         >
-          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">{ar.name}</h1>
+          <h1 className="title text-[40px] leading-none">{ar.name}</h1>
           <p className="mt-2.5 text-[14px] text-ink/60">{counts.join(', ') || 'Nothing by them in your library yet.'}</p>
           <div className="mt-5">
             <PlayButtons tracks={own.length ? own : also} from={ar.name} label="Play all" />

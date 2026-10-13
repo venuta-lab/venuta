@@ -33,7 +33,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
             animate={{ opacity: 1, y: 0 }}
             transition={{ ...spring, delay: 0.05 }}
           >
-            <h1 className="text-[34px] font-semibold leading-[1.1] tracking-[-0.03em]">{a.title}</h1>
+            <h1 className="title text-[34px] leading-[1.1]">{a.title}</h1>
             <button
               onClick={() => nav.openArtist(a.artist)}
               className="mt-2 rounded-md text-left text-[16px] font-medium text-accent-ink hover:underline"
