@@ -16,7 +16,7 @@ import {
 } from '../lib/engine'
 import { loadCovers } from '../lib/covers'
 import { AlbumRow } from '../components/AlbumRow'
-import { DeepProgressBar, PillButton } from './LibraryScreen'
+import { DeepProgressBar, PillButton } from './libraryParts'
 import { IconIncoming } from '../components/Icons'
 import { track } from '../lib/jobs'
 

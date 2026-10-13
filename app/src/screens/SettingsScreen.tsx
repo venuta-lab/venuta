@@ -235,11 +235,15 @@ function ThemeCard(props: { style: StyleInfo; on: boolean; onPick: () => void })
   const s = props.style
   return (
     <button role="radio" aria-checked={props.on} onClick={props.onPick} className="group text-left transition-transform duration-200 hover:-translate-y-0.5">
+      {/* The ring is the app's own accent, outside the preview (which has the theme's). */}
       <div
-        data-preview={s.id}
-        className={`keep-round relative aspect-[16/10] overflow-hidden rounded-xl transition-shadow ${
+        className={`keep-round rounded-xl transition-shadow ${
           props.on ? 'shadow-[0_0_0_2px_var(--color-accent)]' : 'shadow-[0_0_0_1px_var(--edge)] group-hover:shadow-[0_0_0_1px_var(--edge-strong)]'
         }`}
+      >
+      <div
+        data-preview={s.id}
+        className="keep-round relative aspect-[16/10] overflow-hidden rounded-xl"
         style={{ backgroundColor: 'var(--app-bg)', backgroundImage: 'var(--app-image)' }}
       >
         {s.id === 'venuta' && (
@@ -281,6 +285,7 @@ function ThemeCard(props: { style: StyleInfo; on: boolean; onPick: () => void })
             <span className="keep-round block h-full w-2/5 rounded-full bg-accent" />
           </span>
         </div>
+      </div>
       </div>
       <div className="mt-2 flex items-baseline gap-2 px-0.5">
         <span className={`text-[13.5px] font-medium ${props.on ? 'text-ink' : 'text-ink/80'}`}>{s.name}</span>

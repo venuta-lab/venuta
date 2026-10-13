@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { checkHome, getSettings, inApp, type HealthReport, type Settings } from '../lib/engine'
-import { DeepProgressBar } from './LibraryScreen'
+import { DeepProgressBar } from './libraryParts'
 import { useEscape } from '../lib/layers'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const

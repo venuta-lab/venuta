@@ -15,7 +15,7 @@ import { useCovers } from '../lib/covers'
 import { AlbumEditor } from './AlbumEditor'
 import { NoCover } from './MusicScreen'
 import { Page } from '../components/ui'
-import { FormatBar, SpectrogramView } from './LibraryScreen'
+import { FormatBar, SpectrogramView } from './libraryParts'
 
 /*
   Health: how complete and how sound your library is, as a dashboard of tiles, each with

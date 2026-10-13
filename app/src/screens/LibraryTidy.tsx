@@ -18,7 +18,7 @@ import {
 } from '../lib/engine'
 import { track, useJob } from '../lib/jobs'
 import { ArtistNames } from '../components/ArtistNames'
-import { DeepProgressBar } from './LibraryScreen'
+import { DeepProgressBar } from './libraryParts'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 const n = (v: number) => v.toLocaleString('en-IN')
