@@ -91,15 +91,19 @@ export const AlbumCard = memo(function AlbumCard(props: {
   subtitle?: 'artist' | 'year'
 }) {
   const { album: a, cover: c, origin } = props
-  const { root, openAlbum } = useNav()
+  const nav = useNav()
+  const { root, openAlbum } = nav
   const sub = props.subtitle === 'year' ? a.year : `${a.artist}${a.year ? `, ${a.year}` : ''}`
+  const ctx = useContextMenu(() => albumActions(nav, a))
   return (
     <motion.div
       whileHover={{ y: -6 }}
       transition={spring}
       onHoverStart={() => setAccent(c?.accent)}
+      onContextMenu={ctx.onContextMenu}
       className="group relative"
     >
+      {ctx.menu}
       <button
         onClick={() => {
           setAccent(c?.accent)
@@ -133,7 +137,7 @@ export const AlbumCard = memo(function AlbumCard(props: {
             props.now === 'no' ? 'translate-y-1.5 opacity-0' : 'opacity-100'
           }`}
         >
-          {props.now === 'playing' ? <IconPause /> : <IconPlay className="translate-x-[1px]" />}
+          {props.now === 'playing' ? <IconPause /> : <IconPlay />}
         </motion.button>
       </div>
     </motion.div>
@@ -251,6 +255,43 @@ export function Avatar({ name, cover }: { name: string; cover: Cover | undefined
 // --- The "…" menu on a song ------------------------------------------------------------------
 
 /** "…" on a song: play next, add to queue, go to artist, edit details. */
+/** A menu opened with the right mouse button, at the pointer. */
+export function useContextMenu(items: () => [string, () => void][]) {
+  const [at, setAt] = useState<{ x: number; y: number; up: boolean; items: [string, () => void][] } | null>(null)
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const up = e.clientY + 230 > window.innerHeight
+    setAt({ x: Math.min(e.clientX + 180, window.innerWidth - 8), y: e.clientY, up, items: items() })
+  }
+  const close = useCallback(() => setAt(null), [])
+  const menu = createPortal(<AnimatePresence>{at && <Menu at={at} items={at.items} onClose={close} />}</AnimatePresence>, document.body)
+  return { onContextMenu, menu }
+}
+
+/** What can be done with a whole album (right-click a cover). */
+export function albumActions(nav: ReturnType<typeof useNav>, a: Album): [string, () => void][] {
+  return [
+    ['Play', () => void play(nav.root, a.tracks, 0, a.title)],
+    ['Shuffle', () => void play(nav.root, shuffled(a.tracks), 0, a.title)],
+    ['Play next', () => void enqueue(nav.root, a.tracks, true)],
+    ['Add to queue', () => void enqueue(nav.root, a.tracks, false)],
+    ['Go to artist', () => nav.openArtist(a.artist)],
+    ['Edit details', () => nav.editDetails(a.dir)],
+  ]
+}
+
+/** What can be done with one song. */
+export function trackActions(nav: ReturnType<typeof useNav>, track: CatalogTrack): [string, () => void][] {
+  const artist = track.artists[0] || track.album_artist
+  return [
+    ['Play next', () => void enqueue(nav.root, [track], true)],
+    ['Add to queue', () => void enqueue(nav.root, [track], false)],
+    ...(artist ? ([['Go to artist', () => nav.openArtist(artist)]] as [string, () => void][]) : []),
+    ['Go to album', () => nav.openAlbum(track.dir)],
+    ['Edit details', () => nav.editDetails(track.dir)],
+  ]
+}
+
 export function TrackMenu({ track, label }: { track: CatalogTrack; label: string }) {
   const nav = useNav()
   const button = useRef<HTMLButtonElement>(null)
@@ -266,13 +307,7 @@ export function TrackMenu({ track, label }: { track: CatalogTrack; label: string
     setAt(null)
     if (refocus) button.current?.focus()
   }, [])
-  const artist = track.artists[0] || track.album_artist
-  const items: [string, () => void][] = [
-    ['Play next', () => void enqueue(nav.root, [track], true)],
-    ['Add to queue', () => void enqueue(nav.root, [track], false)],
-    ...(artist ? ([['Go to artist', () => nav.openArtist(artist)]] as [string, () => void][]) : []),
-    ['Edit details', () => nav.editDetails(track.dir)],
-  ]
+  const items = trackActions(nav, track)
 
   return (
     <>

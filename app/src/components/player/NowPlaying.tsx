@@ -1,3 +1,4 @@
+import { useEscape } from '../../lib/layers'
 import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -12,12 +13,12 @@ import { Stars } from './Stars'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
-interface Lyrics {
+export interface Lyrics {
   lines: [number, string][]
   text: string
 }
 
-function useLyrics(root: string, path: string | undefined) {
+export function useLyrics(root: string, path: string | undefined) {
   const [lyrics, setLyrics] = useState<{ path: string; value: Lyrics | null }>({ path: '', value: null })
   useEffect(() => {
     if (!path || !inApp()) return
@@ -30,6 +31,23 @@ function useLyrics(root: string, path: string | undefined) {
     }
   }, [root, path])
   return lyrics.path === path ? lyrics.value : null
+}
+
+/** The line being sung at `position` (a moment early, so it's read as it's sung); -1 before the first. */
+export function lineAt(lyrics: Lyrics | null, position: number): number {
+  if (!lyrics?.lines.length) return -1
+  let lo = 0
+  let hi = lyrics.lines.length - 1
+  let found = -1
+  const t = position + 250
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (lyrics.lines[mid][0] <= t) {
+      found = mid
+      lo = mid + 1
+    } else hi = mid - 1
+  }
+  return found
 }
 
 /** Synced lyrics follow the song: the line being sung is bright, a click jumps to a line. */
@@ -101,7 +119,7 @@ function UpNext() {
         const art = cover(q.dir)
         return (
           <li key={`${q.path}#${k}`}>
-            <button onDoubleClick={() => void jumpTo(s.index + 1 + k)} className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left hover:bg-ink/[0.06]">
+            <button onClick={() => void jumpTo(s.index + 1 + k)} title="Play" className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]">
               <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
                 {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
               </span>
@@ -128,12 +146,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
   const art = song ? cover(song.dir) : undefined
   const lyrics = useLyrics(props.root, props.open ? song?.path : undefined)
   const { open, onClose } = props
-  useEffect(() => {
-    if (!open) return
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [open, onClose])
+  useEscape(open, onClose)
   return (
     <AnimatePresence>
       {open && song && (
@@ -145,22 +158,8 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
           transition={{ duration: 0.25 }}
           className="absolute inset-0 z-30 overflow-hidden"
         >
-          {/* The cover, blurred and large, behind everything. */}
-          {/* A solid base, so nothing behind shows through, whatever the surface setting. */}
-          <div className="absolute inset-0 bg-[var(--solid)]" aria-hidden />
-          {art && (
-            <motion.img
-              key={art.src}
-              src={art.src}
-              alt=""
-              aria-hidden
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.55 }}
-              transition={{ duration: 0.8 }}
-              className="absolute inset-0 h-full w-full scale-125 object-cover blur-[70px] saturate-150"
-            />
-          )}
-          <div className="absolute inset-0 bg-[var(--scrim)]" aria-hidden />
+          {/* No background of its own: the window's backdrop turns to this song's cover, so the
+              title bar, the rail and the player all share one light. */}
 
           <button
             aria-label="Close Now Playing (Esc)"

@@ -1,58 +1,60 @@
-//! A song's shape for the seek bar: the loudest moment in each of `buckets` equal slices,
-//! from 0 (silence) to 255 (full scale).
+//! A song's shape for the seek bar: how loud each of `buckets` equal slices is, from 0 (quiet)
+//! to 255 (full scale).
+//!
+//! Loudness, not peaks: modern masters touch full scale almost everywhere, so a peak shape is a
+//! flat slab. The RMS level of each slice, on a decibel scale from -42 dBFS to 0, shows verses,
+//! choruses and quiet intros as they sound.
 
 use crate::decode::Source;
 use std::path::Path;
+
+/// The bottom of the scale: anything this quiet or quieter draws at the minimum.
+const FLOOR_DB: f64 = -42.0;
 
 pub fn waveform(path: &Path, buckets: usize) -> Result<Vec<u8>, String> {
     let buckets = buckets.clamp(16, 4096);
     let mut source = Source::open(path)?;
     let channels = usize::from(source.format.channels.max(1));
     let total = source.frames.unwrap_or(0);
-    let mut peaks: Vec<u32> = Vec::with_capacity(buckets);
-    let mut frames: Vec<u32> = Vec::new();
+    // Mean square per slice (samples are left-justified i32, so full scale is i32::MAX).
+    let mut slices: Vec<f64> = Vec::new();
     let mut buf = Vec::new();
-    // Without a known length, collect per-second peaks and fold them at the end.
-    let per_bucket = if total > 0 {
+    // Without a known length, measure each second and fold at the end.
+    let per_slice = if total > 0 {
         total.div_ceil(buckets as u64).max(1)
     } else {
         u64::from(source.format.rate.max(1))
     };
-    let mut cur: u32 = 0;
-    let mut in_bucket: u64 = 0;
+    let full = f64::from(i32::MAX);
+    let mut sum = 0.0f64;
+    let mut count: u64 = 0;
     while source.next(&mut buf)? {
         for frame in buf.chunks_exact(channels) {
-            let loud = frame.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
-            cur = cur.max(loud);
-            in_bucket += 1;
-            if in_bucket == per_bucket {
-                frames.push(cur);
-                cur = 0;
-                in_bucket = 0;
+            for &s in frame {
+                let x = f64::from(s) / full;
+                sum += x * x;
+            }
+            count += 1;
+            if count == per_slice {
+                slices.push(sum / (count as f64 * channels as f64));
+                sum = 0.0;
+                count = 0;
             }
         }
     }
-    if in_bucket > 0 {
-        frames.push(cur);
+    if count > 0 {
+        slices.push(sum / (count as f64 * channels as f64));
     }
-    // Fold (or stretch) to exactly `buckets`.
-    let n = frames.len().max(1);
-    for b in 0..buckets {
-        let lo = b * n / buckets;
-        let hi = ((b + 1) * n / buckets).max(lo + 1).min(n);
-        peaks.push(
-            frames
-                .get(lo..hi)
-                .and_then(|s| s.iter().max().copied())
-                .unwrap_or(0),
-        );
-    }
-    // Shown on a gentle curve, so quiet passages are still visible.
-    Ok(peaks
-        .iter()
-        .map(|&p| {
-            let x = f64::from(p) / f64::from(u32::MAX >> 1);
-            ((x.min(1.0).sqrt()) * 255.0).round() as u8
+    // Fold (or stretch) to exactly `buckets`, averaging energy.
+    let n = slices.len().max(1);
+    Ok((0..buckets)
+        .map(|b| {
+            let lo = b * n / buckets;
+            let hi = ((b + 1) * n / buckets).max(lo + 1).min(n);
+            let part = slices.get(lo..hi).unwrap_or(&[]);
+            let ms = if part.is_empty() { 0.0 } else { part.iter().sum::<f64>() / part.len() as f64 };
+            let db = if ms > 0.0 { 10.0 * ms.log10() } else { FLOOR_DB };
+            (((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0) * 255.0).round() as u8
         })
         .collect())
 }

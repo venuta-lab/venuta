@@ -93,6 +93,8 @@ export interface PlayerState {
   stop_after_current: boolean
   /** Seconds until the sleep timer pauses. */
   sleep_in_s: number | null
+  /** The folder the queue's songs are in. */
+  root?: string
 }
 
 const idle: PlayerState = {
@@ -197,6 +199,19 @@ export function usePlayer(): PlayerState {
   )
 }
 
+/** Just one value from the player: re-renders only when that value changes. */
+export function usePlayerValue<T>(pick: (s: PlayerState) => T): T {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l)
+      return () => {
+        listeners.delete(l)
+      }
+    },
+    () => pick(state),
+  )
+}
+
 /** The song playing (or paused) now. */
 export const current = (s: PlayerState) => (s.index >= 0 ? s.queue[s.index] : undefined)
 
@@ -283,6 +298,9 @@ export const setSound = (sound: Sound) => {
   set({ ...state, sound })
   return call('player_sound', { sound })
 }
+/** The mini player: open it (the main window steps aside) or close it and come back. */
+export const miniPlayer = (open: boolean) => call('mini_player', { open })
+
 export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
 /** Pause after `minutes` (null cancels). */
 export const setSleep = (minutes: number | null) => call('player_sleep', { minutes })

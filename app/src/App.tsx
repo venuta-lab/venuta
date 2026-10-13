@@ -34,7 +34,7 @@ import {
   scanLibrary,
   type HealthReport,
 } from './lib/engine'
-import { coverFor, loadCovers, setAccent } from './lib/covers'
+import { coverFor, loadCovers, setAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
 import * as player from './lib/player'
 import { connectPlayer, resumePlayer } from './lib/player'
@@ -76,6 +76,13 @@ const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'playlists', 'devi
 /** The places on the top of the rail, in order (Ctrl+1 … Ctrl+6). */
 const MAIN = 6
 
+/** The window's backdrop; while Now Playing is open, the playing song's cover fills it. */
+function NowBackdrop({ covers, focus }: { covers: string[]; focus: boolean }) {
+  const dir = player.usePlayerValue((s) => player.current(s)?.dir ?? '')
+  const cover = useCovers(320)
+  return <Backdrop covers={covers} focus={focus && dir ? (cover(dir)?.src ?? null) : null} />
+}
+
 export default function App() {
   const prefs = usePrefs()
   // The folder showing: your library, or music being brought in. `home` is your library,
@@ -112,6 +119,8 @@ export default function App() {
   const [nowOpen, setNowOpen] = useState(false)
   const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal' | 'sound'>('lyrics')
   const [queueOpen, setQueueOpen] = useState(false)
+  // Counts choosing the open place again in the rail (it goes back to its start).
+  const [again, setAgain] = useState(0)
   const closeQueue = useCallback(() => setQueueOpen(false), [])
   const closeNow = useCallback(() => setNowOpen(false), [])
   const closeNotice = useCallback(() => setNotice(''), [])
@@ -234,6 +243,9 @@ export default function App() {
 
   const go = useCallback(
     (id: Place) => {
+      // Going anywhere (even to the place underneath) closes the full-window views over it.
+      setNowOpen(false)
+      setQueueOpen(false)
       const from = ORDER.indexOf(active)
       const to = ORDER.indexOf(id)
       if (to < 0 || to === from) return
@@ -341,6 +353,7 @@ export default function App() {
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
       { id: 'play-toggle', group: 'Player', label: 'Play or pause', keys: 'Space', keywords: 'resume stop', run: () => void player.toggle() },
+      { id: 'mini', group: 'Player', label: 'Mini player', keys: 'Ctrl+M', keywords: 'small window compact on top', run: () => void player.miniPlayer(true) },
       { id: 'play-next', group: 'Player', label: 'Next song', keys: 'Ctrl+→', keywords: 'skip forward', run: () => void player.next() },
       { id: 'play-prev', group: 'Player', label: 'Previous song', keys: 'Ctrl+←', keywords: 'back', run: () => void player.previous() },
       {
@@ -567,6 +580,7 @@ export default function App() {
             openAlbum={listenAlbum}
             onOpenedAlbum={() => setListenAlbum(null)}
             onEditDetails={() => go('music')}
+            reset={again}
           />
         )
       case 'music':
@@ -643,7 +657,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion={motionSetting(prefs)}>
       <div className="relative flex h-full flex-col" onWheel={onWheel}>
-        <Backdrop covers={backdrop} />
+        <NowBackdrop covers={backdrop} focus={nowOpen} />
         <TitleBar onPalette={() => setPalette(true)} />
         <div className="relative z-10 flex min-h-0 flex-1">
           <Rail
@@ -652,11 +666,22 @@ export default function App() {
             active={setup ? '' : active}
             onSelect={(id) => {
               setSetup(false)
+              // The place you're on, chosen again (and nothing over it): back to its start.
+              if (id === active && !nowOpen) {
+                setAgain((n) => n + 1)
+                document.querySelector('main .thin-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
+              }
               go(id as Place)
             }}
           />
           <div className="relative flex min-w-0 flex-1 flex-col">
           <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+            {/* The page steps back while Now Playing is open; it keeps its place. */}
+            <div
+              inert={nowOpen}
+              className="absolute inset-0 transition-[opacity,transform,filter] duration-300 ease-out"
+              style={nowOpen ? { opacity: 0, transform: 'scale(0.985)', pointerEvents: 'none' } : undefined}
+            >
             <AnimatePresence mode="popLayout" custom={direction} initial={false}>
               <motion.div
                 key={active}
@@ -675,6 +700,7 @@ export default function App() {
                 {screen}
               </motion.div>
             </AnimatePresence>
+            </div>
             <Toast text={error ? '' : notice} onClose={closeNotice} />
             <Toast text={error} tone="error" onClose={closeError} />
             <NowPlaying

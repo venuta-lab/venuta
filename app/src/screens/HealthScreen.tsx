@@ -1,3 +1,4 @@
+import { useEscape } from '../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -382,11 +383,7 @@ function AlbumsSheet(props: { root: string; sheet: Sheet; albums: AlbumSummary[]
   const [wanted, setWanted] = useState<Set<string>>(new Set())
   const spectral = !!props.sheet.issue && SPECTRAL_ISSUES.has(props.sheet.issue)
   const { onClose } = props
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !open && !spectrum && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, spectrum, onClose])
+  useEscape(!open && !spectrum, onClose)
   return (
     <>
       <motion.div className="fixed inset-0 z-40 bg-black/35" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />

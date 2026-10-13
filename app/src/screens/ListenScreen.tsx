@@ -1,3 +1,4 @@
+import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { musicCatalog, type CatalogTrack, type HealthReport } from '../lib/engine'
@@ -31,7 +32,12 @@ interface Props {
   openAlbum: string | null
   onOpenedAlbum: () => void
   onEditDetails: (dir: string) => void
+  /** Bumped when Music is chosen again while already open: back to its start. */
+  reset?: number
 }
+
+// The view you were on, kept while you visit other places (the screen itself is remounted).
+const kept: { tab: Tab; filter: string } = { tab: 'home', filter: 'all' }
 
 /** Music: your library to listen to. Home, albums, artists and songs, and search across them. */
 export function ListenScreen(props: Props) {
@@ -60,10 +66,14 @@ function Listen(props: Props) {
   const { root, report, busy, searchRef, openAlbum, onOpenedAlbum } = props
   const box = useRef<HTMLDivElement>(null)
   const [tracks, setTracks] = useState<CatalogTrack[] | null>(null)
-  const [tab, setTab] = useState<Tab>('home')
+  const [tab, setTab] = useState<Tab>(kept.tab)
   const [stack, setStack] = useState<Entry[]>([])
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState(kept.filter)
+  useEffect(() => {
+    kept.tab = tab
+    kept.filter = filter
+  }, [tab, filter])
   const [fadeIn, setFadeIn] = useState(true)
   const [shown, setShown] = useState<string | null>(null)
   const typed = useDeferredValue(query)
@@ -147,29 +157,30 @@ function Listen(props: Props) {
     if (openAlbum && shown === openAlbum) onOpenedAlbum()
   }, [openAlbum, shown, onOpenedAlbum])
 
-  // Escape (or the mouse's back button) closes the page on top.
+  // Escape (when nothing is open over it) or the mouse's back button closes the page on top.
+  useEscape(stack.length > 0, back)
   useEffect(() => {
     if (!stack.length) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      const t = e.target
-      if (t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (document.querySelector('[role="dialog"], [role="menu"]')) return
-      back()
-    }
     const onMouse = (e: MouseEvent) => {
       if (e.button === 3) {
         e.preventDefault()
         back()
       }
     }
-    window.addEventListener('keydown', onKey)
     window.addEventListener('mouseup', onMouse)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('mouseup', onMouse)
-    }
+    return () => window.removeEventListener('mouseup', onMouse)
   }, [stack, back])
+
+  // Music chosen again in the rail: close pages and search, back to the top.
+  const resets = useRef(props.reset)
+  useEffect(() => {
+    if (props.reset === resets.current) return
+    resets.current = props.reset
+    restore.current = 0
+    setStack([])
+    setQuery('')
+    scrollerOf(box.current)?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [props.reset])
 
   const results = useMemo(() => search(lib, typed), [lib, typed])
   const seeAll = useCallback((f: string) => {

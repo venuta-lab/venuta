@@ -123,7 +123,8 @@ export const IconSun = (p: P) => (
 /** Play: a rounded triangle, filled so it reads at small sizes. */
 export const IconPlay = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
-    <path d="M8 5.6v12.8c0 .8.9 1.3 1.6.9l10-6.4a1 1 0 0 0 0-1.8l-10-6.4c-.7-.4-1.6.1-1.6.9Z" fill="currentColor" />
+    {/* Optically centred: the triangle's box sits 1px right of the middle, its weight on it. */}
+    <path d="M7 5.6v12.8c0 .8.9 1.3 1.6.9l10-6.4a1 1 0 0 0 0-1.8l-10-6.4c-.7-.4-1.6.1-1.6.9Z" fill="currentColor" />
   </svg>
 )
 export const IconPause = (p: P) => (
@@ -208,5 +209,12 @@ export const IconExpand = (p: P) => (
 export const IconClose = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
     <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />
+  </svg>
+)
+/** A small window in the corner of a big one: the mini player. */
+export const IconMini = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+    <rect x="11.5" y="11.5" width="7" height="5.5" rx="1.2" fill="currentColor" stroke="none" />
   </svg>
 )

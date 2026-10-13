@@ -1,7 +1,8 @@
+import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, jumpTo, move, removeAt, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, jumpTo, move, removeAt, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { IconClose } from '../Icons'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
@@ -33,10 +34,14 @@ function Row(props: {
         setOver(false)
         props.onDrop(props.index)
       }}
-      onDoubleClick={() => void jumpTo(props.index)}
+      // One click plays it (the song playing now pauses or resumes); drag to reorder.
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
+        void (props.current ? toggle() : jumpTo(props.index))
+      }}
       onKeyDown={(e) => e.key === 'Enter' && void jumpTo(props.index)}
       tabIndex={0}
-      className={`group flex min-w-0 cursor-grab items-center gap-3 rounded-xl px-2 py-1.5 active:cursor-grabbing ${
+      className={`group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 active:cursor-grabbing ${
         props.current ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05]'
       } ${over ? 'ring-1 ring-[var(--accent)]' : ''}`}
     >
@@ -78,12 +83,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     return () => window.clearTimeout(t)
   }, [props.open])
   const { open, onClose } = props
-  useEffect(() => {
-    if (!open) return
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [open, onClose])
+  useEscape(open, onClose)
 
   const upcoming = s.queue.length - s.index - 1
   const left = s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0)

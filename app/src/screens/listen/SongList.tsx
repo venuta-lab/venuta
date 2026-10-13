@@ -1,11 +1,11 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { clock, play } from '../../lib/player'
-import { IconPlay } from '../../components/Icons'
+import { clock, play, toggle } from '../../lib/player'
+import { IconPause, IconPlay } from '../../components/Icons'
 import { compareText, scrollerOf, useNav, useNowPlaying } from './model'
 import { InBar } from '../../components/ui'
-import { Equalizer, QualityBadge, TrackMenu } from './parts'
+import { Equalizer, QualityBadge, TrackMenu, trackActions, useContextMenu } from './parts'
 
 const ROW = 44
 const OVERSCAN = 10
@@ -151,15 +151,22 @@ const SongRow = memo(function SongRow(props: {
   onMove: (i: number, by: number) => void
 }) {
   const { track: t, index: i, now } = props
-  const { openAlbum } = useNav()
+  const nav = useNav()
+  const { openAlbum } = nav
   const isNow = now !== 'no'
+  const ctx = useContextMenu(() => trackActions(nav, t))
   return (
     <div
+      onContextMenu={ctx.onContextMenu}
       role="listitem"
       tabIndex={0}
       data-index={i}
       aria-current={isNow || undefined}
-      onDoubleClick={() => props.onPlay(i)}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
+        if (isNow) void toggle()
+        else props.onPlay(i)
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (e.key === 'Enter') {
@@ -175,8 +182,8 @@ const SongRow = memo(function SongRow(props: {
     >
       <button
         tabIndex={-1}
-        aria-label={`Play ${t.title}`}
-        onClick={() => props.onPlay(i)}
+        aria-label={now === 'playing' ? `Pause ${t.title}` : `Play ${t.title}`}
+        onClick={() => (isNow ? void toggle() : props.onPlay(i))}
         className="relative h-8 w-8 overflow-hidden rounded-md bg-ink/[0.06]"
       >
         {props.cover ? (
@@ -194,7 +201,16 @@ const SongRow = memo(function SongRow(props: {
             isNow ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
-          {isNow ? <Equalizer playing={now === 'playing'} /> : <IconPlay width={14} height={14} />}
+          {isNow ? (
+            <>
+              <span className="group-hover:hidden">
+                <Equalizer playing={now === 'playing'} />
+              </span>
+              <span className="hidden group-hover:block">{now === 'playing' ? <IconPause width={14} height={14} /> : <IconPlay width={14} height={14} />}</span>
+            </>
+          ) : (
+            <IconPlay width={14} height={14} />
+          )}
         </span>
       </button>
       <span className="truncate text-[13.5px] font-medium">{t.title}</span>
@@ -214,6 +230,7 @@ const SongRow = memo(function SongRow(props: {
         <QualityBadge text={quality(t)} />
       </span>
       <TrackMenu track={t} label={t.title} />
+      {ctx.menu}
     </div>
   )
 })

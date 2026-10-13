@@ -2,8 +2,8 @@ import { motion } from 'motion/react'
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { quality, type CatalogTrack } from '../../lib/engine'
 import { setAccent, useCovers } from '../../lib/covers'
-import { clock, play } from '../../lib/player'
-import { IconPlay } from '../../components/Icons'
+import { clock, play, toggle } from '../../lib/player'
+import { IconPause, IconPlay } from '../../components/Icons'
 import { coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
 import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
@@ -99,7 +99,11 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                 tabIndex={0}
                 data-index={i}
                 aria-current={isNow || undefined}
-                onDoubleClick={() => playAt(i)}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
+                  if (isNow) void toggle()
+                  else playAt(i)
+                }}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return
                   if (e.key === 'Enter') {
@@ -122,13 +126,14 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                   ) : (
                     <span className="text-[13px] text-ink/50 group-hover:hidden">{t.track || i + 1}</span>
                   )}
+                  {/* The song playing now pauses and resumes; any other starts. */}
                   <button
                     tabIndex={-1}
-                    aria-label={`Play ${t.title}`}
-                    onClick={() => playAt(i)}
+                    aria-label={state === 'playing' ? `Pause ${t.title}` : `Play ${t.title}`}
+                    onClick={() => (isNow ? void toggle() : playAt(i))}
                     className="absolute inset-0 hidden place-items-center rounded-full text-ink hover:text-accent-ink group-hover:grid"
                   >
-                    <IconPlay width={15} height={15} />
+                    {state === 'playing' ? <IconPause width={15} height={15} /> : <IconPlay width={15} height={15} />}
                   </button>
                 </span>
                 <span className="min-w-0">

@@ -1,3 +1,4 @@
+import { useEscape } from '../lib/layers'
 import { AnimatePresence, motion, useDragControls } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -56,11 +57,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
     }
   }, [props.root, a.dir])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && props.onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [props])
+  useEscape(true, props.onClose)
 
   const dirty = Object.keys(fields).length + Object.keys(titles).length
   const edits = useMemo<TagEdit[]>(() => {

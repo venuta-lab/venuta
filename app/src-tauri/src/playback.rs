@@ -48,10 +48,12 @@ impl Item for QueueItem {
     }
 }
 
-/// What the window receives (see `app/src/lib/player.ts`).
-#[derive(Serialize)]
+/// What each window receives (see `app/src/lib/player.ts`).
+#[derive(Serialize, Clone)]
 pub struct WindowStatus {
     queue: Option<Vec<QueueItem>>,
+    /// The folder the queue's songs are in (the mini player needs it for covers and lyrics).
+    root: String,
     index: i64,
     playing: bool,
     position_ms: u64,
@@ -82,7 +84,8 @@ pub struct Playback {
     player: Arc<Mutex<Option<Player<QueueItem>>>>,
     /// Updates for the media overlay thread, once it runs.
     media: Arc<Mutex<Option<std::sync::mpsc::Sender<NowPlaying>>>>,
-    window: Arc<Mutex<Option<Channel<WindowStatus>>>>,
+    /// Every window listening (the main one, the mini player), by label.
+    window: Arc<Mutex<std::collections::HashMap<String, Channel<WindowStatus>>>>,
     /// The folder the queue's songs are in (for plays and picking up where you were).
     root: Arc<Mutex<String>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
@@ -179,11 +182,12 @@ impl Playback {
                         });
                     }
                     last = (key, s.playing, tick);
-                    if let Ok(w) = window.lock()
-                        && let Some(ch) = w.as_ref()
+                    if let Ok(mut w) = window.lock()
+                        && !w.is_empty()
                     {
-                        let _ = ch.send(WindowStatus {
+                        let status = WindowStatus {
                             queue: s.queue,
+                            root: folder,
                             index: s.index.map(|i| i as i64).unwrap_or(-1),
                             playing: s.playing,
                             position_ms: s.position_ms,
@@ -197,7 +201,9 @@ impl Playback {
                             sound: s.sound,
                             stop_after_current: s.stop_after_current,
                             sleep_in_s: s.sleep_in_s,
-                        });
+                        };
+                        // A window that has closed stops listening.
+                        w.retain(|_, ch| ch.send(status.clone()).is_ok());
                     }
                 },
             ));
@@ -351,9 +357,13 @@ pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, Stri
 #[tauri::command]
 pub fn player_subscribe(
     on_state: Channel<WindowStatus>,
+    webview: tauri::Webview,
     pb: State<'_, Playback>,
 ) -> Result<(), String> {
-    *pb.window.lock().map_err(|e| e.to_string())? = Some(on_state);
+    pb.window
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(webview.label().to_string(), on_state);
     // Send the current state at once (and the queue with it).
     pb.send(Cmd::Refresh)
 }
@@ -606,7 +616,7 @@ pub async fn player_verify(
         .map_err(|e| e.to_string())?
 }
 
-/// A song's shape for the seek bar (600 peaks, 0–255), made once and kept in `.venuta/waves`.
+/// A song's shape for the seek bar (600 loudness levels, 0–255), made once and kept in `.venuta/waves-rms`.
 #[tauri::command]
 pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -622,7 +632,8 @@ pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String
             format!("{}|{}|{stamp}|600", file.to_string_lossy(), meta.len()).as_bytes(),
         )
         .to_hex();
-        let dir = engine::paths::app_data_dir().join("waves");
+        // "waves-rms": loudness per slice (the older "waves" held peaks).
+        let dir = engine::paths::app_data_dir().join("waves-rms");
         let cached = dir.join(format!("{}.bin", &key[..24]));
         if let Ok(b) = std::fs::read(&cached)
             && b.len() == 600
@@ -636,4 +647,62 @@ pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Open the mini player (a small window that stays on top; the main window steps aside), or
+/// close it and bring the main window back. Async: making a window from a synchronous command
+/// deadlocks on Windows.
+#[tauri::command]
+pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let main = app.get_webview_window("main");
+    if open {
+        if let Some(w) = app.get_webview_window("mini") {
+            let _ = w.show();
+            let _ = w.set_focus();
+        } else {
+            let (w, h) = (380.0, 132.0);
+            // Bottom right of the screen the main window is on, clear of the taskbar.
+            let place = main
+                .as_ref()
+                .and_then(|m| m.current_monitor().ok().flatten())
+                .map(|mon| {
+                    let area = mon.work_area();
+                    let scale = mon.scale_factor();
+                    let right = (area.position.x as f64 + area.size.width as f64) / scale;
+                    let bottom = (area.position.y as f64 + area.size.height as f64) / scale;
+                    (right - w - 24.0, bottom - h - 24.0)
+                });
+            let mut b = tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#mini".into()))
+                .title("Venuta")
+                .inner_size(w, h)
+                .min_inner_size(220.0, 56.0)
+                .decorations(false)
+                .transparent(true)
+                .shadow(true)
+                .always_on_top(true)
+                .resizable(true)
+                .effects(tauri::utils::config::WindowEffectsConfig {
+                    effects: vec![tauri::window::Effect::Acrylic],
+                    ..Default::default()
+                });
+            if let Some((x, y)) = place {
+                b = b.position(x, y);
+            }
+            b.build().map_err(|e| e.to_string())?;
+        }
+        if let Some(m) = main {
+            let _ = m.minimize();
+        }
+    } else {
+        if let Some(w) = app.get_webview_window("mini") {
+            let _ = w.close();
+        }
+        if let Some(m) = main {
+            let _ = m.unminimize();
+            let _ = m.show();
+            let _ = m.set_focus();
+        }
+    }
+    Ok(())
 }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import {
   clock,
+  miniPlayer,
   current,
   next,
   outputChoices,
@@ -25,6 +26,7 @@ import {
 import {
   IconExpand,
   IconLyrics,
+  IconMini,
   IconMute,
   IconNext,
   IconPause,
@@ -44,31 +46,77 @@ const typing = (t: EventTarget | null) =>
 
 /** Drag or click to move through the song; hover shows where you'd land. */
 /** The song's shape: bars, dim ahead and accent-coloured behind where you are. */
+/**
+ * The song's loudness as one smooth shape, mirrored about the middle (Poweramp's waveform
+ * seek bar): what has played in the accent, what's to come dimmed, and a glowing playhead.
+ */
 function Wave(props: { wave: number[]; pct: number; height: number }) {
-  // About one bar per 4 px of a 600 px bar: fold the 600 peaks to 150.
-  const bars = useMemo(() => {
-    const n = 150
-    return Array.from({ length: n }, (_, i) => {
+  const path = useMemo(() => {
+    const n = 160
+    const h = props.height
+    const mid = h / 2
+    // Peaks folded to n points, then softened so the edge flows instead of stepping.
+    const raw = Array.from({ length: n }, (_, i) => {
       const a = Math.floor((i * props.wave.length) / n)
       const b = Math.max(a + 1, Math.floor(((i + 1) * props.wave.length) / n))
       return Math.max(...props.wave.slice(a, b)) / 255
     })
-  }, [props.wave])
-  const shape = (
-    <>
-      {bars.map((v, i) => {
-        const h = Math.max(0.08, v) * props.height
-        return <rect key={i} x={i * 4 + 0.5} y={(props.height - h) / 2} width={2.6} height={h} rx={1.3} />
-      })}
-    </>
-  )
+    const soft = raw.map((_, i) => {
+      let sum = 0
+      let w = 0
+      for (let k = -2; k <= 2; k++) {
+        const v = raw[i + k]
+        if (v === undefined) continue
+        const weight = 3 - Math.abs(k)
+        sum += v * weight
+        w += weight
+      }
+      return sum / w
+    })
+    // Loud masters peak near full scale almost everywhere: stretch this song's own range
+    // (quietest tenth to loudest) so its quiet and loud passages read as shape.
+    const sorted = [...soft].sort((a, b) => a - b)
+    const lo = sorted[Math.floor(n * 0.1)] ?? 0
+    const hi = sorted[n - 1] || 1
+    const amp = soft.map((v) => {
+      const t = hi > lo ? Math.min(1, Math.max(0, (v - lo) / (hi - lo))) : 0.5
+      return (0.12 + 0.88 * Math.pow(t, 1.4)) * (mid - 0.5)
+    })
+    const x = (i: number) => (i / (n - 1)) * 600
+    // Top edge left to right as smooth curves through midpoints, then the mirror back.
+    let d = `M0 ${mid} L0 ${mid - amp[0]}`
+    for (let i = 1; i < n; i++) {
+      const cx = x(i - 1)
+      const cy = mid - amp[i - 1]
+      d += ` Q${cx.toFixed(1)} ${cy.toFixed(2)} ${((cx + x(i)) / 2).toFixed(1)} ${(mid - (amp[i - 1] + amp[i]) / 2).toFixed(2)}`
+    }
+    d += ` L600 ${mid - amp[n - 1]} L600 ${mid + amp[n - 1]}`
+    for (let i = n - 2; i >= 0; i--) {
+      const cx = x(i + 1)
+      const cy = mid + amp[i + 1]
+      d += ` Q${cx.toFixed(1)} ${cy.toFixed(2)} ${((cx + x(i)) / 2).toFixed(1)} ${(mid + (amp[i + 1] + amp[i]) / 2).toFixed(2)}`
+    }
+    return d + ` L0 ${mid + amp[0]} Z`
+  }, [props.wave, props.height])
   return (
-    <svg viewBox={`0 0 600 ${props.height}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden>
-      <g className="fill-ink/20">{shape}</g>
-      <g className="fill-accent" style={{ clipPath: `inset(0 ${100 - props.pct}% 0 0)` }}>
-        {shape}
-      </g>
-    </svg>
+    <>
+      <svg viewBox={`0 0 600 ${props.height}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden>
+        <defs>
+          <linearGradient id="wave-played" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="var(--accent)" stopOpacity="1" />
+            <stop offset="0.5" stopColor="var(--accent)" stopOpacity="0.85" />
+            <stop offset="1" stopColor="var(--accent)" stopOpacity="1" />
+          </linearGradient>
+        </defs>
+        <path d={path} className="fill-ink/[0.18] transition-[fill] group-hover:fill-ink/25" />
+        <path d={path} fill="url(#wave-played)" style={{ clipPath: `inset(0 ${100 - props.pct}% 0 0)` }} />
+      </svg>
+      {/* The playhead: a thin line with the accent's glow. */}
+      <div
+        className="pointer-events-none absolute -top-0.5 -bottom-0.5 w-[2px] -translate-x-1/2 rounded-full bg-ink shadow-[0_0_8px_var(--accent)]"
+        style={{ left: `${props.pct}%` }}
+      />
+    </>
   )
 }
 
@@ -402,6 +450,9 @@ function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => v
         open.lyrics()
       } else if (!e.ctrlKey && (e.key === 'q' || e.key === 'Q')) {
         open.queue()
+      } else if (e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
+        e.preventDefault()
+        void miniPlayer(true)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -499,7 +550,7 @@ export function NowPlayingBar(props: {
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.6, opacity: 0 }}
                     transition={{ duration: 0.12 }}
-                    className={s.playing ? '' : 'pl-0.5'}
+                    className="grid place-items-center"
                   >
                     {s.playing ? <IconPause /> : <IconPlay />}
                   </motion.span>
@@ -528,6 +579,9 @@ export function NowPlayingBar(props: {
             )}
             <Round label="Queue (Q)" on={props.queueOpen} onClick={props.onQueue}>
               <IconQueue />
+            </Round>
+            <Round label="Mini player (Ctrl M)" onClick={() => void miniPlayer(true)}>
+              <IconMini />
             </Round>
             <Volume volume={s.volume} />
           </div>
