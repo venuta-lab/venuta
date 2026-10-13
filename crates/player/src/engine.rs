@@ -103,7 +103,7 @@ pub struct Player<T> {
 
 impl<T: Item + Serialize> Player<T> {
     /// Start the player thread. `on_status` is called from it.
-    pub fn spawn(output: OutputChoice, on_status: impl Fn(Status<T>) + Send + 'static) -> Self {
+    pub fn spawn(output: OutputChoice, on_status: impl FnMut(Status<T>) + Send + 'static) -> Self {
         let (tx, rx) = channel();
         let thread = std::thread::Builder::new()
             .name("venuta-player".into())
@@ -165,7 +165,7 @@ struct Engine<T: Item + Serialize> {
     started: bool,
     /// The playing song first; the next (decoded ahead) after it.
     segs: VecDeque<Segment>,
-    on_status: Box<dyn Fn(Status<T>) + Send>,
+    on_status: Box<dyn FnMut(Status<T>) + Send>,
     last_status: Instant,
     paused_at: Option<Instant>,
     scratch: Vec<i32>,
@@ -174,7 +174,7 @@ struct Engine<T: Item + Serialize> {
 }
 
 impl<T: Item + Serialize> Engine<T> {
-    fn new(choice: OutputChoice, on_status: Box<dyn Fn(Status<T>) + Send>) -> Self {
+    fn new(choice: OutputChoice, on_status: Box<dyn FnMut(Status<T>) + Send>) -> Self {
         Self {
             queue: Queue::default(),
             queue_changed: true,

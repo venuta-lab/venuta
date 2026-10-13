@@ -52,9 +52,22 @@ pub struct WindowStatus {
     error: String,
 }
 
+/// What the Windows media overlay (and media keys) show.
+struct NowPlaying {
+    title: String,
+    artist: String,
+    album: String,
+    cover: Option<String>,
+    duration_ms: u64,
+    playing: bool,
+    position_ms: u64,
+}
+
 #[derive(Default)]
 pub struct Playback {
-    player: Mutex<Option<Player<QueueItem>>>,
+    player: Arc<Mutex<Option<Player<QueueItem>>>>,
+    /// Updates for the media overlay thread, once it runs.
+    media: Arc<Mutex<Option<std::sync::mpsc::Sender<NowPlaying>>>>,
     window: Arc<Mutex<Option<Channel<WindowStatus>>>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
     output: Mutex<(Option<String>, bool)>,
@@ -65,10 +78,43 @@ impl Playback {
         let mut slot = self.player.lock().map_err(|e| e.to_string())?;
         if slot.is_none() {
             let window = self.window.clone();
+            let media = self.media.clone();
             let (id, exclusive) = self.output.lock().map_err(|e| e.to_string())?.clone();
+            // The current song and play state, to tell the media overlay only when they change.
+            let mut last: (Option<String>, bool, u64) = (None, false, 0);
+            let mut queue: Vec<QueueItem> = Vec::new();
             *slot = Some(Player::spawn(
                 OutputChoice::Device { id, exclusive },
                 move |s: Status<QueueItem>| {
+                    if let Some(q) = &s.queue {
+                        queue = q.clone();
+                    }
+                    let item = s.index.and_then(|i| queue.get(i));
+                    let key = item.map(|i| i.file.to_string_lossy().into_owned());
+                    let tick = s.position_ms / 5000;
+                    if (key.clone(), s.playing, tick) != last
+                        && let Some(item) = item
+                        && let Ok(m) = media.lock()
+                        && let Some(tx) = m.as_ref()
+                    {
+                        let cover = item
+                            .file
+                            .parent()
+                            .map(|d| d.join("cover.jpg"))
+                            .filter(|c| c.is_file());
+                        let _ = tx.send(NowPlaying {
+                            title: item.title.clone(),
+                            artist: item.artists.join(", "),
+                            album: item.album.clone(),
+                            cover: cover.map(|c| {
+                                format!("file:///{}", c.to_string_lossy().replace('\\', "/"))
+                            }),
+                            duration_ms: s.duration_ms,
+                            playing: s.playing,
+                            position_ms: s.position_ms,
+                        });
+                    }
+                    last = (key, s.playing, tick);
                     if let Ok(w) = window.lock()
                         && let Some(ch) = w.as_ref()
                     {
@@ -95,6 +141,68 @@ impl Playback {
     fn send(&self, cmd: Cmd<QueueItem>) -> Result<(), String> {
         self.with(|p| p.send(cmd))
     }
+}
+
+/// Media keys and the Windows media overlay: a thread of their own, for the window `hwnd`.
+#[cfg(windows)]
+pub fn start_media_controls(pb: &Playback, hwnd: isize) {
+    use souvlaki::{
+        MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition,
+        PlatformConfig,
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<NowPlaying>();
+    if let Ok(mut m) = pb.media.lock() {
+        *m = Some(tx);
+    }
+    let player = pb.player.clone();
+    std::thread::Builder::new()
+        .name("venuta-media-keys".into())
+        .spawn(move || {
+            let Ok(mut controls) = MediaControls::new(PlatformConfig {
+                display_name: "Venuta",
+                dbus_name: "venuta",
+                hwnd: Some(hwnd as *mut std::ffi::c_void),
+            }) else {
+                return;
+            };
+            let send = move |cmd: Cmd<QueueItem>| {
+                if let Ok(p) = player.lock()
+                    && let Some(p) = p.as_ref()
+                {
+                    p.send(cmd);
+                }
+            };
+            let _ = controls.attach(move |e| match e {
+                MediaControlEvent::Play => send(Cmd::Play),
+                MediaControlEvent::Pause => send(Cmd::Pause),
+                MediaControlEvent::Toggle => send(Cmd::Toggle),
+                MediaControlEvent::Next => send(Cmd::Next),
+                MediaControlEvent::Previous => send(Cmd::Previous),
+                MediaControlEvent::Stop => send(Cmd::Pause),
+                MediaControlEvent::SetPosition(MediaPosition(d)) => {
+                    send(Cmd::Seek(d.as_millis() as u64))
+                }
+                _ => {}
+            });
+            for now in rx {
+                let _ = controls.set_metadata(MediaMetadata {
+                    title: Some(&now.title),
+                    artist: Some(&now.artist),
+                    album: Some(&now.album),
+                    cover_url: now.cover.as_deref(),
+                    duration: Some(std::time::Duration::from_millis(now.duration_ms)),
+                });
+                let progress = Some(MediaPosition(std::time::Duration::from_millis(
+                    now.position_ms,
+                )));
+                let _ = controls.set_playback(if now.playing {
+                    MediaPlayback::Playing { progress }
+                } else {
+                    MediaPlayback::Paused { progress }
+                });
+            }
+        })
+        .ok();
 }
 
 fn resolve(root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {

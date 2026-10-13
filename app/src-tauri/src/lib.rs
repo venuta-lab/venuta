@@ -1717,6 +1717,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             allow_data_assets(app.handle());
+            #[cfg(windows)]
+            if let Some(w) = app.get_webview_window("main")
+                && let Ok(hwnd) = w.hwnd()
+            {
+                playback::start_media_controls(&app.state::<playback::Playback>(), hwnd.0 as isize);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

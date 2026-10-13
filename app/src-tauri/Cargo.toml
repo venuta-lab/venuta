@@ -22,3 +22,4 @@ blake3.workspace = true
 walkdir.workspace = true
 tauri = { version = "2.12.3", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.8"
+souvlaki = "0.8"
