@@ -141,7 +141,7 @@ export function HealthScreen(props: {
       {props.progress}
 
       {/* The overview and the tools. */}
-      <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <section className="glass flex flex-wrap items-center gap-6 rounded-[24px] p-6">
           <Ring now={overallNow} after={plan ? overallAfter : overallNow} />
           <div className="min-w-[200px] flex-1">
@@ -282,7 +282,7 @@ export function HealthScreen(props: {
       )}
 
       {/* Formats and duplicates. */}
-      <div className="mt-10 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+      <div className="mt-10 grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <section className="glass rounded-[22px] p-5">
           <h2 className="text-[15px] font-semibold">Formats</h2>
           <FormatBar formats={s.formats} total={s.tracks} />
@@ -376,9 +376,7 @@ function Tool(props: { title: string; text: string; action: string; disabled?: b
     <div className="flex items-center gap-3 border-b border-edge py-3 last:border-b-0">
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] font-medium">{props.title}</div>
-        <div className="truncate text-[12px] text-ink/50" title={props.text}>
-          {props.text}
-        </div>
+        <div className="mt-0.5 text-[12px] leading-snug text-ink/50">{props.text}</div>
       </div>
       <button
         onClick={props.onClick}

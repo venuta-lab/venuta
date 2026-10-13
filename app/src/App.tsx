@@ -38,7 +38,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
-import { dismissNotice, useNotice } from './lib/notify'
+import { dismissNotice, notify, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
@@ -46,7 +46,7 @@ import { QueueDrawer } from './components/player/QueueDrawer'
 import { NowPlaying } from './components/player/NowPlaying'
 import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Prefs, type Surface } from './lib/prefs'
 import { DeepProgressBar } from './screens/libraryParts'
-import { MissingFolder, NoLibrary, NoMusic } from './components/FolderStates'
+import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
 import { ListenScreen } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
@@ -56,7 +56,8 @@ import { PlaylistsScreen, showPlaylists } from './screens/PlaylistsScreen'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { ActivityScreen } from './screens/ActivityScreen'
-import { SettingsScreen } from './screens/SettingsScreen'
+import { SettingsScreen, settingsSection } from './screens/SettingsScreen'
+import { checkAtStart } from './lib/updates'
 import { SetupScreen } from './screens/SetupScreen'
 
 // Before the open folder was kept with the library, this computer remembered it; read once.
@@ -110,6 +111,8 @@ export default function App() {
   const [ready, setReady] = useState(!inApp())
   const [missing, setMissing] = useState('')
   const [report, setReport] = useState<HealthReport | null>(null)
+  // Reading the folder failed (not a missing folder): its screens offer to try again.
+  const [readError, setReadError] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [active, setActive] = useState<Place>('listen')
@@ -176,6 +179,7 @@ export default function App() {
       })
       setReport(r)
       setError('')
+      setReadError('')
       setBusy('')
       // Covers: a spread of albums for the background first, then everything for the wall.
       const dirs = r.albums.filter((a) => a.cover_track).map((a) => a.dir)
@@ -192,7 +196,10 @@ export default function App() {
       setBusy('')
       // A folder that has gone (drive unplugged, renamed) gets its own screen, not an error.
       if (/does not exist or is not a directory/.test(String(e))) setMissing(dir)
-      else setError(String(e))
+      else {
+        setError(String(e))
+        setReadError(String(e).replace(/^Error: /, ''))
+      }
       return null
     }
   }, [])
@@ -275,6 +282,25 @@ export default function App() {
     },
     [active],
   )
+
+  // A new version: looked for quietly once a day, offered with a notice; installed only when asked.
+  useEffect(() => {
+    if (!inApp()) return
+    const t = window.setTimeout(() => {
+      void checkAtStart().then((info) => {
+        if (info)
+          notify(`Venuta ${info.version} is ready to install.`, {
+            label: 'See what’s new',
+            run: () => {
+              settingsSection('about')
+              go('settings')
+            },
+          })
+      })
+    }, 8000)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // The first time the window is closed, ask what closing should do (Rust holds the window open).
   useEffect(() => {
@@ -668,6 +694,19 @@ export default function App() {
         />
       )
     if (!root && active !== 'settings') return <NoLibrary onSetup={() => setSetup(true)} />
+    if (!report && readError && active !== 'settings')
+      return (
+        <ReadFailed
+          path={root}
+          message={readError}
+          onRetry={() => {
+            setReadError('')
+            setError('')
+            void refresh(root, true)
+          }}
+          onChoose={() => void chooseRoot()}
+        />
+      )
     switch (active) {
       case 'listen':
         if (report && report.summary.tracks === 0)

@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager, State};
 mod desktop;
 mod listening;
 mod playback;
+mod updates;
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
@@ -2084,6 +2085,7 @@ pub fn run() {
         .manage(Jobs::default())
         .manage(playback::Playback::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![desktop::IN_TRAY_ARG]),
@@ -2185,6 +2187,8 @@ pub fn run() {
             want_add,
             want_remove,
             desktop::set_close_action,
+            updates::update_check,
+            updates::update_install,
             playlist_shelf,
             wanted_export,
             player_test_write,

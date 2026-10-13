@@ -2,108 +2,138 @@
 
 *The essence of the flute.*
 
-A free, open-source desktop app that builds and keeps a perfect personal lossless music library, and mirrors it to SD cards for portable players.
+A free, open-source Windows app for a lossless music library: it builds and keeps the library
+tidy, plays it bit-perfect, keeps your playlists from anywhere, and writes the library to SD
+cards for portable players.
 
-- **Audit** the library: tags, duplicates, art, lyrics, loudness, paths and suspicious quality.
-- **Organise** it with your own rules, as a change set you review and can undo.
-- **Look up** years, credits, labels, covers and synced lyrics from free public sources.
-- **Intake** new albums through an `_Incoming` folder, filed the same way.
-- **Browse, edit and curate:** tags, ratings, playlists and smart playlists.
-- **Bring over** your Apple Music playlists, with a want-list of what you don't own yet.
-- **Sync** to SD cards: a one-way mirror that is safe to interrupt and only writes what changed.
+![Music home: the album playing, then your playlists and shelves](docs/screenshots/music-home.jpg)
 
 There is no AI at runtime, no account and no paid service, and the app never downloads music.
 
-> Built for one person's library first, and shared as-is in case it helps you. No support is promised.
+> Built for one person's library first, and shared as-is in case it helps you. No support is
+> promised.
 
-Status: 0.1, Windows first, built for one library and shared as-is. See [docs/PLAN.md](docs/PLAN.md) for the design and progress, [docs/decisions](docs/decisions) for what was learned while building, and [docs/research](docs/research) for the sources behind it.
+## What it does
+
+- **Plays** your files bit-perfect (exclusive WASAPI), with a waveform seek bar, synced lyrics,
+  a queue, an equaliser and volume levelling when you want them, and a mini player.
+- **Keeps the library tidy** with your own rules: folder and file names, artist spellings,
+  categories, covers and lyrics, as changes you review first and can undo.
+- **Looks up** original years, composers, lyricists, sharper covers and synced lyrics from free
+  public sources.
+- **Checks the sound**: damaged files, lossy sources, fake hi-res, and loudness for levelling.
+- **Brings your playlists over** from Spotify, Apple Music, YouTube Music, Deezer, TIDAL and
+  others, matched to your files; songs you don't have keep their place until you do.
+- **Writes SD cards** for the player that reads them (Poweramp, Snowsky Disc, Echo Mini,
+  Astell&Kern), changing only what changed.
+
+| | |
+|---|---|
+| ![Now Playing with the sound tools](docs/screenshots/now-playing.jpg) | ![An album](docs/screenshots/album.jpg) |
+| ![Playlists, grouped by where they came from](docs/screenshots/playlists.jpg) | ![A playlist brought over from Spotify](docs/screenshots/playlist.jpg) |
+| ![Importing playlists: exact matches, close ones to check, songs to get](docs/screenshots/import-review.jpg) | ![Health: how complete and how sound the library is](docs/screenshots/health.jpg) |
+| ![Seven looks, among them retro ones](docs/screenshots/themes.jpg) | ![The Neo-Tokyo look](docs/screenshots/theme-neo-tokyo.jpg) |
 
 ## What it will never do
 
-- **It never writes to the folder you start from.** The first build copies your library into a new folder and changes only the copy.
-- **It never deletes outright.** Removed files and playlists go to `_Quarantine` inside the library. Every run writes a journal, and every run can be undone.
-- **Audio is never re-encoded.** Each tag write is verified: the audio bytes before and after must match, or the file is left as it was.
-- **On a card, it never touches files it did not put there.**
+- **Change the music you bring in.** The first build copies it into your library and changes
+  only the copy.
+- **Delete outright.** Duplicates, replaced files and removed playlists go to **Set aside**
+  beside your music. Every change is journaled and can be undone in **Activity**.
+- **Re-encode audio.** Each tag write is verified: the audio before and after must match, or the
+  file is left as it was.
+- **Touch files on a card that it didn't put there.**
 
-## Using it
+## The places
 
-The first time, **Set up your library** walks you through it: where your music is, where the clean library goes, reading it, and looking up details online. After that the app has seven places, in the rail on the left.
+**Music** is where you listen: the album playing (or one picked for today), your playlists,
+shelves (jump back in, most played, top rated, hi-res, your categories), then albums, artists
+and songs. Click to play; right-click a song or an album for the rest, including **Add to
+playlist…**.
 
-### Music
+**Metadata** lists the albums missing details; open one to edit its fields and song titles, and
+rate songs.
 
-Every album as a cover wall, with search and your own top-level folders as filters. Open an album to edit its details and song titles, rate songs (saved as you click) and add it to a playlist. Editing writes to your music files, so the first time the app asks you to confirm that you have a backup.
+**Health** shows how complete and how sound the library is, with the tools: look up details
+online, measure loudness and check quality, rescan.
 
-### Health
+**Organize** tidies the library with your rules and files new music. What can be proven is done
+for you, with its proof; what can't is asked, one question at a time, with the evidence side by
+side.
 
-How complete and how sound your library is, as a dashboard:
+**Playlists** are ordinary `.m3u8` files in your library, so any player can read them. Make
+them, drag to reorder, import them from elsewhere, or let smart playlists fill themselves from
+rules. **To get** lists the albums your playlists want and your library doesn't have.
 
-- a ring with how complete the details are today, and after you build;
-- a tile per detail (composer, synced lyrics, genre, album artist, covers, volume levelling), showing the albums still missing it;
-- a tile per sound problem (damaged, lossy, fake hi-res, padded 24-bit, cut-off highs, missing songs), opening the albums with their spectrograms, and **Add to To get** for a better copy;
-- the tools: **Look up details online** (MusicBrainz, Apple's catalogue, Deezer, LRCLIB, plus Discogs and AcoustID with your keys), **Check quality** (decodes every song), **Rescan**, and the music folder.
+**Devices** writes each SD card for its player. **Test this player** puts a short test album on
+the card to check what your player reads (artists, covers, lyrics, playlists), and the card is
+then written that way.
 
-### Organize
+**Activity** lists every build, edit and answer, each with undo. **Settings** holds the look,
+startup and the tray, folders, online sources and keys, safety, and updates.
 
-Where your library is tidied and new music is filed.
+Venuta keeps playing in the tray when you close the window (you're asked the first time), answers
+media keys, and shows the song in the Windows media flyout.
 
-- **Questions for you:** only what can't be proven, one card at a time, with the evidence side by side, clips from your own files (Space), a recommendation and its reason. Number keys answer, Enter accepts the recommendation, Ctrl+Enter accepts them all.
-- **Handled for you:** what was proven automatically (identical songs set aside, spellings unified, years settled by the recording codes), each with its exact proof, to approve or change.
-- **What the build changes:** a few stories (sharper covers, synced lyrics, credits, years…) that open to the albums and their exact before and after; any album can be left out.
-- **Build library** copies, retags, adds covers and lyrics, verifies, and writes a journal. Albums waiting for an answer are held back and built later. Then **Switch to the new library**.
-- **New music:** drop albums on the window, or into `_Incoming`, and they are filed the same way.
+![The mini player](docs/screenshots/mini-player.jpg)
 
-Rules are plain TOML files in your rules folder (Settings, Music folders): artist names, categories, folder layout, genres, title clean-up and tags to strip. Artist names can also be edited in Settings.
-
-### Playlists
-
-Playlists are ordinary `.m3u8` files in `Playlists/` inside your library, so any player can use them. Create, rename, reorder by dragging, remove songs, delete (to quarantine); a moved song is found again by its audio checksum. Smart playlists are rules ("rating at least 4", "unrated songs on albums you rated highly") that rewrite themselves. Your Apple Music playlists can be brought over; what you don't own goes on **To get**.
-
-### Devices
-
-Each SD card is written for the player that reads it: **Poweramp**, **Snowsky Disc**, **Echo Mini**, **Astell&Kern**, or an exact copy. The sound is never re-encoded; only the tags and covers are adjusted (several singers joined with ";", the original year in DATE, covers at the player's size). Only changes are written, a pulled card is safe, and music already on a card is recognised instead of copied again. **Test this player** writes a short test album to check what your player reads.
-
-### Activity and Settings
-
-**Activity** lists every build, every edit to your files and every answer, each with undo. **Settings** holds the look (light or dark, Glass, Frosted, Solid or AMOLED, the accent colour), music folders, artist names, online sources and keys, players, safety and about.
-
-Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+5** switch between Music, Health, Organize, Playlists and Devices, **Ctrl+,** opens Settings, **/** searches your music, **?** lists every shortcut.
+Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+6** switch places, **Ctrl+,**
+opens Settings, **Space** plays or pauses, **Ctrl+M** opens the mini player, **/** searches,
+**?** lists every shortcut.
 
 ### Where things live
 
 | What | Where |
 |---|---|
-| Settings, the index for each library, caches, thumbnails, journals | `%APPDATA%\Venuta\` |
-| Rules and smart-playlist rules | the rules folder (Settings, Music folders) |
+| Your albums | `<library>\Music\` |
 | Playlists | `<library>\Playlists\` |
-| Card identity and manifest | `<card>\.venuta\` |
+| Set aside (never deleted) | `<library>\Set aside\` |
+| Everything Venuta knows: settings, index, journals, caches | `<library>\.venuta\` |
+| Which library is yours | `%APPDATA%\Venuta\library.json` |
+| A card's identity and what it holds | `<card>\.venuta\` |
+
+The whole library moves or backs up as one folder.
 
 ## Install
 
-Download the Windows installer (`Venuta_x.y.z_x64-setup.exe`) from the releases page and run it. It installs for your user only, with no admin rights needed. The app is not code-signed yet, so Windows SmartScreen may warn you the first time: choose **More info**, then **Run anyway**.
+Download `Venuta_x.y.z_x64-setup.exe` from the [releases](../../releases) and run it. It installs
+for your user only, with no admin rights. The installer isn't code-signed, so Windows SmartScreen
+may warn you the first time: choose **More info**, then **Run anyway**.
+
+Updates are signed: Venuta checks GitHub at most once a day (you can turn that off in Settings,
+About) and installs a new version only when you choose.
 
 ## Development
 
-Requirements: Rust (stable), Node 24 + pnpm 10, and on Windows the MSVC C++ build tools and WebView2.
+Requirements: Rust (stable), Node 24 and pnpm 10, and on Windows the MSVC C++ build tools and
+WebView2.
 
 ```bash
-cargo test                                  # engine + cli tests
-cargo run -p cli -- scan <library-folder>   # headless scan (read-only)
+cargo test                                  # engine tests
+cargo run -p cli -- scan <music-folder>     # headless scan (read-only)
 pnpm --dir app install
-pnpm --dir app tauri dev                    # desktop app with hot reload
-pnpm --dir app tauri build                  # installer in target/release/bundle
+pnpm --dir app tauri dev                    # the app with hot reload
 ```
 
-The CLI (`venuta`) can do everything headless: `scan`, `health`, `deepcheck`, `plan`, `apply`, `undo`, `incoming-plan`, `incoming-import`, `card-setup`, `card-sync`, `apple-import` and `lookup`. Run `venuta --help` for details.
+The CLI (`venuta`) does the library work headless: `scan`, `health`, `deepcheck`, `plan`,
+`apply`, `undo`, `tidy`, `incoming-plan`, `incoming-import`, `card-setup`, `card-sync`,
+`apple-import` and `lookup`. Run `venuta --help` for details.
 
-Layout:
+Releases: `node scripts/release.mjs <x.y.z> [--notes notes.md] [--publish]` sets the version,
+builds the installer signed with the updater key (kept outside the repository), writes
+`latest.json`, tags, and creates the GitHub release (a draft unless `--publish`).
 
 | Folder | Contents |
 |---|---|
-| `crates/engine` | all the logic, no UI |
+| `crates/engine` | the library logic, no UI |
+| `crates/player` | decoding, the bit-perfect output, sound tools |
 | `crates/cli` | the headless binary `venuta` |
-| `app/` | the Tauri shell and React UI |
-| `docs/` | plan, research and decision records |
+| `app/` | the Tauri shell and the React UI |
+| `docs/` | plans, research and decision records |
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). Metadata comes from [MusicBrainz](https://musicbrainz.org) (CC0), the iTunes Search API, the Deezer API and [LRCLIB](https://lrclib.net). Each is used within its published limits.
+MIT, see [LICENSE](LICENSE). Details come from [MusicBrainz](https://musicbrainz.org) (CC0), the
+iTunes Search API, the Deezer API and [LRCLIB](https://lrclib.net), each used within its
+published limits; Discogs and AcoustID optionally, with your own keys. Album art in the
+screenshots belongs to its owners.

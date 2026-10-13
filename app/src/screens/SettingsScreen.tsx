@@ -14,6 +14,7 @@ import {
 import { resolvedTheme, setPrefs, surfaceShown, usePrefs, type Prefs } from '../lib/prefs'
 import { ACCENTS, STYLES, styleInfo, tuneAccent, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
+import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
@@ -27,6 +28,12 @@ const PAGES: { id: Page; label: string }[] = [
   { id: 'about', label: 'About' },
 ]
 
+let askedPage: Page | null = null
+/** Open Settings on this section next time it shows. */
+export function settingsSection(p: Page) {
+  askedPage = p
+}
+
 export function SettingsScreen(props: {
   root: string
   home: string | null
@@ -36,7 +43,12 @@ export function SettingsScreen(props: {
   onChooseHome: (path: string) => Promise<void>
   page?: Page
 }) {
-  const [page, setPage] = useState<Page>(props.page ?? 'look')
+  const [page, setPage] = useState<Page>(() => {
+    // Opened to a section from elsewhere (the update notice opens About).
+    const p = askedPage ?? props.page ?? 'look'
+    askedPage = null
+    return p
+  })
   return (
     <Frame title="Settings" line="Set up once: how it looks, where your music lives, and where details come from.">
       <div className="flex items-start gap-6">
@@ -584,11 +596,54 @@ function About() {
   useEffect(() => {
     engineVersion().then(setV)
   }, [])
+  const u = useUpdates()
+  const [auto, setAuto] = useState(savedUpdates().auto)
+  const line =
+    u.at === 'checking'
+      ? 'Checking…'
+      : u.at === 'current'
+        ? 'Venuta is up to date.'
+        : u.at === 'found'
+          ? `Venuta ${u.info.version} is ready to install (you have ${u.info.current}).`
+          : u.at === 'downloading'
+            ? `Downloading Venuta ${u.info.version}…`
+            : u.at === 'failed'
+              ? u.message
+              : 'New versions are signed, and installed only when you choose.'
   return (
     <div className="select-text">
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">About</h2>
+      <h2 className="title text-[22px]">About</h2>
       <p className="mt-2 text-[13.5px] text-ink/70">Venuta (वेणुता) {v}. Free and open source under the MIT licence.</p>
-      <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
+      <Row title="Updates" hint={line}>
+        {u.at === 'found' ? (
+          <button onClick={() => void installUpdate()} className="btn-primary">
+            Install and restart
+          </button>
+        ) : (
+          <button onClick={() => void checkForUpdate()} disabled={u.at === 'checking' || u.at === 'downloading'} className="btn">
+            {u.at === 'checking' ? 'Checking…' : 'Check for updates'}
+          </button>
+        )}
+      </Row>
+      {u.at === 'downloading' && (
+        <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
+          <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }} />
+        </div>
+      )}
+      {(u.at === 'found' || u.at === 'downloading') && u.info.notes && (
+        <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{u.info.notes}</div>
+      )}
+      <Row title="Check when Venuta starts" hint="At most once a day, it asks GitHub whether there is a new version. Nothing else is sent.">
+        <Switch
+          label="Check for updates when Venuta starts"
+          on={auto}
+          onChange={(on) => {
+            setAuto(on)
+            remember({ auto: on })
+          }}
+        />
+      </Row>
+      <p className="mt-4 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
         published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
       </p>

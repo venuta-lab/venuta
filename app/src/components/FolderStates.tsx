@@ -77,6 +77,26 @@ export function NoMusic(props: { path: string; isLibrary: boolean; onAdd: () => 
   )
 }
 
+/** Reading the folder failed for another reason: say what happened, and try again. */
+export function ReadFailed(props: { path: string; message: string; onRetry: () => void; onChoose: () => void }) {
+  return (
+    <Shell
+      title="Your music couldn't be read"
+      text={
+        <>
+          Venuta couldn't finish reading {props.path}. Nothing was changed.
+          <span className="mt-2 block text-[13px] text-ink/50">{props.message}</span>
+        </>
+      }
+    >
+      <Action primary onClick={props.onRetry}>
+        Try again
+      </Action>
+      <Action onClick={props.onChoose}>Choose another folder</Action>
+    </Shell>
+  )
+}
+
 /** Before a library is chosen, every place leads back to setting one up. */
 export function NoLibrary(props: { onSetup: () => void }) {
   return (

@@ -163,6 +163,9 @@ impl Index {
             })?;
         }
         let conn = Connection::open(db_path)?;
+        // Several parts of the app open the index at once (most of all the first time a
+        // library is read): wait for one another instead of failing with "database is locked".
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;

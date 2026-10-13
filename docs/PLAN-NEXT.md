@@ -45,9 +45,19 @@ undo a change made elsewhere; now only the changed fields are written.
 - [ ] The player test kit, run on his real cards (needs him and the cards).
 
 ## 4. Release and sharing
-- [ ] GitHub `aakashkore/venuta`, README with screenshots, installer.
-- [ ] Updates: the app checks for a new release and installs it when asked.
-- [ ] Code signing (costs money: his decision).
+- [x] GitHub `theSelfSa/venuta` (private for now; he publishes it), README rewritten with
+      screenshots of his library (no lyrics in them), signed NSIS installer.
+- [x] Updates: the app checks GitHub at most once a day (switchable in Settings, About) and
+      installs only when asked. Signed with a key kept in `%USERPROFILE%\.venuta-signing\` (back
+      it up). Checked against a local server: a signed 0.1.1 was found and verified, a version
+      mismatch and a tampered file were refused. It can only find releases once the repository
+      is public. scripts/release.mjs makes a release (draft unless --publish).
+- [x] Code signing: his decision, unsigned for now; the README explains the SmartScreen warning.
+
+Also found while taking screenshots: the first read of a big library failed with "database
+is locked" (several parts opened the new index at once, with no busy timeout) and the Music
+screen then said "Reading…" forever. Fixed both: a 30 s busy timeout, and a "couldn't be
+read" screen with Try again. Health's Tools panel ran off the window when its text grew.
 
 ## 5. Online sources (later)
 - [ ] Your own server (Navidrome / OpenSubsonic).
