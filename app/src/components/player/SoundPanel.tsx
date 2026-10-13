@@ -200,6 +200,22 @@ export function SoundPanel() {
         )}
       </Card>
 
+      <Card title="Crossfade" right={<span className="text-[12px] tabular-nums text-ink/60">{draft.crossfade_s ? `${draft.crossfade_s} s` : 'Off'}</span>}>
+        <input
+          type="range"
+          min={0}
+          max={12}
+          step={1}
+          value={draft.crossfade_s}
+          onChange={(e) => change({ ...draft, crossfade_s: Number(e.target.value) })}
+          aria-label="Crossfade, seconds"
+          className="h-1 w-full accent-[var(--accent)]"
+        />
+        <p className="mt-2 text-[12px] text-ink/55">
+          Blends the end of one song into the next. Never between songs of the same album, so live albums and mixes stay seamless.
+        </p>
+      </Card>
+
       <Card title="Limiter" right={<Switch label="Limiter" on={draft.limiter} onChange={(limiter) => change({ ...draft, limiter })} />}>
         <p className="text-[12px] text-ink/55">Keeps boosts from clipping. Only acts when something above makes the sound louder.</p>
       </Card>

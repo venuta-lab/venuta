@@ -35,6 +35,10 @@ pub struct Sound {
     pub leveling_preamp_db: f32,
     /// Keep boosts from clipping.
     pub limiter: bool,
+    /// Blend the end of one song into the next over this many seconds (0: off). Songs from
+    /// the same album are never blended (live albums and mixes stay seamless).
+    #[serde(default)]
+    pub crossfade_s: f32,
 }
 
 impl Default for Sound {
@@ -49,6 +53,7 @@ impl Default for Sound {
             leveling: Leveling::Off,
             leveling_preamp_db: 0.0,
             limiter: true,
+            crossfade_s: 0.0,
         }
     }
 }

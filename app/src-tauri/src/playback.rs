@@ -43,6 +43,9 @@ impl Item for QueueItem {
     fn gain(&self) -> player::dsp::Gain {
         self.rg
     }
+    fn album(&self) -> Option<String> {
+        Some(self.dir.clone())
+    }
 }
 
 /// What the window receives (see `app/src/lib/player.ts`).

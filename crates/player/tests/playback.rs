@@ -258,3 +258,25 @@ fn a_sound_tool_changes_the_output_and_says_so() {
     );
     assert_eq!(last.sound.bass_db, 6.0);
 }
+
+#[test]
+fn crossfade_overlaps_the_songs_by_exactly_the_fade() {
+    use player::dsp::Sound;
+    let dir = tempdir();
+    let (a, b) = (dir.join("x.wav"), dir.join("y.wav"));
+    wav(&a, 44_100, 16, 1, 20_000, |_, _| 10_000);
+    wav(&b, 44_100, 16, 1, 20_000, |_, _| 20_000);
+    let sound = Sound { crossfade_s: 0.1, limiter: false, ..Sound::default() };
+    let (got, _) = play_with(vec![a, b], vec![Cmd::Sound(sound)]);
+    let v = values(&got.bytes, 16);
+    let fade = 4_410;
+    // Untouched until the fade starts.
+    assert!(v[..20_000 - fade].iter().all(|&x| x == 10_000));
+    // Then the second song, at full level, for the rest of it.
+    let after = 20_000 + (20_000 - fade);
+    assert!(v[20_000..after].iter().all(|&x| x == 20_000), "second song continues where the blend left it");
+    assert!(v[after..].iter().all(|&x| x == 0), "overlap shortened the total by the fade");
+    // In between, it rises from one level to the other.
+    let mid = v[20_000 - fade / 2];
+    assert!(mid > 10_000 && mid < 30_000, "{mid}");
+}

@@ -37,6 +37,8 @@ export interface Sound {
   leveling: 'off' | 'track' | 'album'
   leveling_preamp_db: number
   limiter: boolean
+  /** Seconds of blend between songs (0: off). Never within one album. */
+  crossfade_s: number
 }
 
 export const SOUND_OFF: Sound = {
@@ -49,6 +51,7 @@ export const SOUND_OFF: Sound = {
   leveling: 'off',
   leveling_preamp_db: 0,
   limiter: true,
+  crossfade_s: 0,
 }
 
 /** Where the sound goes and what happens on the way (for the badge and the signal path). */

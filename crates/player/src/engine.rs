@@ -23,6 +23,10 @@ pub trait Item: Clone + Send + 'static {
     fn gain(&self) -> Gain {
         Gain::default()
     }
+    /// Which album it's from, so songs of one album are never crossfaded.
+    fn album(&self) -> Option<String> {
+        None
+    }
 }
 
 impl Item for PathBuf {
@@ -159,6 +163,7 @@ struct Segment {
     played: u64,
     start_frame: u64,
     gain: Gain,
+    album: Option<String>,
     /// The sound tools for this song (made when it starts playing).
     chain: Option<Chain>,
 }
@@ -194,6 +199,8 @@ struct Engine<T: Item + Serialize> {
     sound: Sound,
     stop_after_current: bool,
     sleep_at: Option<Instant>,
+    /// A crossfade is blending two songs right now (for the signal path).
+    fading: bool,
     scratch: Vec<i32>,
     mapped: Vec<i32>,
     bytes: Vec<u8>,
@@ -220,6 +227,7 @@ impl<T: Item + Serialize> Engine<T> {
             sound: Sound::default(),
             stop_after_current: false,
             sleep_at: None,
+            fading: false,
             scratch: Vec::new(),
             mapped: Vec::new(),
             bytes: Vec::new(),
@@ -403,6 +411,7 @@ impl<T: Item + Serialize> Engine<T> {
                         played: 0,
                         start_frame,
                         gain: item.gain(),
+                        album: item.album(),
                         chain: None,
                     });
                     return;
@@ -480,7 +489,7 @@ impl<T: Item + Serialize> Engine<T> {
             .front()
             .map(|s| s.source.format.rate)
             .unwrap_or(44_100);
-        let target = (rate as f32 * BUFFER_SECONDS) as usize;
+        let target = (rate as f32 * (BUFFER_SECONDS + self.sound.crossfade_s.max(0.0))) as usize;
         loop {
             let buffered: usize = self.segs.iter().map(Segment::frames).sum();
             if buffered >= target {
@@ -508,6 +517,7 @@ impl<T: Item + Serialize> Engine<T> {
                         played: 0,
                         start_frame: 0,
                         gain: item.gain(),
+                        album: item.album(),
                         chain: None,
                     }),
                     // It will be reported when its turn comes.
@@ -571,11 +581,15 @@ impl<T: Item + Serialize> Engine<T> {
                 c.process(&mut taken[at..], fmt.channels);
             }
             front.played += n as u64;
+            let ended = front.ended;
+            if self.sound.crossfade_s > 0.0 {
+                self.blend_next(&mut taken[at..], n, &fmt, dev_fmt.valid_bits);
+            }
             frames += n;
             if frames >= want {
                 break;
             }
-            if !front.ended {
+            if !ended {
                 // Decoding fell behind: decode now, then carry on.
                 self.fill()?;
                 if self
@@ -654,6 +668,71 @@ impl<T: Item + Serialize> Engine<T> {
         Ok(())
     }
 
+    /// Mix the start of the next song into the end of this one (the last `crossfade_s`
+    /// seconds), on an equal-power curve. `chunk` holds the `n` frames just taken from the
+    /// playing song. The next song then continues from where the blend left it.
+    fn blend_next(&mut self, chunk: &mut [i32], n: usize, fmt: &SourceFormat, out_bits: u16) {
+        self.fading = false;
+        let rate = f64::from(fmt.rate.max(1));
+        let fade = (f64::from(self.sound.crossfade_s) * rate) as u64;
+        let segs = self.segs.make_contiguous();
+        let [front, next, ..] = segs else { return };
+        let Some(total) = front.source.frames else {
+            return;
+        };
+        let same_album = front.album.is_some() && front.album == next.album;
+        if fade == 0 || same_album || next.source.format != *fmt {
+            return;
+        }
+        let end = total.saturating_sub(front.start_frame);
+        let after = front.played;
+        let before = after.saturating_sub(n as u64);
+        let from = before.max(end.saturating_sub(fade));
+        if from >= after {
+            return;
+        }
+        let ch = usize::from(fmt.channels.max(1));
+        let want = (after - from) as usize;
+        let have = next.frames().min(want);
+        if have == 0 {
+            return;
+        }
+        let mut incoming: Vec<i32> = next.samples.drain(..have * ch).collect();
+        if next.chain.is_none() {
+            next.chain = Some(Chain::new(
+                &self.sound,
+                &next.gain,
+                fmt.rate,
+                fmt.channels,
+                out_bits,
+            ));
+        }
+        if let Some(c) = next.chain.as_mut() {
+            c.process(&mut incoming, fmt.channels);
+        }
+        next.played += have as u64;
+        let skip = (from - before) as usize;
+        for k in 0..have {
+            let pos = from + k as u64;
+            let t = ((pos + fade).saturating_sub(end)) as f64 / fade as f64;
+            let (out_g, in_g) = (
+                (t * std::f64::consts::FRAC_PI_2).cos(),
+                (t * std::f64::consts::FRAC_PI_2).sin(),
+            );
+            for c in 0..ch {
+                let i = (skip + k) * ch + c;
+                if let Some(x) = chunk.get_mut(i) {
+                    let mixed = f64::from(*x) * out_g + f64::from(incoming[k * ch + c]) * in_g;
+                    *x = mixed
+                        .round()
+                        .clamp(f64::from(i32::MIN), f64::from(i32::MAX))
+                        as i32;
+                }
+            }
+        }
+        self.fading = true;
+    }
+
     fn release(&mut self) {
         if let Some(mut d) = self.device.take() {
             d.close();
@@ -682,7 +761,13 @@ impl<T: Item + Serialize> Engine<T> {
             .as_ref()
             .map(|c| c.steps.clone())
             .unwrap_or_default();
-        let processed = seg.chain.as_ref().is_some_and(|c| c.active);
+        let processed = seg.chain.as_ref().is_some_and(|c| c.active) || self.fading;
+        if self.fading {
+            steps.push(format!(
+                "Crossfading into the next song ({} s)",
+                self.sound.crossfade_s
+            ));
+        }
         if mode == Mode::Shared {
             steps.push("Mixed by Windows (shared mode), which may resample".into());
         }
