@@ -27,7 +27,7 @@ export function Segmented<T extends string>(props: {
     <div
       role={props.tabs ? 'tablist' : 'radiogroup'}
       aria-label={props.label}
-      className={`inline-flex shrink-0 rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)] ${props.className ?? ''}`}
+      className={`seg inline-flex shrink-0 rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)] ${props.className ?? ''}`}
     >
       {props.options.map((o) => {
         const on = o.value === props.value
@@ -39,7 +39,7 @@ export function Segmented<T extends string>(props: {
             aria-checked={props.tabs ? undefined : on}
             disabled={o.disabled}
             onClick={() => props.onChange(o.value)}
-            className={`relative rounded-full font-medium transition-colors disabled:opacity-35 ${
+            className={`seg-item relative rounded-full font-medium transition-colors disabled:opacity-35 ${
               sm ? 'px-3 py-1 text-[12px]' : 'px-4 py-1.5 text-[13px]'
             } ${on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
           >
@@ -47,7 +47,7 @@ export function Segmented<T extends string>(props: {
               <motion.span
                 layoutId={`seg-${id}`}
                 transition={spring}
-                className="absolute inset-0 rounded-full bg-ink/[0.13] shadow-[inset_0_1px_0_var(--highlight),0_1px_6px_-2px_rgb(0_0_0/0.3)]"
+                className="seg-on absolute inset-0 rounded-full bg-ink/[0.13] shadow-[inset_0_1px_0_var(--highlight),0_1px_6px_-2px_rgb(0_0_0/0.3)]"
               />
             )}
             <span className="relative">{o.label}</span>
@@ -240,12 +240,12 @@ export function Detail(props: {
       {props.glow && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-[520px] overflow-hidden opacity-45"
+          className="hero-glow pointer-events-none absolute inset-x-0 top-0 h-[520px] overflow-hidden opacity-45"
           style={{
             maskImage: 'radial-gradient(120% 90% at 30% 0%, #000 30%, transparent 75%)',
           }}
         >
-          <img src={props.glow} alt="" className="h-full w-full scale-125 object-cover" style={{ filter: "blur(64px) saturate(1.5) var(--art-tint)" }} />
+          <img src={props.glow} alt="" className="hero-glow-img h-full w-full scale-125 object-cover" style={{ filter: "blur(64px) saturate(1.5) var(--art-tint)" }} />
         </div>
       )}
       <div className={`sticky top-0 z-20 -mx-10 px-10 transition-[background-color,box-shadow] duration-200 ${stuck ? 'bar' : ''}`}>

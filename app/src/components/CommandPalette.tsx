@@ -137,7 +137,7 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
                       onMouseMove={() => setSel(i)}
                       onClick={() => run(c)}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left ${
-                        i === sel ? 'bg-[color-mix(in_oklab,var(--accent)_22%,transparent)]' : ''
+                        i === sel ? 'palette-on bg-[color-mix(in_oklab,var(--accent)_22%,transparent)]' : ''
                       }`}
                     >
                       <span className="min-w-0 flex-1">

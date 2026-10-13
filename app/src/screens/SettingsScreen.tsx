@@ -221,7 +221,7 @@ function LookAndFeel() {
           </Row>
         </>
       )}
-      {p.style !== 'bounty' && p.style !== 'skin99' && (
+      {!['bounty', 'skin99', 'green-room', 'orchard', 'redline', 'glasshouse'].includes(p.style) && (
         <Row
           title="Album background"
           hint={p.style === 'venuta' ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}

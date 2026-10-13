@@ -1,6 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/sora'
+import '@fontsource-variable/figtree'
+import '@fontsource-variable/inter'
+import '@fontsource-variable/roboto'
 // The retro themes' typefaces (OFL, bundled): only downloaded from disk when a theme uses them.
 import '@fontsource/dela-gothic-one/400'
 import '@fontsource/barlow-condensed/600'

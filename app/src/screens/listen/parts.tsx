@@ -54,13 +54,13 @@ export function PlayButtons(props: { tracks: CatalogTrack[]; from: From; dir?: s
       <button
         disabled={!tracks.length}
         onClick={() => (isNow ? void toggle() : void playAll(root, tracks, from))}
-        className={`btn-primary ${sm ? 'btn-sm' : 'btn-lg'}`}
+        className={`btn-primary play-main ${sm ? 'btn-sm' : 'btn-lg'}`}
       >
         {isNow && now.playing ? <IconPause /> : <IconPlay />}
         {isNow ? (now.playing ? 'Pause' : 'Resume') : label}
       </button>
       {!sm && (
-        <button disabled={tracks.length < 2} onClick={() => void playAll(root, tracks, from, 'shuffle')} className="btn btn-lg">
+        <button disabled={tracks.length < 2} onClick={() => void playAll(root, tracks, from, 'shuffle')} className="btn btn-lg shuffle-main">
           <IconShuffle />
           Shuffle
         </button>
@@ -101,7 +101,7 @@ export const AlbumCard = memo(function AlbumCard(props: {
       whileHover={{ y: -6 }}
       transition={spring}
       onContextMenu={ctx.onContextMenu}
-      className="group relative"
+      className="card group relative"
     >
       {ctx.menu}
       <button
@@ -113,7 +113,7 @@ export const AlbumCard = memo(function AlbumCard(props: {
         <motion.div
           layoutId={coverId(origin, a.dir)}
           transition={spring}
-          className="aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-xl shadow-black/30"
+          className="card-art aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-xl shadow-black/30"
         >
           <Art cover={c} album={a} />
         </motion.div>
@@ -131,7 +131,7 @@ export const AlbumCard = memo(function AlbumCard(props: {
           transition={spring}
           aria-label={props.now === 'playing' ? `Pause ${a.title}` : `Play ${a.title}`}
           onClick={() => (props.now !== 'no' ? void toggle() : void playAll(root, a.tracks, albumFrom(a)))}
-          className={`pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 focus-visible:translate-y-0 focus-visible:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 ${
+          className={`card-play pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 focus-visible:translate-y-0 focus-visible:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 ${
             props.now === 'no' ? 'translate-y-1.5 opacity-0' : 'opacity-100'
           }`}
         >

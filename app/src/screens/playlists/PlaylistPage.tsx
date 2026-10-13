@@ -416,12 +416,12 @@ export function PlaylistPage(props: {
             <button
               disabled={!songs.length}
               onClick={() => (isNow ? void toggle() : void playAll(root, songs, from))}
-              className="btn-primary btn-lg"
+              className="btn-primary btn-lg play-main"
             >
               {isNow && playing ? <IconPause /> : <IconPlay />}
               {isNow ? (playing ? 'Pause' : 'Resume') : 'Play'}
             </button>
-            <button disabled={songs.length < 2} onClick={() => void playAll(root, songs, from, 'shuffle')} className="btn btn-lg">
+            <button disabled={songs.length < 2} onClick={() => void playAll(root, songs, from, 'shuffle')} className="btn btn-lg shuffle-main">
               <IconShuffle />
               Shuffle
             </button>
@@ -557,7 +557,7 @@ function Title(props: { name: string; editable: boolean; startEditing: boolean; 
   if (!editing || !props.editable)
     return (
       <h1
-        className={`title mt-1 text-[34px] leading-[1.1] ${props.editable ? 'cursor-text rounded-lg decoration-ink/30 underline-offset-8 hover:underline' : ''}`}
+        className={`title hero-title mt-1 text-[34px] leading-[1.1] ${props.editable ? 'cursor-text rounded-lg decoration-ink/30 underline-offset-8 hover:underline' : ''}`}
         onClick={() => props.editable && setEditing(true)}
         title={props.editable ? 'Click to rename' : undefined}
       >
@@ -657,7 +657,7 @@ function PlaylistRow(props: {
         }
         if (e.key === 'Delete' && !props.smart) props.onRemove()
       }}
-      className={`group absolute inset-x-0 grid grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 transition-colors ${
+      className={`row group absolute inset-x-0 grid grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 transition-colors ${
         r.missing ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
       } ${isNow ? 'text-accent-ink' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
     >

@@ -53,7 +53,7 @@ export function Rail(props: {
   return (
     <nav
       aria-label="Sections"
-      className="rail relative z-20 mb-3 ml-3 flex w-[84px] shrink-0 flex-col items-center gap-1 py-2"
+      className="rail rail-main relative z-20 mb-3 ml-3 flex w-[84px] shrink-0 flex-col items-center gap-1 py-2"
     >
       {props.top.map(item)}
       <div className="flex-1" />

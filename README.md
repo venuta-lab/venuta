@@ -34,7 +34,7 @@ There is no AI at runtime, no account and no paid service, and the app never dow
 | ![Now Playing with the sound tools](docs/screenshots/now-playing.jpg) | ![An album](docs/screenshots/album.jpg) |
 | ![Playlists, grouped by where they came from](docs/screenshots/playlists.jpg) | ![A playlist brought over from Spotify](docs/screenshots/playlist.jpg) |
 | ![Importing playlists: exact matches, close ones to check, songs to get](docs/screenshots/import-review.jpg) | ![Health: how complete and how sound the library is](docs/screenshots/health.jpg) |
-| ![Seven looks, among them retro ones](docs/screenshots/themes.jpg) | ![The Neo-Tokyo look](docs/screenshots/theme-neo-tokyo.jpg) |
+| ![Eleven looks: after the players you know, and retro ones](docs/screenshots/themes.jpg) | ![The Neo-Tokyo look](docs/screenshots/theme-neo-tokyo.jpg) |
 
 ## What it will never do
 

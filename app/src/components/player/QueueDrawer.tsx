@@ -98,9 +98,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
           <header className="flex items-start gap-3 px-5 pb-2 pt-4">
             <div className="min-w-0 flex-1">
               <h2 className="title text-[18px]">Queue</h2>
+              <PlayingFrom className="mt-0.5 block truncate text-[12px] text-ink/55" />
               <p className="mt-0.5 truncate text-[12px] text-ink/55">
-                <PlayingFrom />
-                {s.from ? '. ' : ''}
                 {upcoming > 0 ? `${upcoming} up next, ${clock(left)}` : 'Nothing after this song'}
               </p>
             </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { albumCovers, assetUrl, type CoverThumb } from './engine'
 import { fixedAccent, getPrefs, resolvedTheme } from './prefs'
-import { colourDistance, nearestBlock, tuneAccent } from './themes'
+import { artTone, colourDistance, nearestBlock, styleInfo, tuneAccent } from './themes'
 
 export interface Cover {
   src: string
@@ -63,14 +63,25 @@ function apply() {
   const p = getPrefs()
   const root = document.documentElement.style
   const hex = page ?? playing
+  // The cover's colour as a tint, for the themes that colour a page with it (every theme gets it).
+  if (hex) root.setProperty('--art', artTone(hex))
+  else root.removeProperty('--art')
   if (p.style === 'bounty') {
     const block = nearestBlock(hex ?? '')
     root.setProperty('--block', block)
     root.setProperty('--accent', block)
     return
   }
-  if (p.style !== 'venuta') return
-  const next = p.accentMode === 'fixed' || !hex ? fixedAccent(p) : (tuneAccent(hex, resolvedTheme(p) === 'light') ?? fixedAccent(p))
+  if (!styleInfo(p.style).albumAccent) return
+  // Glasshouse always follows the cover (its own red when there is none); Venuta as you chose.
+  const own = p.style === 'venuta' ? fixedAccent(p) : null
+  const tuned = hex ? tuneAccent(hex, resolvedTheme(p) === 'light') : null
+  const next = p.style === 'venuta' && p.accentMode === 'fixed' ? own : (tuned ?? own)
+  if (!next) {
+    shown = ''
+    root.removeProperty('--accent')
+    return
+  }
   // Similar covers (one album's songs) keep one accent instead of shimmering between near-twins.
   if (shown && root.getPropertyValue('--accent').trim() === shown && colourDistance(shown, next) < 0.06) return
   shown = next

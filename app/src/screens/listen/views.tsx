@@ -289,7 +289,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
           animate={{ opacity: 1, y: 0 }}
           transition={spring}
         >
-          <h1 className="title text-[40px] leading-none">{ar.name}</h1>
+          <h1 className="title hero-title text-[40px] leading-none">{ar.name}</h1>
           <p className="mt-2.5 text-[14px] text-ink/60">{counts.join(', ') || 'Nothing by them in your library yet.'}</p>
           <div className="mt-5">
             <PlayButtons tracks={own.length ? own : also} from={{ kind: 'artist', ref: ar.name, label: ar.name }} label="Play all" />

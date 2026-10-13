@@ -829,6 +829,745 @@
   animation: none;
 }
 
+/* ======================================================================================== */
+/* The players people know (research 08): Green Room (after Spotify), Orchard (after Apple   */
+/* Music), Redline (after YouTube Music), Glasshouse (after Cider). Values measured from the */
+/* players' own web apps, October 2026; typefaces are free near matches.                    */
+/* ======================================================================================== */
+
+/* The page's own surface (a panel in some themes; nothing in the rest). */
+.stage {
+  background: var(--stage-bg, transparent);
+  border-radius: var(--stage-radius, 0);
+  margin: var(--stage-margin, 0);
+  box-shadow: var(--stage-edge, none);
+}
+
+/* ---- Green Room: black chrome, #121212 panels 8px round with 8px gaps, green Play. -------- */
+:root[data-style="green-room"],
+[data-preview="green-room"] {
+  --accent: #1ed760;
+  --on-accent: #000000;
+  --accent-ink: #1ed760;
+  --accent-2: #1ed760;
+  --ink: #ffffff;
+  --problem: #f3727f;
+  --fix: #ffa42b;
+  --good: #1ed760;
+  --note: #8cb8ff;
+  --app-bg: #000000;
+  --app-image: none;
+  --solid: #000000;
+  --backdrop-opacity: 0;
+  --scrim: rgb(0 0 0 / 0.7);
+  --vignette: none;
+  --glass: #1f1f1f;
+  --edge: transparent;
+  --edge-strong: rgb(255 255 255 / 0.1);
+  --highlight: transparent;
+  --shadow: none;
+  --shadow-e3: 0 16px 24px rgb(0 0 0 / 0.3), 0 6px 8px rgb(0 0 0 / 0.2);
+  --blur: none;
+  --blur-over: none;
+  --popover: #282828;
+  --bar: #121212;
+  --bar-blur: none;
+  --bar-edge: transparent;
+  --rail-bg: #121212;
+  --rail-blur: none;
+  --rail-edge: transparent;
+  --rail-shadow: none;
+  --pill-bg: #2a2a2a;
+  --pill-ink: #ffffff;
+  --pill-shadow: none;
+  --np-bg: #000000;
+  --np-blur: none;
+  --np-edge: transparent;
+  --np-shadow: none;
+  --r-rail: 8px;
+  --r-np: 0px;
+  --font-ui: "Figtree Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-readout: var(--font-ui);
+  --title-weight: 800;
+  --title-tracking: -0.04em;
+  --title-case: none;
+  --label-case: none;
+  --stage-bg: #121212;
+  --stage-radius: 8px;
+  --stage-margin: 0 8px 8px 0;
+  color-scheme: dark;
+}
+:root[data-style="green-room"] .rail-main {
+  margin-left: 8px;
+  margin-bottom: 8px;
+}
+:root[data-style="green-room"] .rail-item:not([aria-current="page"]) {
+  color: #b3b3b3;
+}
+:root[data-style="green-room"] .rail-item:hover {
+  color: #ffffff;
+}
+:root[data-style="green-room"] .np-bar {
+  margin: 0;
+  padding-block: 8px 10px;
+}
+/* Buttons: the green pill, the outlined secondary, the quiet text. */
+:root[data-style="green-room"] :is(.btn, .btn-primary, .btn-ghost) {
+  font-weight: 700;
+  font-size: 14px;
+  transition:
+    transform 33ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+:root[data-style="green-room"] .btn-primary:hover {
+  background: #3be477;
+  transform: scale(1.04);
+}
+:root[data-style="green-room"] .btn {
+  background: transparent;
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px #7c7c7c;
+}
+:root[data-style="green-room"] .btn:hover {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #ffffff;
+  transform: scale(1.04);
+}
+:root[data-style="green-room"] .btn-ghost {
+  color: #b3b3b3;
+}
+:root[data-style="green-room"] .btn-ghost:hover {
+  background: transparent;
+  color: #ffffff;
+}
+/* An album's or playlist's Play: a 56px green circle; Shuffle: its icon. */
+:root[data-style="green-room"] .play-main {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+}
+:root[data-style="green-room"] .play-main svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+:root[data-style="green-room"] .shuffle-main {
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+  width: 44px;
+  height: 44px;
+  box-shadow: none;
+  color: #b3b3b3;
+}
+:root[data-style="green-room"] .shuffle-main:hover {
+  color: #ffffff;
+  box-shadow: none;
+}
+:root[data-style="green-room"] .shuffle-main svg {
+  width: 30px;
+  height: 30px;
+}
+/* The header: the cover's colour, fading into the page. Titles big and heavy. */
+:root[data-style="green-room"] .hero-glow {
+  opacity: 1;
+  mask-image: none;
+  height: 440px;
+  background: linear-gradient(to bottom, color-mix(in oklab, var(--art, #535353) 82%, #000) 0%, color-mix(in oklab, var(--art, #535353) 40%, #121212) 55%, #121212 100%);
+}
+:root[data-style="green-room"] .hero-glow-img {
+  display: none;
+}
+:root[data-style="green-room"] .hero-title {
+  font-size: clamp(40px, 5.6vw, 88px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-weight: 800;
+}
+/* Cards: a panel on hover, the art square-cornered, the green play button rising in. */
+:root[data-style="green-room"] .card {
+  transform: none !important;
+  padding: 12px;
+  margin: -12px;
+  border-radius: 8px;
+  transition: background-color 300ms ease;
+}
+:root[data-style="green-room"] .card:hover {
+  background: #1f1f1f;
+}
+:root[data-style="green-room"] .card > .pointer-events-none {
+  inset: 12px 12px auto 12px;
+}
+:root[data-style="green-room"] .card-art {
+  border-radius: 6px !important;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.5) !important;
+}
+:root[data-style="green-room"] .card-play {
+  width: 48px;
+  height: 48px;
+  right: 8px;
+  bottom: 8px;
+  box-shadow: 0 8px 8px rgb(0 0 0 / 0.3);
+}
+:root[data-style="green-room"] .card-play:hover {
+  transform: scale(1.04);
+  background: #3be477;
+}
+/* Song rows: 4px corners, a white tint on hover. */
+:root[data-style="green-room"] .row {
+  border-radius: 4px;
+}
+:root[data-style="green-room"] .row:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+/* Tabs and choices as chips: grey pills, the chosen one white with black type. */
+:root[data-style="green-room"] .seg {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  gap: 8px;
+}
+:root[data-style="green-room"] .seg-item {
+  background: rgb(255 255 255 / 0.07);
+  color: #ffffff;
+  font-weight: 600;
+}
+:root[data-style="green-room"] .seg-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.12);
+}
+:root[data-style="green-room"] .seg-item:is([aria-selected="true"], [aria-checked="true"]) {
+  color: #000000;
+}
+:root[data-style="green-room"] .seg-on {
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+:root[data-style="green-room"] .field {
+  background: #1f1f1f;
+  border-color: transparent;
+  border-radius: 500px;
+}
+:root[data-style="green-room"] .field:hover {
+  background: #2a2a2a;
+  border-color: #535353;
+}
+:root[data-style="green-room"] .field:focus {
+  border-color: #ffffff;
+  box-shadow: inset 0 0 0 1px #ffffff;
+}
+
+/* ---- Orchard: system greys, a red-pink key, a translucent sidebar and a floating player. -- */
+:root[data-style="orchard"],
+[data-preview="orchard"] {
+  --accent: #fa2d48;
+  --on-accent: #ffffff;
+  --accent-ink: #fa586a;
+  --accent-2: #fa586a;
+  --ink: #f5f5f7;
+  --problem: #ff453a;
+  --fix: #ffd60a;
+  --good: #30d158;
+  --note: #64d2ff;
+  --app-bg: #1f1f1f;
+  --app-image: none;
+  --solid: #1f1f1f;
+  --backdrop-opacity: 0;
+  --scrim: rgb(0 0 0 / 0.5);
+  --vignette: none;
+  --glass: rgb(255 255 255 / 0.05);
+  --edge: rgb(255 255 255 / 0.1);
+  --edge-strong: rgb(255 255 255 / 0.16);
+  --highlight: transparent;
+  --shadow: none;
+  --shadow-e3: 0 22px 70px rgb(0 0 0 / 0.5);
+  --blur: blur(30px) saturate(1.8);
+  --blur-over: blur(40px) saturate(1.8);
+  --popover: rgb(40 40 42 / 0.86);
+  --bar: rgb(31 31 31 / 0.82);
+  --bar-blur: blur(30px) saturate(1.8);
+  --bar-edge: rgb(255 255 255 / 0.08);
+  --rail-bg: rgb(38 38 40 / 0.6);
+  --rail-blur: blur(40px) saturate(1.8);
+  --rail-edge: transparent;
+  --rail-shadow: 1px 0 0 rgb(0 0 0 / 0.5);
+  --pill-bg: rgb(255 255 255 / 0.08);
+  --pill-ink: var(--ink);
+  --pill-shadow: none;
+  --np-bg: rgb(45 45 45 / 0.88);
+  --np-blur: blur(40px) saturate(1.8);
+  --np-edge: rgb(255 255 255 / 0.1);
+  --np-shadow: 0 10px 40px rgb(0 0 0 / 0.45);
+  --r-rail: 0px;
+  --r-np: 16px;
+  --font-ui: "Inter Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-readout: var(--font-ui);
+  --title-weight: 700;
+  --title-tracking: -0.022em;
+  --title-case: none;
+  --label-case: none;
+  color-scheme: dark;
+}
+:root[data-style="orchard"][data-theme="light"],
+[data-preview="orchard"][data-preview-theme="light"] {
+  --accent: #fa233b;
+  --on-accent: #ffffff;
+  --accent-ink: #e01e35;
+  --accent-2: #fa233b;
+  --ink: #1d1d1f;
+  --problem: #d70015;
+  --fix: #b25000;
+  --good: #248a3d;
+  --note: #0071e3;
+  --app-bg: #ffffff;
+  --solid: #ffffff;
+  --scrim: rgb(0 0 0 / 0.25);
+  --glass: rgb(0 0 0 / 0.03);
+  --edge: rgb(0 0 0 / 0.1);
+  --edge-strong: rgb(0 0 0 / 0.16);
+  --popover: rgb(250 250 252 / 0.9);
+  --bar: rgb(255 255 255 / 0.82);
+  --bar-edge: rgb(0 0 0 / 0.08);
+  --rail-bg: rgb(245 245 247 / 0.72);
+  --rail-shadow: 1px 0 0 rgb(0 0 0 / 0.08);
+  --pill-bg: rgb(0 0 0 / 0.06);
+  --np-bg: rgb(250 250 252 / 0.86);
+  --np-edge: rgb(0 0 0 / 0.08);
+  --np-shadow: 0 10px 40px rgb(0 0 0 / 0.14);
+  color-scheme: light;
+}
+/* The sidebar runs the window's full height, against the edge. */
+:root[data-style="orchard"] .rail-main {
+  margin: 0;
+  padding-top: 12px;
+}
+:root[data-style="orchard"] .rail-item {
+  border-radius: 8px;
+}
+:root[data-style="orchard"] .rail-item[aria-current="page"] svg {
+  color: var(--accent-ink);
+}
+/* The player floats over the page, a glass bar at the bottom. */
+:root:is([data-style="orchard"], [data-style="glasshouse"]) .np-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  margin: 0 auto;
+  width: min(1040px, calc(100% - 48px));
+  z-index: 30;
+}
+:root:is([data-style="orchard"], [data-style="glasshouse"]) .place {
+  padding-bottom: 112px;
+}
+/* Notices rise above the floating player instead of covering it. */
+:root:is([data-style="orchard"], [data-style="glasshouse"]) .toast {
+  bottom: 128px;
+}
+/* Buttons: rounded rectangles; Play and Shuffle both in the key. */
+:root[data-style="orchard"] :is(.btn, .btn-primary, .btn-ghost) {
+  border-radius: 8px;
+  font-weight: 600;
+}
+:root[data-style="orchard"] .btn {
+  background: rgb(255 255 255 / 0.1);
+}
+:root[data-style="orchard"][data-theme="light"] .btn {
+  background: rgb(0 0 0 / 0.06);
+}
+:root[data-style="orchard"] .btn-ghost {
+  color: var(--accent-ink);
+}
+:root[data-style="orchard"] .btn-primary:hover {
+  background: color-mix(in oklab, var(--accent) 88%, #000);
+}
+:root[data-style="orchard"] :is(.play-main, .shuffle-main) {
+  min-width: 112px;
+}
+:root[data-style="orchard"] .btn.shuffle-main {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+:root[data-style="orchard"] .btn.shuffle-main:hover {
+  background: color-mix(in oklab, var(--accent) 88%, #000);
+}
+:root[data-style="orchard"] .hero-glow {
+  display: none;
+}
+:root[data-style="orchard"] .hero-title {
+  font-size: 30px;
+  line-height: 1.15;
+}
+/* Cards: art with soft corners; Play waits in the corner, in dark glass. */
+:root[data-style="orchard"] .card {
+  transform: none !important;
+}
+:root[data-style="orchard"] .card-art {
+  border-radius: 8px !important;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.25) !important;
+}
+:root[data-style="orchard"] .card-play {
+  left: 10px;
+  right: auto;
+  bottom: 10px;
+  width: 32px;
+  height: 32px;
+  background: rgb(0 0 0 / 0.45);
+  color: #ffffff;
+  backdrop-filter: blur(12px);
+  box-shadow: none;
+}
+:root[data-style="orchard"] .card-play svg {
+  width: 16px;
+  height: 16px;
+}
+/* Song lists: hairlines between rows, a grey tint on hover. */
+:root[data-style="orchard"] .row {
+  border-radius: 6px;
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
+:root[data-style="orchard"] .row:hover {
+  background: var(--glass);
+}
+/* The segmented control. */
+:root[data-style="orchard"] .seg {
+  border-radius: 9px;
+  background: rgb(118 118 128 / 0.24);
+  box-shadow: none;
+  padding: 2px;
+}
+:root[data-style="orchard"] .seg-item {
+  border-radius: 7px;
+}
+:root[data-style="orchard"] .seg-on {
+  border-radius: 7px !important;
+  background: rgb(255 255 255 / 0.2) !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2) !important;
+}
+:root[data-style="orchard"][data-theme="light"] .seg-on {
+  background: #ffffff !important;
+  box-shadow: 0 3px 8px rgb(0 0 0 / 0.12), 0 1px 1px rgb(0 0 0 / 0.16) !important;
+}
+:root[data-style="orchard"] .field {
+  border-radius: 8px;
+}
+
+/* ---- Redline: a black canvas, grey chips, white pills, and red only where it plays. ------- */
+:root[data-style="redline"],
+[data-preview="redline"] {
+  --accent: #ff0033;
+  --on-accent: #ffffff;
+  --accent-ink: #ff4e45;
+  --accent-2: #ff4e45;
+  --ink: #ffffff;
+  --problem: #ff4e45;
+  --fix: #ffa42b;
+  --good: #2ba640;
+  --note: #3ea6ff;
+  --app-bg: #030303;
+  --app-image: none;
+  --solid: #030303;
+  --backdrop-opacity: 0;
+  --scrim: rgb(0 0 0 / 0.6);
+  --vignette: none;
+  --glass: #181818;
+  --edge: rgb(255 255 255 / 0.1);
+  --edge-strong: rgb(255 255 255 / 0.2);
+  --highlight: transparent;
+  --shadow: none;
+  --shadow-e3: 0 4px 32px rgb(0 0 0 / 0.6);
+  --blur: none;
+  --blur-over: none;
+  --popover: #212121;
+  --bar: rgb(3 3 3 / 0.96);
+  --bar-blur: none;
+  --bar-edge: rgb(255 255 255 / 0.1);
+  --rail-bg: transparent;
+  --rail-blur: none;
+  --rail-edge: transparent;
+  --rail-shadow: none;
+  --pill-bg: rgb(255 255 255 / 0.1);
+  --pill-ink: #ffffff;
+  --pill-shadow: none;
+  --np-bg: #212121;
+  --np-blur: none;
+  --np-edge: transparent;
+  --np-shadow: none;
+  --r-rail: 0px;
+  --r-np: 0px;
+  --font-ui: "Roboto Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-readout: var(--font-ui);
+  --title-weight: 700;
+  --title-tracking: -0.01em;
+  --title-case: none;
+  --label-case: none;
+  color-scheme: dark;
+}
+:root[data-style="redline"] .rail-item {
+  border-radius: 8px;
+}
+:root[data-style="redline"] .rail-item:not([aria-current="page"]) {
+  color: rgb(255 255 255 / 0.7);
+}
+:root[data-style="redline"] .np-bar {
+  margin: 0;
+}
+/* Buttons: white pill first, outlined second, text third. */
+:root[data-style="redline"] .btn-primary {
+  background: #ffffff;
+  color: #030303;
+}
+:root[data-style="redline"] .btn-primary:hover {
+  background: #d9d9d9;
+}
+:root[data-style="redline"] .btn {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.2);
+}
+:root[data-style="redline"] .btn:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+:root[data-style="redline"] .btn-ghost:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+:root[data-style="redline"] .hero-glow {
+  opacity: 0.7;
+  height: 560px;
+  mask-image: linear-gradient(to bottom, #000 35%, transparent);
+}
+:root[data-style="redline"] .hero-glow-img {
+  filter: blur(80px) saturate(1.2) brightness(0.55) !important;
+}
+:root[data-style="redline"] .hero-title {
+  font-size: clamp(32px, 3.6vw, 45px);
+  line-height: 1.1;
+}
+:root[data-style="redline"] .card {
+  transform: none !important;
+}
+:root[data-style="redline"] .card-art {
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+:root[data-style="redline"] .card-play {
+  background: rgb(0 0 0 / 0.6);
+  color: #ffffff;
+  box-shadow: none;
+}
+:root[data-style="redline"] .card-play:hover {
+  background: rgb(0 0 0 / 0.8);
+  transform: scale(1.06);
+}
+:root[data-style="redline"] .row {
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.1);
+}
+:root[data-style="redline"] .row:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+/* Chips: grey with 8px corners; the chosen one white. */
+:root[data-style="redline"] .seg {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  gap: 12px;
+}
+:root[data-style="redline"] .seg-item {
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.1);
+  color: #ffffff;
+}
+:root[data-style="redline"] .seg-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.2);
+}
+:root[data-style="redline"] .seg-item:is([aria-selected="true"], [aria-checked="true"]) {
+  color: #030303;
+}
+:root[data-style="redline"] .seg-on {
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+:root[data-style="redline"] .field {
+  background: rgb(255 255 255 / 0.15);
+  border-color: rgb(255 255 255 / 0.1);
+  border-radius: 8px;
+}
+
+/* ---- Glasshouse: dark glass, an inset stage, everything tinted by the cover playing. ----- */
+:root[data-style="glasshouse"],
+[data-preview="glasshouse"] {
+  --accent: #fc3c44;
+  --on-accent: #ffffff;
+  --accent-ink: var(--accent);
+  --accent-2: #ff2654;
+  --ink: #ffffff;
+  --problem: #ff6b78;
+  --fix: #ffb547;
+  --good: #3ddc97;
+  --note: #8cb8ff;
+  --app-bg: #0e0e10;
+  --app-image: none;
+  --solid: #0e0e10;
+  --backdrop-opacity: 0;
+  --scrim: rgb(0 0 0 / 0.55);
+  --vignette: none;
+  --glass: rgb(255 255 255 / 0.05);
+  --edge: rgb(255 255 255 / 0.07);
+  --edge-strong: rgb(255 255 255 / 0.12);
+  --highlight: rgb(255 255 255 / 0.04);
+  --shadow: none;
+  --shadow-e3: 0 30px 80px -20px rgb(0 0 0 / 0.7);
+  --blur: blur(30px) saturate(1.6);
+  --blur-over: blur(40px) saturate(1.7);
+  --popover: rgb(32 32 36 / 0.88);
+  --bar: rgb(28 28 31 / 0.8);
+  --bar-blur: blur(30px) saturate(1.6);
+  --bar-edge: rgb(255 255 255 / 0.06);
+  --rail-bg: transparent;
+  --rail-blur: none;
+  --rail-edge: transparent;
+  --rail-shadow: none;
+  --pill-bg: rgb(255 255 255 / 0.08);
+  --pill-ink: #ffffff;
+  --pill-shadow: none;
+  --np-bg: rgb(30 30 34 / 0.72);
+  --np-blur: blur(36px) saturate(1.8);
+  --np-edge: rgb(255 255 255 / 0.1);
+  --np-shadow: 0 18px 50px -12px rgb(0 0 0 / 0.7);
+  --r-rail: 0px;
+  --r-np: 18px;
+  --font-ui: "Inter Variable", "Segoe UI Variable", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-readout: var(--font-ui);
+  --title-weight: 700;
+  --title-tracking: -0.025em;
+  --title-case: none;
+  --label-case: none;
+  --stage-bg: #1c1c1f;
+  --stage-radius: 14px;
+  --stage-margin: 0 10px 10px 2px;
+  --stage-edge: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  color-scheme: dark;
+}
+/* Its preview hints at the cover-tinted stage. */
+[data-preview="glasshouse"] {
+  --app-image: linear-gradient(165deg, #6a2430 0%, #2a1c22 38%, #141416 70%);
+}
+:root[data-style="glasshouse"] .stage {
+  overflow: hidden;
+}
+:root[data-style="glasshouse"] .rail-item {
+  border-radius: 10px;
+}
+:root[data-style="glasshouse"] .rail-item[aria-current="page"] svg {
+  color: var(--accent);
+}
+/* Within the stage, the player floats a little higher. */
+:root[data-style="glasshouse"] .np-bar {
+  bottom: 24px;
+  width: min(900px, calc(100% - 140px));
+  transform: translateX(-46px);
+}
+/* Play and Shuffle: pills in a light version of the cover's colour, dark type on them. */
+:root[data-style="glasshouse"] :is(.play-main, .btn.shuffle-main) {
+  background: color-mix(in oklab, var(--art, #fc3c44) 40%, #ffffff);
+  color: #141416;
+  box-shadow: none;
+}
+:root[data-style="glasshouse"] :is(.play-main, .btn.shuffle-main):hover {
+  background: color-mix(in oklab, var(--art, #fc3c44) 30%, #ffffff);
+}
+:root[data-style="glasshouse"] .btn {
+  background: rgb(255 255 255 / 0.08);
+}
+:root[data-style="glasshouse"] .btn:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+/* The header: the cover's colour, deep at the top, settling into the stage. */
+:root[data-style="glasshouse"] .hero-glow {
+  opacity: 1;
+  height: 520px;
+  mask-image: none;
+  background: linear-gradient(to bottom, color-mix(in oklab, var(--art, #3a3a40) 90%, #000) 0%, color-mix(in oklab, var(--art, #3a3a40) 45%, #1c1c1f) 50%, #1c1c1f 100%);
+}
+:root[data-style="glasshouse"] .hero-glow-img {
+  opacity: 0.25;
+  mix-blend-mode: soft-light;
+}
+:root[data-style="glasshouse"] .hero-title {
+  font-size: clamp(30px, 3.4vw, 42px);
+  line-height: 1.08;
+}
+:root[data-style="glasshouse"] .card-art {
+  border-radius: 12px !important;
+}
+:root[data-style="glasshouse"] .row {
+  border-radius: 8px;
+}
+:root[data-style="glasshouse"] .row:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+:root[data-style="glasshouse"] .seg {
+  background: rgb(255 255 255 / 0.05);
+}
+:root[data-style="glasshouse"] .seg-on {
+  background: rgb(255 255 255 / 0.14) !important;
+}
+
+/* The palette's chosen row: grey, as these players mark it (not in the accent). */
+:root:is([data-style="green-room"], [data-style="redline"]) .palette-on {
+  background: rgb(255 255 255 / 0.1) !important;
+}
+:root[data-style="orchard"] .palette-on {
+  background: var(--accent) !important;
+  color: #ffffff;
+}
+
+/* ---- Shared by the four: panel corners, and the player's Play. ---------------------------- */
+:root[data-style="green-room"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round) {
+  border-radius: 8px !important;
+}
+:root[data-style="orchard"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
+  border-radius: 12px !important;
+}
+:root[data-style="redline"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
+  border-radius: 12px !important;
+}
+:root[data-style="green-room"] .np-play {
+  background: #ffffff;
+  color: #000000;
+  box-shadow: none;
+  transition: transform 33ms ease;
+}
+:root[data-style="green-room"] .np-play:hover {
+  transform: scale(1.06);
+}
+:root[data-style="redline"] .np-play {
+  background: transparent;
+  color: #ffffff;
+  box-shadow: none;
+}
+:root[data-style="redline"] .np-play svg {
+  width: 30px;
+  height: 30px;
+}
+:root:is([data-style="orchard"], [data-style="glasshouse"]) .np-play {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+}
+:root:is([data-style="orchard"], [data-style="glasshouse"]) .np-play svg {
+  width: 26px;
+  height: 26px;
+}
+
 /* ---- Effects (components/ThemeFx.tsx) */
 @keyframes fx-trail {
   from {

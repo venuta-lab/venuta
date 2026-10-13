@@ -839,7 +839,7 @@ export default function App() {
             }}
           />
           <div className="relative flex min-w-0 flex-1 flex-col">
-          <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <main className="stage relative min-h-0 min-w-0 flex-1 overflow-hidden">
             {/* The page steps back while Now Playing is open; it keeps its place. */}
             <div
               inert={nowOpen}

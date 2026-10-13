@@ -52,10 +52,10 @@ export function PlaylistCard(props: {
         : []) as [string, () => void][]),
   ])
   return (
-    <motion.div whileHover={{ y: -6 }} transition={spring} onContextMenu={ctx.onContextMenu} className="group relative">
+    <motion.div whileHover={{ y: -6 }} transition={spring} onContextMenu={ctx.onContextMenu} className="card group relative">
       {ctx.menu}
       <button onClick={props.onOpen} className="block w-full text-left">
-        <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="aspect-square rounded-2xl shadow-xl shadow-black/30" />
+        <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>
         <div className="truncate text-[12.5px] text-ink/55">
           {p.smart
@@ -77,7 +77,7 @@ export function PlaylistCard(props: {
             transition={spring}
             aria-label={isNow && playing ? `Pause ${p.name}` : `Play ${p.name}`}
             onClick={() => (isNow ? void toggle() : void playPlaylist(root, p, 'play', props.rule))}
-            className={`pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
+            className={`card-play pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
               isNow ? 'opacity-100' : 'translate-y-1.5 opacity-0'
             }`}
           >

@@ -124,6 +124,30 @@ function Wave(props: { wave: number[]; pct: number; height: number }) {
 
 /** The retro themes' seek bars (research §3): each its own track and playhead. */
 export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
+  // The players people know: a thin line that thickens or lights up under the pointer.
+  if (style === 'green-room')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-[#4d4d4d]" />
+        <div className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-white group-hover:bg-[#1ed760]" style={{ width: `${pct}%` }} />
+        <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 shadow-[0_2px_4px_rgb(0_0_0/0.5)] group-hover:opacity-100" style={{ left: `${pct}%` }} />
+      </>
+    )
+  if (style === 'orchard' || style === 'glasshouse')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-ink/20 transition-[height] group-hover:h-[6px]" />
+        <div className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-ink/70 transition-[height] group-hover:h-[6px]" style={{ width: `${pct}%` }} />
+      </>
+    )
+  if (style === 'redline')
+    return (
+      <>
+        <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-white/20 transition-[height] group-hover:h-[5px]" />
+        <div className="absolute left-0 top-1/2 h-[3px] -translate-y-1/2 bg-[#f03] transition-[height] group-hover:h-[5px]" style={{ width: `${pct}%` }} />
+        <span className="absolute top-1/2 h-[13px] w-[13px] -translate-x-1/2 -translate-y-1/2 scale-0 rounded-full bg-[#f03] transition-transform group-hover:scale-100" style={{ left: `${pct}%` }} />
+      </>
+    )
   if (style === 'sync-ratio') {
     const lit = Math.round((pct / 100) * 24)
     return (
@@ -574,7 +598,7 @@ export function NowPlayingBar(props: {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 90, opacity: 0 }}
           transition={spring}
-          className="np @container relative mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(280px,1.5fr)_minmax(0,1fr)] items-center gap-4 px-4 py-3 @[1100px]:gap-6"
+          className="np np-bar @container relative mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(280px,1.5fr)_minmax(0,1fr)] items-center gap-4 px-4 py-3 @[1100px]:gap-6"
         >
           {/* Shown large in Now Playing while that is open, so it steps aside here. */}
           <motion.div
@@ -630,7 +654,7 @@ export function NowPlayingBar(props: {
                 onClick={() => void toggle()}
                 aria-label={s.playing ? 'Pause (Space)' : 'Play (Space)'}
                 title={s.playing ? 'Pause (Space)' : 'Play (Space)'}
-                className="grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent shadow-lg"
+                className="np-play grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent shadow-lg"
               >
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.span

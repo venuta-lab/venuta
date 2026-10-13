@@ -41,7 +41,7 @@ export function Toast(props: {
           exit={{ y: 40, opacity: 0 }}
           onMouseEnter={() => (hover.current = true)}
           onMouseLeave={() => (hover.current = false)}
-          className="popover absolute bottom-5 left-1/2 z-40 flex max-w-[680px] -translate-x-1/2 items-start gap-3 rounded-2xl py-3 pl-5 pr-2 text-[13px]"
+          className="toast popover absolute bottom-5 left-1/2 z-40 flex max-w-[680px] -translate-x-1/2 items-start gap-3 rounded-2xl py-3 pl-5 pr-2 text-[13px]"
         >
           <span className="min-w-0 flex-1 pt-0.5">
             {tone === 'error' && <span className="text-problem">Something went wrong. </span>}

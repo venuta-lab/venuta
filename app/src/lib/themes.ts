@@ -3,7 +3,18 @@
   Tokens live in src/themes.css; the reasoning in docs/research/06-themes-and-design.md.
 */
 
-export type Style = 'venuta' | 'neo-tokyo' | 'thermoptic' | 'sync-ratio' | 'layer-zero' | 'bounty' | 'skin99'
+export type Style =
+  | 'venuta'
+  | 'green-room'
+  | 'orchard'
+  | 'redline'
+  | 'glasshouse'
+  | 'neo-tokyo'
+  | 'thermoptic'
+  | 'sync-ratio'
+  | 'layer-zero'
+  | 'bounty'
+  | 'skin99'
 
 export interface StyleInfo {
   id: Style
@@ -18,6 +29,11 @@ export interface StyleInfo {
 
 export const STYLES: StyleInfo[] = [
   { id: 'venuta', name: 'Venuta', line: 'Glass over your album art, in the colour of what you play.', modes: true, albumAccent: true },
+  // The players people know (research 08): their own names here, what they are after in the line.
+  { id: 'green-room', name: 'Green Room', line: 'Black panels, a green Play and big bold titles. After Spotify.', modes: false, albumAccent: false },
+  { id: 'orchard', name: 'Orchard', line: 'Quiet greys, a red-pink key and a floating player. After Apple Music.', modes: true, albumAccent: false },
+  { id: 'redline', name: 'Redline', line: 'Pitch black, white pills and a red line. After YouTube Music.', modes: false, albumAccent: false },
+  { id: 'glasshouse', name: 'Glasshouse', line: 'Dark glass, an inset stage tinted by each cover. After Cider.', modes: false, albumAccent: true },
   { id: 'neo-tokyo', name: 'Neo-Tokyo', line: 'Red light-trails through a neon night city. After Akira (1988).', modes: false, albumAccent: false },
   { id: 'thermoptic', name: 'Thermoptic', line: 'Rain-damp teal city and terminal-green data. After Ghost in the Shell.', modes: false, albumAccent: false },
   { id: 'sync-ratio', name: 'Sync Ratio', line: 'Emergency orange, cockpit purple, serif title cards. After Evangelion.', modes: false, albumAccent: false },
@@ -128,6 +144,17 @@ export function tuneAccent(hex: string, light: boolean): string | null {
     c = Math.min(Math.max(c, 0.06), 0.13)
   }
   return oklchToHex({ l, c, h })
+}
+
+/**
+ * An album's colour as a tint for a page (a playlist or album header, the stage): deep enough
+ * that white type reads over it, coloured enough to be its cover's. Greys stay a neutral grey.
+ */
+export function artTone(hex: string): string {
+  const lch = hexToOklch(hex)
+  if (!lch) return '#535353'
+  if (lch.c < 0.03) return oklchToHex({ l: 0.42, c: 0, h: 0 })
+  return oklchToHex({ l: Math.min(Math.max(lch.l, 0.4), 0.5), c: Math.min(Math.max(lch.c, 0.07), 0.15), h: lch.h })
 }
 
 /** Distance between two colours in OKLab (to skip changes too small to notice). */
