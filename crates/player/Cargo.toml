@@ -1,0 +1,18 @@
+[package]
+name = "player"
+description = "Venuta's audio engine: bit-perfect, gapless playback of your own files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "vorbis", "ogg"] }
+serde = { workspace = true }
+rand = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.19"
+
+[dev-dependencies]
+md-5 = "0.10"
