@@ -63,6 +63,8 @@ pub enum Cmd<T> {
     Remove(usize),
     Move(usize, usize),
     Output(OutputChoice),
+    /// Send the whole status again, queue included (a new window listening).
+    Refresh,
     Quit,
 }
 
@@ -317,6 +319,7 @@ impl<T: Item + Serialize> Engine<T> {
                 self.release();
                 self.choice = choice;
             }
+            Cmd::Refresh => self.queue_changed = true,
             Cmd::Quit => {}
         }
         self.publish(true);

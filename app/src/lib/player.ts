@@ -25,15 +25,15 @@ export interface QueueItem {
 }
 
 /** Where the sound goes and what happens on the way (for the badge and the signal path). */
-export interface Output {
+export interface Signal {
   device: string
-  /** "exclusive": straight to the device, at the file's own format. "shared": via Windows mixing. */
-  mode: 'exclusive' | 'shared' | 'none'
-  sample_rate: number
-  bit_depth: number
+  /** "exclusive": straight to the device, at the song's own format. "shared": via Windows' mixer. */
+  mode: 'exclusive' | 'shared' | 'memory'
+  source: { rate: number; channels: number; bits: number; lossless: boolean; codec: string }
+  output: { rate: number; channels: number; container_bits: number; valid_bits: number; kind: 'int' | 'float' }
   /** Nothing changes the samples on the way. */
   bit_perfect: boolean
-  /** What does change them, in words ("Resampled to 48 kHz", "Volume levelled"). */
+  /** What does change them, in words ("Volume at 60%"). */
   steps: string[]
 }
 
@@ -42,11 +42,13 @@ export interface PlayerState {
   index: number
   playing: boolean
   position_ms: number
+  /** The playing song's length, as the file says (0 until known). */
+  duration_ms: number
   shuffle: boolean
   repeat: Repeat
   /** 0–1. */
   volume: number
-  output: Output | null
+  signal: Signal | null
   /** "Taal", "Songs", "Search: rahman" — where the queue came from. */
   from: string
   /** The last problem, in words (a file that couldn't be opened…). */
@@ -58,10 +60,11 @@ const idle: PlayerState = {
   index: -1,
   playing: false,
   position_ms: 0,
+  duration_ms: 0,
   shuffle: false,
   repeat: 'off',
   volume: 1,
-  output: null,
+  signal: null,
   from: '',
   error: '',
 }
@@ -78,8 +81,9 @@ let subscribed = false
 export function connectPlayer() {
   if (subscribed || !inApp()) return
   subscribed = true
-  const channel = new Channel<PlayerState>()
-  channel.onmessage = set
+  // The queue comes only when it changed; everything else every time.
+  const channel = new Channel<Omit<PlayerState, 'queue'> & { queue: QueueItem[] | null }>()
+  channel.onmessage = (m) => set({ ...m, queue: m.queue ?? state.queue })
   invoke('player_subscribe', { onState: channel }).catch(() => {
     subscribed = false
   })

@@ -132,6 +132,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "engine",
+ "player",
  "serde",
  "serde_json",
  "tauri",

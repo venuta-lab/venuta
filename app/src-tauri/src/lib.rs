@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+mod playback;
+
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
 struct Jobs {
@@ -1711,6 +1713,7 @@ fn confirm_backup() -> CmdResult<()> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
+        .manage(playback::Playback::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             allow_data_assets(app.handle());
@@ -1732,6 +1735,20 @@ pub fn run() {
             check_music_folder,
             set_open_folder,
             music_catalog,
+            playback::player_subscribe,
+            playback::player_play,
+            playback::player_toggle,
+            playback::player_next,
+            playback::player_previous,
+            playback::player_seek,
+            playback::player_volume,
+            playback::player_options,
+            playback::player_enqueue,
+            playback::player_remove,
+            playback::player_move,
+            playback::player_jump,
+            playback::player_devices,
+            playback::player_output,
             tidy_preview,
             tidy_apply,
             tidy_undo,
