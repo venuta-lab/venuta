@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+mod listening;
 mod playback;
 
 /// The running deep check, if any, so it can be cancelled.
@@ -1756,6 +1757,8 @@ pub fn run() {
             playback::player_devices,
             playback::player_output,
             playback::song_lyrics,
+            playback::player_resume,
+            listening::listening_summary,
             tidy_preview,
             tidy_apply,
             tidy_undo,

@@ -184,3 +184,11 @@ export function sourceLabel(s: Signal['source']): string {
   const khz = s.rate % 1000 ? (s.rate / 1000).toFixed(1) : String(s.rate / 1000)
   return s.lossless ? `${s.codec} ${s.bits}/${khz}` : `${s.codec} ${khz} kHz`
 }
+
+let resumedFor = ''
+/** Pick up where you left off in this folder (once per folder): the saved queue, paused. */
+export function resumePlayer(root: string) {
+  if (!inApp() || !root || resumedFor === root || state.queue.length) return
+  resumedFor = root
+  invoke('player_resume', { root }).catch(() => {})
+}

@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { listeningSummary, type ListeningSummary } from '../../lib/engine'
 import { setAccent, useCovers } from '../../lib/covers'
 import {
   appearsOn,
@@ -23,12 +24,32 @@ export const HI_RES = 'Hi-Res'
 
 /** What is playing (or an album for today), then shelves: hi-res first, then your categories. */
 export const HomeView = memo(function HomeView(props: {
+  root: string
   lib: Library
   hasCover: (dir: string) => boolean
   onSeeAll: (filter: string) => void
 }) {
   const { lib } = props
   const now = useNowPlaying()
+  // What you've played, fetched again when the album playing changes.
+  const [heard, setHeard] = useState<ListeningSummary | null>(null)
+  useEffect(() => {
+    let live = true
+    void listeningSummary(props.root)
+      .then((h) => live && setHeard(h))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [props.root, now.dir])
+  const recent = useMemo(
+    () => (heard?.recent ?? []).map((d) => lib.byDir.get(d)).filter((a): a is Album => !!a).slice(0, 24),
+    [heard, lib],
+  )
+  const top = useMemo(
+    () => (heard?.top ?? []).filter(([, n]) => n >= 2).map(([d]) => lib.byDir.get(d)).filter((a): a is Album => !!a),
+    [heard, lib],
+  )
   const today = useMemo(() => featured(lib.albums, props.hasCover), [lib, props.hasCover])
   const playing = now.dir ? lib.byDir.get(now.dir) : undefined
   const hero = playing ?? today
@@ -47,6 +68,8 @@ export const HomeView = memo(function HomeView(props: {
           />
         )}
       </AnimatePresence>
+      {recent.length > 0 && <Shelf title="Jump back in" albums={recent} origin="shelf-recent" />}
+      {top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" />}
       <Shelf title="Hi-Res" albums={lib.hiRes} origin="shelf-hires" onSeeAll={() => props.onSeeAll(HI_RES)} />
       {shelves.map(([c, albums]) => (
         <Shelf key={c} title={c} albums={albums} origin={`shelf-${c}`} onSeeAll={() => props.onSeeAll(c)} />

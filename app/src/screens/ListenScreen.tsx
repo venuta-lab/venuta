@@ -206,7 +206,7 @@ function Listen(props: Props) {
     const view = typed.trim() ? (
       <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} />
     ) : tab === 'home' ? (
-      <HomeView lib={lib} hasCover={hasCover} onSeeAll={seeAll} />
+      <HomeView root={root} lib={lib} hasCover={hasCover} onSeeAll={seeAll} />
     ) : tab === 'albums' ? (
       <AlbumsView lib={lib} filter={filter} onFilter={setFilter} />
     ) : tab === 'artists' ? (

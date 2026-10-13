@@ -70,7 +70,11 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   // Bring the playing song into view when the drawer opens.
   useEffect(() => {
     if (!props.open) return
-    const t = window.setTimeout(() => list.current?.querySelector('[data-current="true"]')?.scrollIntoView({ block: 'center' }), 60)
+    const t = window.setTimeout(() => {
+      const box = list.current
+      const el = box?.querySelector<HTMLElement>('[data-current="true"]')
+      if (box && el) box.scrollTop = el.offsetTop - box.clientHeight / 2 + el.offsetHeight / 2
+    }, 60)
     return () => window.clearTimeout(t)
   }, [props.open])
   const { open, onClose } = props
@@ -106,7 +110,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
               <IconClose />
             </button>
           </header>
-          <div ref={list} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
+          <div ref={list} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
             {s.queue.length === 0 ? (
               <p className="px-2 py-10 text-center text-[13px] text-ink/55">Play an album or a song, and it lines up here.</p>
             ) : (

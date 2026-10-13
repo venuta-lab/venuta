@@ -68,6 +68,8 @@ pub struct Playback {
     /// Updates for the media overlay thread, once it runs.
     media: Arc<Mutex<Option<std::sync::mpsc::Sender<NowPlaying>>>>,
     window: Arc<Mutex<Option<Channel<WindowStatus>>>>,
+    /// The folder the queue's songs are in (for plays and picking up where you were).
+    root: Arc<Mutex<String>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
     output: Mutex<(Option<String>, bool)>,
 }
@@ -78,6 +80,7 @@ impl Default for Playback {
             player: Arc::default(),
             media: Arc::default(),
             window: Arc::default(),
+            root: Arc::default(),
             // Bit-perfect unless you choose otherwise.
             output: Mutex::new((None, true)),
         }
@@ -90,6 +93,9 @@ impl Playback {
         if slot.is_none() {
             let window = self.window.clone();
             let media = self.media.clone();
+            let root = self.root.clone();
+            let mut tracker = crate::listening::Tracker::default();
+            let mut saved: (i64, bool, u64) = (-2, false, 0);
             let (id, exclusive) = self.output.lock().map_err(|e| e.to_string())?.clone();
             // The current song and play state, to tell the media overlay only when they change.
             let mut last: (Option<String>, bool, u64) = (None, false, 0);
@@ -99,6 +105,32 @@ impl Playback {
                 move |s: Status<QueueItem>| {
                     if let Some(q) = &s.queue {
                         queue = q.clone();
+                    }
+                    let folder = root.lock().map(|r| r.clone()).unwrap_or_default();
+                    let index = s.index.map(|i| i as i64).unwrap_or(-1);
+                    {
+                        let song = s.index.and_then(|i| queue.get(i));
+                        tracker.update(
+                            &folder,
+                            song.map(|q| (q.path.as_str(), q.dir.as_str())),
+                            s.playing,
+                            s.position_ms,
+                            s.duration_ms,
+                        );
+                        // Where you were: when the queue, song or play state changes, and every
+                        // ten seconds of playing.
+                        let mark = (index, s.playing, s.position_ms / 10_000);
+                        if !folder.is_empty() && (s.queue.is_some() || mark != saved) {
+                            let q = s.queue.as_ref().and_then(|q| serde_json::to_string(q).ok());
+                            tracker.save_place(
+                                &folder,
+                                q.as_deref(),
+                                index,
+                                s.position_ms,
+                                &s.from,
+                            );
+                            saved = mark;
+                        }
                     }
                     let item = s.index.and_then(|i| queue.get(i));
                     let key = item.map(|i| i.file.to_string_lossy().into_owned());
@@ -227,6 +259,40 @@ fn resolve(root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
         .collect()
 }
 
+/// Pick up where you left off in this folder: the saved queue, on the song and at the place
+/// you stopped, paused.
+#[tauri::command]
+pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, String> {
+    let Some((queue, place)) = crate::listening::saved_place() else {
+        return Ok(false);
+    };
+    let same = place.get("root").and_then(|r| r.as_str()).is_some_and(|r| {
+        engine::paths::canonical_root_string(Path::new(r))
+            == engine::paths::canonical_root_string(Path::new(&root))
+    });
+    let items: Vec<QueueItem> = serde_json::from_value(queue).unwrap_or_default();
+    let index = place.get("index").and_then(|i| i.as_i64()).unwrap_or(-1);
+    if !same || items.is_empty() || index < 0 {
+        return Ok(false);
+    }
+    *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
+    pb.send(Cmd::Set {
+        items: resolve(&root, items),
+        index: index as usize,
+        start_ms: place
+            .get("position_ms")
+            .and_then(|p| p.as_u64())
+            .unwrap_or(0),
+        play: false,
+        from: place
+            .get("from")
+            .and_then(|f| f.as_str())
+            .unwrap_or_default()
+            .to_owned(),
+    })?;
+    Ok(true)
+}
+
 /// Start receiving the player's status (the window calls this once).
 #[tauri::command]
 pub fn player_subscribe(
@@ -246,6 +312,7 @@ pub fn player_play(
     from: String,
     pb: State<'_, Playback>,
 ) -> Result<(), String> {
+    *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
     pb.send(Cmd::Set {
         items: resolve(&root, items),
         index,
@@ -296,6 +363,11 @@ pub fn player_enqueue(
     next: bool,
     pb: State<'_, Playback>,
 ) -> Result<(), String> {
+    if let Ok(mut r) = pb.root.lock()
+        && r.is_empty()
+    {
+        *r = root.clone();
+    }
     pb.send(Cmd::Insert {
         items: resolve(&root, items),
         next,

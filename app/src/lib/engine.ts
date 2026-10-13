@@ -760,3 +760,18 @@ export function quality(t: Pick<CatalogTrack, 'format' | 'bit_depth' | 'sample_r
 /** Above CD quality: more than 16 bits or more than 48 kHz. */
 export const isHiRes = (t: Pick<CatalogTrack, 'bit_depth' | 'sample_rate' | 'format'>) =>
   t.format === 'FLAC' && (t.bit_depth > 16 || t.sample_rate > 48000)
+
+export interface ListeningSummary {
+  /** Album folders, most recently played first. */
+  recent: string[]
+  /** Album folders by plays, most first. */
+  top: [string, number][]
+  /** Plays per song (library-relative path). */
+  counts: Record<string, number>
+  last_played: Record<string, number>
+}
+
+export const listeningSummary = (root: string) =>
+  inApp()
+    ? invoke<ListeningSummary>('listening_summary', { root })
+    : Promise.resolve<ListeningSummary>({ recent: [], top: [], counts: {}, last_played: {} })

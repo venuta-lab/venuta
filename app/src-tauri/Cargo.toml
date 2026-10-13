@@ -15,6 +15,7 @@ tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
 engine.workspace = true
+rusqlite.workspace = true
 player = { path = "../../crates/player" }
 serde.workspace = true
 serde_json.workspace = true

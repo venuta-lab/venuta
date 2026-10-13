@@ -36,7 +36,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { track } from './lib/jobs'
-import { connectPlayer } from './lib/player'
+import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
 import { NowPlaying } from './components/player/NowPlaying'
@@ -169,6 +169,10 @@ export default function App() {
 
   // The player is app-wide: hear its state from the start, whatever screen is open.
   useEffect(() => connectPlayer(), [])
+  // Once the folder is read, the queue from last time comes back, paused where you stopped.
+  useEffect(() => {
+    if (report && root) resumePlayer(root)
+  }, [report, root])
 
   // On start: where the library is, which folder was open, and the look saved with it.
   useEffect(() => {

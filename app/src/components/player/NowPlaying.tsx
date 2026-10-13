@@ -52,7 +52,11 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number }) {
   }, [lyrics, position])
   useEffect(() => {
     if (at < 0 || Date.now() - userScrolled.current < 4000) return
-    box.current?.querySelector(`[data-line="${at}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // Scroll only the lyrics (scrollIntoView would move every scrollable parent too).
+    const el = box.current?.querySelector<HTMLElement>(`[data-line="${at}"]`)
+    if (el && box.current) {
+      box.current.scrollTo({ top: el.offsetTop - box.current.clientHeight / 2 + el.offsetHeight / 2, behavior: 'smooth' })
+    }
   }, [at])
 
   if (!lyrics) return <p className="py-10 text-center text-[13px] text-ink/55">Finding the words…</p>
@@ -64,7 +68,7 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number }) {
     <div
       ref={box}
       onWheel={() => (userScrolled.current = Date.now())}
-      className="no-scrollbar h-full overflow-y-auto py-[30vh]"
+      className="no-scrollbar relative h-full overflow-y-auto py-[30vh]"
       style={{ maskImage: 'linear-gradient(transparent, black 18%, black 82%, transparent)' }}
     >
       {lyrics.lines.map(([ms, line], i) => (

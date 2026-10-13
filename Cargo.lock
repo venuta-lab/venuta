@@ -133,6 +133,7 @@ dependencies = [
  "blake3",
  "engine",
  "player",
+ "rusqlite",
  "serde",
  "serde_json",
  "souvlaki",
