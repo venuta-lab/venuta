@@ -196,6 +196,8 @@ export interface Settings {
   /** The folder showing in the app: your library, or music being brought in. */
   open_folder?: string | null
   appearance?: Record<string, unknown> | null
+  /** What closing the window does: keep playing in the tray, or quit. Unset until asked. */
+  close_action?: 'tray' | 'quit' | null
 }
 
 export interface HomeInfo {
@@ -320,8 +322,12 @@ export const setDecisions = (root: string, changes: Record<string, Decision | nu
 }
 
 
-export const setSettings = (settings: Settings) =>
-  inApp() ? invoke<void>('set_settings', { settings }) : Promise.resolve()
+/** Remember what closing the window does; `now` also does it. */
+export const setCloseAction = (action: 'tray' | 'quit', now: boolean) => invoke<void>('set_close_action', { action, now })
+
+/** Save only these fields, onto what is saved now. */
+export const setSettings = (change: Partial<Settings>) =>
+  inApp() ? invoke<void>('set_settings', { change }) : Promise.resolve()
 
 /** Build the new library from every album that isn't left out or waiting for an answer. */
 export function buildLibrary(root: string, onProgress: (done: number, total: number) => void) {

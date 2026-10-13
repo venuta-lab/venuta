@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+mod desktop;
 mod listening;
 mod playback;
 
@@ -303,9 +304,19 @@ fn check_new_library(root: String, target: String) -> CmdResult<()> {
     engine::apply::check_target(Path::new(&root), Path::new(&target))
 }
 
+/// Change some settings: only the fields given are written, onto what is saved now (so a
+/// screen holding an older copy can't undo a change made elsewhere).
 #[tauri::command]
-fn set_settings(settings: Settings) -> CmdResult<()> {
-    engine::settings::save(&settings)
+fn set_settings(change: serde_json::Value) -> CmdResult<()> {
+    let serde_json::Value::Object(change) = change else {
+        return Err("Settings changes must be an object.".into());
+    };
+    let mut now = serde_json::to_value(engine::settings::load()).map_err(|e| e.to_string())?;
+    if let serde_json::Value::Object(map) = &mut now {
+        map.extend(change);
+    }
+    let s: Settings = serde_json::from_value(now).map_err(|e| e.to_string())?;
+    engine::settings::save(&s)
 }
 
 /// Remember which folder is open (your library, or music being brought in).
@@ -2026,12 +2037,33 @@ fn confirm_backup() -> CmdResult<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // One Venuta at a time: opening it again brings the open one forward. (VENUTA_MULTI lets a
+    // test copy run beside the one in use.)
+    if std::env::var_os("VENUTA_MULTI").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::show_main(app);
+        }));
+    }
+    builder
         .manage(Jobs::default())
         .manage(playback::Playback::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![desktop::IN_TRAY_ARG]),
+        ))
+        .on_window_event(desktop::on_window_event)
         .setup(|app| {
             allow_data_assets(app.handle());
+            if let Err(e) = desktop::tray(app.handle()) {
+                eprintln!("tray: {e}");
+            }
+            // Started with Windows: stay in the tray. Otherwise show the window (it starts
+            // hidden so it never flashes before this choice).
+            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG) {
+                desktop::show_main(app.handle());
+            }
             #[cfg(windows)]
             if let Some(w) = app.get_webview_window("main")
                 && let Ok(hwnd) = w.hwnd()
@@ -2117,6 +2149,7 @@ pub fn run() {
             players,
             want_add,
             want_remove,
+            desktop::set_close_action,
             playlist_shelf,
             wanted_export,
             player_test_write,

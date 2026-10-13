@@ -70,21 +70,23 @@ pub struct WindowStatus {
     bands: Option<Vec<u8>>,
 }
 
-/// What the Windows media overlay (and media keys) show.
-struct NowPlaying {
-    title: String,
-    artist: String,
-    album: String,
-    cover: Option<String>,
-    duration_ms: u64,
-    playing: bool,
-    position_ms: u64,
+/// What the Windows media overlay, media keys and the tray show. `file` is None when nothing
+/// is loaded (stopped).
+#[derive(Clone, Default)]
+pub struct NowPlaying {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub file: Option<PathBuf>,
+    pub duration_ms: u64,
+    pub playing: bool,
+    pub position_ms: u64,
 }
 
 pub struct Playback {
     player: Arc<Mutex<Option<Player<QueueItem>>>>,
-    /// Updates for the media overlay thread, once it runs.
-    media: Arc<Mutex<Option<std::sync::mpsc::Sender<NowPlaying>>>>,
+    /// Whoever follows what's playing outside the window (the media overlay, the tray).
+    media: Arc<Mutex<Vec<std::sync::mpsc::Sender<NowPlaying>>>>,
     /// Every window listening (the main one, the mini player), by label.
     window: Arc<Mutex<std::collections::HashMap<String, Channel<WindowStatus>>>>,
     /// Windows showing a spectrum display (the engine measures while any is).
@@ -110,6 +112,15 @@ impl Default for Playback {
 }
 
 impl Playback {
+    /// Follow what's playing (song changes, play/pause, and every few seconds while playing).
+    pub fn follow(&self) -> std::sync::mpsc::Receiver<NowPlaying> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Ok(mut m) = self.media.lock() {
+            m.push(tx);
+        }
+        rx
+    }
+
     fn with<R>(&self, f: impl FnOnce(&Player<QueueItem>) -> R) -> Result<R, String> {
         let mut slot = self.player.lock().map_err(|e| e.to_string())?;
         if slot.is_none() {
@@ -164,26 +175,22 @@ impl Playback {
                     let key = item.map(|i| i.file.to_string_lossy().into_owned());
                     let tick = s.position_ms / 5000;
                     if (key.clone(), s.playing, tick) != last
-                        && let Some(item) = item
-                        && let Ok(m) = media.lock()
-                        && let Some(tx) = m.as_ref()
+                        && let Ok(mut m) = media.lock()
                     {
-                        let cover = item
-                            .file
-                            .parent()
-                            .map(|d| d.join("cover.jpg"))
-                            .filter(|c| c.is_file());
-                        let _ = tx.send(NowPlaying {
-                            title: item.title.clone(),
-                            artist: item.artists.join(", "),
-                            album: item.album.clone(),
-                            cover: cover.map(|c| {
-                                format!("file:///{}", c.to_string_lossy().replace('\\', "/"))
-                            }),
-                            duration_ms: s.duration_ms,
-                            playing: s.playing,
-                            position_ms: s.position_ms,
-                        });
+                        let now = match item {
+                            Some(item) => NowPlaying {
+                                title: item.title.clone(),
+                                artist: item.artists.join(", "),
+                                album: item.album.clone(),
+                                file: Some(item.file.clone()),
+                                duration_ms: s.duration_ms,
+                                playing: s.playing,
+                                position_ms: s.position_ms,
+                            },
+                            None => NowPlaying::default(),
+                        };
+                        // A follower that has gone stops being told.
+                        m.retain(|tx| tx.send(now.clone()).is_ok());
                     }
                     last = (key, s.playing, tick);
                     if let Ok(mut w) = window.lock()
@@ -224,6 +231,17 @@ impl Playback {
     fn send(&self, cmd: Cmd<QueueItem>) -> Result<(), String> {
         self.with(|p| p.send(cmd))
     }
+
+    /// For the tray: play or pause, next, previous.
+    pub fn toggle(&self) {
+        let _ = self.send(Cmd::Toggle);
+    }
+    pub fn next(&self) {
+        let _ = self.send(Cmd::Next);
+    }
+    pub fn previous(&self) {
+        let _ = self.send(Cmd::Previous);
+    }
 }
 
 /// Media keys and the Windows media overlay: a thread of their own, for the window `hwnd`.
@@ -233,10 +251,7 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
         MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition,
         PlatformConfig,
     };
-    let (tx, rx) = std::sync::mpsc::channel::<NowPlaying>();
-    if let Ok(mut m) = pb.media.lock() {
-        *m = Some(tx);
-    }
+    let rx = pb.follow();
     let player = pb.player.clone();
     std::thread::Builder::new()
         .name("venuta-media-keys".into())
@@ -267,14 +282,34 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                 }
                 _ => {}
             });
+            // The cover file for the song showing (looked up once per song).
+            let mut cover: (Option<PathBuf>, Option<String>) = (None, None);
             for now in rx {
-                let _ = controls.set_metadata(MediaMetadata {
+                let Some(file) = now.file.clone() else {
+                    let _ = controls.set_playback(MediaPlayback::Stopped);
+                    cover = (None, None);
+                    continue;
+                };
+                if cover.0.as_ref() != Some(&file) {
+                    // souvlaki strips "file://" and opens the rest as a Windows path, which must
+                    // use backslashes only (library roots are kept with "/").
+                    let url = engine::art::cover_file_for(&file)
+                        .map(|c| format!("file://{}", c.to_string_lossy().replace('/', "\\")));
+                    cover = (Some(file), url);
+                }
+                let meta = |cover_url| MediaMetadata {
                     title: Some(&now.title),
                     artist: Some(&now.artist),
                     album: Some(&now.album),
-                    cover_url: now.cover.as_deref(),
+                    cover_url,
                     duration: Some(std::time::Duration::from_millis(now.duration_ms)),
-                });
+                };
+                // A cover Windows can't open must not cost the title: try again without it.
+                let url = cover.1.clone();
+                if controls.set_metadata(meta(url.as_deref())).is_err() {
+                    cover.1 = None;
+                    let _ = controls.set_metadata(meta(None));
+                }
                 let progress = Some(MediaPosition(std::time::Duration::from_millis(
                     now.position_ms,
                 )));

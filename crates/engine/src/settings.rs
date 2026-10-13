@@ -36,6 +36,10 @@ pub struct Settings {
     /// Which free sources "Look up details online" asks.
     #[serde(default)]
     pub sources: Sources,
+    /// What closing the window does: "tray" (keep playing there) or "quit". None until you
+    /// are asked, the first time you close it.
+    #[serde(default)]
+    pub close_action: Option<String>,
 }
 
 /// The free online sources, each on unless switched off.

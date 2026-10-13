@@ -17,9 +17,10 @@ import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
-type Page = 'look' | 'folders' | 'online' | 'safety' | 'about'
+type Page = 'look' | 'desktop' | 'folders' | 'online' | 'safety' | 'about'
 const PAGES: { id: Page; label: string }[] = [
   { id: 'look', label: 'Look and feel' },
+  { id: 'desktop', label: 'Startup and tray' },
   { id: 'folders', label: 'Music folders' },
   { id: 'online', label: 'Online sources' },
   { id: 'safety', label: 'Safety and undo' },
@@ -68,6 +69,7 @@ export function SettingsScreen(props: {
         className="glass min-w-0 flex-1 rounded-[24px] px-7 py-6"
       >
         {page === 'look' && <LookAndFeel />}
+        {page === 'desktop' && <Desktop />}
         {page === 'folders' && (
           <Folders
             root={props.root}
@@ -303,9 +305,8 @@ function useSettings() {
   }, [])
   async function save(change: Partial<Settings>, message = 'Saved.') {
     if (!s) return
-    const next = { ...s, ...change }
-    await setSettings(next)
-    setS(next)
+    await setSettings(change)
+    setS({ ...s, ...change })
     setSaved(message)
     window.setTimeout(() => setSaved(''), 2200)
   }
@@ -509,6 +510,51 @@ function Online() {
         length={16}
         onSave={(v) => save({ apple_key: v }, v ? 'Apple Music key saved.' : 'Apple Music key removed.')}
       />
+      {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
+    </div>
+  )
+}
+
+/** What closing the window does, and starting with Windows. */
+function Desktop() {
+  const { s, save, saved } = useSettings()
+  const [startup, setStartup] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!inApp()) return
+    import('@tauri-apps/plugin-autostart')
+      .then((a) => a.isEnabled())
+      .then(setStartup)
+      .catch(() => setStartup(false))
+  }, [])
+  async function setStartWithWindows(on: boolean) {
+    const a = await import('@tauri-apps/plugin-autostart')
+    await (on ? a.enable() : a.disable())
+    setStartup(await a.isEnabled())
+  }
+  return (
+    <div>
+      <h2 className="title text-[22px]">Startup and tray</h2>
+      <Row
+        title="When you close the window"
+        hint={
+          s && !s.close_action
+            ? 'Not chosen yet: Venuta asks the first time you close it.'
+            : 'In the tray, Venuta keeps playing and answers your media keys. Click its icon by the clock to come back; right-click it for play, next and quit.'
+        }
+      >
+        <Segmented
+          id="close"
+          value={(s?.close_action ?? '') as 'tray' | 'quit'}
+          onChange={(close_action) => save({ close_action }, close_action === 'tray' ? 'Closing keeps music playing in the tray.' : 'Closing quits Venuta.')}
+          options={[
+            { value: 'tray', label: 'Keep playing in the tray' },
+            { value: 'quit', label: 'Quit Venuta' },
+          ]}
+        />
+      </Row>
+      <Row title="Start with Windows" hint="When you sign in, Venuta starts in the tray without opening a window, ready for your media keys.">
+        <Switch label="Start with Windows" on={!!startup} disabled={startup === null} onChange={(on) => void setStartWithWindows(on)} />
+      </Row>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
   )

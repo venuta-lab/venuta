@@ -26,6 +26,7 @@ import {
   syncCard,
   lookupOnline,
   inApp,
+  setCloseAction,
   chooseHome,
   checkMusicFolder,
   getSettings,
@@ -53,7 +54,7 @@ import { InboxScreen } from './screens/InboxScreen'
 import { CardsScreen } from './screens/CardsScreen'
 import { PlaylistsScreen, showPlaylists } from './screens/PlaylistsScreen'
 import { AddToPlaylist } from './components/AddToPlaylist'
-import { ConfirmHost } from './components/Confirm'
+import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { ActivityScreen } from './screens/ActivityScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { SetupScreen } from './screens/SetupScreen'
@@ -272,6 +273,30 @@ export default function App() {
     },
     [active],
   )
+
+  // The first time the window is closed, ask what closing should do (Rust holds the window open).
+  useEffect(() => {
+    if (!inApp()) return
+    let off: (() => void) | undefined
+    let live = true
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) =>
+        listen('venuta://close-asked', async () => {
+          const a = await chooseAsk({
+            title: 'Keep playing when you close the window?',
+            text: 'Venuta can stay in the tray, by the clock: the music goes on and your media keys still work. Click its icon to come back. You can change this later in Settings, Startup and tray.',
+            confirm: 'Keep playing in the tray',
+            other: 'Quit Venuta',
+          })
+          if (a !== 'no') await setCloseAction(a === 'yes' ? 'tray' : 'quit', true)
+        }),
+      )
+      .then((u) => (live ? (off = u) : u()))
+    return () => {
+      live = false
+      off?.()
+    }
+  }, [])
 
   // Playlists from elsewhere (the Music home's shelf, a notice's Open).
   const openPlaylist = useCallback(

@@ -16,6 +16,11 @@
     "core:window:allow-set-size",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-position",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "core:window:allow-hide",
+    "core:window:allow-show"
   ]
 }

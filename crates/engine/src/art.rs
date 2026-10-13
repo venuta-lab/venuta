@@ -94,6 +94,71 @@ fn front_cover_bytes(path: &Path) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "no picture".to_owned())
 }
 
+/// Any audio file's front cover (FLAC above, the rest through their tags).
+fn cover_bytes_any(path: &Path) -> Result<Vec<u8>, String> {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("flac"))
+    {
+        return front_cover_bytes(path);
+    }
+    use lofty::file::TaggedFileExt;
+    let file = lofty::read_from_path(path).map_err(|e| e.to_string())?;
+    let pics: Vec<_> = file.tags().iter().flat_map(|t| t.pictures()).collect();
+    pics.iter()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| pics.first())
+        .map(|p| p.data().to_vec())
+        .ok_or_else(|| "no picture".to_owned())
+}
+
+/// A picture file of a song's cover that other programs can open (the Windows media flyout,
+/// the tray): the album folder's own image, else the embedded art written to a small cache
+/// (named by its hash, so the same cover is written once; only the latest few are kept).
+pub fn cover_file_for(track: &Path) -> Option<PathBuf> {
+    let dir = track.parent()?;
+    for name in [
+        "cover.jpg",
+        "cover.png",
+        "folder.jpg",
+        "folder.png",
+        "front.jpg",
+        "front.png",
+    ] {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let data = cover_bytes_any(track).ok()?;
+    let ext = if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else {
+        "jpg"
+    };
+    let hash = blake3::hash(&data).to_hex();
+    let out_dir = paths::app_data_dir().join("now-playing");
+    std::fs::create_dir_all(&out_dir).ok()?;
+    let out = out_dir.join(format!("{}.{ext}", &hash.as_str()[..16]));
+    if !out.is_file() {
+        let tmp = out.with_extension(format!("{ext}.part"));
+        std::fs::write(&tmp, &data).ok()?;
+        std::fs::rename(&tmp, &out).ok()?;
+        // Keep the newest eight.
+        let mut old: Vec<_> = std::fs::read_dir(&out_dir)
+            .ok()?
+            .flatten()
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .collect();
+        old.sort();
+        let n = old.len().saturating_sub(8);
+        for (_, p) in old.into_iter().take(n) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Some(out)
+}
+
 /// Pick a vivid, mid-bright colour: average the most saturated pixels of a small copy.
 pub fn accent_color(img: &RgbImage) -> Option<String> {
     let small = image::imageops::thumbnail(img, 32, 32);
