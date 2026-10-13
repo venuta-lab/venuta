@@ -250,7 +250,9 @@ function Changes(props: {
                   .filter(Boolean)
                   .join(', ')}
                 {moves || retags ? '. ' : ''}
-                Files stay on the same drive and are renamed where they are; nothing is copied or deleted, and you can undo it.
+                {moves
+                  ? 'Files stay on the same drive and are renamed where they are; nothing is copied or deleted, and you can undo it.'
+                  : 'Only the details inside the files change; the audio is untouched, and you can undo it.'}
               </p>
             </div>
             {doable.length > 0 && (
