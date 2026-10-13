@@ -108,6 +108,8 @@ pub struct PlaylistSummary {
     /// The first few songs' album folders, for its mosaic cover.
     pub dirs: Vec<String>,
     pub duration_ms: u64,
+    /// When its file last changed (seconds since 1970), for "recent first".
+    pub modified: u64,
 }
 
 pub fn folder(library_root: &Path) -> PathBuf {
@@ -364,6 +366,13 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
                     .sum(),
                 dirs,
                 name,
+                modified: e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or_default(),
             })
         })
         .collect();
@@ -379,7 +388,16 @@ pub fn repair_all(library_root: &Path, lib: &Library) -> usize {
         if let Ok((entries, true)) = read(library_root, lib, &p.name) {
             // Wanted songs and the source stay; only the moved paths change.
             let items: Vec<Item> = entries.iter().map(PlaylistEntry::item).collect();
-            if write_items(library_root, lib, &p.name, &items, false, p.source.as_deref()).is_ok() {
+            if write_items(
+                library_root,
+                lib,
+                &p.name,
+                &items,
+                false,
+                p.source.as_deref(),
+            )
+            .is_ok()
+            {
                 n += 1;
             }
         }
@@ -438,7 +456,12 @@ pub fn free_name(library_root: &Path, wanted: &str) -> String {
 }
 
 /// A copy of a playlist under a new name (a smart one becomes an ordinary playlist).
-pub fn duplicate(library_root: &Path, lib: &Library, from: &str, to: &str) -> Result<String, String> {
+pub fn duplicate(
+    library_root: &Path,
+    lib: &Library,
+    from: &str,
+    to: &str,
+) -> Result<String, String> {
     let (entries, _) = read(library_root, lib, from)?;
     let items: Vec<Item> = entries.iter().map(PlaylistEntry::item).collect();
     let name = free_name(library_root, to);
@@ -516,7 +539,17 @@ pub fn loose_key(s: &str) -> String {
         .filter(|w| {
             !matches!(
                 *w,
-                "remix" | "reprise" | "unplugged" | "acoustic" | "live" | "version" | "edit" | "mix" | "remastered" | "remaster" | "radio"
+                "remix"
+                    | "reprise"
+                    | "unplugged"
+                    | "acoustic"
+                    | "live"
+                    | "version"
+                    | "edit"
+                    | "mix"
+                    | "remastered"
+                    | "remaster"
+                    | "radio"
             )
         })
         .collect();
@@ -589,7 +622,11 @@ impl<'a> Matcher<'a> {
                 by_title.entry(title_key(title)).or_default().push(t);
                 by_loose.entry(loose_key(title)).or_default().push(t);
             }
-            if let Some(i) = t.first("ISRC").map(|i| i.trim().to_uppercase()).filter(|i| i.len() >= 12) {
+            if let Some(i) = t
+                .first("ISRC")
+                .map(|i| i.trim().to_uppercase())
+                .filter(|i| i.len() >= 12)
+            {
                 by_isrc.entry(i).or_insert(t);
             }
         }
@@ -605,7 +642,12 @@ impl<'a> Matcher<'a> {
             .map(split_names)
             .unwrap_or_default()
             .iter()
-            .chain(t.first("ALBUMARTIST").map(split_names).unwrap_or_default().iter())
+            .chain(
+                t.first("ALBUMARTIST")
+                    .map(split_names)
+                    .unwrap_or_default()
+                    .iter(),
+            )
             .any(|a| artists.contains(&crate::audit::name_key(a)))
     }
 
@@ -623,7 +665,10 @@ impl<'a> Matcher<'a> {
 
     /// Find a song from elsewhere in the library, and say how sure the match is.
     pub fn grade(&self, f: &Foreign) -> Option<Found<'a>> {
-        let near = |t: &Track| f.duration_ms.is_none_or(|ms| t.duration_ms.abs_diff(ms) <= 3000);
+        let near = |t: &Track| {
+            f.duration_ms
+                .is_none_or(|ms| t.duration_ms.abs_diff(ms) <= 3000)
+        };
         // 1. The same recording code is the same recording.
         if let Some(t) = f
             .isrc
@@ -677,7 +722,10 @@ impl<'a> Matcher<'a> {
                 return Some(Found {
                     track: t,
                     grade: Grade::Close,
-                    why: format!("You have {} versions; this is the nearest in length", mine.len()),
+                    why: format!(
+                        "You have {} versions; this is the nearest in length",
+                        mine.len()
+                    ),
                 });
             }
             // The title alone: only one song, and the same length, is worth offering.
@@ -760,6 +808,10 @@ pub struct WantedAlbum {
     pub why: String,
     pub saved_tracks: usize,
     pub playlists: Vec<String>,
+    /// On the list by itself (you added it, or an older import), not because a playlist
+    /// still wants its songs: only these can be taken off by hand.
+    #[serde(default)]
+    pub kept: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -914,6 +966,7 @@ pub fn rank_wanted(lib: &Library, groups: Vec<WantGroup>) -> Vec<WantedAlbum> {
             why,
             saved_tracks: saved,
             playlists,
+            kept: false,
         });
     }
     wanted.sort_by(|a, b| {
@@ -925,6 +978,60 @@ pub fn rank_wanted(lib: &Library, groups: Vec<WantGroup>) -> Vec<WantedAlbum> {
 }
 
 /// The want-list as CSV, for shopping or ripping CDs.
+/// The albums your playlists want right now, read from their wanted songs and ranked. Found,
+/// removed or replaced songs drop out by themselves, since nothing is kept apart from the files.
+pub fn wanted_now(library_root: &Path, lib: &Library) -> Vec<WantedAlbum> {
+    let mut groups: BTreeMap<(String, String), (HashSet<String>, Vec<String>)> = BTreeMap::new();
+    let files = std::fs::read_dir(folder(library_root))
+        .into_iter()
+        .flatten()
+        .flatten();
+    for e in files {
+        let p = e.path();
+        if !p
+            .extension()
+            .is_some_and(|x| x.eq_ignore_ascii_case("m3u8") || x.eq_ignore_ascii_case("m3u"))
+        {
+            continue;
+        }
+        let Some(name) = p.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let Ok((entries, _)) = read(library_root, lib, &name) else {
+            continue;
+        };
+        for w in entries.iter().filter_map(|x| x.want.as_ref()) {
+            if w.album.trim().is_empty() {
+                continue;
+            }
+            let g = groups
+                .entry((w.album.clone(), w.artist.clone()))
+                .or_default();
+            g.0.insert(format!(
+                "{}|{}",
+                w.title.to_lowercase(),
+                w.artist.to_lowercase()
+            ));
+            if !g.1.contains(&name) {
+                g.1.push(name.clone());
+            }
+        }
+    }
+    rank_wanted(
+        lib,
+        groups
+            .into_iter()
+            .map(|((album, artist), (songs, playlists))| WantGroup {
+                album,
+                artist,
+                genre: String::new(),
+                saved: songs.len(),
+                playlists,
+            })
+            .collect(),
+    )
+}
+
 pub fn wanted_csv(wanted: &[WantedAlbum]) -> String {
     let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
     let mut out = String::from("tier,album,artist,saved_tracks,why,playlists\n");
@@ -1257,26 +1364,83 @@ mod tests {
 
     #[test]
     fn matches_are_graded_exact_close_or_none() {
-        let mut isrc = song(4, "B/04.flac", "Kesariya", "Arijit Singh", "Brahmastra", 268_000);
+        let mut isrc = song(
+            4,
+            "B/04.flac",
+            "Kesariya",
+            "Arijit Singh",
+            "Brahmastra",
+            268_000,
+        );
         isrc.tags.insert("ISRC".into(), vec!["INZ032201234".into()]);
         let lib = library(vec![
-            song(1, "A/01.flac", "Tum Hi Ho", "Arijit Singh", "Aashiqui 2", 262_000),
-            song(2, "A/02.flac", "Tum Hi Ho (Remix)", "Arijit Singh", "Aashiqui 2", 240_000),
-            song(3, "C/03.flac", "Kabira", "Tochi Raina, Rekha Bhardwaj", "YJHD", 223_000),
+            song(
+                1,
+                "A/01.flac",
+                "Tum Hi Ho",
+                "Arijit Singh",
+                "Aashiqui 2",
+                262_000,
+            ),
+            song(
+                2,
+                "A/02.flac",
+                "Tum Hi Ho (Remix)",
+                "Arijit Singh",
+                "Aashiqui 2",
+                240_000,
+            ),
+            song(
+                3,
+                "C/03.flac",
+                "Kabira",
+                "Tochi Raina, Rekha Bhardwaj",
+                "YJHD",
+                223_000,
+            ),
             isrc,
         ]);
         let m = Matcher::new(&lib);
         let g = |f: Foreign| m.grade(&f).map(|h| (h.track.path.clone(), h.grade));
         // Title and artist, the "(From …)" note ignored.
-        assert_eq!(g(foreign("Tum Hi Ho (From \"Aashiqui 2\")", "Arijit Singh", "", Some(262_500))), Some(("A/01.flac".into(), Grade::Exact)));
+        assert_eq!(
+            g(foreign(
+                "Tum Hi Ho (From \"Aashiqui 2\")",
+                "Arijit Singh",
+                "",
+                Some(262_500)
+            )),
+            Some(("A/01.flac".into(), Grade::Exact))
+        );
         // The recording code alone is enough.
-        assert_eq!(g(Foreign { isrc: Some("inz032201234".into()), ..foreign("Something else", "", "", None) }), Some(("B/04.flac".into(), Grade::Exact)));
+        assert_eq!(
+            g(Foreign {
+                isrc: Some("inz032201234".into()),
+                ..foreign("Something else", "", "", None)
+            }),
+            Some(("B/04.flac".into(), Grade::Exact))
+        );
         // One artist of several is enough to say it's theirs.
-        assert_eq!(g(foreign("Kabira", "Rekha Bhardwaj", "", None)), Some(("C/03.flac".into(), Grade::Exact)));
+        assert_eq!(
+            g(foreign("Kabira", "Rekha Bhardwaj", "", None)),
+            Some(("C/03.flac".into(), Grade::Exact))
+        );
         // A version you don't have: the nearest you do, for you to confirm.
-        assert_eq!(g(foreign("Tum Hi Ho - Unplugged", "Arijit Singh", "", Some(250_000))).map(|x| x.1), Some(Grade::Close));
+        assert_eq!(
+            g(foreign(
+                "Tum Hi Ho - Unplugged",
+                "Arijit Singh",
+                "",
+                Some(250_000)
+            ))
+            .map(|x| x.1),
+            Some(Grade::Close)
+        );
         // The same title by someone else, a different length: not offered.
-        assert_eq!(g(foreign("Kabira", "Someone Else", "", Some(100_000))), None);
+        assert_eq!(
+            g(foreign("Kabira", "Someone Else", "", Some(100_000))),
+            None
+        );
         // Nothing like it.
         assert_eq!(g(foreign("Kun Faya Kun", "A.R. Rahman", "", None)), None);
     }
@@ -1293,18 +1457,92 @@ mod tests {
             isrc: None,
         };
         let items = vec![Item::wanted(want.clone()), Item::track("A/01.flac")];
-        write_items(root.path(), &lib, "Mixed", &items, false, Some("Spotify 2026-10-13")).unwrap();
+        write_items(
+            root.path(),
+            &lib,
+            "Mixed",
+            &items,
+            false,
+            Some("Spotify 2026-10-13"),
+        )
+        .unwrap();
         let (entries, _) = read(root.path(), &lib, "Mixed").unwrap();
         assert_eq!(entries.len(), 2);
         assert!(entries[0].missing);
         assert_eq!(entries[0].want.as_ref(), Some(&want));
         assert_eq!(entries[1].path, "A/01.flac");
-        assert_eq!(source_of(root.path(), "Mixed").as_deref(), Some("Spotify 2026-10-13"));
+        assert_eq!(
+            source_of(root.path(), "Mixed").as_deref(),
+            Some("Spotify 2026-10-13")
+        );
         // A plain save (reorder in the app) keeps the source line.
         write(root.path(), &lib, "Mixed", &["A/01.flac".into()], false).unwrap();
-        assert_eq!(source_of(root.path(), "Mixed").as_deref(), Some("Spotify 2026-10-13"));
+        assert_eq!(
+            source_of(root.path(), "Mixed").as_deref(),
+            Some("Spotify 2026-10-13")
+        );
         // Names are never overwritten by a copy.
-        assert_eq!(duplicate(root.path(), &lib, "Mixed", "Mixed").unwrap(), "Mixed 2");
+        assert_eq!(
+            duplicate(root.path(), &lib, "Mixed", "Mixed").unwrap(),
+            "Mixed 2"
+        );
+    }
+
+    #[test]
+    fn to_get_follows_the_playlists() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        let want = |t: &str, album: &str| {
+            Item::wanted(WantEntry {
+                title: t.into(),
+                artist: "Y".into(),
+                album: album.into(),
+                duration_ms: 0,
+                isrc: None,
+            })
+        };
+        write_items(
+            root.path(),
+            &lib,
+            "Road",
+            &[
+                want("A", "Gone"),
+                want("B", "Gone"),
+                Item::track("A/01.flac"),
+            ],
+            false,
+            None,
+        )
+        .unwrap();
+        write_items(
+            root.path(),
+            &lib,
+            "Night",
+            &[want("A", "Gone"), want("C", "Other")],
+            false,
+            None,
+        )
+        .unwrap();
+        let now = wanted_now(root.path(), &lib);
+        let gone = now.iter().find(|w| w.album == "Gone").unwrap();
+        assert_eq!(gone.saved_tracks, 2);
+        assert_eq!(gone.playlists.len(), 2);
+        // Replace the wanted songs in Night with a library song: "Other" is no longer wanted.
+        write_items(
+            root.path(),
+            &lib,
+            "Night",
+            &[Item::track("A/01.flac")],
+            false,
+            None,
+        )
+        .unwrap();
+        let now = wanted_now(root.path(), &lib);
+        assert!(now.iter().all(|w| w.album != "Other"));
+        assert_eq!(
+            now.iter().find(|w| w.album == "Gone").unwrap().playlists,
+            vec!["Road".to_string()]
+        );
     }
 
     #[test]

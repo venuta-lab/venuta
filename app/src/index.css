@@ -98,10 +98,12 @@ body {
     .btn-primary  the one main action of a place (accent)
     .btn          a normal action (a quiet tint)
     .btn-ghost    a minor one (text until hovered)
+    .btn-danger   going ahead with removing something, in a question that asked first
 */
 .btn,
 .btn-primary,
-.btn-ghost {
+.btn-ghost,
+.btn-danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -136,14 +138,22 @@ body {
 .btn-ghost {
   color: color-mix(in oklab, var(--ink) 70%, transparent);
 }
+/* Deepened so white text reads on every theme's red. */
+.btn-danger {
+  background: color-mix(in oklab, var(--problem) 74%, #000);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: color-mix(in oklab, var(--problem) 64%, #000);
+}
 .btn-ghost:hover {
   background: color-mix(in oklab, var(--ink) 8%, transparent);
   color: var(--ink);
 }
-:is(.btn, .btn-primary, .btn-ghost):active:not(:disabled) {
+:is(.btn, .btn-primary, .btn-ghost, .btn-danger):active:not(:disabled) {
   transform: scale(0.97);
 }
-:is(.btn, .btn-primary, .btn-ghost):disabled {
+:is(.btn, .btn-primary, .btn-ghost, .btn-danger):disabled {
   opacity: 0.4;
   pointer-events: none;
 }
@@ -322,4 +332,38 @@ kbd {
     padding-block: 6px;
     gap: 2px;
   }
+}
+
+/* Text fields and drop-downs inside panels: one look everywhere. */
+.field {
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--color-ink) 7%, transparent);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--color-ink);
+  outline: none;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.field:hover {
+  background: color-mix(in oklab, var(--color-ink) 10%, transparent);
+}
+.field:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 70%, transparent);
+}
+.field::placeholder {
+  color: color-mix(in oklab, var(--color-ink) 40%, transparent);
+}
+select.field {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+select.field option {
+  background: var(--solid);
+  color: var(--color-ink);
 }

@@ -1382,6 +1382,65 @@ fn load_wanted() -> Vec<engine::playlists::WantedAlbum> {
         .unwrap_or_default()
 }
 
+/// "To get": albums the playlists want now, then the ones kept on the list by themselves
+/// (better copies you asked for, an older Apple Music import). The same album shows once.
+fn wanted_all(root: &Path, lib: &Library) -> Vec<engine::playlists::WantedAlbum> {
+    let mut list = engine::playlists::wanted_now(root, lib);
+    for mut w in load_wanted() {
+        match list
+            .iter_mut()
+            .find(|x| x.album == w.album && x.artist == w.artist)
+        {
+            Some(x) => {
+                for p in w.playlists {
+                    if !x.playlists.contains(&p) {
+                        x.playlists.push(p);
+                    }
+                }
+                x.tier = x.tier.min(w.tier);
+                x.kept = true;
+            }
+            None => {
+                w.kept = true;
+                list.push(w)
+            }
+        }
+    }
+    list.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then(b.saved_tracks.cmp(&a.saved_tracks))
+    });
+    list
+}
+
+/// Take an album off "To get" (one kept on the list by itself).
+#[tauri::command]
+fn want_remove(album: String, artist: String) -> CmdResult<()> {
+    let list: Vec<_> = load_wanted()
+        .into_iter()
+        .filter(|w| !(w.album == album && w.artist == artist))
+        .collect();
+    std::fs::write(
+        wantlist_path(),
+        serde_json::to_vec(&list).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// "To get" as a spreadsheet (CSV), where you choose. Returns how many albums it lists.
+#[tauri::command]
+async fn wanted_export(root: String, to: String) -> CmdResult<usize> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let list = wanted_all(&rootp, &lib);
+        std::fs::write(&to, engine::playlists::wanted_csv(&list)).map_err(|e| e.to_string())?;
+        Ok(list.len())
+    })
+    .await
+}
+
 /// How albums you put on the list yourself are marked.
 const BETTER_COPY: &str = "Get a better copy";
 
@@ -1399,6 +1458,7 @@ fn want_add(album: String, artist: String, why: String) -> CmdResult<usize> {
                 why: format!("{BETTER_COPY}: {why}"),
                 saved_tracks: 0,
                 playlists: vec![],
+                kept: true,
             },
         );
     }
@@ -1416,10 +1476,25 @@ struct PlaylistsView {
     smart: Vec<engine::playlists::SmartRule>,
     /// How many songs each smart rule selects right now.
     smart_counts: BTreeMap<String, usize>,
+    /// Up to four album folders each smart rule starts with, for its cover (before a file exists).
+    smart_dirs: BTreeMap<String, Vec<String>>,
     /// Where playlists are saved (the folder may not exist yet).
     folder: String,
     wanted: Vec<engine::playlists::WantedAlbum>,
     apple_ready: bool,
+}
+
+/// The playlists as they are saved, for a shelf on the Music home: no rescan and nothing
+/// rewritten, so it is quick (Playlists itself does the repairs).
+#[tauri::command]
+async fn playlist_shelf(root: String) -> CmdResult<Vec<engine::playlists::PlaylistSummary>> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let index = open_index(&rootp)?;
+        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        Ok(engine::playlists::list(&rootp, &lib))
+    })
+    .await
 }
 
 /// Playlists in the library (repairing moved entries), smart rules and the want-list.
@@ -1435,6 +1510,8 @@ async fn playlists(root: String) -> CmdResult<PlaylistsView> {
         let folder = engine::playlists::folder(&rootp);
         if folder.is_dir() {
             engine::playlists::repair_all(&rootp, &lib);
+            // Songs a playlist was waiting for that have since come into the library.
+            engine::imports::refind_all(&rootp, &lib);
             engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index)?;
         }
         let evaluated = engine::playlists::evaluate_all(&rules_dir, &lib, &index)?;
@@ -1445,12 +1522,28 @@ async fn playlists(root: String) -> CmdResult<PlaylistsView> {
                 .iter()
                 .map(|(r, p)| (r.name.clone(), p.len()))
                 .collect(),
+            smart_dirs: evaluated
+                .iter()
+                .map(|(r, paths)| {
+                    let mut dirs: Vec<String> = Vec::new();
+                    for p in paths {
+                        let d = p
+                            .rsplit_once('/')
+                            .map(|(d, _)| d.to_owned())
+                            .unwrap_or_default();
+                        if !dirs.contains(&d) {
+                            dirs.push(d);
+                        }
+                        if dirs.len() == 4 {
+                            break;
+                        }
+                    }
+                    (r.name.clone(), dirs)
+                })
+                .collect(),
             smart: evaluated.into_iter().map(|(r, _)| r).collect(),
             folder: folder.to_string_lossy().into_owned(),
-            wanted: std::fs::read_to_string(wantlist_path())
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok())
-                .unwrap_or_default(),
+            wanted: wanted_all(&rootp, &lib),
             apple_ready: s.apple_key.is_some()
                 && s.apple_library
                     .as_ref()
@@ -1570,6 +1663,207 @@ fn set_apple(library: Option<String>, key: Option<String>) -> CmdResult<()> {
         s.apple_key = key;
     }
     engine::settings::save(&s)
+}
+
+/// Save a playlist exactly as shown: songs in the library and songs still wanted, in order
+/// (its source line stays).
+#[tauri::command]
+async fn playlist_save_items(
+    root: String,
+    name: String,
+    items: Vec<engine::playlists::Item>,
+) -> CmdResult<()> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let source = engine::playlists::source_of(&rootp, &name);
+        engine::playlists::write_items(&rootp, &lib, &name, &items, false, source.as_deref())
+    })
+    .await
+}
+
+/// Add songs to a playlist (making it if it's new), skipping ones already in it. Returns how
+/// many were added.
+#[tauri::command]
+async fn playlist_add(root: String, name: String, paths: Vec<String>) -> CmdResult<usize> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let entries = if engine::playlists::exists(&rootp, &name) {
+            engine::playlists::read(&rootp, &lib, &name)?.0
+        } else {
+            vec![]
+        };
+        let have: HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        let mut seen = HashSet::new();
+        let added: Vec<String> = paths
+            .into_iter()
+            .filter(|p| !have.contains(p.as_str()) && seen.insert(p.clone()))
+            .collect();
+        let mut items: Vec<engine::playlists::Item> = entries
+            .iter()
+            .map(engine::playlists::PlaylistEntry::item)
+            .collect();
+        items.extend(added.iter().cloned().map(engine::playlists::Item::track));
+        let source = engine::playlists::source_of(&rootp, &name);
+        engine::playlists::write_items(&rootp, &lib, &name, &items, false, source.as_deref())?;
+        Ok(added.len())
+    })
+    .await
+}
+
+/// A copy of a playlist; returns the name it got.
+#[tauri::command]
+async fn playlist_duplicate(root: String, name: String) -> CmdResult<String> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::playlists::duplicate(&rootp, &lib, &name, &format!("{name} copy"))
+    })
+    .await
+}
+
+/// Save a playlist for other apps (full paths); returns how many songs it holds.
+#[tauri::command]
+async fn playlist_export(root: String, name: String, to: String) -> CmdResult<usize> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::playlists::export(&rootp, &lib, &name, Path::new(&to))
+    })
+    .await
+}
+
+/// Look for a playlist's missing songs again (after new music came in).
+#[tauri::command]
+async fn playlist_refind(root: String, name: String) -> CmdResult<usize> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::imports::refind(&rootp, &lib, &name)
+    })
+    .await
+}
+
+/// What an import read: the playlists, and what couldn't be read (one file of three, say).
+#[derive(serde::Serialize)]
+struct ImportRead {
+    lists: Vec<engine::imports::PreviewPlaylist>,
+    problems: Vec<String>,
+}
+
+/// Read playlists from files other apps made, a Deezer link, or the Apple Music library, and
+/// match every song. Nothing is written yet.
+#[tauri::command]
+async fn import_preview(
+    root: String,
+    files: Vec<String>,
+    link: Option<String>,
+    apple: bool,
+) -> CmdResult<ImportRead> {
+    blocking(move || {
+        let mut lists: Vec<engine::imports::ForeignPlaylist> = Vec::new();
+        let mut problems: Vec<String> = Vec::new();
+        for f in &files {
+            match engine::imports::read_file(Path::new(f)) {
+                Ok(mut l) => lists.append(&mut l),
+                Err(e) => problems.push(e),
+            }
+        }
+        let needs_web = link.is_some()
+            || lists
+                .iter()
+                .any(|l| l.tracks.iter().any(|t| t.youtube.is_some()));
+        if needs_web {
+            let http = engine::net::Http::open()?;
+            if let Some(link) = link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+                match engine::imports::deezer_id(link) {
+                    Some(id) => match engine::imports::deezer(&http, &id) {
+                        Ok(p) => lists.push(p),
+                        Err(e) => problems.push(e),
+                    },
+                    None => problems.push(
+                        "That link isn't a Deezer playlist. Spotify, YouTube and Apple links need an export file instead (see the steps for each)."
+                            .into(),
+                    ),
+                }
+            }
+            engine::imports::youtube_titles(&http, &mut lists, &mut |_, _| {});
+        }
+        if apple {
+            let s = settings_with_defaults();
+            let key = s
+                .apple_key
+                .ok_or("Enter your Apple Music library key in Settings, Online sources, first.")?;
+            let file = s
+                .apple_library
+                .map(PathBuf::from)
+                .or_else(engine::apple::default_library_path)
+                .ok_or("Couldn't find your Apple Music library on this computer.")?;
+            let apple = engine::apple::read(&file, &key)?;
+            lists.extend(engine::imports::apple_library(&apple));
+        }
+        if lists.is_empty() {
+            return Err(if problems.is_empty() {
+                "No playlists found.".into()
+            } else {
+                problems.join("\n")
+            });
+        }
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        Ok(ImportRead {
+            lists: engine::imports::preview(&rootp, &lib, &lists),
+            problems,
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct ImportDone {
+    written: Vec<engine::imports::Written>,
+    /// Albums now on the want-list because of these playlists.
+    wanted: usize,
+}
+
+/// Write the playlists you confirmed; the albums they still want go on the want-list.
+#[tauri::command]
+async fn import_apply(
+    root: String,
+    choices: Vec<engine::imports::Choice>,
+) -> CmdResult<ImportDone> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let today = chrono_today();
+        // The wanted songs live in the playlists themselves; "To get" reads them from there.
+        let (written, fresh) = engine::imports::apply(&rootp, &lib, &choices, &today)?;
+        Ok(ImportDone {
+            written,
+            wanted: fresh.len(),
+        })
+    })
+    .await
+}
+
+/// Today as YYYY-MM-DD (for "Imported from Spotify 2026-10-13").
+fn chrono_today() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    // Civil date from days since 1970 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{}-{m:02}-{d:02}", if m <= 2 { y + 1 } else { y })
 }
 
 /// Rate the songs of one playlist (e.g. Apple's Favourite Songs) that have no rating yet.
@@ -1822,6 +2116,9 @@ pub fn run() {
             setup_card,
             players,
             want_add,
+            want_remove,
+            playlist_shelf,
+            wanted_export,
             player_test_write,
             player_test_remove,
             player_test_save,
@@ -1836,6 +2133,13 @@ pub fn run() {
             playlist_rename,
             smart_save,
             apple_import,
+            playlist_save_items,
+            playlist_add,
+            playlist_duplicate,
+            playlist_export,
+            playlist_refind,
+            import_preview,
+            import_apply,
             set_apple,
             rate_playlist
         ])

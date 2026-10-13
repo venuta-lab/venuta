@@ -18,6 +18,7 @@ import {
 import { Detail, InBar } from '../../components/ui'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
+import { PlaylistShelf } from '../playlists/PlaylistShelf'
 
 export const HI_RES = 'Hi-Res'
 
@@ -29,6 +30,8 @@ export const HomeView = memo(function HomeView(props: {
   lib: Library
   hasCover: (dir: string) => boolean
   onSeeAll: (filter: string) => void
+  onOpenPlaylist: (name: string) => void
+  onPlaylists: () => void
 }) {
   const { lib } = props
   const now = useNowPlaying()
@@ -92,6 +95,7 @@ export const HomeView = memo(function HomeView(props: {
         )}
       </AnimatePresence>
       {recent.length > 0 && <Shelf title="Jump back in" albums={recent} origin="shelf-recent" />}
+      <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} />
       {top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" />}
       {rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" />}
       {rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" />}

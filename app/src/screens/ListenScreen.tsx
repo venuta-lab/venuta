@@ -1,7 +1,8 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { musicCatalog, type CatalogTrack, type HealthReport } from '../lib/engine'
+import { type HealthReport } from '../lib/engine'
+import { useCatalog } from '../lib/catalog'
 import { current, usePlayer } from '../lib/player'
 import { IconSearch } from '../components/Icons'
 import { Page, Segmented } from '../components/ui'
@@ -32,6 +33,8 @@ interface Props {
   openAlbum: string | null
   onOpenedAlbum: () => void
   onEditDetails: (dir: string) => void
+  onOpenPlaylist: (name: string) => void
+  onPlaylists: () => void
   /** Bumped when Music is chosen again while already open: back to its start. */
   reset?: number
 }
@@ -65,7 +68,6 @@ function NowPlaying({ children }: { children: ReactNode }) {
 function Listen(props: Props) {
   const { root, report, busy, searchRef, openAlbum, onOpenedAlbum } = props
   const box = useRef<HTMLDivElement>(null)
-  const [tracks, setTracks] = useState<CatalogTrack[] | null>(null)
   const [tab, setTab] = useState<Tab>(kept.tab)
   const [stack, setStack] = useState<Entry[]>([])
   const [query, setQuery] = useState('')
@@ -78,16 +80,9 @@ function Listen(props: Props) {
   const [shown, setShown] = useState<string | null>(null)
   const typed = useDeferredValue(query)
 
-  // A new report means the folder was read again: read the catalog again with it.
-  useEffect(() => {
-    let live = true
-    musicCatalog(root)
-      .then((t) => live && setTracks(t))
-      .catch(() => live && setTracks([]))
-    return () => {
-      live = false
-    }
-  }, [root, report])
+  // A new report means the folder was read again: the catalog is read again with it (shared
+  // with Playlists and the add-to-playlist picker).
+  const tracks = useCatalog(root, report)
 
   const lib = useMemo(() => buildLibrary(tracks ?? []), [tracks])
   const withCover = useMemo(() => new Set((report?.albums ?? []).filter((a) => a.cover_track).map((a) => a.dir)), [report])
@@ -218,7 +213,14 @@ function Listen(props: Props) {
     const view = typed.trim() ? (
       <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} />
     ) : tab === 'home' ? (
-      <HomeView root={root} lib={lib} hasCover={hasCover} onSeeAll={seeAll} />
+      <HomeView
+        root={root}
+        lib={lib}
+        hasCover={hasCover}
+        onSeeAll={seeAll}
+        onOpenPlaylist={props.onOpenPlaylist}
+        onPlaylists={props.onPlaylists}
+      />
     ) : tab === 'albums' ? (
       <AlbumsView lib={lib} filter={filter} onFilter={setFilter} />
     ) : tab === 'artists' ? (

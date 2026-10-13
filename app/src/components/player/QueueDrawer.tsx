@@ -1,3 +1,4 @@
+import { askAddToPlaylist } from '../AddToPlaylist'
 import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
@@ -107,6 +108,15 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
                 {upcoming > 0 ? `${upcoming} up next, ${clock(left)}` : 'Nothing after this song'}
               </p>
             </div>
+            {s.queue.length > 0 && (
+              <button
+                onClick={() => askAddToPlaylist(s.queue.map((q) => q.path), 'the queue')}
+                className="btn-ghost btn-sm mt-0.5 shrink-0"
+                title="Save every song in the queue as a playlist, or add them to one"
+              >
+                Save as playlist
+              </button>
+            )}
             <button aria-label="Close the queue" onClick={props.onClose} className="grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/10 hover:text-ink">
               <IconClose />
             </button>

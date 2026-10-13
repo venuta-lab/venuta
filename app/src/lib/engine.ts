@@ -601,15 +601,84 @@ export interface PlaylistSummary {
   smart: boolean
   tracks: number
   missing: number
+  /** "Spotify 2026-10-13": where it came from, if imported. */
+  source: string | null
+  /** Up to four album folders from the top, for the mosaic cover. */
+  dirs: string[]
+  duration_ms: number
+  /** When its file last changed, seconds since 1970. */
+  modified: number
+}
+
+/** A song a playlist wants that isn't in the library. */
+export interface WantEntry {
+  title: string
+  artist: string
+  album: string
+  duration_ms: number
+  isrc?: string
 }
 
 export interface PlaylistEntry {
   path: string
   title: string
   artist: string
+  album: string
   duration_ms: number
   audio_md5: string | null
   missing: boolean
+  want?: WantEntry
+}
+
+/** One line of a playlist to save: a library song, or one still wanted. */
+export type PlaylistItem = { path: string } | { want: WantEntry }
+
+/** A song from elsewhere, as an import read it. */
+export interface ForeignSong {
+  title: string
+  artist: string
+  album: string
+  duration_ms: number | null
+  isrc: string | null
+  file?: string
+  youtube?: string
+}
+
+export interface MatchCandidate {
+  path: string
+  title: string
+  artist: string
+  album: string
+  duration_ms: number
+}
+
+export interface PreviewItem {
+  foreign: ForeignSong
+  found: MatchCandidate | null
+  grade: 'exact' | 'close' | null
+  why: string
+}
+
+export interface PreviewPlaylist {
+  name: string
+  source: string
+  exists: boolean
+  items: PreviewItem[]
+  exact: number
+  close: number
+  missing: number
+}
+
+export interface ImportChoice {
+  name: string
+  source: string
+  items: PlaylistItem[]
+  replace: boolean
+}
+
+export interface ImportDone {
+  written: { name: string; songs: number; wanted: number }[]
+  wanted: number
 }
 
 export interface Condition {
@@ -632,12 +701,15 @@ export interface WantedAlbum {
   why: string
   saved_tracks: number
   playlists: string[]
+  /** On the list by itself (you added it), not because a playlist wants its songs. */
+  kept?: boolean
 }
 
 export interface PlaylistsView {
   playlists: PlaylistSummary[]
   smart: SmartRule[]
   smart_counts: Record<string, number>
+  smart_dirs: Record<string, string[]>
   folder: string
   wanted: WantedAlbum[]
   apple_ready: boolean
@@ -653,7 +725,7 @@ export interface ImportReport {
 export const playlists = (root: string) =>
   inApp()
     ? invoke<PlaylistsView>('playlists', { root })
-    : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], smart_counts: {}, folder: '', wanted: [], apple_ready: false })
+    : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], smart_counts: {}, smart_dirs: {}, folder: '', wanted: [], apple_ready: false })
 export const playlistTracks = (root: string, name: string) => invoke<PlaylistEntry[]>('playlist_tracks', { root, name })
 export const playlistSave = (root: string, name: string, paths: string[]) =>
   invoke<void>('playlist_save', { root, name, paths })
@@ -662,6 +734,20 @@ export const playlistRename = (root: string, from: string, to: string) =>
   invoke<void>('playlist_rename', { root, from, to })
 export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_save', { root, rule })
 export const appleImport = (root: string) => invoke<ImportReport>('apple_import', { root })
+export const playlistSaveItems = (root: string, name: string, items: PlaylistItem[]) =>
+  invoke<void>('playlist_save_items', { root, name, items })
+/** Adds songs (skipping ones already in it); makes the playlist if it's new. Returns how many were added. */
+export const playlistAdd = (root: string, name: string, paths: string[]) => invoke<number>('playlist_add', { root, name, paths })
+export const playlistDuplicate = (root: string, name: string) => invoke<string>('playlist_duplicate', { root, name })
+export const playlistExport = (root: string, name: string, to: string) => invoke<number>('playlist_export', { root, name, to })
+export const playlistRefind = (root: string, name: string) => invoke<number>('playlist_refind', { root, name })
+export const importPreview = (root: string, files: string[], link: string | null, apple: boolean) =>
+  invoke<{ lists: PreviewPlaylist[]; problems: string[] }>('import_preview', { root, files, link, apple })
+export const importApply = (root: string, choices: ImportChoice[]) => invoke<ImportDone>('import_apply', { root, choices })
+export const playlistShelf = (root: string) =>
+  inApp() ? invoke<PlaylistSummary[]>('playlist_shelf', { root }) : Promise.resolve<PlaylistSummary[]>([])
+export const wantRemove = (album: string, artist: string) => invoke<void>('want_remove', { album, artist })
+export const wantedExport = (root: string, to: string) => invoke<number>('wanted_export', { root, to })
 export const setApple = (library: string | null, key: string | null) => invoke<void>('set_apple', { library, key })
 export const ratePlaylist = (root: string, name: string, stars: number) =>
   invoke<EditReport>('rate_playlist', { root, name, stars })

@@ -45,3 +45,17 @@ for. Then the full UI polish pass (docs/PLAN-POLISH.md) covers these screens too
    ("Save as playlist"), the palette.
 6. Music home: a "Your playlists" shelf.
 7. Verify every flow in the running app with real files from each source; commit.
+
+## Done (2026-10-13)
+All seven steps, checked in the running app against a scratch library (`VENUTA_HOME`), with real
+files from Spotify (account JSON, Exportify CSV), another player (.m3u8), a live Deezer link and
+a Google Takeout CSV (titles from YouTube). Changes from the plan, found while building:
+- **"To get" is read from the playlists** (`wanted_now`), not stored at import time: find,
+  replace or remove a wanted song and its album leaves the list by itself. The stored list now
+  only holds albums kept there on their own (a better copy you asked for, the older Apple
+  import); those can be removed by hand. "Save as a spreadsheet…" replaces the CSV that used to
+  be written beside the rules.
+- **Playlists fill in by themselves**: each time Playlists opens, wanted songs that have come
+  into the library are put in place (exact matches only; `refind_all`).
+- Two imports with the same name in one go never replace each other.
+- The Music home shelf reads playlists without a rescan (`playlist_shelf`), so Music stays quick.

@@ -42,7 +42,12 @@ pub fn read_file(path: &Path) -> Result<Vec<ForeignPlaylist>, String> {
         "txt" => vec![itunes_txt(&text, &stem)?],
         "m3u" | "m3u8" => vec![m3u(&text, &stem, path.parent().unwrap_or(Path::new(".")))],
         "pls" => vec![pls(&text, &stem, path.parent().unwrap_or(Path::new(".")))],
-        _ => return Err(format!("{} isn't a playlist file Venuta can read.", path.display())),
+        _ => {
+            return Err(format!(
+                "{} isn't a playlist file Venuta can read.",
+                path.display()
+            ));
+        }
     };
     let found: Vec<ForeignPlaylist> = found.into_iter().filter(|p| !p.tracks.is_empty()).collect();
     if found.is_empty() {
@@ -55,8 +60,15 @@ pub fn read_file(path: &Path) -> Result<Vec<ForeignPlaylist>, String> {
 
 /// Spotify's account data: `Playlist1.json` (your playlists) or `YourLibrary.json` (liked songs).
 fn spotify_json(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
-    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("Not readable JSON: {e}"))?;
-    let s = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().trim().to_owned();
+    let v: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("Not readable JSON: {e}"))?;
+    let s = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    };
     let mut out = Vec::new();
     if let Some(lists) = v.get("playlists").and_then(|p| p.as_array()) {
         for p in lists {
@@ -98,7 +110,10 @@ fn spotify_json(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
         });
     }
     if out.is_empty() {
-        return Err("This JSON isn't a Spotify playlist export (Playlist1.json or YourLibrary.json).".into());
+        return Err(
+            "This JSON isn't a Spotify playlist export (Playlist1.json or YourLibrary.json)."
+                .into(),
+        );
     }
     Ok(out)
 }
@@ -154,21 +169,46 @@ fn duration_ms(s: &str, millis: bool) -> Option<u64> {
         return Some(parts.iter().fold(0, |acc, p| acc * 60 + p) * 1000);
     }
     let n: f64 = s.parse().ok()?;
-    Some(if millis { n as u64 } else { (n * 1000.0) as u64 })
+    Some(if millis {
+        n as u64
+    } else {
+        (n * 1000.0) as u64
+    })
 }
 
 fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String> {
     let mut rows = csv_rows(text);
     // Google Takeout's older playlist files open with a block about the playlist itself.
-    if let Some(at) = rows.iter().position(|r| r.iter().any(|f| f.trim().eq_ignore_ascii_case("video id"))) {
+    if let Some(at) = rows
+        .iter()
+        .position(|r| r.iter().any(|f| f.trim().eq_ignore_ascii_case("video id")))
+    {
         rows.drain(..at);
     }
     let Some(head) = rows.first().cloned() else {
         return Ok(vec![]);
     };
-    let col = |names: &[&str]| head.iter().position(|h| names.iter().any(|n| h.trim().eq_ignore_ascii_case(n)));
-    let title = col(&["track name", "track", "title", "name", "song", "song name", "track title"]);
-    let artist = col(&["artist name(s)", "artist name", "artist", "artists", "artist(s)", "artist names"]);
+    let col = |names: &[&str]| {
+        head.iter()
+            .position(|h| names.iter().any(|n| h.trim().eq_ignore_ascii_case(n)))
+    };
+    let title = col(&[
+        "track name",
+        "track",
+        "title",
+        "name",
+        "song",
+        "song name",
+        "track title",
+    ]);
+    let artist = col(&[
+        "artist name(s)",
+        "artist name",
+        "artist",
+        "artists",
+        "artist(s)",
+        "artist names",
+    ]);
     let album = col(&["album name", "album", "album title"]);
     let isrc = col(&["isrc"]);
     let ms = col(&["track duration (ms)", "duration (ms)", "duration_ms"]);
@@ -177,7 +217,10 @@ fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String>
     let video = col(&["video id", "video_id", "videoid"]);
     let source = if video.is_some() {
         "YouTube Music"
-    } else if head.iter().any(|h| h.eq_ignore_ascii_case("track uri") || h.eq_ignore_ascii_case("spotify id")) {
+    } else if head
+        .iter()
+        .any(|h| h.eq_ignore_ascii_case("track uri") || h.eq_ignore_ascii_case("spotify id"))
+    {
         "Spotify"
     } else if head.iter().any(|h| h.eq_ignore_ascii_case("type")) && list.is_some() {
         "TuneMyMusic"
@@ -185,10 +228,20 @@ fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String>
         "CSV"
     };
     if title.is_none() && video.is_none() {
-        return Err("This CSV has no title column (looked for \"Track name\", \"Title\", \"Video Id\"…).".into());
+        return Err(
+            "This CSV has no title column (looked for \"Track name\", \"Title\", \"Video Id\"…)."
+                .into(),
+        );
     }
-    let get = |r: &Vec<String>, c: Option<usize>| c.and_then(|i| r.get(i)).map(|s| s.trim().to_owned()).unwrap_or_default();
-    let base = stem.trim_end_matches("-videos").trim_end_matches(" videos").to_owned();
+    let get = |r: &Vec<String>, c: Option<usize>| {
+        c.and_then(|i| r.get(i))
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default()
+    };
+    let base = stem
+        .trim_end_matches("-videos")
+        .trim_end_matches(" videos")
+        .to_owned();
     let mut groups: BTreeMap<String, Vec<Foreign>> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     for r in rows.iter().skip(1) {
@@ -200,14 +253,19 @@ fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String>
             duration_ms: ms
                 .and_then(|i| r.get(i))
                 .and_then(|s| duration_ms(s, true))
-                .or_else(|| secs.and_then(|i| r.get(i)).and_then(|s| duration_ms(s, false))),
+                .or_else(|| {
+                    secs.and_then(|i| r.get(i))
+                        .and_then(|s| duration_ms(s, false))
+                }),
             youtube: Some(get(r, video)).filter(|s| !s.is_empty()),
             file: None,
         };
         if f.title.is_empty() && f.youtube.is_none() {
             continue;
         }
-        let name = Some(get(r, list)).filter(|s| !s.is_empty()).unwrap_or_else(|| base.clone());
+        let name = Some(get(r, list))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| base.clone());
         if !groups.contains_key(&name) {
             order.push(name.clone());
         }
@@ -271,7 +329,9 @@ fn unescape(s: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            _ if ent.starts_with("#x") => u32::from_str_radix(&ent[2..], 16).ok().and_then(char::from_u32),
+            _ if ent.starts_with("#x") => u32::from_str_radix(&ent[2..], 16)
+                .ok()
+                .and_then(char::from_u32),
             _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),
             _ => None,
         };
@@ -308,12 +368,21 @@ impl<'a> PlistReader<'a> {
             }
             let closing = inner.starts_with('/');
             let selfclose = inner.ends_with('/');
-            let name = inner.trim_start_matches('/').trim_end_matches('/').split_whitespace().next().unwrap_or("").to_owned();
+            let name = inner
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_owned();
             return Some((name, closing, selfclose));
         }
     }
     fn text_until(&mut self, close: &str) -> String {
-        let end = self.s[self.at..].find(close).map(|i| i + self.at).unwrap_or(self.s.len());
+        let end = self.s[self.at..]
+            .find(close)
+            .map(|i| i + self.at)
+            .unwrap_or(self.s.len());
         let t = unescape(&self.s[self.at..end]);
         self.at = (end + close.len()).min(self.s.len());
         t
@@ -380,7 +449,9 @@ fn itunes_xml(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
     let root = PlistReader { s: text, at: 0 }
         .value()
         .ok_or("This XML isn't an iTunes or Apple Music export.")?;
-    let tracks = root.get("Tracks").ok_or("This XML has no tracks (export a playlist from Apple Music or iTunes).")?;
+    let tracks = root
+        .get("Tracks")
+        .ok_or("This XML has no tracks (export a playlist from Apple Music or iTunes).")?;
     let song = |id: i64| -> Option<Foreign> {
         let t = tracks.get(&id.to_string())?;
         let s = |k: &str| t.get(k).and_then(Plist::str).unwrap_or_default().to_owned();
@@ -392,12 +463,29 @@ fn itunes_xml(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
             ..Default::default()
         })
     };
-    let skip = ["Library", "Music", "Downloaded", "Music Videos", "Movies", "TV Shows", "Podcasts", "Audiobooks", "Genius"];
+    let skip = [
+        "Library",
+        "Music",
+        "Downloaded",
+        "Music Videos",
+        "Movies",
+        "TV Shows",
+        "Podcasts",
+        "Audiobooks",
+        "Genius",
+    ];
     let mut out = Vec::new();
     if let Some(Plist::Array(lists)) = root.get("Playlists") {
         for p in lists {
-            let name = p.get("Name").and_then(Plist::str).unwrap_or_default().to_owned();
-            if p.get("Master").is_some() || p.get("Distinguished Kind").is_some() || skip.contains(&name.as_str()) {
+            let name = p
+                .get("Name")
+                .and_then(Plist::str)
+                .unwrap_or_default()
+                .to_owned();
+            if p.get("Master").is_some()
+                || p.get("Distinguished Kind").is_some()
+                || skip.contains(&name.as_str())
+            {
                 continue;
             }
             let items = match p.get("Playlist Items") {
@@ -423,19 +511,29 @@ fn itunes_txt(text: &str, stem: &str) -> Result<ForeignPlaylist, String> {
     let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
     let head: Vec<&str> = lines.next().unwrap_or_default().split('\t').collect();
     let col = |n: &str| head.iter().position(|h| h.trim().eq_ignore_ascii_case(n));
-    let (Some(name), artist, album, time) = (col("Name"), col("Artist"), col("Album"), col("Time")) else {
-        return Err("This text file isn't an Apple Music / iTunes playlist export (no \"Name\" column).".into());
+    let (Some(name), artist, album, time) = (col("Name"), col("Artist"), col("Album"), col("Time"))
+    else {
+        return Err(
+            "This text file isn't an Apple Music / iTunes playlist export (no \"Name\" column)."
+                .into(),
+        );
     };
     let tracks = lines
         .map(|l| l.split('\t').collect::<Vec<_>>())
         .filter_map(|r| {
-            let get = |c: Option<usize>| c.and_then(|i| r.get(i)).map(|s| s.trim().to_owned()).unwrap_or_default();
+            let get = |c: Option<usize>| {
+                c.and_then(|i| r.get(i))
+                    .map(|s| s.trim().to_owned())
+                    .unwrap_or_default()
+            };
             let title = get(Some(name));
             (!title.is_empty()).then(|| Foreign {
                 title,
                 artist: get(artist),
                 album: get(album),
-                duration_ms: time.and_then(|i| r.get(i)).and_then(|s| duration_ms(s, false)),
+                duration_ms: time
+                    .and_then(|i| r.get(i))
+                    .and_then(|s| duration_ms(s, false)),
                 ..Default::default()
             })
         })
@@ -480,9 +578,15 @@ fn tags_of(path: &Path) -> Option<Foreign> {
     let f = lofty::read_from_path(path).ok()?;
     let tag = f.primary_tag().or_else(|| f.first_tag());
     Some(Foreign {
-        title: tag.and_then(|t| t.title().map(|s| s.into_owned())).unwrap_or_default(),
-        artist: tag.and_then(|t| t.artist().map(|s| s.into_owned())).unwrap_or_default(),
-        album: tag.and_then(|t| t.album().map(|s| s.into_owned())).unwrap_or_default(),
+        title: tag
+            .and_then(|t| t.title().map(|s| s.into_owned()))
+            .unwrap_or_default(),
+        artist: tag
+            .and_then(|t| t.artist().map(|s| s.into_owned()))
+            .unwrap_or_default(),
+        album: tag
+            .and_then(|t| t.album().map(|s| s.into_owned()))
+            .unwrap_or_default(),
         duration_ms: Some(f.properties().duration().as_millis() as u64).filter(|d| *d > 0),
         file: Some(path.to_string_lossy().into_owned()),
         ..Default::default()
@@ -538,14 +642,25 @@ fn m3u(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
             venuta = true;
         } else if let Some(info) = line.strip_prefix("#EXTINF:") {
             let (secs, label) = info.split_once(',').unwrap_or((info, ""));
-            pending = Some((secs.trim().parse::<i64>().ok().filter(|s| *s > 0).map(|s| s as u64 * 1000), label.to_owned()));
+            pending = Some((
+                secs.trim()
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|s| *s > 0)
+                    .map(|s| s as u64 * 1000),
+                label.to_owned(),
+            ));
         } else if !line.is_empty() && !line.starts_with('#') {
             tracks.push(entry(line, pending.take(), dir));
         }
     }
     ForeignPlaylist {
         name,
-        source: if venuta { "Venuta".into() } else { "Playlist file".into() },
+        source: if venuta {
+            "Venuta".into()
+        } else {
+            "Playlist file".into()
+        },
         tracks,
     }
 }
@@ -553,7 +668,9 @@ fn m3u(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
 fn pls(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
     let mut files: BTreeMap<u32, (String, Option<String>, Option<u64>)> = BTreeMap::new();
     for line in text.lines().map(str::trim) {
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let k = k.to_lowercase();
         let num = |p: &str| k.strip_prefix(p).and_then(|n| n.parse::<u32>().ok());
         if let Some(n) = num("file") {
@@ -561,7 +678,12 @@ fn pls(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
         } else if let Some(n) = num("title") {
             files.entry(n).or_default().1 = Some(v.to_owned());
         } else if let Some(n) = num("length") {
-            files.entry(n).or_default().2 = v.trim().parse::<i64>().ok().filter(|s| *s > 0).map(|s| s as u64 * 1000);
+            files.entry(n).or_default().2 = v
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|s| *s > 0)
+                .map(|s| s as u64 * 1000);
         }
     }
     ForeignPlaylist {
@@ -592,16 +714,29 @@ pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, Stri
     if let Some(err) = v.get("error") {
         return Err(format!(
             "Deezer couldn't show that playlist ({}). Is it public?",
-            err.get("message").and_then(|m| m.as_str()).unwrap_or("error")
+            err.get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("error")
         ));
     }
-    let name = v.get("title").and_then(|t| t.as_str()).unwrap_or("Deezer playlist").to_owned();
+    let name = v
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("Deezer playlist")
+        .to_owned();
     let mut tracks = Vec::new();
     let mut page = v.get("tracks").cloned();
     let mut guard = 0;
     while let Some(p) = page.take() {
-        for t in p.get("data").and_then(|d| d.as_array()).into_iter().flatten() {
-            let s = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).unwrap_or_default().to_owned();
+        for t in p
+            .get("data")
+            .and_then(|d| d.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let s = |v: Option<&serde_json::Value>| {
+                v.and_then(|x| x.as_str()).unwrap_or_default().to_owned()
+            };
             tracks.push(Foreign {
                 title: s(t.get("title")),
                 artist: s(t.get("artist").and_then(|a| a.get("name"))),
@@ -629,20 +764,39 @@ pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, Stri
 pub fn youtube_song(title: &str, channel: &str) -> (String, String) {
     let noise = regex::Regex::new(r"(?i)\s*[\(\[][^\)\]]*(official|video|audio|lyric|lyrics|visualizer|hd|4k|full song|music video)[^\)\]]*[\)\]]").expect("valid");
     let clean = noise.replace_all(title, "").trim().to_owned();
-    let channel = channel.trim_end_matches(" - Topic").trim_end_matches("VEVO").trim().to_owned();
+    let channel = channel
+        .trim_end_matches(" - Topic")
+        .trim_end_matches("VEVO")
+        .trim()
+        .to_owned();
     if let Some((a, t)) = clean.split_once(" - ") {
-        return (t.split('|').next().unwrap_or(t).trim().to_owned(), a.trim().to_owned());
+        return (
+            t.split('|').next().unwrap_or(t).trim().to_owned(),
+            a.trim().to_owned(),
+        );
     }
     let first = clean.split('|').next().unwrap_or(&clean).trim().to_owned();
     (first, channel)
 }
 
 /// Fill in titles for YouTube entries (one public oEmbed request each, cached).
-pub fn youtube_titles(http: &crate::net::Http, lists: &mut [ForeignPlaylist], on_progress: &mut dyn FnMut(usize, usize)) {
-    let total: usize = lists.iter().flat_map(|l| &l.tracks).filter(|t| t.youtube.is_some() && t.title.is_empty()).count();
+pub fn youtube_titles(
+    http: &crate::net::Http,
+    lists: &mut [ForeignPlaylist],
+    on_progress: &mut dyn FnMut(usize, usize),
+) {
+    let total: usize = lists
+        .iter()
+        .flat_map(|l| &l.tracks)
+        .filter(|t| t.youtube.is_some() && t.title.is_empty())
+        .count();
     let mut done = 0;
     for l in lists.iter_mut() {
-        for t in l.tracks.iter_mut().filter(|t| t.youtube.is_some() && t.title.is_empty()) {
+        for t in l
+            .tracks
+            .iter_mut()
+            .filter(|t| t.youtube.is_some() && t.title.is_empty())
+        {
             let id = t.youtube.clone().unwrap_or_default();
             let url = format!(
                 "https://www.youtube.com/oembed?format=json&url={}",
@@ -650,7 +804,10 @@ pub fn youtube_titles(http: &crate::net::Http, lists: &mut [ForeignPlaylist], on
             );
             if let Ok(v) = http.get_json(&url) {
                 let title = v.get("title").and_then(|x| x.as_str()).unwrap_or_default();
-                let channel = v.get("author_name").and_then(|x| x.as_str()).unwrap_or_default();
+                let channel = v
+                    .get("author_name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default();
                 let (title, artist) = youtube_song(title, channel);
                 t.title = title;
                 t.artist = artist;
@@ -697,12 +854,22 @@ pub struct PreviewPlaylist {
 }
 
 /// Match every song of every playlist, without writing anything.
-pub fn preview(library_root: &Path, lib: &Library, lists: &[ForeignPlaylist]) -> Vec<PreviewPlaylist> {
+pub fn preview(
+    library_root: &Path,
+    lib: &Library,
+    lists: &[ForeignPlaylist],
+) -> Vec<PreviewPlaylist> {
     let matcher = Matcher::new(lib);
     // A file that's already in the library is itself, whatever its tags say.
-    let root = library_root.to_string_lossy().replace('\\', "/").to_lowercase();
-    let by_path: std::collections::HashMap<String, &crate::library::Track> =
-        lib.tracks.iter().map(|t| (t.path.to_lowercase(), t)).collect();
+    let root = library_root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase();
+    let by_path: std::collections::HashMap<String, &crate::library::Track> = lib
+        .tracks
+        .iter()
+        .map(|t| (t.path.to_lowercase(), t))
+        .collect();
     lists
         .iter()
         .map(|l| {
@@ -712,7 +879,8 @@ pub fn preview(library_root: &Path, lib: &Library, lists: &[ForeignPlaylist]) ->
                 .map(|f| {
                     let in_library = f.file.as_ref().and_then(|p| {
                         let p = p.replace('\\', "/").to_lowercase();
-                        p.strip_prefix(&root).map(|r| r.trim_start_matches('/').to_owned())
+                        p.strip_prefix(&root)
+                            .map(|r| r.trim_start_matches('/').to_owned())
                     });
                     let hit = in_library
                         .and_then(|rel| by_path.get(&rel).copied())
@@ -778,11 +946,20 @@ pub struct Written {
 }
 
 /// Write the playlists you confirmed, and the albums they still want.
-pub fn apply(library_root: &Path, lib: &Library, choices: &[Choice], when: &str) -> Result<(Vec<Written>, Vec<WantedAlbum>), String> {
+pub fn apply(
+    library_root: &Path,
+    lib: &Library,
+    choices: &[Choice],
+    when: &str,
+) -> Result<(Vec<Written>, Vec<WantedAlbum>), String> {
     let mut written = Vec::new();
-    let mut groups: BTreeMap<(String, String), (HashSet<String>, HashSet<String>)> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String), (HashSet<String>, HashSet<String>)> =
+        BTreeMap::new();
+    let mut taken: HashSet<String> = HashSet::new();
     for c in choices {
-        let name = if c.replace && playlists::exists(library_root, &c.name) {
+        // "Replace" means the playlist there before this import, never one this import just wrote.
+        let replace = c.replace && !taken.contains(&c.name.trim().to_lowercase());
+        let name = if replace && playlists::exists(library_root, &c.name) {
             playlists::delete(library_root, &c.name)?;
             c.name.trim().to_owned()
         } else {
@@ -790,9 +967,16 @@ pub fn apply(library_root: &Path, lib: &Library, choices: &[Choice], when: &str)
         };
         let source = format!("{} {when}", c.source).trim().to_owned();
         playlists::write_items(library_root, lib, &name, &c.items, false, Some(&source))?;
+        taken.insert(name.to_lowercase());
         for w in c.items.iter().filter_map(|i| i.want.as_ref()) {
-            let e = groups.entry((w.album.clone(), w.artist.clone())).or_default();
-            e.0.insert(format!("{}|{}", w.title.to_lowercase(), w.artist.to_lowercase()));
+            let e = groups
+                .entry((w.album.clone(), w.artist.clone()))
+                .or_default();
+            e.0.insert(format!(
+                "{}|{}",
+                w.title.to_lowercase(),
+                w.artist.to_lowercase()
+            ));
             e.1.insert(name.clone());
         }
         written.push(Written {
@@ -821,8 +1005,27 @@ pub fn apply(library_root: &Path, lib: &Library, choices: &[Choice], when: &str)
 /// Match a playlist's missing songs again (after new music came in): the ones now found are
 /// put in place. Returns how many were found.
 pub fn refind(library_root: &Path, lib: &Library, name: &str) -> Result<usize, String> {
-    let (entries, _) = playlists::read(library_root, lib, name)?;
+    refind_with(library_root, lib, &Matcher::new(lib), name)
+}
+
+/// Every playlist's missing songs matched again (exact matches only), for when new music came
+/// in. Returns how many songs were put in place.
+pub fn refind_all(library_root: &Path, lib: &Library) -> usize {
     let matcher = Matcher::new(lib);
+    playlists::list(library_root, lib)
+        .into_iter()
+        .filter(|p| !p.smart && p.missing > 0)
+        .map(|p| refind_with(library_root, lib, &matcher, &p.name).unwrap_or(0))
+        .sum()
+}
+
+fn refind_with(
+    library_root: &Path,
+    lib: &Library,
+    matcher: &Matcher,
+    name: &str,
+) -> Result<usize, String> {
+    let (entries, _) = playlists::read(library_root, lib, name)?;
     let mut found = 0;
     let items: Vec<Item> = entries
         .iter()
@@ -845,13 +1048,17 @@ pub fn refind(library_root: &Path, lib: &Library, name: &str) -> Result<usize, S
         })
         .collect();
     if found > 0 {
-        playlists::write_items(library_root, lib, name, &items, false, playlists::source_of(library_root, name).as_deref())?;
+        playlists::write_items(
+            library_root,
+            lib,
+            name,
+            &items,
+            false,
+            playlists::source_of(library_root, name).as_deref(),
+        )?;
     }
     Ok(found)
 }
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -860,7 +1067,10 @@ mod tests {
     #[test]
     fn csv_handles_quotes_and_line_breaks() {
         let rows = csv_rows("a,\"b, c\",\"say \"\"hi\"\"\"\n\"x\ny\",2,3\n");
-        assert_eq!(rows, vec![vec!["a", "b, c", "say \"hi\""], vec!["x\ny", "2", "3"]]);
+        assert_eq!(
+            rows,
+            vec![vec!["a", "b, c", "say \"hi\""], vec!["x\ny", "2", "3"]]
+        );
     }
 
     #[test]
@@ -871,7 +1081,10 @@ mod tests {
         assert_eq!(lists[0].name, "Road trip");
         assert_eq!(lists[0].source, "Spotify");
         let t = &lists[0].tracks[0];
-        assert_eq!((t.title.as_str(), t.artist.as_str(), t.album.as_str()), ("Tum Hi Ho", "Arijit Singh", "Aashiqui 2"));
+        assert_eq!(
+            (t.title.as_str(), t.artist.as_str(), t.album.as_str()),
+            ("Tum Hi Ho", "Arijit Singh", "Aashiqui 2")
+        );
         assert_eq!(t.duration_ms, Some(262_000));
         assert_eq!(t.isrc.as_deref(), Some("INT101300123"));
     }
@@ -880,7 +1093,13 @@ mod tests {
     fn tunemymusic_csv_groups_by_playlist() {
         let text = "Track name,Artist name,Album,Playlist name,Type,ISRC\nA,X,AA,One,Playlist,\nB,Y,BB,Two,Playlist,\nC,Z,CC,One,Playlist,\n";
         let lists = csv_playlists(text, "export").unwrap();
-        assert_eq!(lists.iter().map(|l| (l.name.as_str(), l.tracks.len())).collect::<Vec<_>>(), vec![("One", 2), ("Two", 1)]);
+        assert_eq!(
+            lists
+                .iter()
+                .map(|l| (l.name.as_str(), l.tracks.len()))
+                .collect::<Vec<_>>(),
+            vec![("One", 2), ("Two", 1)]
+        );
         assert_eq!(lists[0].source, "TuneMyMusic");
     }
 
@@ -890,7 +1109,14 @@ mod tests {
         let lists = csv_playlists(text, "Chill-videos").unwrap();
         assert_eq!(lists[0].name, "Chill");
         assert_eq!(lists[0].source, "YouTube Music");
-        assert_eq!(lists[0].tracks.iter().map(|t| t.youtube.clone().unwrap()).collect::<Vec<_>>(), vec!["abc123", "def456"]);
+        assert_eq!(
+            lists[0]
+                .tracks
+                .iter()
+                .map(|t| t.youtube.clone().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["abc123", "def456"]
+        );
     }
 
     #[test]
@@ -922,7 +1148,8 @@ mod tests {
 
     #[test]
     fn itunes_text_export_reads_columns() {
-        let text = "Name\tArtist\tComposer\tAlbum\tTime\nSaans\tShreya Ghoshal\t\tJab Tak Hai Jaan\t264\n";
+        let text =
+            "Name\tArtist\tComposer\tAlbum\tTime\nSaans\tShreya Ghoshal\t\tJab Tak Hai Jaan\t264\n";
         let p = itunes_txt(text, "Evening").unwrap();
         assert_eq!(p.name, "Evening");
         assert_eq!(p.tracks[0].album, "Jab Tak Hai Jaan");
@@ -941,10 +1168,72 @@ mod tests {
 
     #[test]
     fn deezer_links_and_youtube_titles() {
-        assert_eq!(deezer_id("https://www.deezer.com/en/playlist/908622995?utm=x").as_deref(), Some("908622995"));
+        assert_eq!(
+            deezer_id("https://www.deezer.com/en/playlist/908622995?utm=x").as_deref(),
+            Some("908622995")
+        );
         assert_eq!(deezer_id("https://example.com/playlist/1"), None);
-        assert_eq!(youtube_song("Arijit Singh - Tum Hi Ho (Official Video)", "T-Series"), ("Tum Hi Ho".into(), "Arijit Singh".into()));
-        assert_eq!(youtube_song("Kesariya | Brahmastra | Arijit Singh", "Arijit Singh - Topic"), ("Kesariya".into(), "Arijit Singh".into()));
+        assert_eq!(
+            youtube_song("Arijit Singh - Tum Hi Ho (Official Video)", "T-Series"),
+            ("Tum Hi Ho".into(), "Arijit Singh".into())
+        );
+        assert_eq!(
+            youtube_song(
+                "Kesariya | Brahmastra | Arijit Singh",
+                "Arijit Singh - Topic"
+            ),
+            ("Kesariya".into(), "Arijit Singh".into())
+        );
+    }
+
+    #[test]
+    fn two_imports_with_one_name_both_survive() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library {
+            tracks: vec![],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+        };
+        let want = |t: &str| {
+            Item::wanted(playlists::WantEntry {
+                title: t.into(),
+                artist: "X".into(),
+                album: "Al".into(),
+                duration_ms: 0,
+                isrc: None,
+            })
+        };
+        playlists::write_items(
+            root.path(),
+            &lib,
+            "Liked Songs",
+            &[want("Old")],
+            false,
+            None,
+        )
+        .unwrap();
+        let choice = |t: &str| Choice {
+            name: "Liked Songs".into(),
+            source: "Spotify".into(),
+            items: vec![want(t)],
+            replace: true,
+        };
+        let (written, wanted) =
+            apply(root.path(), &lib, &[choice("A"), choice("B")], "2026-10-13").unwrap();
+        // The first replaces the old one; the second must not replace the first.
+        assert_eq!(
+            written.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
+            vec!["Liked Songs", "Liked Songs 2"]
+        );
+        let (first, _) = playlists::read(root.path(), &lib, "Liked Songs").unwrap();
+        assert_eq!(first[0].title, "A");
+        assert_eq!(wanted.len(), 1);
+        assert_eq!(wanted[0].saved_tracks, 2);
     }
 
     #[test]

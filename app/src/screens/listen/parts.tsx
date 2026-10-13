@@ -1,3 +1,4 @@
+import { askAddToPlaylist } from '../../components/AddToPlaylist'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -257,8 +258,18 @@ export function useContextMenu(items: () => [string, () => void][]) {
   const [at, setAt] = useState<{ x: number; y: number; up: boolean; items: [string, () => void][] } | null>(null)
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
-    const up = e.clientY + 230 > window.innerHeight
-    setAt({ x: Math.min(e.clientX + 180, window.innerWidth - 8), y: e.clientY, up, items: items() })
+    const list = items()
+    const h = list.length * 36 + 20
+    // From a button (a click, or a key with no pointer): under the button, right edges lined up.
+    if (e.type === 'click' || (e.clientX === 0 && e.clientY === 0)) {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const up = r.bottom + 6 + h > window.innerHeight
+      setAt({ x: Math.min(r.right, window.innerWidth - 8), y: up ? r.top - 6 : r.bottom + 6, up, items: list })
+      return
+    }
+    // At the pointer, opening downward unless that would run off the window.
+    const up = e.clientY + h > window.innerHeight
+    setAt({ x: Math.min(e.clientX + 180, window.innerWidth - 8), y: e.clientY, up, items: list })
   }
   const close = useCallback(() => setAt(null), [])
   const menu = createPortal(<AnimatePresence>{at && <Menu at={at} items={at.items} onClose={close} />}</AnimatePresence>, document.body)
@@ -272,6 +283,7 @@ export function albumActions(nav: ReturnType<typeof useNav>, a: Album): [string,
     ['Shuffle', () => void play(nav.root, shuffled(a.tracks), 0, a.title)],
     ['Play next', () => void enqueue(nav.root, a.tracks, true)],
     ['Add to queue', () => void enqueue(nav.root, a.tracks, false)],
+    ['Add to playlist…', () => askAddToPlaylist(a.tracks.map((t) => t.path), a.title)],
     ['Go to artist', () => nav.openArtist(a.artist)],
     ['Edit details', () => nav.editDetails(a.dir)],
   ]
@@ -283,6 +295,7 @@ export function trackActions(nav: ReturnType<typeof useNav>, track: CatalogTrack
   return [
     ['Play next', () => void enqueue(nav.root, [track], true)],
     ['Add to queue', () => void enqueue(nav.root, [track], false)],
+    ['Add to playlist…', () => askAddToPlaylist([track.path], track.title)],
     ...(artist ? ([['Go to artist', () => nav.openArtist(artist)]] as [string, () => void][]) : []),
     ['Go to album', () => nav.openAlbum(track.dir)],
     ['Edit details', () => nav.editDetails(track.dir)],
@@ -297,7 +310,7 @@ export function TrackMenu({ track, label }: { track: CatalogTrack; label: string
   const openMenu = () => {
     const r = button.current?.getBoundingClientRect()
     if (!r) return
-    const up = r.bottom + 190 > window.innerHeight
+    const up = r.bottom + items.length * 36 + 20 > window.innerHeight
     setAt({ x: Math.min(r.right, window.innerWidth - 8), y: up ? r.top - 6 : r.bottom + 6, up })
   }
   const close = useCallback((refocus = true) => {

@@ -37,6 +37,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
+import { dismissNotice, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
@@ -50,7 +51,9 @@ import { ListenScreen } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
 import { CardsScreen } from './screens/CardsScreen'
-import { PlaylistsScreen } from './screens/PlaylistsScreen'
+import { PlaylistsScreen, showPlaylists } from './screens/PlaylistsScreen'
+import { AddToPlaylist } from './components/AddToPlaylist'
+import { ConfirmHost } from './components/Confirm'
 import { ActivityScreen } from './screens/ActivityScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { SetupScreen } from './screens/SetupScreen'
@@ -114,6 +117,8 @@ export default function App() {
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
   const [lookup, setLookup] = useState<{ done: number; total: number; note?: string } | null>(null)
   const [notice, setNotice] = useState('')
+  // Notices from anywhere in the app (added to a playlist, removed with Undo…).
+  const shared = useNotice()
   const [palette, setPalette] = useState(false)
   const [sheet, setSheet] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
@@ -268,6 +273,19 @@ export default function App() {
     [active],
   )
 
+  // Playlists from elsewhere (the Music home's shelf, a notice's Open).
+  const openPlaylist = useCallback(
+    (name: string) => {
+      showPlaylists({ kind: 'playlist', name })
+      go('playlists')
+    },
+    [go],
+  )
+  const openPlaylists = useCallback(() => {
+    showPlaylists({ kind: 'home' })
+    go('playlists')
+  }, [go])
+
   async function runDeepCheck() {
     setDeep({ done: 0, total: 0 })
     try {
@@ -361,6 +379,36 @@ export default function App() {
       goTo('health', 'Health', 'Ctrl+3', 'status quality metadata completeness problems tools'),
       goTo('inbox', 'Organize', 'Ctrl+4', 'inbox questions decisions review new music incoming manage library naming'),
       goTo('playlists', 'Playlists', 'Ctrl+5', 'smart want-list to get'),
+      {
+        id: 'playlist-new',
+        group: 'Actions',
+        label: 'New playlist',
+        keywords: 'make create mix',
+        run: () => {
+          showPlaylists({ kind: 'new' })
+          go('playlists')
+        },
+      },
+      {
+        id: 'playlist-import',
+        group: 'Actions',
+        label: 'Import playlists',
+        keywords: 'spotify apple music youtube deezer tidal amazon m3u bring over transfer',
+        run: () => {
+          showPlaylists({ kind: 'import' })
+          go('playlists')
+        },
+      },
+      {
+        id: 'playlist-wanted',
+        group: 'Go to',
+        label: 'To get (albums your playlists want)',
+        keywords: 'want-list wanted missing buy',
+        run: () => {
+          showPlaylists({ kind: 'wanted' })
+          go('playlists')
+        },
+      },
       goTo('devices', 'Devices', 'Ctrl+6', 'cards sd players sync'),
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
@@ -593,6 +641,8 @@ export default function App() {
             openAlbum={listenAlbum}
             onOpenedAlbum={() => setListenAlbum(null)}
             onEditDetails={() => go('music')}
+            onOpenPlaylist={openPlaylist}
+            onPlaylists={openPlaylists}
             reset={again}
           />
         )
@@ -643,7 +693,16 @@ export default function App() {
           />
         )
       case 'playlists':
-        return <PlaylistsScreen root={root} />
+        return (
+          <PlaylistsScreen
+            root={root}
+            report={report}
+            onAlbum={(dir) => {
+              go('listen')
+              setListenAlbum(dir)
+            }}
+          />
+        )
       case 'devices':
         return <CardsScreen root={root} />
       case 'activity':
@@ -716,6 +775,12 @@ export default function App() {
             </AnimatePresence>
             </div>
             <Toast text={error ? '' : notice} onClose={closeNotice} />
+            <Toast
+              text={error || notice ? '' : (shared?.text ?? '')}
+              action={shared?.action}
+              stamp={shared?.id}
+              onClose={dismissNotice}
+            />
             <Toast text={error} tone="error" onClose={closeError} />
             <NowPlaying
               open={nowOpen}
@@ -748,6 +813,10 @@ export default function App() {
           </div>
         </div>
         <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+        {root && (
+          <AddToPlaylist root={root} onOpen={openPlaylist} />
+        )}
+        <ConfirmHost />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />
       </div>
     </MotionConfig>
