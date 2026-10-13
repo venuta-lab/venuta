@@ -1,8 +1,11 @@
-//! Where the app keeps its own data. Placeholder app name until the project is named.
+//! Where Venuta keeps its own data.
 
 use std::path::{Path, PathBuf};
 
-pub const APP_DIR_NAME: &str = "music-librarian";
+pub const APP_DIR_NAME: &str = "Venuta";
+
+/// The folder used before the app was named; moved to the new name on first start.
+const OLD_APP_DIR_NAME: &str = "music-librarian";
 
 /// Per-user application data directory (index, caches, journals).
 pub fn app_data_dir() -> PathBuf {
@@ -15,8 +18,17 @@ pub fn app_data_dir() -> PathBuf {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
     };
-    base.unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR_NAME)
+    let base = base.unwrap_or_else(|| PathBuf::from("."));
+    let dir = base.join(APP_DIR_NAME);
+    // Settings, indexes, caches and journals from before the rename come along, once.
+    static MOVED: std::sync::Once = std::sync::Once::new();
+    MOVED.call_once(|| {
+        let old = base.join(OLD_APP_DIR_NAME);
+        if !dir.exists() && old.is_dir() {
+            let _ = std::fs::rename(&old, &dir);
+        }
+    });
+    dir
 }
 
 /// Index database location for a library root. One index per library, named by a hash of

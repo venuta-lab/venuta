@@ -8,9 +8,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const USER_AGENT: &str = concat!(
-    "MusicLibrarian/",
+    "Venuta/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/aakashkore/music-librarian)"
+    " (+https://github.com/aakashkore/venuta)"
 );
 
 /// Minimum gap between requests to one host.

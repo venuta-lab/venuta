@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "librarian"
+name = "venuta"
 path = "src/main.rs"
 
 [dependencies]

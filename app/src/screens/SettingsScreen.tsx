@@ -443,7 +443,7 @@ function About() {
   return (
     <div className="select-text">
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">About</h2>
-      <p className="mt-2 text-[13.5px] text-ink/70">Music Librarian {v}. Free and open source under the MIT licence.</p>
+      <p className="mt-2 text-[13.5px] text-ink/70">Venuta (वेणुता) {v}. Free and open source under the MIT licence.</p>
       <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
         published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.

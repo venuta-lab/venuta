@@ -1,7 +1,7 @@
 //! SD card sync: a one-way mirror of the library onto a card, safe to interrupt.
 //!
-//! * The card says who it is: `/.music-librarian/card.toml` (never the drive letter).
-//! * The card remembers what it holds: `/.music-librarian/manifest.sqlite`, so any PC can
+//! * The card says who it is: `/.venuta/card.toml` (never the drive letter).
+//! * The card remembers what it holds: `/.venuta/manifest.sqlite`, so any PC can
 //!   sync it and changes are found by content, not by FAT/exFAT's unreliable file times.
 //! * Order: clean up interrupted writes → delete → move → copy new (`.part`, flush, rename) →
 //!   patch tags in place → sidecars. The manifest is updated after every file.
@@ -20,7 +20,18 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-pub const CARD_DIR: &str = ".music-librarian";
+pub const CARD_DIR: &str = ".venuta";
+
+/// The card folder written before the app was named; renamed on first use.
+const OLD_CARD_DIR: &str = ".music-librarian";
+
+/// Move a card's folder from before the rename, so its identity and manifest carry over.
+fn migrate_card(card_root: &Path) {
+    let (new, old) = (card_root.join(CARD_DIR), card_root.join(OLD_CARD_DIR));
+    if !new.exists() && old.is_dir() {
+        let _ = std::fs::rename(old, new);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardConfig {
@@ -50,6 +61,7 @@ fn default_folder() -> String {
 }
 
 pub fn card_config_path(card_root: &Path) -> PathBuf {
+    migrate_card(card_root);
     card_root.join(CARD_DIR).join("card.toml")
 }
 

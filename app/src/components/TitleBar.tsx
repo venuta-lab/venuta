@@ -8,7 +8,7 @@ export function TitleBar(props: { onPalette: () => void }) {
   return (
     <div data-tauri-drag-region className="relative z-30 flex h-10 shrink-0 items-center pl-5">
       <span data-tauri-drag-region className="text-[13px] font-medium tracking-tight text-ink/70">
-        Music Librarian
+        Venuta
       </span>
       <button
         onClick={props.onPalette}

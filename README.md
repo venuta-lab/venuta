@@ -1,4 +1,6 @@
-# Music Librarian (working title)
+# Venuta (वेणुता)
+
+*The essence of the flute.*
 
 A free, open-source desktop app that builds and keeps a perfect personal lossless music library, and mirrors it to SD cards for portable players.
 
@@ -14,7 +16,7 @@ There is no AI at runtime, no account and no paid service, and the app never dow
 
 > Built for one person's library first, and shared as-is in case it helps you. No support is promised.
 
-Status: 0.1, Windows first. See [docs/PLAN.md](docs/PLAN.md) for the design and progress, [docs/decisions](docs/decisions) for what was learned while building, and [docs/research](docs/research) for the sources behind it.
+Status: 0.1, Windows first, built for one library and shared as-is. See [docs/PLAN.md](docs/PLAN.md) for the design and progress, [docs/decisions](docs/decisions) for what was learned while building, and [docs/research](docs/research) for the sources behind it.
 
 ## What it will never do
 
@@ -25,73 +27,59 @@ Status: 0.1, Windows first. See [docs/PLAN.md](docs/PLAN.md) for the design and 
 
 ## Using it
 
-### 1. Library
+The first time, **Set up your library** walks you through it: where your music is, where the clean library goes, reading it, and looking up details online. After that the app has seven places, in the rail on the left.
 
-Choose your music folder. The first scan reads every file once; after that, a rescan only looks at what changed.
+### Music
 
-- **Health** lists problems by kind: tags, duplicates, art, lyrics, paths and loudness.
-- **Deep check** decodes every file. It verifies the checksum and finds lossy sources, upsampling, padded 24-bit and real loudness. It takes a few minutes for a large library and can be stopped and resumed.
-- **Look up online** asks MusicBrainz, Apple's public catalogue, Deezer and LRCLIB for original years, composers, lyricists, labels, large covers and synced lyrics. Answers are cached for 90 days, and requests are paced to respect each service's limits.
+Every album as a cover wall, with search and your own top-level folders as filters. Open an album to edit its details and song titles, rate songs (saved as you click) and add it to a playlist. Editing writes to your music files, so the first time the app asks you to confirm that you have a backup.
 
-### 2. Review and build
+### Health
 
-Review shows, album by album, exactly what would change and why, with a confidence level for each change.
+How complete and how sound your library is, as a dashboard:
 
-- Approve albums one at a time or all at once.
-- Answer the questions it asks, for example whether two artist spellings are the same person. Answers are saved to your rules.
-- Choose where the new library goes, then **Build**. It copies, retags, adds covers and lyrics, verifies, and writes a journal. **Undo** removes everything that run created.
+- a ring with how complete the details are today, and after you build;
+- a tile per detail (composer, synced lyrics, genre, album artist, covers, volume levelling), showing the albums still missing it;
+- a tile per sound problem (damaged, lossy, fake hi-res, padded 24-bit, cut-off highs, missing songs), opening the albums with their spectrograms, and **Add to To get** for a better copy;
+- the tools: **Look up details online** (MusicBrainz, Apple's catalogue, Deezer, LRCLIB, plus Discogs and AcoustID with your keys), **Check quality** (decodes every song), **Rescan**, and the music folder.
 
-Rules are plain TOML files that you can edit in any text editor. Their folder is set in settings (default `%APPDATA%\music-librarian\rules`). The rules files are:
+### Organize
 
-| File | Holds |
-|---|---|
-| `aliases.toml` | artist spellings |
-| `categories.toml` | which folders are film, classical, and so on |
-| `genres.toml` | genre mapping |
-| `layout.toml` | the folder and file naming pattern |
-| `strip.toml` | junk tags to remove |
-| `titles.toml` | title clean-up |
+Where your library is tidied and new music is filed.
 
-### 3. Browse
+- **Questions for you:** only what can't be proven, one card at a time, with the evidence side by side, clips from your own files (Space), a recommendation and its reason. Number keys answer, Enter accepts the recommendation, Ctrl+Enter accepts them all.
+- **Handled for you:** what was proven automatically (identical songs set aside, spellings unified, years settled by the recording codes), each with its exact proof, to approve or change.
+- **What the build changes:** a few stories (sharper covers, synced lyrics, credits, years…) that open to the albums and their exact before and after; any album can be left out.
+- **Build library** copies, retags, adds covers and lyrics, verifies, and writes a journal. Albums waiting for an answer are held back and built later. Then **Switch to the new library**.
+- **New music:** drop albums on the window, or into `_Incoming`, and they are filed the same way.
 
-Your albums as a wall of covers. Open one to edit album fields and track titles, and to rate songs; ratings save as soon as you click. **Add to playlist** puts the whole album on a playlist. Editing writes to your music files, so the first time, the app asks you to confirm that you have a backup.
+Rules are plain TOML files in your rules folder (Settings, Music folders): artist names, categories, folder layout, genres, title clean-up and tags to strip. Artist names can also be edited in Settings.
 
-### 4. Incoming
+### Playlists
 
-Drop new albums onto the screen, or into `_Incoming` inside your library. The app looks them up, shows the plan, and files them like everything else. It also flags songs you already have. Originals are kept in `_Incoming/.imported` until you clear them.
+Playlists are ordinary `.m3u8` files in `Playlists/` inside your library, so any player can use them. Create, rename, reorder by dragging, remove songs, delete (to quarantine); a moved song is found again by its audio checksum. Smart playlists are rules ("rating at least 4", "unrated songs on albums you rated highly") that rewrite themselves. Your Apple Music playlists can be brought over; what you don't own goes on **To get**.
 
-### 5. Playlists
+### Devices
 
-Playlists are ordinary `.m3u8` files in `Playlists/` inside your library, so any player can use them.
+Each SD card is written for the player that reads it: **Poweramp**, **Snowsky Disc**, **Echo Mini**, **Astell&Kern**, or an exact copy. The sound is never re-encoded; only the tags and covers are adjusted (several singers joined with ";", the original year in DATE, covers at the player's size). Only changes are written, a pulled card is safe, and music already on a card is recognised instead of copied again. **Test this player** writes a short test album to check what your player reads.
 
-- **Your playlists:** create, rename, reorder by dragging, remove songs, delete (to quarantine). If a song moves, the playlist finds it again by its audio checksum.
-- **Smart playlists** are rules such as "rating at least 4" or "unrated songs on albums you rated highly". They rewrite themselves every time you open Playlists. *Top rated*, *Explore* and *Recently added* are made for you.
-- **Apple Music (Windows):** the app reads your own `Library.musicdb` and rebuilds your playlists from the songs you have. Everything else goes on a want-list, sorted into albums to get whole, to explore, and to probably skip. The library file is encrypted. You enter its key once, and it is stored only on your computer; it is published in several open-source Apple Music tools and is not included here.
-- **Rate unrated ★★★★** gives every unrated song in a playlist four stars. It is handy for Apple's *Favourite Songs*.
+### Activity and Settings
 
-### 6. Cards
+**Activity** lists every build, every edit to your files and every answer, each with undo. **Settings** holds the look (light or dark, Glass, Frosted, Solid or AMOLED, the accent colour), music folders, artist names, online sources and keys, players, safety and about.
 
-Insert an SD card and choose **Set up** to name it and pick which parts of the library it carries.
-
-- **Sync** copies new music, moves renamed files, removes music you removed, and patches tag changes in place without rewriting the audio.
-- If the card already has your music from another tool, the app adopts those files instead of copying them again.
-- A pulled card is safe: the next sync finishes the job.
-- With **auto-sync** on, a card is synced and ejected as soon as it is inserted while the app is open.
-
-Shortcuts: **Ctrl+1 to Ctrl+6** switch sections, a two-finger swipe moves between them, and **Esc** closes an album.
+Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+5** switch between Music, Health, Organize, Playlists and Devices, **Ctrl+,** opens Settings, **/** searches your music, **?** lists every shortcut.
 
 ### Where things live
 
 | What | Where |
 |---|---|
-| Settings, the index for each library, caches, thumbnails, journals | `%APPDATA%\music-librarian\` |
-| Rules and smart-playlist rules | the rules folder (see above) |
+| Settings, the index for each library, caches, thumbnails, journals | `%APPDATA%\Venuta\` |
+| Rules and smart-playlist rules | the rules folder (Settings, Music folders) |
 | Playlists | `<library>\Playlists\` |
-| Card identity and manifest | `<card>\.music-librarian\` |
+| Card identity and manifest | `<card>\.venuta\` |
 
 ## Install
 
-Download the Windows installer (`Music Librarian_x.y.z_x64-setup.exe`) from the releases page and run it. It installs for your user only, with no admin rights needed. The app is not code-signed yet, so Windows SmartScreen may warn you the first time: choose **More info**, then **Run anyway**.
+Download the Windows installer (`Venuta_x.y.z_x64-setup.exe`) from the releases page and run it. It installs for your user only, with no admin rights needed. The app is not code-signed yet, so Windows SmartScreen may warn you the first time: choose **More info**, then **Run anyway**.
 
 ## Development
 
@@ -105,14 +93,14 @@ pnpm --dir app tauri dev                    # desktop app with hot reload
 pnpm --dir app tauri build                  # installer in target/release/bundle
 ```
 
-The CLI (`librarian`) can do everything headless: `scan`, `health`, `deepcheck`, `plan`, `apply`, `undo`, `incoming-plan`, `incoming-import`, `card-setup`, `card-sync`, `apple-import` and `lookup`. Run `librarian --help` for details.
+The CLI (`venuta`) can do everything headless: `scan`, `health`, `deepcheck`, `plan`, `apply`, `undo`, `incoming-plan`, `incoming-import`, `card-setup`, `card-sync`, `apple-import` and `lookup`. Run `venuta --help` for details.
 
 Layout:
 
 | Folder | Contents |
 |---|---|
 | `crates/engine` | all the logic, no UI |
-| `crates/cli` | the headless binary `librarian` |
+| `crates/cli` | the headless binary `venuta` |
 | `app/` | the Tauri shell and React UI |
 | `docs/` | plan, research and decision records |
 

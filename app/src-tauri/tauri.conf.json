@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Music Librarian",
+  "productName": "Venuta",
   "version": "0.1.0",
-  "identifier": "dev.musiclibrarian.desktop",
+  "identifier": "app.venuta.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Music Librarian",
+        "title": "Venuta",
         "width": 1280,
         "height": 820,
         "minWidth": 960,
@@ -37,8 +37,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$DATA/music-librarian/thumbs/**",
-          "$DATA/music-librarian/spectrograms/**"
+          "$DATA/Venuta/thumbs/**",
+          "$DATA/Venuta/spectrograms/**"
         ]
       }
     }

@@ -2,7 +2,7 @@
 //!
 //! Entries use paths relative to the playlist (`../Film & Series/…`), so the same file works
 //! on the PC and on a card (where the music sits under `Music/`). Each entry also carries the
-//! track's audio checksum in a comment line players ignore (`#LIBRARIAN-MD5:`), so when files
+//! track's audio checksum in a comment line players ignore (`#VENUTA-MD5:`), so when files
 //! move (e.g. the migration) a playlist repairs itself instead of breaking.
 //!
 //! Smart playlists are rules in `<rules>/playlists/*.toml`, written out as `.m3u8` too.
@@ -14,8 +14,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub const FOLDER: &str = "Playlists";
-const MD5_TAG: &str = "#LIBRARIAN-MD5:";
-const SMART_TAG: &str = "#LIBRARIAN-SMART";
+const MD5_TAG: &str = "#VENUTA-MD5:";
+const SMART_TAG: &str = "#VENUTA-SMART";
+/// The same lines as written before the app was named; still read.
+const OLD_MD5_TAG: &str = "#LIBRARIAN-MD5:";
+const OLD_SMART_TAG: &str = "#LIBRARIAN-SMART";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlaylistEntry {
@@ -83,7 +86,10 @@ pub fn read(
     let mut pending_md5: Option<String> = None;
     let mut repaired = false;
     for line in text.lines().map(str::trim) {
-        if let Some(m) = line.strip_prefix(MD5_TAG) {
+        if let Some(m) = line
+            .strip_prefix(MD5_TAG)
+            .or_else(|| line.strip_prefix(OLD_MD5_TAG))
+        {
             pending_md5 = Some(m.trim().to_uppercase());
             continue;
         }
@@ -176,7 +182,7 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
             let (entries, _) = read(library_root, lib, &name).ok()?;
             Some(PlaylistSummary {
                 file: e.path().to_string_lossy().into_owned(),
-                smart: text.contains(SMART_TAG),
+                smart: text.contains(SMART_TAG) || text.contains(OLD_SMART_TAG),
                 tracks: entries.len(),
                 missing: entries.iter().filter(|x| x.missing).count(),
                 name,

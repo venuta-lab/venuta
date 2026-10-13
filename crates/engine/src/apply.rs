@@ -114,7 +114,7 @@ pub fn apply(
     if !marker.exists() {
         std::fs::write(
             &marker,
-            "A library built by Music Librarian.
+            "A library built by Venuta.
 ",
         )
         .map_err(|e| e.to_string())?;
@@ -570,7 +570,10 @@ fn file_len(p: &Path) -> Option<u64> {
 }
 
 /// Marks a folder as a library this app built, so later builds may add to it.
-pub const LIBRARY_MARKER: &str = ".music-librarian-library";
+pub const LIBRARY_MARKER: &str = ".venuta-library";
+
+/// The marker written before the app was named; still recognised.
+const OLD_LIBRARY_MARKER: &str = ".music-librarian-library";
 
 /// The new library must be its own folder: not the current one, not inside it (or around it),
 /// and either empty or one this app built. A folder of other music is never mixed in.
@@ -587,7 +590,10 @@ pub fn check_target(source_root: &Path, target_root: &Path) -> Result<(), String
     let has_other_files = std::fs::read_dir(target_root)
         .map(|mut d| d.next().is_some())
         .unwrap_or(false);
-    if has_other_files && !target_root.join(LIBRARY_MARKER).exists() {
+    if has_other_files
+        && !target_root.join(LIBRARY_MARKER).exists()
+        && !target_root.join(OLD_LIBRARY_MARKER).exists()
+    {
         return Err(format!(
             "{} already has files that this app didn't put there. Choose an empty folder for the new library.",
             target_root.display()

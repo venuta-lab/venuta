@@ -1,4 +1,4 @@
-# Music Librarian: design and plan
+# Venuta: design and plan
 
 > **Status:** v0.3, 2026-10-12. v0.3 added Browse, tag editor, playlist editor, smart playlist builder and preview player (D18–D20). The decisions are made (§12). The working title is a placeholder until the project is named.
 > **Basis:** five research reports in [`research/`](research/), with every claim sourced and marked VERIFIED or UNVERIFIED. Also an audit of the owner's library (`D:\Collection`, 2,688 FLAC files) and their Apple Music library.

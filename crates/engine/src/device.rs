@@ -381,7 +381,7 @@ fn write_variant(
         meta.extend([kind & 0x7F, len[1], len[2], len[3]]);
         meta.extend(data);
     };
-    let mut vendor = b"Music Librarian player test".to_vec();
+    let mut vendor = b"Venuta player test".to_vec();
     for b in &layout.blocks {
         let mut raw = vec![0u8; b.len as usize];
         f.seek(SeekFrom::Start(b.offset + 4))
@@ -466,7 +466,7 @@ pub fn write_test_kit(
         let mut t: Vec<(String, String)> = vec![
             ("TITLE".into(), title.into()),
             ("ALBUM".into(), "Player test".into()),
-            ("ALBUMARTIST".into(), "Music Librarian".into()),
+            ("ALBUMARTIST".into(), "Venuta".into()),
             ("TRACKNUMBER".into(), n.to_string()),
             ("DATE".into(), "2004".into()),
             ("ORIGINALDATE".into(), "1999".into()),
