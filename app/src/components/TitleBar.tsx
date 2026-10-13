@@ -1,4 +1,6 @@
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useEffect, useState } from 'react'
 import { inApp } from '../lib/engine'
 import { ActivityIndicator } from './Activity'
 import { IconSearch } from './Icons'
@@ -6,11 +8,21 @@ import { IconSearch } from './Icons'
 // Frameless window: this strip is the drag handle and holds the window controls.
 export function TitleBar(props: { onPalette: () => void }) {
   const win = inApp() ? getCurrentWindow() : null
+  // A copy for testing, beside the one in use: never mistaken for it.
+  const [test, setTest] = useState(false)
+  useEffect(() => {
+    if (inApp()) invoke<boolean>('is_test_copy').then(setTest, () => {})
+  }, [])
   return (
     <div data-tauri-drag-region className="relative z-30 flex h-10 shrink-0 items-center pl-5">
       <span data-tauri-drag-region className="text-[13px] font-medium tracking-tight text-ink/70">
         Venuta
       </span>
+      {test && (
+        <span data-tauri-drag-region className="ml-2 rounded-full bg-[#e5484d] px-2 py-0.5 text-[11px] font-semibold text-white">
+          Test copy
+        </span>
+      )}
       <button
         onClick={props.onPalette}
         title="Go to a place, an album or an artist, or run a command"

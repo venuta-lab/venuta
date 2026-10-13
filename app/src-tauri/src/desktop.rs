@@ -45,7 +45,7 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let mut builder = TrayIconBuilder::with_id("venuta")
-        .tooltip("Venuta")
+        .tooltip(if crate::test_copy() { "Venuta (test copy)" } else { "Venuta" })
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, e| {

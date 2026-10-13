@@ -2131,12 +2131,22 @@ fn confirm_backup() -> CmdResult<()> {
     engine::settings::save(&s)
 }
 
+/// A test copy running beside the Venuta in use (VENUTA_MULTI): it says so, everywhere.
+pub fn test_copy() -> bool {
+    std::env::var_os("VENUTA_MULTI").is_some()
+}
+
+#[tauri::command]
+fn is_test_copy() -> bool {
+    test_copy()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
     // One Venuta at a time: opening it again brings the open one forward. (VENUTA_MULTI lets a
     // test copy run beside the one in use.)
-    if std::env::var_os("VENUTA_MULTI").is_none() {
+    if !test_copy() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             desktop::show_main(app);
         }));
@@ -2155,6 +2165,11 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .setup(|app| {
             allow_data_assets(app.handle());
+            if test_copy()
+                && let Some(w) = app.get_webview_window("main")
+            {
+                let _ = w.set_title("Venuta (test copy)");
+            }
             if let Err(e) = desktop::tray(app.handle()) {
                 eprintln!("tray: {e}");
             }
@@ -2281,6 +2296,7 @@ pub fn run() {
             playlist_sources_check,
             playlist_update_read,
             playlist_restore,
+            is_test_copy,
             search_web,
             import_preview,
             import_apply,
