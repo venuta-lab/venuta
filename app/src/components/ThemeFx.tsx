@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { usePrefs } from '../lib/prefs'
 import { current, usePlayerValue } from '../lib/player'
 
@@ -114,18 +114,11 @@ function Over(props: { style?: React.CSSProperties; className?: string }) {
 /** Neo-Tokyo: red light-trails sweep across when the song changes. */
 function LightTrails() {
   const path = usePlayerValue((s) => current(s)?.path ?? '')
-  const [run, setRun] = useState(0)
-  const first = useRef(true)
-  useEffect(() => {
-    if (first.current) {
-      first.current = false
-      return
-    }
-    if (path) setRun((n) => n + 1)
-  }, [path])
-  if (!run) return null
+  // Not for the song already playing when the theme appears; each new one replays (by key).
+  const [first] = useState(path)
+  if (!path || path === first) return null
   return (
-    <div key={run} aria-hidden className="pointer-events-none fixed inset-0 z-[80] overflow-hidden">
+    <div key={path} aria-hidden className="pointer-events-none fixed inset-0 z-[80] overflow-hidden">
       {[22, 58, 81].map((top, i) => (
         <span
           key={top}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
-import { accentByName, styleInfo, type Style } from './themes'
+import { ACCENTS, accentByName, colourDistance, styleInfo, type Style } from './themes'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -46,9 +46,11 @@ function load(): Prefs {
   }
 }
 
-/** Older saves kept the accent as a colour; the accents are named now. */
+/** Older saves kept the accent as a colour; the accents are named now: take the nearest. */
 function upgrade(p: Prefs): Prefs {
-  return p.accent.startsWith('#') ? { ...p, accent: 'Azure' } : p
+  if (!p.accent.startsWith('#')) return p
+  const nearest = ACCENTS.reduce((a, b) => (colourDistance(p.accent, b.dark) < colourDistance(p.accent, a.dark) ? b : a))
+  return { ...p, accent: nearest.name }
 }
 
 export const getPrefs = () => current
