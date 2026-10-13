@@ -93,7 +93,7 @@ function Db(props: { label: string; value: number; onChange: (v: number) => void
 
 function Card(props: { title: string; right?: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <section className="glass rounded-2xl px-4 py-3.5">
+    <section className="glass min-w-0 rounded-2xl px-4 py-3.5">
       <div className="flex items-center gap-3">
         <h3 className="flex-1 text-[14px] font-medium">{props.title}</h3>
         {props.right}
@@ -128,14 +128,20 @@ export function SoundPanel() {
     }, 120)
   }
   const band = (i: number, v: number) => change({ ...draft, eq: true, preset: 'Custom', bands: draft.bands.map((b, k) => (k === i ? v : b)) })
-  const changed = s.signal ? !s.signal.bit_perfect : false
+  // From the settings themselves (there's no signal while nothing plays).
+  const changed =
+    (draft.eq && draft.bands.some((b) => Math.abs(b) > 0.05)) ||
+    Math.abs(draft.preamp_db) > 0.05 ||
+    Math.abs(draft.bass_db) > 0.05 ||
+    Math.abs(draft.treble_db) > 0.05 ||
+    draft.leveling !== 'off'
   const sleepMin = s.sleep_in_s !== null ? Math.ceil(s.sleep_in_s / 60) : null
 
   return (
-    <div className="grid gap-3 pb-6 text-[13px]">
+    <div className="grid min-w-0 grid-cols-1 gap-3 pb-6 text-[13px]">
       <p className={`text-[12.5px] ${changed ? 'text-fix' : 'text-ink/55'}`}>
         {changed
-          ? 'The sound is being changed on the way (see Signal). Turn these off for bit-perfect playback.'
+          ? 'These change the sound on the way (Signal shows each step). Turn them off for bit-perfect playback.'
           : 'Everything here is off: you hear the file exactly as it is. Any of these changes the sound.'}
       </p>
 
