@@ -155,7 +155,7 @@ export function MusicScreen(props: {
   return (
     <div className="mx-auto max-w-[1180px]">
       <header className="pb-4 pt-6">
-        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Music</h1>
+        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Metadata</h1>
         <p className="mt-2.5 text-[14px] text-ink/60">
           {s ? `${fmtNum(s.albums)} albums, ${fmtNum(s.tracks)} songs` : props.busy || 'Reading your music…'}
         </p>

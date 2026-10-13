@@ -11,7 +11,8 @@ import {
   IconCards,
   IconHealth,
   IconInbox,
-  IconMusic,
+  IconListen,
+  IconTag,
   IconPlaylists,
   IconSettings,
 } from './components/Icons'
@@ -63,10 +64,11 @@ const store = {
 const normPath = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
 const samePath = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && normPath(a) === normPath(b)
 
-type Place = 'music' | 'health' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
-const ORDER: Place[] = ['music', 'health', 'inbox', 'playlists', 'devices', 'activity', 'settings']
-/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+5). */
-const MAIN = 5
+// "listen" is the Music home (listening); "music" is the album wall for details (Metadata).
+type Place = 'listen' | 'music' | 'health' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
+const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'playlists', 'devices', 'activity', 'settings']
+/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+6). */
+const MAIN = 6
 
 export default function App() {
   const prefs = usePrefs()
@@ -83,7 +85,7 @@ export default function App() {
   const [report, setReport] = useState<HealthReport | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const [active, setActive] = useState<Place>('music')
+  const [active, setActive] = useState<Place>('listen')
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
@@ -305,11 +307,12 @@ export default function App() {
       ['amoled', 'AMOLED (true black)'],
     ]
     const list: Command[] = [
-      goTo('music', 'Music', 'Ctrl+1', 'albums library home browse'),
-      goTo('health', 'Health', 'Ctrl+2', 'status quality metadata completeness problems tools'),
-      goTo('inbox', 'Organize', 'Ctrl+3', 'inbox questions decisions review new music incoming manage library'),
-      goTo('playlists', 'Playlists', 'Ctrl+4', 'smart want-list to get'),
-      goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
+      goTo('listen', 'Music', 'Ctrl+1', 'listen play home albums artists songs player'),
+      goTo('music', 'Metadata', 'Ctrl+2', 'tags details edit covers album wall'),
+      goTo('health', 'Health', 'Ctrl+3', 'status quality metadata completeness problems tools'),
+      goTo('inbox', 'Organize', 'Ctrl+4', 'inbox questions decisions review new music incoming manage library naming'),
+      goTo('playlists', 'Playlists', 'Ctrl+5', 'smart want-list to get'),
+      goTo('devices', 'Devices', 'Ctrl+6', 'cards sd players sync'),
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
@@ -404,7 +407,7 @@ export default function App() {
       } else if (e.ctrlKey && k === 'h') {
         e.preventDefault()
         go('activity')
-      } else if (e.ctrlKey && /^[1-5]$/.test(k)) {
+      } else if (e.ctrlKey && /^[1-6]$/.test(k)) {
         e.preventDefault()
         go(ORDER[Number(k) - 1])
       } else if (!e.ctrlKey && !e.altKey && !typing(e.target)) {
@@ -444,11 +447,12 @@ export default function App() {
   }
 
   const top: Section[] = [
-    { id: 'music', label: 'Music', icon: IconMusic, keys: 'Ctrl+1' },
-    { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+2' },
-    { id: 'inbox', label: 'Organize', icon: IconInbox, keys: 'Ctrl+3', badge: inboxCount },
-    { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+4' },
-    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+5' },
+    { id: 'listen', label: 'Music', icon: IconListen, keys: 'Ctrl+1' },
+    { id: 'music', label: 'Metadata', icon: IconTag, keys: 'Ctrl+2' },
+    { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+3' },
+    { id: 'inbox', label: 'Organize', icon: IconInbox, keys: 'Ctrl+4', badge: inboxCount },
+    { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+5' },
+    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+6' },
   ]
   const bottom: Section[] = [
     { id: 'activity', label: 'Activity', icon: IconActivity, keys: 'Ctrl+H' },

@@ -723,3 +723,40 @@ export const tryLayout = (root: string, template: string) =>
   inApp()
     ? invoke<LayoutTrial>('try_layout', { root, template })
     : Promise.resolve<LayoutTrial>({ albums: 0, examples: [] })
+
+// --- Listening -------------------------------------------------------------------------------
+
+export interface CatalogTrack {
+  path: string
+  dir: string
+  title: string
+  artists: string[]
+  album: string
+  album_artist: string
+  disc: number
+  track: number
+  duration_ms: number
+  sample_rate: number
+  bit_depth: number
+  format: string
+  year: string
+  genre: string
+  category: string
+  lyrics: boolean
+  stars: number
+}
+
+export const musicCatalog = (root: string) =>
+  inApp() ? invoke<CatalogTrack[]>('music_catalog', { root }) : Promise.resolve([] as CatalogTrack[])
+
+/** "FLAC 24/96", "MP3", "FLAC 16/44.1". */
+export function quality(t: Pick<CatalogTrack, 'format' | 'bit_depth' | 'sample_rate'>): string {
+  const khz = t.sample_rate ? (t.sample_rate / 1000).toFixed(t.sample_rate % 1000 ? 1 : 0) : ''
+  return t.format === 'FLAC' || t.format === 'WAV' || t.format === 'AIFF'
+    ? `${t.format} ${t.bit_depth}/${khz}`
+    : t.format
+}
+
+/** Above CD quality: more than 16 bits or more than 48 kHz. */
+export const isHiRes = (t: Pick<CatalogTrack, 'bit_depth' | 'sample_rate' | 'format'>) =>
+  t.format === 'FLAC' && (t.bit_depth > 16 || t.sample_rate > 48000)

@@ -725,6 +725,106 @@ async fn undo_run(journal: String) -> CmdResult<usize> {
     blocking(move || engine::apply::undo(Path::new(&journal))).await
 }
 
+// --- Listening --------------------------------------------------------------------------------
+
+/// One song as the Music home shows it: enough to browse, sort and play, nothing more.
+#[derive(Serialize)]
+struct CatalogTrack {
+    path: String,
+    dir: String,
+    title: String,
+    /// Each singer, in order.
+    artists: Vec<String>,
+    album: String,
+    album_artist: String,
+    disc: u32,
+    track: u32,
+    duration_ms: u64,
+    sample_rate: u32,
+    bit_depth: u8,
+    /// "FLAC", "MP3", "M4A"…
+    format: String,
+    year: String,
+    genre: String,
+    category: String,
+    lyrics: bool,
+    /// Your rating, 0–5.
+    stars: u8,
+}
+
+/// Every song in the open folder, for the Music home.
+#[tauri::command]
+async fn music_catalog(root: String) -> CmdResult<Vec<CatalogTrack>> {
+    blocking(move || {
+        let index = open_index(Path::new(&root))?;
+        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let num = |t: &engine::library::Track, k: &str| {
+            t.first(k)
+                .and_then(|v| v.split('/').next()?.trim().parse::<u32>().ok())
+                .unwrap_or(0)
+        };
+        let mut out: Vec<CatalogTrack> =
+            lib.tracks
+                .iter()
+                .map(|t| {
+                    let stem = t.path.rsplit_once('.').map(|x| x.0).unwrap_or(&t.path);
+                    let ext = t.path.rsplit('.').next().unwrap_or("").to_ascii_uppercase();
+                    CatalogTrack {
+                        path: t.path.clone(),
+                        dir: t.dir.clone(),
+                        title: t.first("TITLE").map(str::to_owned).unwrap_or_else(|| {
+                            t.path.rsplit('/').next().unwrap_or(&t.path).to_owned()
+                        }),
+                        artists: t
+                            .tags
+                            .get("ARTIST")
+                            .map(|v| {
+                                v.iter()
+                                    .flat_map(|a| engine::plan::split_names(a))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        album: t.first("ALBUM").unwrap_or_default().to_owned(),
+                        album_artist: t
+                            .first("ALBUMARTIST")
+                            .or(t.first("ARTIST"))
+                            .unwrap_or_default()
+                            .to_owned(),
+                        disc: num(t, "DISCNUMBER").max(1),
+                        track: num(t, "TRACKNUMBER"),
+                        duration_ms: t.duration_ms,
+                        sample_rate: t.sample_rate,
+                        bit_depth: t.bit_depth,
+                        format: if ext == "FLAC" { "FLAC".into() } else { ext },
+                        year: t
+                            .first("ORIGINALYEAR")
+                            .or(t.first("DATE"))
+                            .map(|d| d.chars().take(4).collect())
+                            .unwrap_or_default(),
+                        genre: t.first("GENRE").unwrap_or_default().to_owned(),
+                        category: t.first("CATEGORY").unwrap_or_default().to_owned(),
+                        lyrics: t.tags.contains_key("LYRICS")
+                            || lib.lyrics_files.contains(&format!("{stem}.lrc")),
+                        stars: t
+                            .first("RATING")
+                            .map(engine::edit::rating_to_stars)
+                            .unwrap_or(0),
+                    }
+                })
+                .collect();
+        out.sort_by(|a, b| {
+            (a.dir.as_str(), a.disc, a.track, a.path.as_str()).cmp(&(
+                b.dir.as_str(),
+                b.disc,
+                b.track,
+                b.path.as_str(),
+            ))
+        });
+        Ok(out)
+    })
+    .await
+}
+
 // --- Your library, tidied in place -----------------------------------------------------------
 
 fn rules_dir() -> PathBuf {
@@ -1631,6 +1731,7 @@ pub fn run() {
             choose_home,
             check_music_folder,
             set_open_folder,
+            music_catalog,
             tidy_preview,
             tidy_apply,
             tidy_undo,

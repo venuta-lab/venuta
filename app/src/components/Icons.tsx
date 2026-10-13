@@ -74,6 +74,21 @@ export const IconMusic = (p: P) => (
     <circle cx="12" cy="12" r="0.8" fill="currentColor" />
   </svg>
 )
+/** A note: listening. */
+export const IconListen = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M9 18.5V6l11-2.5v12.5" />
+    <circle cx="6.5" cy="18.5" r="2.5" />
+    <circle cx="17.5" cy="16" r="2.5" />
+  </svg>
+)
+/** A tag: the details inside your files. */
+export const IconTag = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M3.5 12.6V4.8c0-.7.6-1.3 1.3-1.3h7.8c.4 0 .7.1.9.4l7 7c.5.5.5 1.3 0 1.8l-7.8 7.8c-.5.5-1.3.5-1.8 0l-7-7a1.3 1.3 0 0 1-.4-.9Z" />
+    <circle cx="8.5" cy="8.5" r="1.4" />
+  </svg>
+)
 export const IconInbox = (p: P) => (
   <svg {...base} {...p}>
     <path d="M4 13.5 6.2 5.6A2 2 0 0 1 8.1 4h7.8a2 2 0 0 1 1.9 1.6L20 13.5" />
