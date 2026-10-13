@@ -89,7 +89,9 @@ fn play_all(items: Vec<PathBuf>, start_ms: u64) -> Captured {
 /// Device samples back as the source's own values (32-bit containers, left-justified).
 fn values(bytes: &[u8], bits: u16) -> Vec<i32> {
     bytes
-        .as_chunks::<4>().0.iter()
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> (32 - bits))
         .collect()
 }

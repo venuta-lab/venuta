@@ -158,6 +158,8 @@ struct Engine<T: Item + Serialize> {
     choice: OutputChoice,
     device: Option<Box<dyn Device>>,
     dev_fmt: Option<DeviceFormat>,
+    /// The song format the device was opened for.
+    opened_for: Option<SourceFormat>,
     started: bool,
     /// The playing song first; the next (decoded ahead) after it.
     segs: VecDeque<Segment>,
@@ -181,6 +183,7 @@ impl<T: Item + Serialize> Engine<T> {
             choice,
             device: None,
             dev_fmt: None,
+            opened_for: None,
             started: false,
             segs: VecDeque::new(),
             on_status,
@@ -414,25 +417,15 @@ impl<T: Item + Serialize> Engine<T> {
             });
             self.dev_fmt = None;
         }
-        let needs_open = match &self.dev_fmt {
-            None => true,
-            // Another rate or depth: reopen in exclusive mode (shared converts anyway).
-            Some(d) => {
-                let mode = self
-                    .device
-                    .as_ref()
-                    .map(|d| d.mode())
-                    .unwrap_or(Mode::Shared);
-                d.rate != fmt.rate
-                    || (mode != Mode::Shared && d.valid_bits < fmt.bits.min(32))
-                    || d.channels < fmt.channels.min(2)
-            }
-        };
+        // Reopen only for a song of another format than the one the device was opened for
+        // (a lossy song's nominal depth is not what the device runs at).
+        let needs_open = self.dev_fmt.is_none() || self.opened_for.as_ref() != Some(fmt);
         if needs_open {
             let dev = self.device.as_mut().expect("just made");
             let _ = dev.stop();
             self.started = false;
             self.dev_fmt = Some(dev.open(fmt)?);
+            self.opened_for = Some(fmt.clone());
         }
         Ok(())
     }

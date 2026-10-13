@@ -208,6 +208,15 @@ impl WasapiDevice {
         let event = client.set_get_eventhandle().map_err(|e| e.to_string())?;
         let render = client.get_audiorenderclient().map_err(|e| e.to_string())?;
         self.buffer_frames = client.get_buffer_size().map_err(|e| e.to_string())? as usize;
+        if std::env::var_os("VENUTA_DEBUG_WASAPI").is_some() {
+            eprintln!(
+                "wasapi {mode:?}: {} frames, blockalign {}, {} bits in {}",
+                self.buffer_frames,
+                fmt.get_blockalign(),
+                fmt.get_validbitspersample(),
+                fmt.get_bitspersample()
+            );
+        }
         self.client = Some(client);
         self.render = Some(render);
         self.event = Some(event);

@@ -225,13 +225,17 @@ mod tests {
         let mut out = Vec::new();
         encode(&src, &fmt(24, 24, SampleKind::Int), 1.0, &mut out);
         let back: Vec<i32> = out
-            .as_chunks::<3>().0.iter()
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|b| i32::from_le_bytes([0, b[0], b[1], b[2]]))
             .collect();
         assert_eq!(back, src, "packed 24-bit");
         encode(&src, &fmt(32, 24, SampleKind::Int), 1.0, &mut out);
         let back: Vec<i32> = out
-            .as_chunks::<4>().0.iter()
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
         assert_eq!(back, src, "24 in a 32-bit container");

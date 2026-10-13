@@ -12,15 +12,31 @@ fn main() {
     let exclusive = !args.iter().any(|a| a == "--shared");
     #[cfg(windows)]
     for d in player::wasapi_out::list_devices().unwrap_or_default() {
-        println!("device: {}{}", d.name, if d.default { " (default)" } else { "" });
+        println!(
+            "device: {}{}",
+            d.name,
+            if d.default { " (default)" } else { "" }
+        );
     }
     for file in args.iter().filter(|a| !a.starts_with("--")) {
         let (tx, rx) = channel::<Status<PathBuf>>();
-        let p = Player::spawn(OutputChoice::Device { id: None, exclusive }, move |s| {
-            let _ = tx.send(s);
-        });
+        let p = Player::spawn(
+            OutputChoice::Device {
+                id: None,
+                exclusive,
+            },
+            move |s| {
+                let _ = tx.send(s);
+            },
+        );
         p.send(Cmd::Volume(0.0));
-        p.send(Cmd::Set { items: vec![PathBuf::from(file)], index: 0, start_ms: 0, play: true, from: String::new() });
+        p.send(Cmd::Set {
+            items: vec![PathBuf::from(file)],
+            index: 0,
+            start_ms: 0,
+            play: true,
+            from: String::new(),
+        });
         let t = Instant::now();
         let mut last = None;
         while t.elapsed() < Duration::from_secs(2) {
@@ -37,9 +53,17 @@ fn main() {
             if let Some(sig) = s.signal {
                 println!(
                     "  {:?} on {}: source {}/{} {} → device {}-in-{} {:?} {} Hz {} ch; steps {:?}",
-                    sig.mode, sig.device, sig.source.bits, sig.source.rate, sig.source.codec,
-                    sig.output.valid_bits, sig.output.container_bits, sig.output.kind, sig.output.rate,
-                    sig.output.channels, sig.steps
+                    sig.mode,
+                    sig.device,
+                    sig.source.bits,
+                    sig.source.rate,
+                    sig.source.codec,
+                    sig.output.valid_bits,
+                    sig.output.container_bits,
+                    sig.output.kind,
+                    sig.output.rate,
+                    sig.output.channels,
+                    sig.steps
                 );
             }
         }
