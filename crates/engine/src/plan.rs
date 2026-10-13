@@ -223,18 +223,20 @@ pub fn build_with(lib: &Library, rules: &Rules, answers: &crate::review::Answers
         let year = answers
             .get(&review::year_id(dir))
             .and_then(|y| y.strip_prefix("y:"));
-        plan.albums.extend(plan_album(
-            dir,
-            tracks,
-            lib,
-            rules,
-            quarantined.get(*dir),
-            year,
-        ));
+        let mut planned = plan_album(dir, tracks, lib, rules, quarantined.get(*dir), year);
+        // In your library, what Venuta can't place (no category tag: files it can't tag, or
+        // music put there by hand) stays exactly where it is.
+        if lib.in_library && rule_from_tags(tracks, rules).is_none() {
+            planned.iter_mut().for_each(stay_put);
+        }
+        plan.albums.extend(planned);
     }
     let mut decisions = review::duplicate_songs(&mut plan, lib, answers);
     decisions.extend(review::spellings(&plan, spellings, answers));
-    decisions.extend(review::untagged(lib, answers, &plan));
+    // Files without tags already in your library were kept on purpose; no need to ask again.
+    if !lib.in_library {
+        decisions.extend(review::untagged(lib, answers, &plan));
+    }
     decisions.extend(review::same_album(&mut plan, lib, answers));
     resolve_collisions(&mut plan);
     decisions.extend(review::years(&plan, lib, answers));
@@ -242,6 +244,38 @@ pub fn build_with(lib: &Library, rules: &Rules, answers: &crate::review::Answers
     review::hold(&mut plan, &decisions);
     plan.decisions = decisions;
     plan
+}
+
+/// Leave an album of your library as it is: same folder, same files, same tags.
+fn stay_put(a: &mut AlbumPlan) {
+    a.target_dir = a.source_dir.clone();
+    for t in &mut a.tracks {
+        t.target = t.source.clone();
+        t.tags_after = t.tags_before.clone();
+        t.embed_lyrics_from = None;
+        t.write_lrc = false;
+        t.copy_lrc_from = None;
+    }
+    a.changes.clear();
+}
+
+/// Where an album of your library belongs, from the tags its build wrote. Whether its shelf
+/// holds soundtracks (composer as album artist) is your category rules' call, as at the build.
+fn rule_from_tags(tracks: &[&Track], rules: &Rules) -> Option<crate::rules::CategoryRule> {
+    let pick = |k: &str| crate::library::most_common(tracks.iter().filter_map(|t| t.first(k)));
+    let category = pick("CATEGORY")?;
+    let subfolder = pick("SUBCATEGORY");
+    let soundtrack = rules.categories.rules.iter().any(|r| {
+        r.soundtrack && r.category == category && r.subfolder.as_deref() == subfolder.as_deref()
+    });
+    Some(crate::rules::CategoryRule {
+        pattern: String::new(),
+        category,
+        language: pick("LANGUAGE"),
+        genre: None,
+        soundtrack,
+        subfolder,
+    })
 }
 
 fn plan_album(
@@ -269,9 +303,14 @@ fn plan_album(
     let mb = meta.and_then(|m| m.mb.as_ref().or(m.discogs.as_ref()));
     let mb_name = mb.map(|r| r.source.label()).unwrap_or("MusicBrainz");
 
-    // Your category rules decide; failing that, the catalogue genre suggests one.
-    let (rule_owned, rule_inferred) = match rules.category_for(dir) {
-        Some(r) => (Some(r.clone()), false),
+    // In your library an album is where its tags say (as built); elsewhere your category
+    // rules decide; failing those, the catalogue genre suggests one.
+    let from_tags = lib
+        .in_library
+        .then(|| rule_from_tags(tracks, rules))
+        .flatten();
+    let (rule_owned, rule_inferred) = match from_tags.or_else(|| rules.category_for(dir).cloned()) {
+        Some(r) => (Some(r), false),
         None => {
             let i = infer_category(meta);
             let inferred = i.is_some();
@@ -716,6 +755,12 @@ fn plan_album(
             reason("LANGUAGE", "From your category rules.", Confidence::High);
         }
         tags.set("CATEGORY", vec![category.to_owned()]);
+        // The sub-folder too, so the library alone knows where each album belongs.
+        if subfolder.is_empty() {
+            tags.remove("SUBCATEGORY");
+        } else {
+            tags.set("SUBCATEGORY", vec![subfolder.to_owned()]);
+        }
         reason(
             "CATEGORY",
             "From your category rules; decides the top folder.",
@@ -1454,7 +1499,7 @@ fn clean_title(title: &str, album: &str) -> String {
 }
 
 /// True when two lyrics texts have the same words, ignoring LRC timestamps and spacing.
-fn same_lyrics(a: &str, b: &str) -> bool {
+pub(crate) fn same_lyrics(a: &str, b: &str) -> bool {
     static TS: OnceLock<Regex> = OnceLock::new();
     let ts = re(r"\[[^\]]*\]", &TS);
     let norm = |s: &str| -> String {
@@ -1685,6 +1730,7 @@ pub fn build_checked(
 ) -> crate::Result<(Library, Plan)> {
     let answers = crate::settings::load_answers(root);
     let mut lib = Library::load(index)?;
+    lib.in_library = crate::paths::home_of(root).is_some();
     let mut plan = build_with(&lib, rules, &answers);
     if !plan.pending_pairs.is_empty() {
         crate::compare::run(index, root, &plan.pending_pairs)?;

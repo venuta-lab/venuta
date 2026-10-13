@@ -761,6 +761,7 @@ mod tests {
             fetched_lyrics: Default::default(),
             pairs: Default::default(),
             identities: Default::default(),
+            in_library: false,
         }
     }
 

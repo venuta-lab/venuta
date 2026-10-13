@@ -102,6 +102,9 @@ pub struct Library {
     pub pairs: HashMap<(i64, i64), crate::compare::Comparison>,
     /// What AcoustID recognised files without tags as (with a key), by file id.
     pub identities: HashMap<i64, crate::providers::Identified>,
+    /// This is a library's own Music folder: where an album belongs comes from its tags
+    /// (written when it was built), not from rules about the folders music came from.
+    pub in_library: bool,
 }
 
 impl Library {
@@ -223,6 +226,7 @@ impl Library {
             fetched_lyrics: crate::enrich::load_lyrics(index)?,
             pairs: crate::compare::load(index)?,
             identities: crate::enrich::load_identities(index)?,
+            in_library: false,
         })
     }
 

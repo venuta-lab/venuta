@@ -378,8 +378,16 @@ impl AlbumCtx<'_> {
         if let Some(lrc) = &t.embed_lyrics_from
             && let Ok(text) = crate::text::read_text(&self.source_root.join(lrc))
         {
+            let lyrics = clean_lrc(&text);
+            // Plain lyrics with the same words go; another script or wording stays.
+            if vc
+                .get("UNSYNCEDLYRICS")
+                .is_some_and(|u| crate::plan::same_lyrics(&lyrics, u))
+            {
+                let _ = vc.remove("UNSYNCEDLYRICS").count();
+            }
             let _ = vc.remove("LYRICS").count();
-            vc.push("LYRICS".into(), clean_lrc(&text));
+            vc.push("LYRICS".into(), lyrics);
         }
         if let Some(bytes) = cover {
             let _ = flac.remove_pictures();
@@ -415,6 +423,13 @@ impl AlbumCtx<'_> {
         if t.embed_lyrics_from.is_some() {
             have.retain(|(k, _)| !k.eq_ignore_ascii_case("LYRICS"));
             want.retain(|(k, _)| !k.eq_ignore_ascii_case("LYRICS"));
+            // Embedding may also have dropped plain lyrics with the same words.
+            if !have
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("UNSYNCEDLYRICS"))
+            {
+                want.retain(|(k, _)| !k.eq_ignore_ascii_case("UNSYNCEDLYRICS"));
+            }
         }
         let norm = |v: &mut Vec<(String, String)>| {
             v.iter_mut().for_each(|(k, _)| *k = k.to_ascii_uppercase());
