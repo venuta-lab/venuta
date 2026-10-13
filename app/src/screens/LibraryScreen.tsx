@@ -9,7 +9,7 @@ import {
   type Issue,
   type Severity,
 } from '../lib/engine'
-import { setAccent, useCovers } from '../lib/covers'
+import { useCovers } from '../lib/covers'
 import { IconChevron, IconFolder, IconRefresh } from '../components/Icons'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
@@ -210,7 +210,6 @@ function CoverStrip(props: {
               animate={{ opacity: 1, scale: 1 }}
               transition={{ ...spring, delay: Math.min(i, 12) * 0.025 }}
               whileHover={{ y: -4, scale: 1.04 }}
-              onHoverStart={() => setAccent(c?.accent)}
               onClick={() => a && props.onAlbum?.(a)}
               className={`w-[112px] shrink-0 ${props.onAlbum ? 'cursor-pointer' : ''}`}
               title={a ? `${a.title}  (${a.album_artist})` : d}

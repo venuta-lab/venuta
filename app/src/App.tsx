@@ -35,7 +35,7 @@ import {
   scanLibrary,
   type HealthReport,
 } from './lib/engine'
-import { coverFor, loadCovers, setAccent, useCovers } from './lib/covers'
+import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
 import * as player from './lib/player'
 import { connectPlayer, resumePlayer } from './lib/player'
@@ -77,11 +77,20 @@ const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'playlists', 'devi
 /** The places on the top of the rail, in order (Ctrl+1 … Ctrl+6). */
 const MAIN = 6
 
-/** The window's backdrop; while Now Playing is open, the playing song's cover fills it. */
-function NowBackdrop({ covers, focus }: { covers: string[]; focus: boolean }) {
+/**
+ * The window's backdrop: the playing song's cover whenever there is one, so the backdrop and the
+ * accent always come from the same art; the library's covers when nothing is loaded.
+ */
+function NowBackdrop({ covers }: { covers: string[] }) {
   const dir = player.usePlayerValue((s) => player.current(s)?.dir ?? '')
   const cover = useCovers(320)
-  return <Backdrop covers={covers} focus={focus && dir ? (cover(dir)?.src ?? null) : null} />
+  const art = dir ? cover(dir) : undefined
+  // The accent follows what's playing (see lib/covers.ts).
+  useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
+  // And finds its right variant again when the look changes.
+  const look = usePrefs()
+  useEffect(() => refreshAccent(), [look.style, look.theme, look.surface, look.accentMode, look.accent])
+  return <Backdrop covers={covers} focus={art ? art.src : null} />
 }
 
 export default function App() {
@@ -170,7 +179,6 @@ export default function App() {
         await loadCovers(dir, spread)
         const loaded = spread.map((d) => coverFor(d)).filter((c) => !!c)
         setBackdrop(loaded.map((c) => c.src))
-        setAccent(loaded.find((c) => c.accent)?.accent)
         await loadCovers(dir, dirs, 320, update)
       })
     } catch (e) {
@@ -662,7 +670,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion={motionSetting(prefs)}>
       <div className="relative flex h-full flex-col" onWheel={onWheel}>
-        <NowBackdrop covers={backdrop} focus={nowOpen} />
+        <NowBackdrop covers={backdrop} />
         <ThemeFx />
         <TitleBar onPalette={() => setPalette(true)} />
         <div className="relative z-10 flex min-h-0 flex-1">

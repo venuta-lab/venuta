@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CatalogTrack } from '../../lib/engine'
-import { setAccent, useCovers, type Cover } from '../../lib/covers'
+import { useCovers, type Cover } from '../../lib/covers'
 import { enqueue, play, toggle } from '../../lib/player'
 import { useJob } from '../../lib/jobs'
 import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
@@ -99,17 +99,14 @@ export const AlbumCard = memo(function AlbumCard(props: {
     <motion.div
       whileHover={{ y: -6 }}
       transition={spring}
-      onHoverStart={() => setAccent(c?.accent)}
       onContextMenu={ctx.onContextMenu}
       className="group relative"
     >
       {ctx.menu}
       <button
         onClick={() => {
-          setAccent(c?.accent)
           openAlbum(a.dir, origin)
         }}
-        onFocus={() => setAccent(c?.accent)}
         className="block w-full text-left"
       >
         <motion.div

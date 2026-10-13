@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { listeningSummary, type ListeningSummary } from '../../lib/engine'
-import { setAccent, useCovers } from '../../lib/covers'
+import { useCovers } from '../../lib/covers'
 import {
   appearsOn,
   artistFor,
@@ -112,7 +112,6 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }}
       transition={spring}
-      onHoverStart={() => setAccent(cover?.accent)}
       className="glass relative overflow-hidden rounded-[28px] p-6"
     >
       {cover && (
@@ -127,7 +126,6 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
       <div className="relative flex flex-wrap items-center gap-7">
         <button
           onClick={() => {
-            setAccent(cover?.accent)
             nav.openAlbum(a.dir, 'hero')
           }}
           aria-label={`Open ${a.title}`}
@@ -148,7 +146,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
               {a.title}
             </button>
           </h2>
-          <button onClick={() => nav.openArtist(a.artist)} className="mt-1.5 rounded-md text-left text-[15px] text-accent-ink hover:underline">
+          <button onClick={() => nav.openArtist(a.artist)} className="mt-1.5 rounded-md text-left text-[15px] text-ink/80 hover:text-ink hover:underline">
             {a.artist}
           </button>
           <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
@@ -219,8 +217,6 @@ function ArtistCard({ artist: ar }: { artist: Artist }) {
     <motion.button
       whileHover={{ y: -5 }}
       transition={spring}
-      onHoverStart={() => setAccent(c?.accent)}
-      onFocus={() => setAccent(c?.accent)}
       onClick={() => nav.openArtist(ar.name)}
       className="group block w-full min-w-0 text-center"
     >

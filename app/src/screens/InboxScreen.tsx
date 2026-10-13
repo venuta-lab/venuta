@@ -14,7 +14,7 @@ import {
   type PlanDecision,
   type Review,
 } from '../lib/engine'
-import { loadCovers, setAccent, useCovers } from '../lib/covers'
+import { loadCovers, useCovers } from '../lib/covers'
 import { clipsAvailable, playClips, stopClips, usePlaying } from '../lib/preview'
 import { AlbumRow, BuildResult } from '../components/AlbumRow'
 import { IconChevron } from '../components/Icons'
@@ -288,7 +288,7 @@ function QuestionDeck(props: {
           transition={{ duration: 0.2 }}
           className="glass rounded-[24px] p-6"
         >
-          <div className="text-[13px] font-medium text-accent-ink">{d.question}</div>
+          <div className="text-[13px] font-medium text-ink/60">{d.question}</div>
           <h3 className="mt-1 text-[24px] font-semibold leading-tight tracking-[-0.02em]">{d.subject}</h3>
           {d.albums.length > 0 && (
             <p className="mt-1 text-[13px] text-ink/55">Holds back {plural(d.albums.length, 'album', 'albums')} until you answer.</p>
@@ -357,7 +357,7 @@ function SideCard(props: { root: string; side: PlanDecision['sides'][number]; su
           {s.covers.slice(0, 4).map((k) => {
             const c = cover(k)
             return (
-              <div key={k} className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]" onMouseEnter={() => setAccent(c?.accent)}>
+              <div key={k} className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
                 {c && <img src={c.src} alt="" draggable={false} className="h-full w-full object-cover" />}
               </div>
             )
@@ -631,7 +631,7 @@ function Changes(props: { root: string; data: Review; onChanged: (r: Review) => 
             {shown.list.map((a) => {
               const c = cover(a.cover)
               return (
-                <button key={a.id} onClick={() => setAlbum(a)} onMouseEnter={() => setAccent(c?.accent)} className="group text-left">
+                <button key={a.id} onClick={() => setAlbum(a)} className="group text-left">
                   <div className="aspect-square overflow-hidden rounded-xl bg-ink/[0.06] shadow-lg shadow-black/25">
                     {c && <img src={c.src} alt="" loading="lazy" className="h-full w-full object-cover transition-transform group-hover:scale-[1.04]" />}
                   </div>

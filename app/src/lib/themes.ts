@@ -116,14 +116,16 @@ export function tuneAccent(hex: string, light: boolean): string | null {
   if (lch.c < 0.045) return null
   let { l, c } = lch
   const h = lch.h
+  // Calmer than the cover itself: a soft, light version of its colour sits with the glass and
+  // the backdrop instead of shouting over them (a saturated orange on teal glass jarred).
   if (light) {
-    const top = h >= 85 && h <= 125 ? 0.54 : 0.6
+    const top = h >= 85 && h <= 125 ? 0.52 : 0.58
     l = Math.min(Math.max(l, 0.48), top)
-    c = Math.min(Math.max(c, 0.09), 0.2)
+    c = Math.min(Math.max(c, 0.07), 0.15)
   } else {
-    const floor = h >= 250 && h <= 300 ? 0.72 : 0.7
-    l = Math.min(Math.max(l, floor), 0.84)
-    c = Math.min(Math.max(c, 0.09), 0.19)
+    const floor = h >= 250 && h <= 300 ? 0.76 : 0.76
+    l = Math.min(Math.max(l, floor), 0.86)
+    c = Math.min(Math.max(c, 0.06), 0.13)
   }
   return oklchToHex({ l, c, h })
 }

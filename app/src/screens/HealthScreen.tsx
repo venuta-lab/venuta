@@ -11,7 +11,7 @@ import {
   type AlbumView,
   type HealthReport,
 } from '../lib/engine'
-import { setAccent, useCovers } from '../lib/covers'
+import { useCovers } from '../lib/covers'
 import { AlbumEditor } from './AlbumEditor'
 import { NoCover } from './MusicScreen'
 import { Page } from '../components/ui'
@@ -142,7 +142,7 @@ export function HealthScreen(props: {
         <section className="glass flex flex-wrap items-center gap-6 rounded-[24px] p-6">
           <Ring now={overallNow} after={plan ? overallAfter : overallNow} />
           <div className="min-w-[200px] flex-1">
-            <div className="text-[13px] font-medium text-accent-ink">How complete your library is</div>
+            <div className="text-[13px] font-medium text-ink/60">How complete your library is</div>
             <div className="mt-1 text-[22px] font-semibold leading-tight tracking-[-0.02em]">
               {overallNow}% today{plan && overallAfter > overallNow ? `, ${overallAfter}% after you build` : ''}
             </div>
@@ -415,7 +415,7 @@ function AlbumsSheet(props: { root: string; sheet: Sheet; albums: AlbumSummary[]
             const isWanted = wanted.has(a.dir)
             return (
               <div key={a.dir} className="min-w-0">
-                <button onClick={() => setOpen(a)} onMouseEnter={() => setAccent(c?.accent)} className="group block w-full text-left">
+                <button onClick={() => setOpen(a)} className="group block w-full text-left">
                   <div className="aspect-square overflow-hidden rounded-xl bg-ink/[0.06] shadow-lg shadow-black/25">
                     {c && <img src={c.src} alt="" loading="lazy" className="h-full w-full object-cover transition-transform group-hover:scale-[1.04]" />}
                   </div>

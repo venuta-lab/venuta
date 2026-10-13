@@ -39,7 +39,7 @@ export function SettingsScreen(props: {
   return (
     <Frame title="Settings" line="Set up once: how it looks, where your music lives, and where details come from.">
       <div className="flex items-start gap-6">
-      <aside className="sticky top-4 w-[220px] shrink-0">
+      <aside className="sticky top-[68px] w-[220px] shrink-0">
         <nav aria-label="Settings sections" className="grid gap-0.5">
           {PAGES.map((p) => (
             <button

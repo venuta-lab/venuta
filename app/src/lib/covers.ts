@@ -50,26 +50,55 @@ export function useCovers(size = 320) {
   return (dir: string) => cache.get(`${size}:${dir}`)
 }
 
+/*
+  The accent follows one thing at a time: the album page you have open (its glow is that cover),
+  else the song that's playing, else your fixed accent. Never what the pointer happens to cross:
+  that made the whole app flicker colour while you browsed.
+*/
+let playing: string | null = null
+let page: string | null = null
 let shown = ''
-/**
- * Move the app's accent to an album's colour (CSS glides it over 600 ms). A fixed accent wins;
- * the retro themes keep their palette (Bounty Session snaps it to its colour blocks). A grey
- * cover falls back to your fixed accent, and a change too small to notice is skipped.
- */
-export function setAccent(hex: string | null | undefined) {
+
+function apply() {
   const p = getPrefs()
   const root = document.documentElement.style
+  const hex = page ?? playing
   if (p.style === 'bounty') {
     const block = nearestBlock(hex ?? '')
     root.setProperty('--block', block)
     root.setProperty('--accent', block)
     return
   }
-  if (!hex || p.style !== 'venuta' || p.accentMode === 'fixed') return
-  const next = tuneAccent(hex, resolvedTheme(p) === 'light') ?? fixedAccent(p)
+  if (p.style !== 'venuta') return
+  const next = p.accentMode === 'fixed' || !hex ? fixedAccent(p) : (tuneAccent(hex, resolvedTheme(p) === 'light') ?? fixedAccent(p))
+  // Similar covers (one album's songs) keep one accent instead of shimmering between near-twins.
   if (shown && root.getPropertyValue('--accent').trim() === shown && colourDistance(shown, next) < 0.06) return
   shown = next
   root.setProperty('--accent', next)
+}
+
+/** The playing song's cover colour (set by the app when the song changes). */
+export function setPlayingAccent(hex: string | null | undefined) {
+  playing = hex ?? null
+  apply()
+}
+
+/** While an album page is open, its colour leads; cleared when it closes. */
+export function usePageAccent(hex: string | null | undefined) {
+  useEffect(() => {
+    page = hex ?? null
+    apply()
+    return () => {
+      page = null
+      apply()
+    }
+  }, [hex])
+}
+
+/** Again after the look changes (theme, accent mode), so the right variant shows. */
+export const refreshAccent = () => {
+  shown = ''
+  apply()
 }
 
 /** Cached cover for one album, if loaded. */

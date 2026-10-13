@@ -1,7 +1,7 @@
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { loadCovers, setAccent, useCovers } from '../../lib/covers'
+import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
 import { clock, connectPlayer, current, miniPlayer, next, previous, seek, toggle, usePlayer } from '../../lib/player'
 import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious } from '../Icons'
@@ -61,7 +61,7 @@ export function MiniPlayer() {
     if (root && dir) void loadCovers(root, [dir])
   }, [root, dir])
   const art = dir ? cover(dir) : undefined
-  useEffect(() => setAccent(art?.accent), [art?.accent])
+  useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
 
   const showLyrics = lyricsOn && !!song?.lyrics && shape !== 'micro'
   const lyrics = useLyrics(root, showLyrics ? song?.path : undefined)

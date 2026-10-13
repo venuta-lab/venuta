@@ -63,9 +63,10 @@
   --rail-blur: blur(28px) saturate(1.7);
   --rail-edge: rgb(255 255 255 / 0.08);
   --rail-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.45);
-  --pill-bg: color-mix(in oklab, var(--accent) 22%, rgb(255 255 255 / 0.04));
+  /* The active place: a quiet lift, not a coloured block (the accent marks playing and actions). */
+  --pill-bg: rgb(255 255 255 / 0.1);
   --pill-ink: var(--ink);
-  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 2px 8px -2px rgb(0 0 0 / 0.3);
   /* The player bar. */
   --np-bg: rgb(22 24 31 / 0.66);
   --np-blur: blur(32px) saturate(1.8);
@@ -194,8 +195,8 @@
   --rail-bg: rgb(255 255 255 / 0.58);
   --rail-edge: rgb(16 20 32 / 0.08);
   --rail-shadow: 0 8px 24px -10px rgb(16 20 40 / 0.18);
-  --pill-bg: color-mix(in oklab, var(--accent) 16%, rgb(255 255 255 / 0.6));
-  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --pill-bg: rgb(255 255 255 / 0.82);
+  --pill-shadow: inset 0 1px 0 rgb(255 255 255 / 0.95), 0 2px 8px -3px rgb(16 20 40 / 0.18);
   --np-bg: rgb(255 255 255 / 0.72);
   --np-edge: rgb(16 20 32 / 0.08);
   --np-shadow: 0 8px 24px -8px rgb(16 20 40 / 0.18);

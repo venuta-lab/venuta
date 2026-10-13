@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AlbumSummary, HealthReport } from '../lib/engine'
 import { AlbumEditor } from './AlbumEditor'
-import { setAccent, useCovers } from '../lib/covers'
+import { useCovers } from '../lib/covers'
 import { IconSearch } from '../components/Icons'
 import { Bar } from '../components/Activity'
 import { Chip, Page } from '../components/ui'
@@ -145,10 +145,8 @@ export function MusicScreen({
                 key={a.dir}
                 role="listitem"
                 onClick={() => {
-                  setAccent(c?.accent)
                   setSelected(a)
                 }}
-                onMouseEnter={() => setAccent(c?.accent)}
                 className={`group ${ROW} rounded-2xl py-2 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07]`}
               >
                 <motion.div layoutId={`cover-${a.dir}`} className="h-12 w-12 overflow-hidden rounded-[10px] bg-ink/[0.06] shadow-md shadow-black/25">

@@ -31,3 +31,11 @@ Everything asked for on 2026-10-13, in working order. Ticked when built **and** 
 - [x] Accents: the current fixed swatches don't suit the themes. Replace with the researched set (dark and light variants) and clamp album accents (OKLCH rules).
 - [x] Single click plays a song in Up next, the queue, album track lists and song lists (the song playing now: pause/resume). Links inside rows (artist, album) and the ⋯ menu keep their own clicks.
 - [ ] General review of industry-standard behaviours (hover/press/focus everywhere, consistent click targets, context menus, keyboard).
+
+## Added 2026-10-13 (round 3)
+- [ ] Settings (and Playlists): scrolling, the side menu slid under the pinned bar and showed through it.
+- [ ] Accents still clash with the glass theme (an orange accent over a teal-violet backdrop): calmer album accents, follow what's playing rather than what's hovered, and use the accent for fewer things.
+- [ ] Mini player: retro versions (Neo-Tokyo capsule, Sync Ratio meter, Skin '99 LCD).
+- [ ] Skin '99's spectrum analyser from real audio (engine computes band levels).
+- [ ] Layer Zero's red-static shadow, behind the player bar.
+- [ ] Continue the spacing / button-placement pass on every screen.

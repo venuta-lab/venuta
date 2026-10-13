@@ -105,7 +105,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
   return (
     <Frame title="Playlists" line={`Saved as .m3u8 files in ${data?.folder || 'your library'}, so every player and card can use them.`}>
       <div className="flex items-start gap-6">
-      <aside className="thin-scroll sticky top-4 max-h-[calc(100vh-150px)] w-[260px] shrink-0 overflow-y-auto pr-1">
+      <aside className="thin-scroll sticky top-[68px] max-h-[calc(100vh-230px)] w-[260px] shrink-0 overflow-y-auto pr-1">
 
         <Section title="Smart">
           {data?.smart.map((s) => (

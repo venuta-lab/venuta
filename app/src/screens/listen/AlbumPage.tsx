@@ -1,7 +1,7 @@
 import { motion } from 'motion/react'
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useMemo, useRef } from 'react'
 import { quality, type CatalogTrack } from '../../lib/engine'
-import { setAccent, useCovers } from '../../lib/covers'
+import { useCovers, usePageAccent } from '../../lib/covers'
 import { clock, play, toggle } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
@@ -13,7 +13,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
   const nav = useNav()
   const cover = useCovers(320)(a.dir)
   const accent = cover?.accent
-  useEffect(() => setAccent(accent), [accent])
+  usePageAccent(accent)
 
   const meta = [a.year, a.genre].filter(Boolean).join(', ')
   return (
@@ -36,7 +36,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
             <h1 className="title text-[34px] leading-[1.1]">{a.title}</h1>
             <button
               onClick={() => nav.openArtist(a.artist)}
-              className="mt-2 rounded-md text-left text-[16px] font-medium text-accent-ink hover:underline"
+              className="mt-2 rounded-md text-left text-[16px] font-medium text-ink/85 hover:text-ink hover:underline"
             >
               {a.artist}
             </button>

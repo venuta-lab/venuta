@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
 import { FIELD_NAMES, tidyUndo, undoRun, type AlbumView, type ApplyReport, type Decision, type Run } from '../lib/engine'
-import { setAccent, useCovers } from '../lib/covers'
+import { useCovers } from '../lib/covers'
 import { IconChevron } from './Icons'
 import { when } from '../lib/format'
 
@@ -25,7 +25,6 @@ export function AlbumRow(props: {
     <motion.div layout transition={spring} className="glass overflow-hidden rounded-[18px]">
       <div className="flex items-center gap-4 px-4 py-3">
         <motion.div
-          onHoverStart={() => setAccent(cover?.accent)}
           className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-ink/5"
         >
           {cover && <img src={cover.src} alt="" className="h-full w-full object-cover" draggable={false} />}

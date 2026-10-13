@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
-import { ACCENTS, accentByName, colourDistance, styleInfo, type Style } from './themes'
+import { ACCENTS, accentByName, colourDistance, styleInfo, tuneAccent, type Style } from './themes'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -139,7 +139,8 @@ export const motionSetting = (p: Prefs) =>
 /** The chosen fixed accent, in the version for the theme showing. */
 export function fixedAccent(p = current): string {
   const a = accentByName(p.accent)
-  return resolvedTheme(p) === 'light' ? a.light : a.dark
+  // Through the same calm band as album colours, so a swatch sits with the glass too.
+  return resolvedTheme(p) === 'light' ? a.light : (tuneAccent(a.dark, false) ?? a.dark)
 }
 
 // Development builds only: lets the screenshot scripts try a look without saving it.
