@@ -5,6 +5,7 @@ import { Backdrop } from './components/Backdrop'
 import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
+import { Toast } from './components/Toast'
 import {
   IconActivity,
   IconCards,
@@ -12,7 +13,6 @@ import {
   IconInbox,
   IconMusic,
   IconPlaylists,
-  IconRefresh,
   IconSettings,
 } from './components/Icons'
 import {
@@ -30,7 +30,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Surface } from './lib/prefs'
-import { DeepProgressBar, EmptyState, PillButton } from './screens/LibraryScreen'
+import { DeepProgressBar, EmptyState } from './screens/LibraryScreen'
 import { MusicScreen } from './screens/MusicScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
@@ -81,6 +81,8 @@ export default function App() {
   // The guided set-up: shown until a music folder is chosen, and on request.
   const [setup, setSetup] = useState(() => !store.get() && inApp())
   const search = useRef<HTMLInputElement>(null)
+  const closeNotice = useCallback(() => setNotice(''), [])
+  const closeError = useCallback(() => setError(''), [])
 
   const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
     try {
@@ -171,10 +173,13 @@ export default function App() {
     setLookup({ done: 0, total: 0 })
     try {
       const r = await lookupOnline(root, (done, total, note) => setLookup({ done, total, note }))
+      const nothing = r.albums_looked_up === 0 && r.lyrics_checked === 0 && !r.discogs_matches && !r.identified
       setNotice(
-        r.cancelled
+        nothing && !r.cancelled
+          ? 'Everything is already looked up; nothing new to find. Add music, or keys in Settings, Online sources, to find more.'
+          : r.cancelled
           ? 'Stopped. What was found is kept; look up again to continue.'
-          : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} on Apple${r.discogs_matches ? `, ${r.discogs_matches} on Discogs` : ''}) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} songs${r.identified ? `; recognised ${r.identified} files without tags by their sound` : ''}. The Inbox shows what changes.`,
+          : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} on Apple${r.discogs_matches ? `, ${r.discogs_matches} on Discogs` : ''}) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} songs${r.identified ? `; recognised ${r.identified} files without tags by their sound` : ''}. Organize shows what changes.`,
       )
     } catch (e) {
       setError(String(e))
@@ -218,7 +223,7 @@ export default function App() {
     const list: Command[] = [
       goTo('music', 'Music', 'Ctrl+1', 'albums library home browse'),
       goTo('health', 'Health', 'Ctrl+2', 'status quality metadata completeness problems tools'),
-      goTo('inbox', 'Inbox', 'Ctrl+3', 'questions decisions review new music incoming'),
+      goTo('inbox', 'Organize', 'Ctrl+3', 'inbox questions decisions review new music incoming manage library'),
       goTo('playlists', 'Playlists', 'Ctrl+4', 'smart want-list to get'),
       goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
@@ -357,7 +362,7 @@ export default function App() {
   const top: Section[] = [
     { id: 'music', label: 'Music', icon: IconMusic, keys: 'Ctrl+1' },
     { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+2' },
-    { id: 'inbox', label: 'Inbox', icon: IconInbox, keys: 'Ctrl+3', badge: inboxCount },
+    { id: 'inbox', label: 'Organize', icon: IconInbox, keys: 'Ctrl+3', badge: inboxCount },
     { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+4' },
     { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+5' },
   ]
@@ -393,19 +398,12 @@ export default function App() {
             root={root}
             report={report}
             busy={busy}
-            actions={
-              <>
-                <PillButton onClick={runLookup} disabled={!!busy || !!lookup} title="Original years, credits, sharper covers and lyrics. Nothing changes until you build from the Inbox.">
-                  Look up details online
-                </PillButton>
-                <PillButton onClick={runDeepCheck} disabled={!!busy || !!deep} title="Decode every new or changed song: integrity, quality and loudness. Changes nothing.">
-                  Check quality
-                </PillButton>
-                <PillButton onClick={() => refresh(root, true)} disabled={!!busy} title="Read the folder again for new or changed files">
-                  <IconRefresh />
-                </PillButton>
-              </>
-            }
+            onLookup={runLookup}
+            onCheck={runDeepCheck}
+            onRescan={() => void refresh(root, true)}
+            onChooseFolder={() => void chooseRoot()}
+            onOrganize={() => go('inbox')}
+            running={{ lookup: !!lookup, check: !!deep }}
             progress={
               <>
                 <AnimatePresence>
@@ -478,33 +476,8 @@ export default function App() {
                 {screen}
               </motion.div>
             </AnimatePresence>
-            <AnimatePresence>
-              {notice && !error && (
-                <motion.div
-                  initial={{ y: 40, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: 40, opacity: 0 }}
-                  onClick={() => setNotice('')}
-                  className="popover absolute bottom-5 left-1/2 max-w-[680px] -translate-x-1/2 cursor-pointer rounded-2xl px-5 py-3 text-[13px] text-ink/85"
-                >
-                  {notice}
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <AnimatePresence>
-              {error && (
-                <motion.div
-                  initial={{ y: 40, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: 40, opacity: 0 }}
-                  onClick={() => setError('')}
-                  className="popover absolute bottom-5 left-1/2 max-w-[640px] -translate-x-1/2 cursor-pointer rounded-2xl px-5 py-3 text-[13px]"
-                >
-                  <span className="text-problem">Something went wrong. </span>
-                  <span className="text-ink/75">{error}</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <Toast text={error ? '' : notice} onClose={closeNotice} />
+            <Toast text={error} tone="error" onClose={closeError} />
           </main>
         </div>
         <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />

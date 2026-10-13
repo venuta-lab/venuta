@@ -477,7 +477,7 @@ function ArtistNames() {
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Artist names</h2>
       <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Each person gets one spelling everywhere. The spellings under it are recognised as the same person, ignoring capitals,
-        spaces and punctuation. Your answers in the Inbox add to this list.
+        spaces and punctuation. Your answers in Organize add to this list.
       </p>
       <div className="mt-4 flex items-center gap-3">
         <input

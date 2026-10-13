@@ -95,7 +95,7 @@ export function ActivityScreen(props: { root: string }) {
 
       {answerList.length > 0 && (
         <section className="mt-8">
-          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Your answers in the Inbox</h2>
+          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Your answers in Organize</h2>
           <div className="grid gap-1">
             {answerList.map(([id, choice]) => {
               const d = describeAnswer(id, choice)

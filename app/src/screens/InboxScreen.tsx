@@ -128,7 +128,7 @@ export function InboxScreen(props: {
     <div className="mx-auto max-w-[1080px] pb-40">
       <header className="flex flex-wrap items-end gap-6 pb-4 pt-6">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Inbox</h1>
+          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Organize</h1>
           <p className="mt-2.5 text-[14px] text-ink/60">{summary}</p>
         </div>
         {tab === 'library' && questions.length > 0 && (
@@ -141,7 +141,7 @@ export function InboxScreen(props: {
           </button>
         )}
       </header>
-      <div role="tablist" aria-label="Inbox" className="mb-5 inline-flex rounded-full bg-ink/[0.07] p-1">
+      <div role="tablist" aria-label="Organize" className="mb-5 inline-flex rounded-full bg-ink/[0.07] p-1">
         {(
           [
             ['library', 'Your library'],

@@ -32,6 +32,7 @@ export interface AlbumSummary {
   tracks: number
   duration_ms: number
   cover_track: string | null
+  untagged?: boolean
 }
 
 export interface HealthReport {
@@ -529,6 +530,10 @@ export const playerTestWrite = (root: string, card: string) => invoke<TestItem[]
 export const playerTestRemove = (card: string) => invoke<void>('player_test_remove', { card })
 export const playerTestSave = (card: string, results: Record<string, boolean>) =>
   invoke<CardConfig>('player_test_save', { card, results })
+
+/** Put an album on "To get" to find a better copy. Returns how many albums the list holds. */
+export const wantAdd = (album: string, artist: string, why: string) =>
+  invoke<number>('want_add', { album, artist, why })
 
 export const setupCard = (card: string, name: string, include: string[], autoSync: boolean, player?: PlayerId) =>
   invoke<CardConfig>('setup_card', { card, name, include, autoSync, player })

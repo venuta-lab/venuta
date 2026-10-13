@@ -12,8 +12,8 @@ const SOUND_ISSUES = new Set(['damaged_audio', 'lossy_files', 'upsampled_hires',
 
 /**
  * Setting up, once: where your music is, where the clean copy goes, reading it, looking up
- * details online, then the Inbox. Every step can be revisited; nothing is changed until you
- * build from the Inbox.
+ * details online, then Organize. Every step can be revisited; nothing is changed until you
+ * build from Organize.
  */
 export function SetupScreen(props: {
   root: string
@@ -70,7 +70,7 @@ export function SetupScreen(props: {
       <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Set up your library</h1>
       <p className="mt-3 max-w-[58ch] text-[14.5px] leading-relaxed text-ink/60">
         A clean copy of your music is built in a new folder, with full details, lyrics and covers. Your current folder is
-        only read. Nothing is written until you choose Build in the Inbox.
+        only read. Nothing is written until you choose Build in Organize.
       </p>
 
       <ol className="mt-8 flex flex-wrap gap-2" aria-label="Steps">
@@ -180,9 +180,9 @@ export function SetupScreen(props: {
           {step === 4 && (
             <Step
               title="Your questions are ready"
-              text={`${looked ? 'Details are in. ' : ''}The Inbox shows the few things only you can decide, what was handled for you with proof, and what the build will change. Then build.`}
+              text={`${looked ? 'Details are in. ' : ''}Organize shows the few things only you can decide, what was handled for you with proof, and what the build will change. Then build.`}
             >
-              <Primary onClick={props.onDone}>Open the Inbox</Primary>
+              <Primary onClick={props.onDone}>Open Organize</Primary>
             </Step>
           )}
         </motion.section>

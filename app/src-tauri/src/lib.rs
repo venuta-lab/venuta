@@ -332,7 +332,7 @@ async fn answer_decisions(
     review(app, root, jobs).await
 }
 
-/// Your answers to Inbox decisions for this library, by decision id.
+/// Your answers to Organize decisions for this library, by decision id.
 #[tauri::command]
 fn list_answers(root: String) -> engine::review::Answers {
     engine::settings::load_answers(Path::new(&root))
@@ -370,9 +370,9 @@ async fn build_library(
         let guard = jobs.plan.lock().map_err(|e| e.to_string())?;
         let (plan_root, plan) = guard
             .as_ref()
-            .ok_or("Open the Inbox first so the plan is up to date.")?;
+            .ok_or("Open Organize first so the plan is up to date.")?;
         if *plan_root != root {
-            return Err("The plan is for a different library; open the Inbox again.".into());
+            return Err("The plan is for a different library; open Organize again.".into());
         }
         plan.albums
             .iter()
@@ -858,6 +858,41 @@ fn wantlist_path() -> PathBuf {
     paths::app_data_dir().join("wantlist.json")
 }
 
+fn load_wanted() -> Vec<engine::playlists::WantedAlbum> {
+    std::fs::read_to_string(wantlist_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// How albums you put on the list yourself are marked.
+const BETTER_COPY: &str = "Get a better copy";
+
+/// Put an album on "To get", because your copy has a problem (lossy, fake hi-res…).
+#[tauri::command]
+fn want_add(album: String, artist: String, why: String) -> CmdResult<usize> {
+    let mut list = load_wanted();
+    if !list.iter().any(|w| w.album == album && w.artist == artist) {
+        list.insert(
+            0,
+            engine::playlists::WantedAlbum {
+                album,
+                artist,
+                tier: 1,
+                why: format!("{BETTER_COPY}: {why}"),
+                saved_tracks: 0,
+                playlists: vec![],
+            },
+        );
+    }
+    std::fs::write(
+        wantlist_path(),
+        serde_json::to_vec(&list).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(list.len())
+}
+
 #[derive(Serialize)]
 struct PlaylistsView {
     playlists: Vec<engine::playlists::PlaylistSummary>,
@@ -975,9 +1010,22 @@ async fn apple_import(root: String) -> CmdResult<engine::playlists::ImportReport
         let rootp = PathBuf::from(&root);
         let (_, lib) = load_lib(&rootp)?;
         let report = engine::playlists::import_apple(&rootp, &lib, &apple, "", true)?;
+        // Albums you added yourself (better copies to get) stay on the list.
+        let mut wanted = report.wanted.clone();
+        for w in load_wanted()
+            .into_iter()
+            .filter(|w| w.why.starts_with(BETTER_COPY))
+        {
+            if !wanted
+                .iter()
+                .any(|x| x.album == w.album && x.artist == w.artist)
+            {
+                wanted.push(w);
+            }
+        }
         let _ = std::fs::write(
             wantlist_path(),
-            serde_json::to_vec(&report.wanted).unwrap_or_default(),
+            serde_json::to_vec(&wanted).unwrap_or_default(),
         );
         // A copy you can open in a spreadsheet, next to your rules.
         if let Some(meta) = s
@@ -1208,6 +1256,7 @@ pub fn run() {
             library_folders,
             setup_card,
             players,
+            want_add,
             player_test_write,
             player_test_remove,
             player_test_save,

@@ -108,7 +108,7 @@ export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: He
                   layoutId={`cover-${a.dir}`}
                   className="aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-xl shadow-black/30"
                 >
-                  {c && (
+                  {c ? (
                     <img
                       src={c.src}
                       alt=""
@@ -116,11 +116,13 @@ export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: He
                       loading="lazy"
                       className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
                     />
+                  ) : (
+                    <NoCover title={a.title} />
                   )}
                 </motion.div>
                 <div className="mt-2.5 truncate text-[14px] font-medium">{a.title}</div>
                 <div className="truncate text-[12.5px] text-ink/55">
-                  {a.album_artist}
+                  {a.album_artist || (a.untagged ? 'No tags yet' : 'Unknown artist')}
                   {a.year ? `, ${a.year}` : ''}
                 </div>
               </motion.button>
@@ -158,6 +160,24 @@ export function MusicScreen(props: {
         </p>
       </header>
       <MusicWall ref={props.searchRef} root={props.root} report={props.report} busy={props.busy} />
+    </div>
+  )
+}
+
+/** A cover for albums without art: the first letters on a soft tint of the accent. */
+function NoCover({ title }: { title: string }) {
+  const letters = title
+    .split(/s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join('')
+  return (
+    <div
+      className="grid h-full w-full place-items-center text-[38px] font-semibold tracking-[-0.03em] text-ink/45"
+      style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 22%, transparent), color-mix(in oklab, var(--ink) 4%, transparent))' }}
+    >
+      {letters || '♪'}
     </div>
   )
 }

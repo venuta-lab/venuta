@@ -84,6 +84,8 @@ pub struct AlbumSummary {
     pub duration_ms: u64,
     /// A track whose embedded art represents the album, if any.
     pub cover_track: Option<String>,
+    /// No album tag: the title comes from the file or folder name.
+    pub untagged: bool,
 }
 
 pub struct Library {
@@ -269,9 +271,35 @@ impl Library {
     }
 }
 
+/// "06_Collections" → "Collections", "01 - Some_song" → "Some song": a name as a person would
+/// read it, for files and folders that carry no album tag.
+pub fn readable_name(s: &str) -> String {
+    s.trim_start_matches(|c: char| c.is_ascii_digit())
+        .trim_start_matches(['.', ' ', '-', '_'])
+        .replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn summarize(dir: &str, tracks: &[&Track]) -> AlbumSummary {
-    let title = most_common(tracks.iter().filter_map(|t| t.first("ALBUM")))
-        .unwrap_or_else(|| dir.rsplit('/').next().unwrap_or(dir).to_owned());
+    let tagged = most_common(tracks.iter().filter_map(|t| t.first("ALBUM")));
+    let untagged = tagged.is_none();
+    // Without an album tag: a single loose file is named after the file, a folder after itself.
+    let title = tagged.unwrap_or_else(|| {
+        let name = match tracks {
+            [one] => {
+                let file = one.path.rsplit('/').next().unwrap_or(&one.path);
+                file.rsplit_once('.')
+                    .map(|x| x.0)
+                    .unwrap_or(file)
+                    .to_owned()
+            }
+            _ => dir.rsplit('/').next().unwrap_or(dir).to_owned(),
+        };
+        let r = readable_name(&name);
+        if r.is_empty() { name } else { r }
+    });
     let album_artist = most_common(
         tracks
             .iter()
@@ -291,6 +319,7 @@ pub fn summarize(dir: &str, tracks: &[&Track]) -> AlbumSummary {
             .iter()
             .find(|t| t.front_cover().is_some())
             .map(|t| t.path.clone()),
+        untagged,
     }
 }
 
