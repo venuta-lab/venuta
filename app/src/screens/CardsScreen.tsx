@@ -105,11 +105,11 @@ export function CardsScreen({ root }: { root: string }) {
   return (
     <div className="mx-auto max-w-[980px] pb-20">
       <header className="pt-6">
-        <h1 className="text-[44px] font-semibold leading-none tracking-[-0.035em]">Cards</h1>
+        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Devices</h1>
         <p className="mt-4 max-w-[66ch] text-[15px] leading-relaxed text-ink/70">
-          Each card is a mirror of your library. Only changes are written: new music is copied, edited tags are
-          updated in place, and music already on a card is recognised and moved instead of copied again. Files this
-          app didn’t put on a card are never touched.
+          Each SD card carries your library, written for the player that reads it. Only changes are written: new music
+          is copied, edited tags are updated in place, and music already on a card is recognised and moved instead of
+          copied again. Files this app didn’t put on a card are never touched.
         </p>
       </header>
       {message && (
