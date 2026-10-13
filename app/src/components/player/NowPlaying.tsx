@@ -7,6 +7,7 @@ import { clock, current, jumpTo, seek, sourceLabel, usePlayer, useWaveform } fro
 import { IconClose } from '../Icons'
 import { SeekBar, SignalPath } from './NowPlayingBar'
 import { SoundPanel } from './SoundPanel'
+import { Stars } from './Stars'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
@@ -185,6 +186,9 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                 <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
                   {song.album}
                 </button>
+                <div className="mt-2 flex justify-center">
+                  <Stars path={song.path} stars={song.stars} size={18} />
+                </div>
                 <SeekBar position={s.position_ms} duration={duration} wave={wave} waveHeight={38} className="mt-6" />
                 {s.signal && (
                   <button

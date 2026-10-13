@@ -50,6 +50,28 @@ export const HomeView = memo(function HomeView(props: {
     () => (heard?.top ?? []).filter(([, n]) => n >= 2).map(([d]) => lib.byDir.get(d)).filter((a): a is Album => !!a),
     [heard, lib],
   )
+  // Albums with songs you rated 4 or 5 stars, best first.
+  const rated = useMemo(() => {
+    const score = (a: Album) => {
+      const r = a.tracks.map((t) => t.stars).filter((x) => x > 0)
+      return r.length ? r.reduce((x, y) => x + y, 0) / r.length : 0
+    }
+    return lib.albums
+      .filter((a) => a.tracks.some((t) => t.stars >= 4))
+      .sort((a, b) => score(b) - score(a))
+      .slice(0, 30)
+  }, [lib])
+  // Played before, but not in the last month: oldest first.
+  const [now] = useState(() => Date.now())
+  const rediscover = useMemo(() => {
+    const month = 30 * 24 * 3600 * 1000
+    return Object.entries(heard?.last_played ?? {})
+      .filter(([, at]) => now - at > month)
+      .sort((a, b) => a[1] - b[1])
+      .map(([d]) => lib.byDir.get(d))
+      .filter((a): a is Album => !!a)
+      .slice(0, 24)
+  }, [heard, lib, now])
   const today = useMemo(() => featured(lib.albums, props.hasCover), [lib, props.hasCover])
   const playing = now.dir ? lib.byDir.get(now.dir) : undefined
   const hero = playing ?? today
@@ -70,6 +92,8 @@ export const HomeView = memo(function HomeView(props: {
       </AnimatePresence>
       {recent.length > 0 && <Shelf title="Jump back in" albums={recent} origin="shelf-recent" />}
       {top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" />}
+      {rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" />}
+      {rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" />}
       <Shelf title="Hi-Res" albums={lib.hiRes} origin="shelf-hires" onSeeAll={() => props.onSeeAll(HI_RES)} />
       {shelves.map(([c, albums]) => (
         <Shelf key={c} title={c} albums={albums} origin={`shelf-${c}`} onSeeAll={() => props.onSeeAll(c)} />

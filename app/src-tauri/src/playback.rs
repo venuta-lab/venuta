@@ -25,6 +25,9 @@ pub struct QueueItem {
     pub bit_depth: u16,
     pub sample_rate: u32,
     pub lyrics: bool,
+    /// Your rating, 0–5.
+    #[serde(default)]
+    pub stars: u8,
     /// ReplayGain from the tags.
     #[serde(default)]
     pub rg: player::dsp::Gain,

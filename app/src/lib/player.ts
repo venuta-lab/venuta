@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { inApp, type CatalogTrack, type Gain } from './engine'
+import { editTags, inApp, type CatalogTrack, type Gain } from './engine'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -22,6 +22,7 @@ export interface QueueItem {
   bit_depth: number
   sample_rate: number
   lyrics: boolean
+  stars: number
   rg: Gain
 }
 
@@ -140,6 +141,7 @@ export const toItem = (t: CatalogTrack): QueueItem => ({
   bit_depth: t.bit_depth,
   sample_rate: t.sample_rate,
   lyrics: t.lyrics,
+  stars: t.stars,
   rg: t.rg,
 })
 
@@ -281,3 +283,10 @@ export const setSound = (sound: Sound) => {
 export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
 /** Pause after `minutes` (null cancels). */
 export const setSleep = (minutes: number | null) => call('player_sleep', { minutes })
+
+/** Your rating for a song (0–5), written into the file as RATING (journalled, undoable). */
+export async function rate(path: string, stars: number) {
+  const value = stars > 0 ? [String(Math.min(5, stars) * 20)] : []
+  set({ ...state, queue: state.queue.map((q) => (q.path === path ? { ...q, stars } : q)) })
+  await editTags(queueRoot, [{ file: path, set: [['RATING', value]] }])
+}
