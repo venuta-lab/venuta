@@ -32,6 +32,7 @@ const PAGES: { id: Page; label: string }[] = [
 export function SettingsScreen(props: {
   root: string
   home: string | null
+  music: string | null
   onChooseLibrary: () => void
   onOpenLibrary: () => void
   onChooseHome: (path: string) => Promise<void>
@@ -68,6 +69,7 @@ export function SettingsScreen(props: {
           <Folders
             root={props.root}
             home={props.home}
+            music={props.music}
             onChooseLibrary={props.onChooseLibrary}
             onOpenLibrary={props.onOpenLibrary}
             onChooseHome={props.onChooseHome}
@@ -244,6 +246,7 @@ function useSettings() {
 function Folders(props: {
   root: string
   home: string | null
+  music: string | null
   onChooseLibrary: () => void
   onOpenLibrary: () => void
   onChooseHome: (path: string) => Promise<void>
@@ -259,7 +262,7 @@ function Folders(props: {
     return typeof picked === 'string' ? picked : null
   }
   const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
-  const showingLibrary = !!props.home && norm(props.root) === norm(props.home)
+  const showingLibrary = !!props.music && norm(props.root) === norm(props.music)
   return (
     <div>
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Music folders</h2>
@@ -267,7 +270,7 @@ function Folders(props: {
         title="Your library"
         hint={
           props.home
-            ? `${props.home}. Your music is built here, and everything Venuta knows (settings, answers, history, covers) is kept with it in ${info?.data_dir ?? '.venuta'}. Move or back up the folder and it all goes along.`
+            ? `${props.home}. Your albums are in its Music folder, with Playlists, Add music here and Set aside beside it; everything Venuta knows (settings, answers, history, covers) is kept with it in ${info?.data_dir ?? '.venuta'}. Move or back up the folder and it all goes along.`
             : 'Not chosen yet.'
         }
       >

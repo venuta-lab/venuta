@@ -1,7 +1,8 @@
-//! Playlists as plain `.m3u8` files in `<library>/Playlists/`, readable by every player.
+//! Playlists as plain `.m3u8` files, readable by every player: in `Playlists/` beside the
+//! library's `Music/` folder (inside the music folder for older libraries).
 //!
-//! Entries use paths relative to the playlist (`../Film & Series/…`), so the same file works
-//! on the PC and on a card (where the music sits under `Music/`). Each entry also carries the
+//! Entries use paths relative to the playlist (`../Music/Film & Series/…`), so the same file
+//! works on the PC and on a card, which has the same `Music/` and `Playlists/` folders. Each entry also carries the
 //! track's audio checksum in a comment line players ignore (`#VENUTA-MD5:`), so when files
 //! move (e.g. the migration) a playlist repairs itself instead of breaking.
 //!
@@ -41,7 +42,17 @@ pub struct PlaylistSummary {
 }
 
 pub fn folder(library_root: &Path) -> PathBuf {
-    library_root.join(FOLDER)
+    crate::paths::beside(library_root, crate::paths::Helper::Playlists)
+}
+
+/// How an entry reaches the music from the playlist folder: `../Music/` beside a library's
+/// Music folder, `../` from a Playlists folder inside the music.
+fn to_music(library_root: &Path) -> &'static str {
+    if crate::paths::home_of(library_root).is_some() {
+        "../Music/"
+    } else {
+        "../"
+    }
 }
 
 fn file_for(library_root: &Path, name: &str) -> PathBuf {
@@ -96,7 +107,11 @@ pub fn read(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let rel = line.trim_start_matches("../").replace('\\', "/");
+        let line = line.replace('\\', "/");
+        let rel = line
+            .strip_prefix(to_music(library_root))
+            .unwrap_or_else(|| line.trim_start_matches("../"))
+            .to_owned();
         let md5 = pending_md5.take();
         let track = r.by_path.get(rel.as_str()).copied().or_else(|| {
             let t = md5.as_ref().and_then(|m| r.by_md5.get(m).copied());
@@ -157,7 +172,7 @@ pub fn write(
         if let Some(m) = &t.audio_md5 {
             out.push_str(&format!("{MD5_TAG}{}\n", hex(m)));
         }
-        out.push_str(&format!("../{p}\n"));
+        out.push_str(&format!("{}{p}\n", to_music(library_root)));
     }
     let path = file_for(library_root, name);
     std::fs::create_dir_all(folder(library_root)).map_err(|e| e.to_string())?;
@@ -215,7 +230,7 @@ pub fn repair_all(library_root: &Path, lib: &Library) -> usize {
 /// Deleted playlists are moved aside, never destroyed.
 pub fn delete(library_root: &Path, name: &str) -> Result<(), String> {
     let src = file_for(library_root, name);
-    let dir = library_root.join("_Quarantine").join("playlists");
+    let dir = crate::paths::beside(library_root, crate::paths::Helper::SetAside).join("playlists");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -747,6 +762,36 @@ mod tests {
             pairs: Default::default(),
             identities: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_library_keeps_playlists_beside_its_music() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("Lib");
+        crate::paths::make_home(&home).unwrap();
+        let music = crate::paths::music_dir(&home);
+        let lib = library(vec![track(1, "Film/Taal (1999)/01 - One.flac", "One", 1)]);
+        write(
+            &music,
+            &lib,
+            "Road",
+            &["Film/Taal (1999)/01 - One.flac".into()],
+            false,
+        )
+        .unwrap();
+        let file = home.join("Playlists").join("Road.m3u8");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains(
+                "
+../Music/Film/Taal (1999)/01 - One.flac
+"
+            ),
+            "{text}"
+        );
+        let (entries, repaired) = read(&music, &lib, "Road").unwrap();
+        assert!(!repaired);
+        assert_eq!(entries[0].path, "Film/Taal (1999)/01 - One.flac");
     }
 
     #[test]

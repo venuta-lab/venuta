@@ -121,8 +121,9 @@ pub fn apply(
     let started = std::time::Instant::now();
     check_target(source_root, target_root)?;
     std::fs::create_dir_all(target_root).map_err(|e| e.to_string())?;
+    // A library's Music folder is marked by the library itself; anything else gets a marker.
     let marker = target_root.join(LIBRARY_MARKER);
-    if !marker.exists() {
+    if crate::paths::home_of(target_root).is_none() && !marker.exists() {
         std::fs::write(
             &marker,
             "A library built by Venuta.
@@ -452,7 +453,8 @@ impl AlbumCtx<'_> {
         Ok(())
     }
 
-    /// Set a duplicate album aside, unchanged, under `_Quarantine/<original folder>`.
+    /// Set a duplicate album aside, unchanged, under `Set aside/<original folder>` (beside the
+    /// library's Music folder; `_Quarantine` inside older libraries).
     /// (The folder is the album's source folder.)
     fn quarantine(
         &self,
@@ -461,9 +463,7 @@ impl AlbumCtx<'_> {
         total: usize,
     ) -> Result<(), Vec<ApplyError>> {
         let mut errors = Vec::new();
-        let base = self
-            .target_root
-            .join("_Quarantine")
+        let base = crate::paths::beside(self.target_root, crate::paths::Helper::SetAside)
             .join(&self.album.source_dir);
         for t in &self.album.tracks {
             let name = t.source.rsplit('/').next().unwrap_or(&t.source);
@@ -611,6 +611,10 @@ pub fn check_target(source_root: &Path, target_root: &Path) -> Result<(), String
         return Err(
             "The new library can't be inside the current one, or the other way round.".into(),
         );
+    }
+    // A library's own Music folder is always a right place to build.
+    if crate::paths::home_of(target_root).is_some() {
+        return Ok(());
     }
     let has_other_files = std::fs::read_dir(target_root)
         .map(|mut d| d.next().is_some())

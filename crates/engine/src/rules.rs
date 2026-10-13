@@ -68,7 +68,7 @@ pub struct Layout {
 impl Default for Layout {
     fn default() -> Self {
         Self {
-            template: "{category}/{subfolder}/{language}/{albumartist}/{year} - {album}/{disc}{track} - {title}"
+            template: "{category}/{subfolder}/{language}/{albumartist}/{album} ({year})/{disc}{track} - {title}"
                 .into(),
             max_component: 120,
             max_path: 180,

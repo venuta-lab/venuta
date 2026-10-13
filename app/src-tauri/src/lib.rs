@@ -109,10 +109,10 @@ struct RunFailure {
 
 fn settings_with_defaults() -> Settings {
     let mut s = engine::settings::load();
-    // Your library is where everything is built and kept; an older saved target is only a
-    // suggestion until a library is chosen.
+    // Builds go into your library's Music folder; an older saved target is only a suggestion
+    // until a library is chosen.
     if let Some(home) = paths::home() {
-        s.new_library = Some(home.to_string_lossy().replace('\\', "/"));
+        s.new_library = Some(paths::music_dir(&home).to_string_lossy().replace('\\', "/"));
     }
     if s.rules_dir.is_none() {
         s.rules_dir = Some(
@@ -374,9 +374,11 @@ fn check_music_folder(path: String, library: Option<String>) -> CmdResult<()> {
         return Ok(());
     };
     let music = Path::new(&path);
-    if paths::canonical_root_string(music)
-        .eq_ignore_ascii_case(&paths::canonical_root_string(&home))
-    {
+    let same = |a: &Path, b: &Path| {
+        paths::canonical_root_string(a).eq_ignore_ascii_case(&paths::canonical_root_string(b))
+    };
+    // The library itself, or its Music folder, is simply opened.
+    if same(music, &home) || same(music, &paths::music_dir(&home)) {
         return Ok(());
     }
     engine::apply::check_target(music, &home).map_err(|_| {

@@ -1335,7 +1335,14 @@ struct PathFields<'a> {
 
 fn render_path(rules: &Rules, f: &PathFields<'_>) -> String {
     let max = rules.layout.max_component;
-    let year_album = |s: &str| s.trim_start_matches(" - ").to_owned();
+    // A missing year must not leave " - Album" or "Album ()".
+    let year_album = |s: &str| {
+        s.trim_start_matches(" - ")
+            .replace(" ()", "")
+            .replace("()", "")
+            .trim()
+            .to_owned()
+    };
     let mut out = rules.layout.template.clone();
     for (key, value) in [
         ("{category}", sanitize(f.category, max)),
@@ -1349,7 +1356,7 @@ fn render_path(rules: &Rules, f: &PathFields<'_>) -> String {
         out = out.replace(key, &value);
     }
     out = out.replace("{year}", f.year);
-    // Empty segments collapse; a missing year must not leave " - Album".
+    // Empty segments collapse.
     let segments: Vec<String> = out
         .split('/')
         .map(year_album)
@@ -1690,6 +1697,43 @@ pub fn build_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fields<'a>(year: &'a str, album: &'a str) -> PathFields<'a> {
+        PathFields {
+            category: "Film & Series",
+            subfolder: "",
+            language: "Hindi",
+            albumartist: "A.R. Rahman",
+            year,
+            album,
+            disc: String::new(),
+            track: "01".into(),
+            title: "Beat Of Passion",
+            ext: "flac",
+        }
+    }
+
+    #[test]
+    fn album_folders_are_named_then_dated() {
+        let rules = Rules::default();
+        assert_eq!(
+            render_path(&rules, &fields("1999", "Taal")),
+            "Film & Series/Hindi/A.R. Rahman/Taal (1999)/01 - Beat Of Passion.flac"
+        );
+        // No year: no empty brackets.
+        assert_eq!(
+            render_path(&rules, &fields("", "Taal")),
+            "Film & Series/Hindi/A.R. Rahman/Taal/01 - Beat Of Passion.flac"
+        );
+        // The older year-first template still works for anyone who keeps it.
+        let mut old = Rules::default();
+        old.layout.template =
+            "{category}/{albumartist}/{year} - {album}/{disc}{track} - {title}".into();
+        assert_eq!(
+            render_path(&old, &fields("", "Taal")),
+            "Film & Series/A.R. Rahman/Taal/01 - Beat Of Passion.flac"
+        );
+    }
 
     #[test]
     fn names_split_and_tidy() {

@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 
 pub const INCOMING: &str = "_Incoming";
 
+/// Where new music is dropped: `Add music here` beside a library's Music folder
+/// (`_Incoming` inside older libraries).
 pub fn incoming_dir(library_root: &Path) -> PathBuf {
-    library_root.join(INCOMING)
+    paths::beside(library_root, paths::Helper::AddMusic)
 }
 
 pub fn open_incoming_index(library_root: &Path) -> crate::Result<(PathBuf, Index)> {

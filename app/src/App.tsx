@@ -74,6 +74,9 @@ export default function App() {
   // where everything Venuta builds and knows is kept.
   const [root, setRoot] = useState(inApp() ? '' : 'D:/Collection')
   const [home, setHome] = useState<string | null>(inApp() ? null : 'D:/Music Library')
+  // Your albums live in the library's Music folder; playlists, new music and set-aside copies
+  // sit beside it.
+  const libMusic = home ? `${home.replace(/[\\/]+$/, '')}/Music` : null
   const [suggestion, setSuggestion] = useState('D:/Music Library')
   const [ready, setReady] = useState(!inApp())
   const [missing, setMissing] = useState('')
@@ -156,7 +159,7 @@ export default function App() {
         setSuggestion(h.suggestion)
         setHome(h.library)
         if (!h.library) setSetup(true)
-        else setRoot(s.open_folder || store.get() || h.library)
+        else setRoot(s.open_folder || store.get() || `${h.library.replace(/[\\/]+$/, '')}/Music`)
       } catch (e) {
         setError(String(e))
       } finally {
@@ -458,6 +461,7 @@ export default function App() {
         <SetupScreen
           root={root}
           home={home}
+          music={libMusic}
           suggestion={suggestion}
           report={report}
           busy={busy}
@@ -467,7 +471,7 @@ export default function App() {
             setHome(path)
           }}
           onChooseMusic={chooseRoot}
-          onStartEmpty={() => home && openLibrary(home)}
+          onStartEmpty={() => libMusic && openLibrary(libMusic)}
           onLookup={runLookup}
           onCancelLookup={() => void cancelLookup()}
           onDone={() => {
@@ -481,13 +485,13 @@ export default function App() {
       return (
         <MissingFolder
           path={missing}
-          isLibrary={samePath(missing, home)}
+          isLibrary={samePath(missing, libMusic)}
           onRetry={() => {
             setMissing('')
             void refresh(root, true)
           }}
           onChoose={() => void chooseRoot()}
-          onLibrary={home && !samePath(missing, home) ? () => openLibrary(home) : undefined}
+          onLibrary={libMusic && !samePath(missing, libMusic) ? () => openLibrary(libMusic) : undefined}
         />
       )
     if (!root && active !== 'settings') return <NoLibrary onSetup={() => setSetup(true)} />
@@ -495,7 +499,7 @@ export default function App() {
       case 'music':
         if (report && report.summary.tracks === 0)
           return (
-            <NoMusic path={root} isLibrary={samePath(root, home)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
+            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
           )
         return <MusicScreen root={root} report={report} busy={busy} searchRef={search} />
       case 'health':
@@ -528,7 +532,7 @@ export default function App() {
         return (
           <InboxScreen
             root={root}
-            home={home}
+            home={libMusic}
             onChooseMusic={() => void chooseRoot()}
             onImported={() => void refresh(root, false)}
             onCount={setInboxCount}
@@ -550,13 +554,14 @@ export default function App() {
           <SettingsScreen
             root={root}
             home={home}
+            music={libMusic}
             onChooseLibrary={chooseRoot}
-            onOpenLibrary={() => home && openLibrary(home)}
+            onOpenLibrary={() => libMusic && openLibrary(libMusic)}
             onChooseHome={async (path) => {
               if (root) await checkMusicFolder(root, path)
               await chooseHome(path)
               setHome(path)
-              openLibrary(path)
+              openLibrary(`${path.replace(/[\\/]+$/, '')}/Music`)
             }}
           />
         )

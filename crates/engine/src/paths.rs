@@ -15,6 +15,55 @@ pub const APP_DIR_NAME: &str = "Venuta";
 /// Venuta's folder inside a library.
 pub const DATA_DIR_NAME: &str = ".venuta";
 
+/// Inside a library: the albums (what players and cards see) …
+pub const MUSIC_DIR_NAME: &str = "Music";
+
+/// … and, beside them, the folders for working with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Helper {
+    /// Your playlists (`.m3u8`).
+    Playlists,
+    /// Drop new music here to bring it in.
+    AddMusic,
+    /// Duplicates and copies left out of the library, to check and delete when you like.
+    SetAside,
+}
+
+impl Helper {
+    /// The folder's name beside `Music`, and its name inside an older or outside folder.
+    fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Helper::Playlists => ("Playlists", "Playlists"),
+            Helper::AddMusic => ("Add music here", "_Incoming"),
+            Helper::SetAside => ("Set aside", "_Quarantine"),
+        }
+    }
+}
+
+/// A library's albums folder.
+pub fn music_dir(home: &Path) -> PathBuf {
+    home.join(MUSIC_DIR_NAME)
+}
+
+/// The library a `Music` folder belongs to, if it is one.
+pub fn home_of(music: &Path) -> Option<PathBuf> {
+    let parent = music.parent()?;
+    let named = music
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(MUSIC_DIR_NAME));
+    (named && parent.join(DATA_DIR_NAME).is_dir()).then(|| parent.to_path_buf())
+}
+
+/// Where a helper folder is for the music in `root`: beside it in a library, inside it
+/// otherwise (as before libraries had a `Music` folder).
+pub fn beside(root: &Path, helper: Helper) -> PathBuf {
+    let (new, old) = helper.names();
+    match home_of(root) {
+        Some(home) => home.join(new),
+        None => root.join(old),
+    }
+}
+
 /// The note of where the library is, in the per-user folder.
 pub const POINTER_FILE: &str = "library.json";
 
@@ -123,6 +172,7 @@ pub fn make_home(p: &Path) -> Result<HomeKind, String> {
     let data = p.join(DATA_DIR_NAME);
     std::fs::create_dir_all(&data)
         .map_err(|e| format!("Could not create {}: {e}", data.display()))?;
+    std::fs::create_dir_all(music_dir(p)).map_err(|e| e.to_string())?;
     let marker = p.join(crate::apply::LIBRARY_MARKER);
     if !marker.exists() {
         std::fs::write(&marker, "A library built by Venuta.\n").map_err(|e| e.to_string())?;
@@ -301,6 +351,30 @@ pub fn canonical_root_string(root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_folders_sit_beside_the_music() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("Music Library");
+        make_home(&home).unwrap();
+        let music = music_dir(&home);
+        assert!(music.is_dir(), "a library starts with its Music folder");
+        assert_eq!(home_of(&music).as_deref(), Some(home.as_path()));
+        assert_eq!(beside(&music, Helper::SetAside), home.join("Set aside"));
+        assert_eq!(
+            beside(&music, Helper::AddMusic),
+            home.join("Add music here")
+        );
+        assert_eq!(beside(&music, Helper::Playlists), home.join("Playlists"));
+        // Any other folder (a music folder being brought in, an older library) keeps its
+        // helpers inside, as before.
+        let old = dir.path().join("Old");
+        std::fs::create_dir_all(&old).unwrap();
+        assert_eq!(home_of(&old), None);
+        assert_eq!(beside(&old, Helper::SetAside), old.join("_Quarantine"));
+        assert_eq!(beside(&old, Helper::AddMusic), old.join("_Incoming"));
+        assert_eq!(beside(&old, Helper::Playlists), old.join("Playlists"));
+    }
 
     #[test]
     fn a_home_must_be_empty_new_or_already_ours() {

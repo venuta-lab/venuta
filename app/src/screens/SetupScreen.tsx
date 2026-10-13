@@ -20,6 +20,8 @@ const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLower
 export function SetupScreen(props: {
   root: string
   home: string | null
+  /** The library's Music folder, where its albums are. */
+  music: string | null
   suggestion: string
   report: HealthReport | null
   busy: string
@@ -31,7 +33,7 @@ export function SetupScreen(props: {
   onCancelLookup: () => void
   onDone: () => void
 }) {
-  const bringing = !!props.root && !!props.home && norm(props.root) !== norm(props.home)
+  const bringing = !!props.root && !!props.music && norm(props.root) !== norm(props.music)
   const [step, setStep] = useState(props.home ? (bringing ? 2 : 1) : 0)
   const [settings, setS] = useState<Settings | null>(null)
   const [error, setError] = useState('')

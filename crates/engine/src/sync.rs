@@ -166,6 +166,36 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
         }
         out.push(w);
     }
+    // A library keeps its playlists beside Music/; on the card they go beside the card's
+    // music folder too (`../Playlists/` from it), so their `../Music/…` entries resolve.
+    let beside = crate::playlists::folder(library_root);
+    if crate::paths::home_of(library_root).is_some()
+        && cfg.player.recipe().playlists
+        && !cfg.folder.trim().is_empty()
+        && let Ok(dir) = std::fs::read_dir(&beside)
+    {
+        for e in dir.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(meta) = e.metadata() else { continue };
+            if !meta.is_file() || !name.to_lowercase().ends_with(".m3u8") {
+                continue;
+            }
+            let mtime_ns = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or_default();
+            out.push(Wanted {
+                rel: format!("../{}/{name}", crate::playlists::FOLDER),
+                size: meta.len(),
+                mtime_ns,
+                audio_md5: None,
+                is_flac: false,
+                is_image: false,
+            });
+        }
+    }
     Ok(out)
 }
 
