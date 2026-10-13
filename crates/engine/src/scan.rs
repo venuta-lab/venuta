@@ -7,6 +7,7 @@ use crate::media::{self, FileKind};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 
@@ -25,6 +26,25 @@ pub struct ScanReport {
     pub elapsed_ms: u128,
 }
 
+/// Where a scan is, for a progress bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanStage {
+    /// Walking the folders; `done` is files found so far, `total` is 0 (not known yet).
+    Finding,
+    /// Reading tags of new or changed files.
+    Reading,
+    /// Writing the index.
+    Saving,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ScanProgress {
+    pub stage: ScanStage,
+    pub done: usize,
+    pub total: usize,
+}
+
 struct Entry {
     rel_path: String,
     abs_path: PathBuf,
@@ -35,11 +55,22 @@ struct Entry {
 
 /// Scan `root` into `index`. Safe to run repeatedly; an unchanged library does almost no work.
 pub fn scan(index: &mut Index, root: &Path) -> Result<ScanReport> {
+    scan_with(index, root, &|_| {})
+}
+
+/// [`scan`], reporting progress as it goes (often enough for a bar, not for every file).
+pub fn scan_with(
+    index: &mut Index,
+    root: &Path,
+    progress: &(dyn Fn(ScanProgress) + Sync),
+) -> Result<ScanReport> {
     let started = Instant::now();
     if !root.is_dir() {
         return Err(Error::BadRoot(root.to_path_buf()));
     }
-    let entries = walk(root)?;
+    let step = |stage, done, total| progress(ScanProgress { stage, done, total });
+    step(ScanStage::Finding, 0, 0);
+    let entries = walk(root, &|found| step(ScanStage::Finding, found, 0))?;
     let mut stamps = index.stamps()?;
 
     let mut report = ScanReport {
@@ -65,6 +96,9 @@ pub fn scan(index: &mut Index, root: &Path) -> Result<ScanReport> {
     report.removed = vanished.len();
 
     // Reading tags is I/O + parsing per file; rayon spreads it across cores.
+    let total = to_read.len();
+    let read = AtomicUsize::new(0);
+    step(ScanStage::Reading, 0, total);
     let observed: Vec<ObservedFile> = to_read
         .into_par_iter()
         .map(|e| {
@@ -76,6 +110,10 @@ pub fn scan(index: &mut Index, root: &Path) -> Result<ScanReport> {
             } else {
                 (None, None)
             };
+            let n = read.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_multiple_of(25) || n == total {
+                step(ScanStage::Reading, n, total);
+            }
             ObservedFile {
                 rel_path: e.rel_path,
                 kind: e.kind,
@@ -92,6 +130,7 @@ pub fn scan(index: &mut Index, root: &Path) -> Result<ScanReport> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default();
+    step(ScanStage::Saving, total, total);
     index.apply_scan(&observed, &vanished, now)?;
 
     report.audio_files = index.conn().query_row(
@@ -103,7 +142,7 @@ pub fn scan(index: &mut Index, root: &Path) -> Result<ScanReport> {
     Ok(report)
 }
 
-fn walk(root: &Path) -> Result<Vec<Entry>> {
+fn walk(root: &Path, found: &dyn Fn(usize)) -> Result<Vec<Entry>> {
     let mut out = Vec::new();
     let walker = WalkDir::new(root)
         .follow_links(false)
@@ -151,6 +190,9 @@ fn walk(root: &Path) -> Result<Vec<Entry>> {
             .to_str()
             .ok_or_else(|| Error::NonUtf8Path(abs_path.clone()))?
             .replace('\\', "/");
+        if (out.len() + 1).is_multiple_of(250) {
+            found(out.len() + 1);
+        }
         out.push(Entry {
             kind: FileKind::from_path(&abs_path),
             rel_path: rel,
@@ -160,4 +202,48 @@ fn walk(root: &Path) -> Result<Vec<Entry>> {
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn progress_counts_up_to_every_file_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let album = dir.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        for i in 0..7 {
+            // Not real FLAC: each one is a read error, which still counts as read.
+            std::fs::write(album.join(format!("{i:02}.flac")), b"not audio").unwrap();
+        }
+        std::fs::write(album.join("cover.jpg"), b"jpeg").unwrap();
+        let mut index = Index::open_in_memory(&dir.path().to_string_lossy()).unwrap();
+
+        let seen = Mutex::new(Vec::new());
+        let report = scan_with(&mut index, dir.path(), &|p| seen.lock().unwrap().push(p)).unwrap();
+        let seen = seen.into_inner().unwrap();
+
+        assert_eq!(report.added, 8);
+        assert_eq!(seen.first().map(|p| p.stage), Some(ScanStage::Finding));
+        let reading: Vec<_> = seen
+            .iter()
+            .filter(|p| p.stage == ScanStage::Reading)
+            .collect();
+        assert!(reading.iter().all(|p| p.total == 8 && p.done <= 8));
+        assert_eq!(reading.last().map(|p| p.done), Some(8));
+        assert_eq!(seen.last().map(|p| p.stage), Some(ScanStage::Saving));
+
+        // Nothing changed: no reading at all the second time.
+        let again = Mutex::new(Vec::new());
+        scan_with(&mut index, dir.path(), &|p| again.lock().unwrap().push(p)).unwrap();
+        assert!(
+            !again
+                .into_inner()
+                .unwrap()
+                .iter()
+                .any(|p| p.stage == ScanStage::Reading && p.done > 0)
+        );
+    }
 }

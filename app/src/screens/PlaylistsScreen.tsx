@@ -19,6 +19,7 @@ import {
   type SmartRule,
 } from '../lib/engine'
 import { PillButton } from './LibraryScreen'
+import { track } from '../lib/jobs'
 
 const spring = { type: 'spring', stiffness: 360, damping: 32 } as const
 type View = { kind: 'playlist'; name: string } | { kind: 'smart'; name: string } | { kind: 'wanted' }
@@ -47,7 +48,7 @@ export function PlaylistsScreen({ root }: { root: string }) {
     setImporting(true)
     setMessage('')
     try {
-      const r = await appleImport(root)
+      const r = await track({ id: 'apple', label: 'Matching your Apple Music playlists' }, () => appleImport(root))
       setLastImport(r)
       await load()
     } catch (e) {

@@ -207,3 +207,48 @@ kbd {
     animation: none;
   }
 }
+
+/* Progress that cannot be measured yet: a turning ring, a sweeping bar, shimmering tiles. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes bar-sweep {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+.bar-sweep {
+  animation: bar-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--ink) 5%, transparent) 30%,
+    color-mix(in oklab, var(--ink) 11%, transparent) 50%,
+    color-mix(in oklab, var(--ink) 5%, transparent) 70%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+:root[data-motion="reduced"] :is(.spin, .bar-sweep, .shimmer) {
+  animation-duration: 3s;
+}

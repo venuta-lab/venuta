@@ -64,8 +64,18 @@ const dev = <T,>(file: string) => fetch(`/_dev/${file}`).then((r) => r.json() as
 
 export const engineVersion = () =>
   inApp() ? invoke<string>('engine_version') : Promise.resolve('dev')
-export const scanLibrary = (root: string) =>
-  inApp() ? invoke<ScanReport>('scan_library', { root }) : Promise.resolve(null)
+export interface ScanProgress {
+  stage: 'finding' | 'reading' | 'saving'
+  done: number
+  total: number
+}
+
+export function scanLibrary(root: string, onProgress: (p: ScanProgress) => void = () => {}) {
+  if (!inApp()) return Promise.resolve(null)
+  const channel = new Channel<ScanProgress>()
+  channel.onmessage = onProgress
+  return invoke<ScanReport>('scan_library', { root, onProgress: channel })
+}
 export const libraryHealth = (root: string) =>
   inApp() ? invoke<HealthReport>('library_health', { root }) : dev<HealthReport>('health.json')
 export const albumCovers = (root: string, dirs: string[], size: number) =>

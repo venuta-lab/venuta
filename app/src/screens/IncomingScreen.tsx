@@ -18,6 +18,7 @@ import { loadCovers } from '../lib/covers'
 import { AlbumRow } from '../components/AlbumRow'
 import { DeepProgressBar, PillButton } from './LibraryScreen'
 import { IconIncoming } from '../components/Icons'
+import { track } from '../lib/jobs'
 
 /** Incoming covers get their own thumbnail size so they never collide with library covers. */
 const COVER = 300
@@ -34,7 +35,7 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
 
   const load = useCallback(async () => {
     try {
-      const v = await incoming(root)
+      const v = await track({ id: 'incoming', label: 'Reading new music' }, () => incoming(root))
       setView(v)
       await loadCovers(v.folder, v.plan.albums.map((a) => a.id), COVER)
     } catch (e) {
@@ -66,7 +67,8 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
           setDragging(false)
           setMessage('Copying into Incoming…')
           try {
-            const n = await addToIncoming(root, e.payload.paths)
+            const paths = e.payload.paths
+            const n = await track({ id: 'add', label: 'Copying new music into Incoming' }, () => addToIncoming(root, paths))
             setMessage(`${n} files copied into Incoming. Your originals stay where they were.`)
             await load()
           } catch (err) {
@@ -81,7 +83,12 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
   async function runLookup() {
     setLookup({ done: 0, total: 0 })
     try {
-      const r = await incomingLookup(root, (done, total) => setLookup({ done, total }))
+      const r = await track({ id: 'incoming-lookup', label: 'Looking up new music', unit: 'steps' }, (update) =>
+        incomingLookup(root, (done, total) => {
+          setLookup({ done, total })
+          update(done, total)
+        }),
+      )
       setMessage(
         `Looked up ${r.albums_looked_up} albums; found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} tracks.`,
       )
@@ -99,7 +106,12 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
       .map(([id]) => id)
     setImporting({ done: 0, total: 0 })
     try {
-      const r: ApplyReport = await incomingImport(root, ids, (done, total) => setImporting({ done, total }))
+      const r: ApplyReport = await track({ id: 'import', label: 'Adding new music to your library', unit: 'songs' }, (update) =>
+        incomingImport(root, ids, (done, total) => {
+          setImporting({ done, total })
+          update(done, total)
+        }),
+      )
       setMessage(
         `Imported ${r.tracks_written} tracks into your library${r.errors.length ? `; ${r.errors.length} files could not be written and stayed in Incoming` : ''}. The originals were moved to Incoming/.imported.`,
       )

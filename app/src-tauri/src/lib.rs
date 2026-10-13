@@ -154,13 +154,20 @@ fn engine_version() -> &'static str {
     engine::VERSION
 }
 
-/// Scan a library folder into its index. Read-only on the library.
+/// Scan a library folder into its index. Read-only on the library. Progress streams over
+/// `on_progress`.
 #[tauri::command]
-async fn scan_library(root: String) -> CmdResult<ScanReport> {
+async fn scan_library(
+    root: String,
+    on_progress: Channel<engine::ScanProgress>,
+) -> CmdResult<ScanReport> {
     blocking(move || {
         let root = PathBuf::from(root);
         let mut index = open_index(&root)?;
-        engine::scan(&mut index, &root).map_err(|e| e.to_string())
+        engine::scan_with(&mut index, &root, &|p| {
+            let _ = on_progress.send(p);
+        })
+        .map_err(|e| e.to_string())
     })
     .await
 }

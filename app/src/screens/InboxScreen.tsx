@@ -20,6 +20,7 @@ import { AlbumRow, BuildResult } from '../components/AlbumRow'
 import { IconChevron } from '../components/Icons'
 import { DeepProgressBar } from './LibraryScreen'
 import { IncomingScreen } from './IncomingScreen'
+import { track, useJob } from '../lib/jobs'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 
@@ -665,7 +666,10 @@ function Changes(props: { root: string; data: Review; onChanged: (r: Review) => 
 // --- Build ---------------------------------------------------------------------------------
 
 function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) => void }) {
-  const [building, setBuilding] = useState<{ done: number; total: number } | null>(null)
+  const [mine, setBuilding] = useState<{ done: number; total: number } | null>(null)
+  // A build keeps going when you leave Organize; coming back picks its progress up again.
+  const running = useJob('build')
+  const building = mine ?? (running ? { done: running.done, total: running.total } : null)
   const [result, setResult] = useState<ApplyReport | null>(null)
   const [error, setError] = useState('')
   const albums = props.data.plan.albums
@@ -679,7 +683,14 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
     setResult(null)
     setBuilding({ done: 0, total: 0 })
     try {
-      setResult(await buildLibrary(props.root, (done, total) => setBuilding({ done, total })))
+      setResult(
+        await track({ id: 'build', label: 'Building your library', unit: 'songs', cancel: () => void cancelApply() }, (update) =>
+          buildLibrary(props.root, (done, total) => {
+            setBuilding({ done, total })
+            update(done, total)
+          }),
+        ),
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

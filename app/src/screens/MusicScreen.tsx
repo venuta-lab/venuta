@@ -5,6 +5,8 @@ import type { AlbumSummary, HealthReport } from '../lib/engine'
 import { AlbumEditor } from './AlbumEditor'
 import { setAccent, useCovers } from '../lib/covers'
 import { IconSearch } from '../components/Icons'
+import { Bar } from '../components/Activity'
+import { counted, fraction, timeLeft, useJob, useNow } from '../lib/jobs'
 
 const spring = { type: 'spring', stiffness: 300, damping: 30 } as const
 
@@ -20,6 +22,7 @@ const fmtNum = (n: number) => n.toLocaleString('en-IN')
 export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: HealthReport | null; busy: string }>(
   function MusicWall({ root, report, busy }, searchRef) {
     const cover = useCovers(320)
+    const making = !!useJob('covers')
     const [query, setQuery] = useState('')
     const [shelf, setShelf] = useState<string>('all')
     const [selected, setSelected] = useState<AlbumSummary | null>(null)
@@ -78,13 +81,15 @@ export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: He
               <kbd>/</kbd>
             </div>
           </div>
-          <div className="no-scrollbar mt-3 flex gap-1 overflow-x-auto">
-            {chip('all', 'All', albums.length)}
-            {shelves.map(([s, n]) => chip(s, s, n))}
-          </div>
+          {albums.length > 0 && (
+            <div className="no-scrollbar mt-3 flex gap-1 overflow-x-auto">
+              {chip('all', 'All', albums.length)}
+              {shelves.map(([s, n]) => chip(s, s, n))}
+            </div>
+          )}
         </div>
 
-        {!report && <p className="py-20 text-center text-[14px] text-ink/55">{busy || 'Reading your music…'}</p>}
+        {!report && <Reading busy={busy} />}
         {report && shown.length === 0 && (
           <p className="py-20 text-center text-[14px] text-ink/55">No albums match “{query}”.</p>
         )}
@@ -109,13 +114,9 @@ export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: He
                   className="aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-xl shadow-black/30"
                 >
                   {c ? (
-                    <img
-                      src={c.src}
-                      alt=""
-                      draggable={false}
-                      loading="lazy"
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-                    />
+                    <CoverImage src={c.src} title={a.title} />
+                  ) : making && a.cover_track ? (
+                    <div className="shimmer h-full w-full" />
                   ) : (
                     <NoCover title={a.title} />
                   )}
@@ -164,10 +165,64 @@ export function MusicScreen(props: {
   )
 }
 
+/** While the folder is read: what is happening, how far along, and the wall's shape to come. */
+function Reading({ busy }: { busy: string }) {
+  const job = useJob('scan')
+  const now = useNow()
+  const count = job ? counted(job) : ''
+  const eta = job ? timeLeft(job, now) : ''
+  return (
+    <div className="mt-2">
+      <div className="glass rounded-[22px] px-6 py-5">
+        <div className="flex items-baseline gap-4">
+          <span className="flex-1 text-[15px] font-medium">{job?.label ?? (busy.replace(/…$/, '') || 'Reading your music')}</span>
+          <span className="text-[12.5px] text-ink/55">{[count, eta].filter(Boolean).join(', ')}</span>
+        </div>
+        <div className="mt-3">
+          <Bar value={job ? fraction(job) : null} />
+        </div>
+        <p className="mt-3 text-[12.5px] text-ink/55">
+          The first time takes a few minutes for a big collection; after that only new or changed files are read. Your files are only
+          read, never changed.
+        </p>
+      </div>
+      <div className="mt-6 grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-x-5 gap-y-7" aria-hidden>
+        {Array.from({ length: 10 }, (_, i) => (
+          <div key={i}>
+            <div className="shimmer aspect-square rounded-2xl" style={{ animationDelay: `${i * 80}ms` }} />
+            <div className="shimmer mt-3 h-3 w-3/4 rounded-full" />
+            <div className="shimmer mt-2 h-2.5 w-1/2 rounded-full" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A cover thumbnail. If it fails to load it tries once more, then falls back to the lettered
+ * tile, so a hiccup never leaves a broken-image icon on the wall.
+ */
+function CoverImage({ src, title }: { src: string; title: string }) {
+  const [attempt, setAttempt] = useState(0)
+  if (attempt > 1) return <NoCover title={title} />
+  return (
+    <img
+      key={attempt}
+      src={attempt ? `${src}?retry=${attempt}` : src}
+      alt=""
+      draggable={false}
+      loading="lazy"
+      onError={() => window.setTimeout(() => setAttempt((n) => n + 1), attempt ? 0 : 600)}
+      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+    />
+  )
+}
+
 /** A cover for albums without art: the first letters on a soft tint of the accent. */
 function NoCover({ title }: { title: string }) {
   const letters = title
-    .split(/s+/)
+    .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase())

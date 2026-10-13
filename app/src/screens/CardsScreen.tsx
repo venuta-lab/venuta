@@ -23,6 +23,7 @@ import {
 } from '../lib/engine'
 import { PillButton } from './LibraryScreen'
 import { IconCards } from '../components/Icons'
+import { track } from '../lib/jobs'
 
 const PLAYER_NAMES: Record<PlayerId, string> = {
   standard: 'any player (exact copies)',
@@ -74,8 +75,11 @@ export function CardsScreen({ root }: { root: string }) {
   async function sync(card: string) {
     set(card, { kind: 'syncing', done: 0, total: 0, bytes: 0 })
     try {
-      const report = await syncCard(root, card, (done, total, bytes) =>
-        set(card, { kind: 'syncing', done, total, bytes }),
+      const report = await track({ id: `sync:${card}`, label: 'Syncing your card', unit: 'files', cancel: () => void cancelSync(card) }, (update) =>
+        syncCard(root, card, (done, total, bytes) => {
+          set(card, { kind: 'syncing', done, total, bytes })
+          update(done, total)
+        }),
       )
       set(card, { kind: 'done', report })
       await refresh()

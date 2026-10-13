@@ -34,7 +34,7 @@ pub mod volumes;
 
 pub use error::{Error, Result};
 pub use index::Index;
-pub use scan::{ScanReport, scan};
+pub use scan::{ScanProgress, ScanReport, ScanStage, scan, scan_with};
 
 /// Engine version, shown by the CLI and the app.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

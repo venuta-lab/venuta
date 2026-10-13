@@ -10,19 +10,29 @@ export interface Cover {
 const cache = new Map<string, Cover>()
 const listeners = new Set<() => void>()
 
-/** Fetch covers for album folders in batches; results are cached for the session. */
-export async function loadCovers(root: string, dirs: string[], size = 320) {
+/**
+ * Fetch covers for album folders in batches; results are cached for the session.
+ * `onProgress` counts albums handled (with or without a cover found).
+ */
+export async function loadCovers(
+  root: string,
+  dirs: string[],
+  size = 320,
+  onProgress?: (done: number, total: number) => void,
+) {
   const missing = dirs.filter((d) => !cache.has(`${size}:${d}`))
+  onProgress?.(0, missing.length)
   for (let i = 0; i < missing.length; i += 48) {
     const batch = missing.slice(i, i + 48)
     let thumbs: CoverThumb[] = []
     try {
       thumbs = await albumCovers(root, batch, size)
     } catch {
-      continue
+      thumbs = []
     }
     for (const t of thumbs) cache.set(`${size}:${t.dir}`, { src: assetUrl(t.path), accent: t.accent })
     listeners.forEach((l) => l())
+    onProgress?.(Math.min(missing.length, i + batch.length), missing.length)
   }
 }
 

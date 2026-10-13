@@ -1,5 +1,6 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { inApp } from '../lib/engine'
+import { ActivityIndicator } from './Activity'
 import { IconSearch } from './Icons'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
@@ -18,7 +19,8 @@ export function TitleBar(props: { onPalette: () => void }) {
         <span className="flex-1 truncate text-left">Search or run a command</span>
         <kbd>Ctrl K</kbd>
       </button>
-      <div className="ml-auto flex h-full">
+      <div className="ml-auto flex h-full items-center">
+        <ActivityIndicator />
         <WinButton label="Minimise" onClick={() => win?.minimize()}>
           <path d="M5 12h14" />
         </WinButton>

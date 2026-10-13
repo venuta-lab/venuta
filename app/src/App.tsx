@@ -29,6 +29,7 @@ import {
   type HealthReport,
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
+import { track } from './lib/jobs'
 import { getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Surface } from './lib/prefs'
 import { DeepProgressBar, EmptyState } from './screens/LibraryScreen'
 import { MusicScreen } from './screens/MusicScreen'
@@ -86,30 +87,47 @@ export default function App() {
 
   const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
     try {
-      if (rescan) {
-        setBusy('Reading your music…')
-        await scanLibrary(dir)
-      }
-      setBusy('Checking your files…')
-      let r = await libraryHealth(dir)
-      // A library that was never read shows as empty: read it once, then report.
-      if (!rescan && r.summary.tracks === 0) {
-        setBusy('Reading your music…')
-        await scanLibrary(dir)
-        r = await libraryHealth(dir)
-      }
+      const r = await track({ id: 'scan', label: 'Reading your music', unit: 'files' }, async (update, relabel) => {
+        // Walk, read tags, save: each stage gets its own words and its own count.
+        const read = async () => {
+          let stage = ''
+          await scanLibrary(dir, (p) => {
+            if (p.stage !== stage) {
+              stage = p.stage
+              const label =
+                p.stage === 'finding' ? 'Finding your music' : p.stage === 'reading' ? 'Reading song details' : 'Saving what was read'
+              relabel(label)
+              setBusy(`${label}…`)
+            }
+            update(p.done, p.stage === 'saving' ? 0 : p.total)
+          })
+        }
+        if (rescan) await read()
+        relabel('Checking your files')
+        setBusy('Checking your files…')
+        let r = await libraryHealth(dir)
+        // A library that was never read shows as empty: read it once, then report.
+        if (!rescan && r.summary.tracks === 0) {
+          await read()
+          relabel('Checking your files')
+          r = await libraryHealth(dir)
+        }
+        return r
+      })
       setReport(r)
       setError('')
       setBusy('')
       // Covers: a spread of albums for the background first, then everything for the wall.
       const dirs = r.albums.filter((a) => a.cover_track).map((a) => a.dir)
-      const step = Math.max(1, Math.floor(dirs.length / 24))
-      const spread = dirs.filter((_, i) => i % step === 0).slice(0, 24)
-      await loadCovers(dir, spread)
-      const loaded = spread.map((d) => coverFor(d)).filter((c) => !!c)
-      setBackdrop(loaded.map((c) => c.src))
-      setAccent(loaded.find((c) => c.accent)?.accent)
-      await loadCovers(dir, dirs)
+      await track({ id: 'covers', label: 'Making album covers', unit: 'albums' }, async (update) => {
+        const step = Math.max(1, Math.floor(dirs.length / 24))
+        const spread = dirs.filter((_, i) => i % step === 0).slice(0, 24)
+        await loadCovers(dir, spread)
+        const loaded = spread.map((d) => coverFor(d)).filter((c) => !!c)
+        setBackdrop(loaded.map((c) => c.src))
+        setAccent(loaded.find((c) => c.accent)?.accent)
+        await loadCovers(dir, dirs, 320, update)
+      })
     } catch (e) {
       setBusy('')
       setError(String(e))
@@ -130,7 +148,10 @@ export default function App() {
         if (!c.card?.auto_sync || before.has(c.volume.root)) continue
         setNotice(`Syncing ${c.card.name}…`)
         try {
-          const r = await syncCard(root, c.volume.root, () => {})
+          const name = c.card.name
+          const r = await track({ id: `sync:${c.volume.root}`, label: `Syncing ${name}`, unit: 'files' }, (update) =>
+            syncCard(root, c.volume.root, (done, total) => update(done, total)),
+          )
           await ejectCard(c.volume.root).catch(() => {})
           setNotice(`${c.card.name} is up to date (${r.copied} copied, ${r.patched} updated, ${r.deleted} removed) and safe to remove.`)
         } catch (e) {
@@ -141,9 +162,14 @@ export default function App() {
     return () => window.clearInterval(t)
   }, [root])
 
-  // On launch, show the last library straight from its index.
+  // On launch, show the last library straight from its index; a newly chosen folder is read
+  // afresh first. One refresh per change of folder, never two racing each other.
+  const readNext = useRef(false)
   useEffect(() => {
-    if (root) void refresh(root, false)
+    if (!root) return
+    const rescan = readNext.current
+    readNext.current = false
+    void refresh(root, rescan)
   }, [root, refresh])
 
   const go = useCallback(
@@ -160,7 +186,12 @@ export default function App() {
   async function runDeepCheck() {
     setDeep({ done: 0, total: 0 })
     try {
-      await deepCheck(root, (done, total) => setDeep({ done, total }))
+      await track({ id: 'deep', label: 'Checking sound quality', unit: 'songs', cancel: () => void cancelDeepCheck() }, (update) =>
+        deepCheck(root, (done, total) => {
+          setDeep({ done, total })
+          update(done, total)
+        }),
+      )
       await refresh(root, false)
     } catch (e) {
       setError(String(e))
@@ -172,7 +203,14 @@ export default function App() {
   async function runLookup() {
     setLookup({ done: 0, total: 0 })
     try {
-      const r = await lookupOnline(root, (done, total, note) => setLookup({ done, total, note }))
+      const r = await track(
+        { id: 'lookup', label: 'Looking up details online', unit: 'steps', cancel: () => void cancelLookup() },
+        (update) =>
+          lookupOnline(root, (done, total, note) => {
+            setLookup({ done, total, note })
+            update(done, total, note)
+          }),
+      )
       const nothing = r.albums_looked_up === 0 && r.lyrics_checked === 0 && !r.discogs_matches && !r.identified
       setNotice(
         nothing && !r.cancelled
@@ -198,8 +236,13 @@ export default function App() {
     store.set(path)
     setReport(null)
     setBackdrop([])
-    setRoot(path)
-    void refresh(path, true)
+    // Show the wall filling in rather than leaving you on the screen you chose it from.
+    go('music')
+    if (path === root) void refresh(path, true)
+    else {
+      readNext.current = true
+      setRoot(path)
+    }
   }
 
   const toggleTheme = useCallback(() => setPrefs({ theme: resolvedTheme() === 'dark' ? 'light' : 'dark' }), [])
