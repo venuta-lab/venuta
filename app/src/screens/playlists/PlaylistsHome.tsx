@@ -1,7 +1,7 @@
 import { motion } from 'motion/react'
-import { useMemo, useState } from 'react'
-import type { PlaylistSummary, PlaylistsView, SmartRule } from '../../lib/engine'
-import { usePlayerValue } from '../../lib/player'
+import { useEffect, useMemo, useState } from 'react'
+import { playlistSourcesCheck, type BehindSource, type PlaylistSummary, type PlaylistsView, type SmartRule } from '../../lib/engine'
+import { fromIs, usePlayerValue } from '../../lib/player'
 import { toggle } from '../../lib/player'
 import { Mosaic } from '../../components/Mosaic'
 import { Page } from '../../components/ui'
@@ -30,7 +30,7 @@ export function PlaylistCard(props: {
   const { root, p } = props
   const from = usePlayerValue((s) => s.from)
   const playing = usePlayerValue((s) => s.playing)
-  const isNow = from === p.name
+  const isNow = fromIs(from, 'playlist', p.name)
   const songs = props.count ?? p.tracks - p.missing
   const ctx = useContextMenu(() => [
     ['Play', () => void playPlaylist(root, p, 'play', props.rule)],
@@ -58,9 +58,17 @@ export function PlaylistCard(props: {
         <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>
         <div className="truncate text-[12.5px] text-ink/55">
-          {p.smart ? `Smart, ${plural(songs, 'song')}` : plural(songs, 'song')}
-          {p.missing > 0 && !p.smart ? `, ${p.missing} to find` : ''}
+          {p.smart
+            ? `Smart, ${plural(songs, 'song')}`
+            : p.missing > 0
+              ? `${songs.toLocaleString('en-IN')} of ${plural(p.tracks, 'song')} here`
+              : plural(songs, 'song')}
         </div>
+        {p.missing > 0 && !p.smart && (
+          <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-ink/[0.1]" aria-hidden>
+            <div className="h-full rounded-full bg-ink/45" style={{ width: `${(songs / Math.max(1, p.tracks)) * 100}%` }} />
+          </div>
+        )}
       </button>
       {songs > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 aspect-square">
@@ -92,7 +100,11 @@ export function PlaylistsHome(props: {
   onOpenWanted: () => void
   onNew: () => void
   onImport: () => void
+  /** Bring these Apple Music playlists in whole (the source's names). */
+  onComplete?: (only: string[]) => void
   menu: PlaylistMenu
+  /** Shown inside Music: no page of its own, its buttons in a row at the top. */
+  embedded?: boolean
 }) {
   const { data, root } = props
   const [q, setQ] = useState('')
@@ -135,43 +147,39 @@ export function PlaylistsHome(props: {
     </section>
   )
 
-  return (
-    <Page
-      title="Playlists"
-      line={
-        data
-          ? `${ownCount ? `${plural(ownCount, 'playlist')} and ${plural(data.smart.length, 'smart one')}` : `${plural(data.smart.length, 'smart playlist')}, filled by rules`}. Saved as .m3u8 files beside your music, so other players and cards can use them too.`
-          : 'Reading your playlists…'
-      }
-      actions={
-        ownCount === 0 && !q ? undefined : (
-        <>
-          <button onClick={props.onNew} className="btn btn-lg">
-            New playlist
-          </button>
-          <button onClick={props.onImport} className="btn-primary btn-lg">
-            Import playlists
-          </button>
-        </>
-        )
-      }
-      bar={
-        all.length + (data?.smart.length ?? 0) > 6 ? (
-          <div className="flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
-            <IconSearch className="shrink-0 text-ink/45" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === 'Escape' && setQ('')}
-              placeholder="Find a playlist"
-              aria-label="Find a playlist"
-              className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45"
-            />
-          </div>
-        ) : undefined
-      }
-    >
+  const intro = data
+    ? `${ownCount ? `${plural(ownCount, 'playlist')} and ${plural(data.smart.length, 'smart one')}` : `${plural(data.smart.length, 'smart playlist')}, filled by rules`}. Saved as .m3u8 files beside your music, so other players and cards can use them too.`
+    : 'Reading your playlists…'
+  const buttons =
+    ownCount === 0 && !q ? undefined : (
+      <>
+        <button onClick={props.onNew} className="btn btn-lg">
+          New playlist
+        </button>
+        <button onClick={props.onImport} className="btn-primary btn-lg">
+          Import playlists
+        </button>
+      </>
+    )
+  const find =
+    all.length + (data?.smart.length ?? 0) > 6 ? (
+      <div className="flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
+        <IconSearch className="shrink-0 text-ink/45" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && setQ('')}
+          placeholder="Find a playlist"
+          aria-label="Find a playlist"
+          className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45"
+        />
+      </div>
+    ) : undefined
+
+  const body = (
+    <>
       {props.error && <p className="mb-6 text-[13px] text-problem">{props.error}</p>}
+      {data && !q && props.onComplete && <CompleteBanner root={root} onComplete={props.onComplete} />}
       {!data ? (
         <div className={GRID} aria-hidden>
           {Array.from({ length: 6 }, (_, i) => (
@@ -264,6 +272,93 @@ export function PlaylistsHome(props: {
           )}
         </>
       )}
+    </>
+  )
+
+  if (props.embedded)
+    return (
+      <div className="pb-16">
+        <div className="mb-8 flex flex-wrap items-center gap-3">
+          <p className="min-w-[240px] flex-1 text-[13px] text-ink/55">{intro}</p>
+          {find}
+          {buttons}
+        </div>
+        {body}
+      </div>
+    )
+  return (
+    <Page title="Playlists" line={intro} actions={buttons} bar={find}>
+      {body}
     </Page>
+  )
+}
+
+/**
+ * Playlists an older import brought over only in part (it kept just the songs it matched), or
+ * never: offered once, to bring in whole. Checked against sources on this computer only.
+ */
+function CompleteBanner(props: { root: string; onComplete: (only: string[]) => void }) {
+  const [behind, setBehind] = useState<BehindSource[]>([])
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('venuta.complete-dismissed') ?? ''
+    } catch {
+      return ''
+    }
+  })
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      playlistSourcesCheck(props.root)
+        .then((b) => live && setBehind(b))
+        .catch(() => {})
+    void load()
+    window.addEventListener('venuta:playlists-changed', load)
+    return () => {
+      live = false
+      window.removeEventListener('venuta:playlists-changed', load)
+    }
+  }, [props.root])
+  const short = behind.filter((b) => b.yours)
+  const fresh = behind.filter((b) => !b.yours)
+  const songs = short.reduce((n, b) => n + b.source_songs - b.have, 0)
+  // Dismissed for what it said then; offered again only when there is more.
+  const said = `${behind.length}:${songs + fresh.reduce((n, b) => n + b.source_songs, 0)}`
+  if (!behind.length || said === dismissed) return null
+  const dismiss = () => {
+    try {
+      localStorage.setItem('venuta.complete-dismissed', said)
+    } catch {
+      /* remembered for this visit only */
+    }
+    setDismissed(said)
+  }
+  return (
+    <section className="glass mb-10 flex flex-wrap items-center gap-x-6 gap-y-4 rounded-[22px] p-5 pl-6" aria-label="Complete your Apple Music playlists">
+      <div className="min-w-[280px] flex-1">
+        <h2 className="text-[16px] font-semibold">
+          {short.length
+            ? `${plural(short.length, 'playlist')} ${short.length === 1 ? 'is' : 'are'} missing ${plural(songs, 'song')} that Apple Music still has`
+            : `${plural(fresh.length, 'Apple Music playlist')} never came over`}
+        </h2>
+        <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-ink/60">
+          {short.length ? 'An earlier import kept only the songs it found in your library. ' : ''}
+          {short.length && fresh.length
+            ? fresh.length <= 2
+              ? `${fresh.map((b) => `“${b.name}”`).join(' and ')} never came over at all. `
+              : `${fresh.length} more never came over at all. `
+            : ''}
+          Complete them: every song comes in, in Apple Music's order. Songs you have play from your files; the rest keep their places, so you can see what to get.{short.length ? ' Songs you added stay.' : ''} You review it first, and can undo it.
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={dismiss} className="btn">
+          Not now
+        </button>
+        <button onClick={() => props.onComplete(behind.map((b) => b.name))} className="btn-primary">
+          Review and complete
+        </button>
+      </div>
+    </section>
   )
 }

@@ -1,23 +1,29 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   importApply,
   importPreview,
+  playlistRestore,
+  playlistUpdateRead,
   spotifyPlaylists,
   spotifyRead,
   type ImportChoice,
   type ImportDone,
+  type ImportRead,
+  type ImportWritten,
   type PlaylistItem,
   type PreviewItem,
   type PreviewPlaylist,
   type SpotifyPlaylist,
+  type UpdateTarget,
 } from '../../lib/engine'
 import { SpotifyAccount, useSpotifyStatus } from '../../components/SpotifyAccount'
 import { clock } from '../../lib/player'
 import { Detail, Segmented, Switch } from '../../components/ui'
 import { playlistsChanged } from '../../components/AddToPlaylist'
+import { notify } from '../../lib/notify'
 import { plural } from './common'
 
 type SourceId = 'spotify' | 'apple' | 'youtube' | 'deezer' | 'others' | 'player'
@@ -93,19 +99,54 @@ const SOURCES: { id: SourceId; name: string; need: string; steps: React.ReactNod
   },
 ]
 
+/** What an incoming playlist does to one you have: fills it in, sits beside it, or replaces it. */
+type Mode = 'update' | 'both' | 'replace'
+
 interface Pick {
   include: boolean
   name: string
-  replace: boolean
+  mode: Mode
   /** Close matches you said no to, by position. */
   rejected: Set<number>
 }
 
 type Step = { at: 'pick' } | { at: 'reading'; what: string } | { at: 'review' } | { at: 'saving' } | { at: 'done'; result: ImportDone }
 
+/** What the source said about a song, kept with it (so a later update knows the song). */
+const wantOf = (it: PreviewItem) => ({
+  title: it.foreign.title,
+  artist: it.foreign.artist,
+  album: it.foreign.album,
+  duration_ms: it.foreign.duration_ms ?? 0,
+  ...(it.foreign.isrc ? { isrc: it.foreign.isrc } : {}),
+})
+
+/** What updating a playlist does, in words. */
+function updateLine(t: UpdateTarget, source: string) {
+  if (!t.added && !t.removed) return `It already has every song ${source} has; nothing changes.`
+  const parts = [
+    t.added ? `${plural(t.added, 'song')} added from ${source}` : '',
+    t.yours ? `${t.yours} you added ${t.yours === 1 ? 'stays' : 'stay'}` : '',
+    t.removed ? `${t.removed} ${source} dropped ${t.removed === 1 ? 'goes' : 'go'}` : '',
+    t.skipped ? `${t.skipped} you took out ${t.skipped === 1 ? 'stays' : 'stay'} out` : '',
+  ].filter(Boolean)
+  return `${t.songs} → ${plural(t.after, 'song')}: ${parts.join(', ')}. ${t.after_here} of them in your library, the rest wait in their places.`
+}
+
+/** Opened to do one thing at once: complete playlists from Apple Music, or update one from its source. */
+export type ImportStart = { kind: 'apple'; only: string[] } | { kind: 'update'; name: string }
+
+const pickFor = (l: PreviewPlaylist, include = l.items.length > 0): Pick => ({
+  include,
+  name: l.target?.name ?? l.name,
+  mode: l.target ? 'update' : 'both',
+  rejected: new Set(),
+})
+
 export function ImportSheet(props: {
   root: string
   appleReady: boolean
+  start?: ImportStart
   onBack: () => void
   onOpen: (name: string) => void
   onOpenWanted: () => void
@@ -120,28 +161,48 @@ export function ImportSheet(props: {
   const [problems, setProblems] = useState<string[]>([])
   const [dropping, setDropping] = useState(false)
 
-  async function read(files: string[], deezer: string | null, apple: boolean) {
-    const youtube = source === 'youtube'
+  /** Read, then show the review: `only` keeps just those playlists (by the source's names). */
+  async function review(what: string, get: () => Promise<ImportRead>, only?: string[]) {
     setProblems([])
-    setStep({
-      at: 'reading',
-      what: apple
-        ? 'Reading your Apple Music library and matching every song to yours…'
-        : deezer
-          ? 'Fetching the playlist from Deezer and matching every song…'
-          : `Reading ${files.length === 1 ? 'the file' : `${files.length} files`}${youtube ? ', asking YouTube for song names,' : ''} and matching every song to your library…`,
-    })
+    setStep({ at: 'reading', what })
     try {
-      const r = await importPreview(root, files, deezer, apple)
-      setLists(r.lists)
+      const r = await get()
+      const lists = only ? r.lists.filter((l) => only.includes(l.name)) : r.lists
+      setLists(lists)
       setProblems(r.problems)
-      setPicks(r.lists.map((l) => ({ include: l.items.length > 0, name: l.name, replace: false, rejected: new Set() })))
+      setPicks(lists.map((l) => pickFor(l)))
       setStep({ at: 'review' })
     } catch (e) {
       setProblems([e instanceof Error ? e.message : String(e)])
       setStep({ at: 'pick' })
     }
   }
+
+  function read(files: string[], deezer: string | null, apple: boolean, only?: string[]) {
+    const youtube = source === 'youtube'
+    return review(
+      apple
+        ? 'Reading your Apple Music library and matching every song to yours…'
+        : deezer
+          ? 'Fetching the playlist from Deezer and matching every song…'
+          : `Reading ${files.length === 1 ? 'the file' : `${files.length} files`}${youtube ? ', asking YouTube for song names,' : ''} and matching every song to your library…`,
+      () => importPreview(root, files, deezer, apple),
+      only,
+    )
+  }
+
+  // Opened to do one thing: start on it at once.
+  const started = useRef(false)
+  useEffect(() => {
+    const s = props.start
+    if (!s || started.current) return
+    started.current = true
+    if (s.kind === 'apple') {
+      setSource('apple')
+      void read([], null, true, s.only)
+    } else void review(`Reading where “${s.name}” came from and matching every song…`, () => playlistUpdateRead(root, s.name))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.start])
 
   /** Playlists read from your Spotify account, matched like any import. */
   async function readSpotify(chosen: SpotifyPlaylist[]) {
@@ -152,7 +213,7 @@ export function ImportSheet(props: {
       const r = await spotifyRead(root, chosen)
       setLists(r.lists)
       setProblems(r.problems)
-      setPicks(r.lists.map((l) => ({ include: l.items.length > 0, name: l.name, replace: false, rejected: new Set() })))
+      setPicks(r.lists.map((l) => pickFor(l)))
       setStep({ at: 'review' })
     } catch (e) {
       setProblems([e instanceof Error ? e.message : String(e)])
@@ -218,20 +279,16 @@ export function ImportSheet(props: {
 
   async function apply() {
     const choices: ImportChoice[] = chosen.map(({ p, l }) => ({
-      name: p.name.trim() || l.name,
+      name: p.mode === 'update' && l.target ? l.target.name : p.name.trim() || l.name,
       source: l.source,
-      replace: l.exists && p.replace,
+      source_id: l.source_id,
+      update: p.mode === 'update' && l.target ? l.target.name : null,
+      replace: l.exists && p.mode === 'replace',
       items: l.items.map((it, i): PlaylistItem =>
         it.found && (it.grade === 'exact' || !p.rejected.has(i))
-          ? { path: it.found.path }
+          ? { path: it.found.path, source: wantOf(it) }
           : {
-              want: {
-                title: it.foreign.title,
-                artist: it.foreign.artist,
-                album: it.foreign.album,
-                duration_ms: it.foreign.duration_ms ?? 0,
-                ...(it.foreign.isrc ? { isrc: it.foreign.isrc } : {}),
-              },
+              want: wantOf(it),
             },
       ),
     }))
@@ -247,8 +304,23 @@ export function ImportSheet(props: {
     }
   }
 
+  async function undo(w: ImportWritten) {
+    if (!w.copy) return
+    try {
+      await playlistRestore(root, w.name, w.copy)
+      playlistsChanged()
+      props.onChanged()
+      setUndone((u) => new Set(u).add(w.name))
+      notify(`“${w.name}” is back as it was.`)
+    } catch (e) {
+      notify(`Couldn't put “${w.name}” back: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  const [undone, setUndone] = useState<Set<string>>(new Set())
+
   const setPick = (i: number, p: Partial<Pick>) => setPicks((all) => all.map((x, j) => (j === i ? { ...x, ...p } : x)))
   const restart = () => {
+    setUndone(new Set())
     setLists([])
     setPicks([])
     setProblems([])
@@ -432,7 +504,13 @@ export function ImportSheet(props: {
                 Start over
               </button>
               <button onClick={() => void apply()} disabled={!chosen.length} className="btn-primary">
-                Import {chosen.length > 1 ? plural(chosen.length, 'playlist') : 'playlist'}
+                {(() => {
+                  const updates = chosen.filter(({ p, l }) => p.mode === 'update' && l.target).length
+                  const fresh = chosen.length - updates
+                  if (!updates) return `Import ${fresh > 1 ? plural(fresh, 'playlist') : 'playlist'}`
+                  if (!fresh) return `Update ${updates > 1 ? plural(updates, 'playlist') : 'playlist'}`
+                  return `Import ${fresh}, update ${updates}`
+                })()}
               </button>
             </div>
           </motion.div>
@@ -441,19 +519,29 @@ export function ImportSheet(props: {
         {step.at === 'done' && (
           <motion.div key="done" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="mt-8 max-w-[760px]">
             <div className="grid gap-1.5">
-              {step.result.written.map((w) => (
-                <div key={w.name} className="glass flex items-center gap-4 rounded-2xl px-4 py-3">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14.5px] font-medium">{w.name}</span>
-                    <span className="block text-[12.5px] text-ink/55">
-                      {plural(w.songs, 'song')} from your library{w.wanted ? `, ${w.wanted} waiting until you have them` : ''}
+              {step.result.written.map((w) => {
+                const back = undone.has(w.name)
+                return (
+                  <div key={w.name} className="glass flex items-center gap-4 rounded-2xl px-4 py-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14.5px] font-medium">{w.name}</span>
+                      <span className="block text-[12.5px] text-ink/55">
+                        {back
+                          ? 'Put back as it was before.'
+                          : `${w.updated ? `Updated: ${w.added ? `${plural(w.added, 'song')} added` : 'no songs added'}${w.removed ? `, ${w.removed} dropped` : ''}. ` : ''}${plural(w.songs, 'song')} in your library${w.wanted ? `, ${w.wanted} waiting until you have them` : ''}.`}
+                      </span>
                     </span>
-                  </span>
-                  <button onClick={() => props.onOpen(w.name)} className="btn btn-sm">
-                    Open
-                  </button>
-                </div>
-              ))}
+                    {w.updated && w.copy && !back && (
+                      <button onClick={() => void undo(w)} className="btn-ghost btn-sm" title="Put this playlist back as it was before the update">
+                        Undo
+                      </button>
+                    )}
+                    <button onClick={() => props.onOpen(w.name)} className="btn btn-sm">
+                      Open
+                    </button>
+                  </div>
+                )
+              })}
             </div>
             {step.result.wanted > 0 && (
               <p className="mt-5 text-[13.5px] text-ink/65">
@@ -574,7 +662,8 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
   const shown = more ? rows : rows.slice(0, 150)
   const accepted = l.close - [...pick.rejected].filter((i) => l.items[i]?.grade === 'close').length
   const toGet = l.missing + (l.close - accepted)
-  const nameClash = l.exists && pick.include
+  const t = l.target
+  const nameClash = l.exists && pick.include && !t
 
   return (
     <section className={`glass rounded-[20px] transition-opacity ${pick.include ? '' : 'opacity-60'}`} aria-label={l.name}>
@@ -585,7 +674,7 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
           onChange={(e) => props.onChange({ name: e.target.value })}
           onBlur={() => !pick.name.trim() && props.onChange({ name: l.name })}
           aria-label="Name for this playlist"
-          disabled={!pick.include}
+          disabled={!pick.include || (pick.mode === 'update' && !!t)}
           className="min-w-[180px] flex-1 rounded-lg bg-transparent px-2 py-1 text-[15.5px] font-semibold outline-none transition-colors -mx-2 hover:bg-ink/[0.05] focus:bg-ink/[0.07] focus:ring-1 focus:ring-[color-mix(in_oklab,var(--accent)_60%,transparent)]"
         />
         <span className="flex flex-wrap items-center gap-1.5 text-[12px]">
@@ -607,14 +696,41 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
         </button>
       </div>
       {!l.items.length && <p className="px-4 pb-4 text-[12.5px] text-ink/50">This playlist is empty, so there is nothing to import.</p>}
+      {t && pick.include && (
+        <div className="border-t border-edge px-4 py-3 text-[13px] text-ink/75">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="min-w-0 flex-1">
+              {t.linked ? `This updates your “${t.name}”, which came from here.` : `You already have a playlist called “${t.name}”.`}
+            </span>
+            <Segmented
+              label="What to do with it"
+              size="sm"
+              value={pick.mode}
+              onChange={(mode) => props.onChange({ mode, name: mode === 'update' ? t.name : pick.name })}
+              options={[
+                { value: 'update', label: 'Update it' },
+                { value: 'both', label: 'Keep both' },
+                { value: 'replace', label: 'Replace it' },
+              ]}
+            />
+          </div>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-ink/60">
+            {pick.mode === 'update'
+              ? updateLine(t, l.source)
+              : pick.mode === 'replace'
+                ? `Your “${t.name}” goes to Set aside, and this one takes its place. Songs you added to it are not carried over.`
+                : 'This one is saved beside yours, with a number added to its name.'}
+          </p>
+        </div>
+      )}
       {nameClash && (
         <div className="flex flex-wrap items-center gap-3 border-t border-edge px-4 py-3 text-[13px] text-ink/70">
           <span className="min-w-0 flex-1">You already have a playlist called “{l.name}”.</span>
           <Segmented
             label="When the name is taken"
             size="sm"
-            value={pick.replace ? 'replace' : 'both'}
-            onChange={(v) => props.onChange({ replace: v === 'replace' })}
+            value={pick.mode === 'replace' ? 'replace' : 'both'}
+            onChange={(v) => props.onChange({ mode: v })}
             options={[
               { value: 'both', label: 'Keep both' },
               { value: 'replace', label: 'Replace it' },

@@ -11,6 +11,7 @@ import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
 import { Stars } from './Stars'
+import { PlayingFrom } from './PlayingFrom'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
@@ -182,6 +183,7 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
                 <h2 className="title truncate text-[26px]">{song.title}</h2>
                 <p className="mt-1 truncate text-[15px] text-ink/65">{song.artists.join(', ') || song.album_artist}</p>
+                <PlayingFrom className="mt-1.5 block truncate text-[12.5px] text-ink/50" onOpen={props.onClose} />
                 <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
                   {song.album}
                 </button>

@@ -18,7 +18,7 @@ import { notify } from '../lib/notify'
 import { confirmAsk } from '../components/Confirm'
 import { playlistsChanged } from '../components/AddToPlaylist'
 import { playableSongs, plural } from './playlists/common'
-import { ImportSheet } from './playlists/ImportSheet'
+import { ImportSheet, type ImportStart } from './playlists/ImportSheet'
 import { PlaylistPage } from './playlists/PlaylistPage'
 import { PlaylistsHome, type PlaylistMenu } from './playlists/PlaylistsHome'
 import { WantList } from './playlists/WantList'
@@ -27,7 +27,7 @@ export type PlaylistsPlace =
   | { kind: 'home' }
   | { kind: 'playlist'; name: string; fresh?: boolean; rename?: boolean }
   | { kind: 'wanted' }
-  | { kind: 'import' }
+  | { kind: 'import'; start?: ImportStart }
   | { kind: 'new' }
 
 /*
@@ -51,10 +51,34 @@ type View = Exclude<PlaylistsPlace, { kind: 'new' }> & { id: number }
 let viewSeq = 0
 const at = (p: Exclude<PlaylistsPlace, { kind: 'new' }>): View => ({ ...p, id: ++viewSeq })
 // Where you were, kept while you visit other places.
-let kept: View = at({ kind: 'home' })
+let keptView: View = at({ kind: 'home' })
 let keptRoot = ''
+const kindListeners = new Set<() => void>()
+const kept = {
+  get view() {
+    return keptView
+  },
+  set view(v: View) {
+    keptView = v
+    kindListeners.forEach((l) => l())
+  },
+}
+/** What Playlists shows ("home", "playlist", "import", "wanted"), or is about to show. */
+export function usePlaylistsKind() {
+  return useSyncExternalStore(
+    (l) => {
+      kindListeners.add(l)
+      listeners.add(l)
+      return () => {
+        kindListeners.delete(l)
+        listeners.delete(l)
+      }
+    },
+    () => (asked && asked.kind !== 'new' ? asked.kind : keptView.kind),
+  )
+}
 
-export function PlaylistsScreen(props: { root: string; report: HealthReport | null; onAlbum: (dir: string) => void }) {
+export function PlaylistsScreen(props: { root: string; report: HealthReport | null; onAlbum: (dir: string) => void; embedded?: boolean }) {
   const { root } = props
   const [data, setData] = useState<PlaylistsView | null>(null)
   const [error, setError] = useState('')
@@ -62,17 +86,17 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
     // Opened to show something (a playlist from the Music home): start there, with no flash
     // of where you were before.
     if (asked && asked.kind !== 'new') {
-      kept = at(asked)
+      keptView = at(asked)
       asked = null
-      return kept
+      return keptView
     }
-    return keptRoot === root ? kept : at({ kind: 'home' })
+    return keptRoot === root ? keptView : at({ kind: 'home' })
   })
   keptRoot = root
   const catalog = useCatalog(root, props.report)
   const box = useRef<HTMLDivElement>(null)
   const setView = (v: View) => {
-    kept = v
+    kept.view = v
     setViewState(v)
     box.current?.closest('.overflow-y-auto')?.scrollTo({ top: 0 })
   }
@@ -176,7 +200,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
     <div ref={box}>
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={view.kind === 'playlist' ? `p${view.id}` : view.kind}
+          key={view.kind === 'playlist' || view.kind === 'import' ? `${view.kind}${view.id}` : view.kind}
           initial={{ opacity: 0, x: view.kind === 'home' ? -14 : 14 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0 }}
@@ -191,7 +215,9 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               onOpenWanted={() => setView(at({ kind: 'wanted' }))}
               onNew={() => void create()}
               onImport={() => setView(at({ kind: 'import' }))}
+              onComplete={(only) => setView(at({ kind: 'import', start: { kind: 'apple', only } }))}
               menu={menu}
+              embedded={props.embedded}
             />
           )}
           {view.kind === 'playlist' && (
@@ -208,7 +234,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               onRenamed={(name) => {
                 // Same page, new name: keep its id so nothing reloads or animates.
                 const next = { ...view, name, fresh: view.fresh, rename: false }
-                kept = next
+                kept.view = next
                 setViewState(next)
                 void load()
                 playlistsChanged()
@@ -219,6 +245,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               }}
               onOpen={(name) => setView(at({ kind: 'playlist', name }))}
               onAlbum={props.onAlbum}
+              onUpdate={(name) => setView(at({ kind: 'import', start: { kind: 'update', name } }))}
             />
           )}
           {view.kind === 'wanted' && <WantList root={root} wanted={data?.wanted ?? []} onBack={home} onOpen={(name) => setView(at({ kind: 'playlist', name }))} onChanged={() => void load()} />}
@@ -226,6 +253,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
             <ImportSheet
               root={root}
               appleReady={!!data?.apple_ready}
+              start={view.start}
               onBack={home}
               onOpen={(name) => setView(at({ kind: 'playlist', name }))}
               onOpenWanted={() => setView(at({ kind: 'wanted' }))}

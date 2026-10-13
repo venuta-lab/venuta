@@ -1,7 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { clock, play, toggle } from '../../lib/player'
+import { clock, play, toggle, type From } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { compareText, scrollerOf, useNav, useNowPlaying } from './model'
 import { InBar } from '../../components/ui'
@@ -41,7 +41,7 @@ const ORDER: Record<SortKey, (a: CatalogTrack, b: CatalogTrack) => number> = {
 export const SongList = memo(function SongList(props: {
   tracks: CatalogTrack[]
   /** Where the queue says it came from ("Songs", "Search: rahman"). */
-  from: string
+  from: From
   /** Start sorted, or keep the order given. */
   sortBy?: SortKey
   /** Keep the column heads in the page's pinned bar while the list scrolls. */

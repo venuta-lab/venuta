@@ -71,6 +71,15 @@ pub enum Cmd<T> {
     },
     Remove(usize),
     Move(usize, usize),
+    /// The same source with a new list (a playlist edited while it plays): `index` is the song
+    /// playing now, which plays on (see `Queue::follow`).
+    Follow {
+        items: Vec<T>,
+        index: usize,
+    },
+    /// After a restart: the queue is a shuffled one, and these are its positions in the order
+    /// before shuffling.
+    RestoreOrder(Vec<usize>),
     Output(OutputChoice),
     /// The sound tools (equalizer, levelling…).
     Sound(Sound),
@@ -114,6 +123,8 @@ pub struct Status<T: Serialize> {
     pub repeat: Repeat,
     pub volume: f32,
     pub signal: Option<Signal>,
+    /// With `queue`, while shuffled: where each song of the order before shuffling is.
+    pub unshuffled: Option<Vec<usize>>,
     pub from: String,
     pub error: String,
     pub sound: Sound,
@@ -360,6 +371,15 @@ impl<T: Item + Serialize> Engine<T> {
                 self.queue.move_item(a, b);
                 self.queue_changed = true;
                 self.drop_prefetch();
+            }
+            Cmd::Follow { items, index } => {
+                self.queue.follow(items, index);
+                self.queue_changed = true;
+                self.drop_prefetch();
+            }
+            Cmd::RestoreOrder(positions) => {
+                self.queue.restore_order(&positions);
+                self.queue_changed = true;
             }
             Cmd::Output(choice) => {
                 self.release();
@@ -841,6 +861,10 @@ impl<T: Item + Serialize> Engine<T> {
             repeat: self.queue.repeat,
             volume: self.volume,
             signal: self.signal(),
+            unshuffled: self
+                .queue_changed
+                .then(|| self.queue.unshuffled())
+                .flatten(),
             from: self.from.clone(),
             error: self.error.clone(),
             sound: self.sound.clone(),
@@ -849,7 +873,11 @@ impl<T: Item + Serialize> Engine<T> {
                 .sleep_at
                 .map(|t| t.saturating_duration_since(Instant::now()).as_secs()),
             bands: (self.spectrum && self.playing).then(|| {
-                let rate = self.segs.front().map(|s| s.source.format.rate).unwrap_or(44_100);
+                let rate = self
+                    .segs
+                    .front()
+                    .map(|s| s.source.format.rate)
+                    .unwrap_or(44_100);
                 crate::spectrum::levels(self.recent.make_contiguous(), rate)
             }),
         };

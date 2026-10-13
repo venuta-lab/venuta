@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useMemo, useState } from 'react'
-import { listeningSummary, type ListeningSummary } from '../../lib/engine'
+import { listeningSummary, playlistShelf, type ListeningSummary, type PlaylistSummary } from '../../lib/engine'
+import { PlaylistCard } from '../playlists/PlaylistsHome'
 import { useCovers } from '../../lib/covers'
 import {
   appearsOn,
   artistFor,
+  albumFrom,
   coverId,
   featured,
   plural,
@@ -35,7 +37,7 @@ export const HomeView = memo(function HomeView(props: {
 }) {
   const { lib } = props
   const now = useNowPlaying()
-  // What you've played, fetched again when the album playing changes.
+  // What you've played, fetched again when the song playing changes.
   const [heard, setHeard] = useState<ListeningSummary | null>(null)
   useEffect(() => {
     let live = true
@@ -45,10 +47,35 @@ export const HomeView = memo(function HomeView(props: {
     return () => {
       live = false
     }
-  }, [props.root, now.dir])
+  }, [props.root, now.path])
   const recent = useMemo(
     () => (heard?.recent ?? []).map((d) => lib.byDir.get(d)).filter((a): a is Album => !!a).slice(0, 24),
     [heard, lib],
+  )
+  // Playlists you played, beside the albums in Jump back in.
+  const [lists, setLists] = useState<PlaylistSummary[]>([])
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      playlistShelf(props.root)
+        .then((l) => live && setLists(l))
+        .catch(() => {})
+    void load()
+    window.addEventListener('venuta:playlists-changed', load)
+    return () => {
+      live = false
+      window.removeEventListener('venuta:playlists-changed', load)
+    }
+  }, [props.root])
+  const playedLists = useMemo(
+    () =>
+      (heard?.recent_playlists ?? []).flatMap(([name, at]) => {
+        const p = lists.find((x) => x.name === name)
+        return p && p.tracks - p.missing > 0
+          ? [{ key: `playlist:${name}`, at, node: <PlaylistCard root={props.root} p={p} onOpen={() => props.onOpenPlaylist(name)} /> }]
+          : []
+      }),
+    [heard, lists, props],
   )
   const top = useMemo(
     () => (heard?.top ?? []).filter(([, n]) => n >= 2).map(([d]) => lib.byDir.get(d)).filter((a): a is Album => !!a),
@@ -94,7 +121,9 @@ export const HomeView = memo(function HomeView(props: {
           />
         )}
       </AnimatePresence>
-      {recent.length > 0 && <Shelf title="Jump back in" albums={recent} origin="shelf-recent" />}
+      {recent.length + playedLists.length > 0 && (
+        <Shelf title="Jump back in" albums={recent} origin="shelf-recent" more={playedLists} at={(d) => heard?.last_played[d] ?? 0} />
+      )}
       <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} />
       {top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" />}
       {rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" />}
@@ -159,7 +188,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
             {a.hiRes && <HiResPill />}
           </div>
           <div className="mt-5">
-            <PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} />
+            <PlayButtons tracks={a.tracks} from={albumFrom(a)} dir={a.dir} />
           </div>
         </div>
       </div>
@@ -248,7 +277,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
       title={ar.name}
       onBack={onBack}
       glow={cover?.src}
-      tools={<PlayButtons tracks={own.length ? own : also} from={ar.name} label="Play all" size="sm" />}
+      tools={<PlayButtons tracks={own.length ? own : also} from={{ kind: 'artist', ref: ar.name, label: ar.name }} label="Play all" size="sm" />}
     >
       <div className="flex flex-wrap items-end gap-7">
         <div className="w-[168px] shrink-0">
@@ -263,7 +292,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
           <h1 className="title text-[40px] leading-none">{ar.name}</h1>
           <p className="mt-2.5 text-[14px] text-ink/60">{counts.join(', ') || 'Nothing by them in your library yet.'}</p>
           <div className="mt-5">
-            <PlayButtons tracks={own.length ? own : also} from={ar.name} label="Play all" />
+            <PlayButtons tracks={own.length ? own : also} from={{ kind: 'artist', ref: ar.name, label: ar.name }} label="Play all" />
           </div>
         </motion.div>
       </div>
@@ -276,7 +305,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
       {also.length > 0 && (
         <section className="mt-10">
           <h2 className="mb-3 text-[19px] font-semibold tracking-[-0.02em]">Also appears on</h2>
-          <SongList tracks={also} from={ar.name} />
+          <SongList tracks={also} from={{ kind: 'artist', ref: ar.name, label: ar.name }} />
         </section>
       )}
     </Detail>
@@ -299,7 +328,7 @@ export function SearchResults(props: { query: string; albums: Album[]; artists: 
             <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
             <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
           </div>
-          <SongList tracks={props.tracks} from={`Search: ${props.query.trim()}`} pin />
+          <SongList tracks={props.tracks} from={{ kind: 'search', ref: props.query.trim(), label: `Search: ${props.query.trim()}` }} pin />
         </section>
       )}
     </div>

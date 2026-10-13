@@ -4,11 +4,11 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { createPortal } from 'react-dom'
 import type { CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { enqueue, play, toggle } from '../../lib/player'
+import { enqueue, playAll, toggle, type From } from '../../lib/player'
 import { useJob } from '../../lib/jobs'
 import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { CoverImage, NoCover } from '../MusicScreen'
-import { coverId, shuffled, smooth, spring, useNav, useNowPlaying, type Album } from './model'
+import { albumFrom, coverId, smooth, spring, useNav, useNowPlaying, type Album } from './model'
 
 export function QualityBadge({ text }: { text: string }) {
   if (!text) return null
@@ -43,7 +43,7 @@ export function Equalizer({ playing, className = '' }: { playing: boolean; class
 }
 
 /** The primary action. Plays the album, or pauses and resumes it when it is the one playing. */
-export function PlayButtons(props: { tracks: CatalogTrack[]; from: string; dir?: string; label?: string; size?: 'sm' | 'lg' }) {
+export function PlayButtons(props: { tracks: CatalogTrack[]; from: From; dir?: string; label?: string; size?: 'sm' | 'lg' }) {
   const { tracks, from, dir, label = 'Play' } = props
   const sm = props.size === 'sm'
   const { root } = useNav()
@@ -53,14 +53,14 @@ export function PlayButtons(props: { tracks: CatalogTrack[]; from: string; dir?:
     <div className="flex flex-wrap items-center gap-2.5">
       <button
         disabled={!tracks.length}
-        onClick={() => (isNow ? void toggle() : void play(root, tracks, 0, from))}
+        onClick={() => (isNow ? void toggle() : void playAll(root, tracks, from))}
         className={`btn-primary ${sm ? 'btn-sm' : 'btn-lg'}`}
       >
         {isNow && now.playing ? <IconPause /> : <IconPlay />}
         {isNow ? (now.playing ? 'Pause' : 'Resume') : label}
       </button>
       {!sm && (
-        <button disabled={tracks.length < 2} onClick={() => void play(root, shuffled(tracks), 0, from)} className="btn btn-lg">
+        <button disabled={tracks.length < 2} onClick={() => void playAll(root, tracks, from, 'shuffle')} className="btn btn-lg">
           <IconShuffle />
           Shuffle
         </button>
@@ -130,7 +130,7 @@ export const AlbumCard = memo(function AlbumCard(props: {
           whileTap={{ scale: 0.92 }}
           transition={spring}
           aria-label={props.now === 'playing' ? `Pause ${a.title}` : `Play ${a.title}`}
-          onClick={() => (props.now !== 'no' ? void toggle() : void play(root, a.tracks, 0, a.title))}
+          onClick={() => (props.now !== 'no' ? void toggle() : void playAll(root, a.tracks, albumFrom(a)))}
           className={`pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 focus-visible:translate-y-0 focus-visible:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 ${
             props.now === 'no' ? 'translate-y-1.5 opacity-0' : 'opacity-100'
           }`}
@@ -166,6 +166,10 @@ export function Shelf(props: {
   title: string
   albums: Album[]
   origin: string
+  /** Other cards among the albums (playlists you played), placed by when (see `at`). */
+  more?: { key: string; at: number; node: React.ReactNode }[]
+  /** When an album was played, to place it among `more`. */
+  at?: (dir: string) => number
   onSeeAll?: () => void
   limit?: number
   /** Space above, between shelves; off for the first thing on a page. */
@@ -174,7 +178,12 @@ export function Shelf(props: {
   const { cover, state } = useCardState()
   const row = useRef<HTMLDivElement>(null)
   const [ends, setEnds] = useState({ start: true, end: false })
-  const shown = props.albums.slice(0, props.limit ?? 24)
+  const shown = [
+    ...props.albums.map((a) => ({ key: a.dir, at: props.at?.(a.dir) ?? 0, album: a as Album | undefined, node: null as React.ReactNode })),
+    ...(props.more ?? []).map((m) => ({ ...m, album: undefined })),
+  ]
+    .sort((x, y) => (props.more?.length ? y.at - x.at : 0))
+    .slice(0, props.limit ?? 24)
 
   const measure = () => {
     const el = row.current
@@ -214,7 +223,7 @@ export function Shelf(props: {
     <section className={props.spaced === false ? '' : 'mt-10'}>
       <div className="mb-3.5 flex items-baseline gap-3">
         <h2 className="title text-[19px]">{props.title}</h2>
-        <span className="text-[12.5px] text-ink/50">{props.albums.length.toLocaleString('en-IN')}</span>
+        <span className="text-[12.5px] text-ink/50">{(props.albums.length + (props.more?.length ?? 0)).toLocaleString('en-IN')}</span>
         {props.onSeeAll && (
           <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
             See all
@@ -229,9 +238,9 @@ export function Shelf(props: {
           className="no-scrollbar -mx-3 -my-3 flex snap-x gap-5 overflow-x-auto px-3 py-3"
           style={{ scrollPaddingInline: 12 }}
         >
-          {shown.map((a) => (
-            <div key={a.dir} className="w-[168px] shrink-0 snap-start">
-              <AlbumCard album={a} cover={cover(a.dir)} origin={props.origin} now={state(a.dir)} />
+          {shown.map(({ key, album: a, node }) => (
+            <div key={key} className="w-[168px] shrink-0 snap-start">
+              {a ? <AlbumCard album={a} cover={cover(a.dir)} origin={props.origin} now={state(a.dir)} /> : node}
             </div>
           ))}
         </div>
@@ -279,8 +288,8 @@ export function useContextMenu(items: () => [string, () => void][]) {
 /** What can be done with a whole album (right-click a cover). */
 export function albumActions(nav: ReturnType<typeof useNav>, a: Album): [string, () => void][] {
   return [
-    ['Play', () => void play(nav.root, a.tracks, 0, a.title)],
-    ['Shuffle', () => void play(nav.root, shuffled(a.tracks), 0, a.title)],
+    ['Play', () => void playAll(nav.root, a.tracks, albumFrom(a))],
+    ['Shuffle', () => void playAll(nav.root, a.tracks, albumFrom(a), 'shuffle')],
     ['Play next', () => void enqueue(nav.root, a.tracks, true)],
     ['Add to queue', () => void enqueue(nav.root, a.tracks, false)],
     ['Add to playlist…', () => askAddToPlaylist(a.tracks.map((t) => t.path), a.title)],

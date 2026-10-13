@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, Reorder, useDragControls } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { tracksFor } from '../../lib/catalog'
@@ -13,6 +13,7 @@ import {
   playlistSaveItems,
   playlistTracks,
   ratePlaylist,
+  searchWeb,
   smartSave,
   type CatalogTrack,
   type PlaylistEntry,
@@ -20,24 +21,45 @@ import {
   type PlaylistSummary,
   type SmartRule,
 } from '../../lib/engine'
-import { clock, enqueue, play, toggle, usePlayerValue, current } from '../../lib/player'
+import { clock, enqueue, follow, fromIs, play, playAll, toggle, usePlayerValue, current } from '../../lib/player'
 import { notify } from '../../lib/notify'
 import { useEscape } from '../../lib/layers'
 import { confirmAsk } from '../../components/Confirm'
 import { askAddToPlaylist } from '../../components/AddToPlaylist'
 import { Mosaic } from '../../components/Mosaic'
-import { Detail } from '../../components/ui'
+import { Detail, Segmented } from '../../components/ui'
 import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../components/Icons'
 import { Equalizer, useContextMenu } from '../listen/parts'
-import { shuffled } from '../listen/model'
-import { fromWhere, length, plural, sourceDate } from './common'
+import { fromWhere, length, playlistFrom, plural, sourceDate } from './common'
 import { describeRule, SmartRules } from './SmartRules'
+import { PlaylistList, type Grab, type Line } from './PlaylistList'
 
 type Row = PlaylistEntry & { key: string }
 let keySeq = 0
 const withKeys = (entries: PlaylistEntry[]): Row[] => entries.map((e) => ({ ...e, key: `r${++keySeq}` }))
 const itemOf = (r: PlaylistEntry): PlaylistItem =>
   r.missing ? { want: r.want ?? { title: r.title, artist: r.artist, album: r.album, duration_ms: r.duration_ms } } : { path: r.path }
+
+/** Which songs the page shows: all of them, the ones here, or the ones to get. */
+type Show = 'all' | 'here' | 'get'
+// Remembered per playlist while the app runs.
+const shownFor = new Map<string, Show>()
+
+/** The words to look a missing song up by. */
+const wordsFor = (r: PlaylistEntry) => [r.artist, r.title].filter(Boolean).join(' ')
+
+/** Missing songs by album, the albums with most songs first: what to get, in the fewest steps. */
+function byAlbum(rows: Row[]): { album: string; artist: string; rows: Row[] }[] {
+  const groups = new Map<string, { album: string; artist: string; rows: Row[] }>()
+  for (const r of rows) {
+    const album = r.album.trim()
+    const k = album ? album.toLowerCase() : `\u0000${r.key}`
+    const g = groups.get(k) ?? { album, artist: r.artist, rows: [] }
+    g.rows.push(r)
+    groups.set(k, g)
+  }
+  return [...groups.values()].sort((a, b) => b.rows.length - a.rows.length || a.album.localeCompare(b.album))
+}
 
 export function PlaylistPage(props: {
   root: string
@@ -56,6 +78,8 @@ export function PlaylistPage(props: {
   onGone: () => void
   onOpen: (name: string) => void
   onAlbum: (dir: string) => void
+  /** Bring it up to date from where it came from (reviewed like an import). */
+  onUpdate?: (name: string) => void
 }) {
   const { root, name } = props
   const smart = !!props.rule
@@ -134,6 +158,44 @@ export function PlaylistPage(props: {
 
   const have = useMemo(() => (rows ?? []).filter((r) => !r.missing), [rows])
   const missing = (rows ?? []).length - have.length
+  const [show, setShowState] = useState<Show>(() => shownFor.get(name) ?? 'all')
+  const setShow = (s: Show) => {
+    shownFor.set(name, s)
+    setShowState(s)
+  }
+  // Nothing left to get: back to every song.
+  const view: Show = missing ? show : 'all'
+  const position = useMemo(() => new Map((rows ?? []).map((r, i) => [r.key, i])), [rows])
+  const visible = useMemo(
+    () => (rows ?? []).filter((r) => (view === 'here' ? !r.missing : view === 'get' ? r.missing : true)),
+    [rows, view],
+  )
+  const groups = useMemo(() => (view === 'get' ? byAlbum(visible) : []), [view, visible])
+  // What the list draws: the songs, or (To get) each album's heading and its songs.
+  const lines = useMemo<Line<Row>[]>(
+    () =>
+      view === 'get'
+        ? groups.flatMap((g): Line<Row>[] => [
+            {
+              kind: 'head',
+              key: `h:${g.rows[0].key}`,
+              node: (
+                <div className="flex w-full min-w-0 items-baseline gap-x-3 px-2">
+                  <h3 className="min-w-0 truncate text-[14.5px] font-semibold">{g.album || 'No album given'}</h3>
+                  <span className="shrink-0 text-[12.5px] text-ink/50">{[g.artist, plural(g.rows.length, 'song')].filter(Boolean).join(', ')}</span>
+                  {g.album && (
+                    <button onClick={() => void searchWeb(`${g.artist} ${g.album}`)} className="btn-ghost btn-sm ml-auto shrink-0" title="Look this album up in your browser">
+                      Search the web
+                    </button>
+                  )}
+                </div>
+              ),
+            },
+            ...g.rows.map((r): Line<Row> => ({ kind: 'row', key: r.key, row: r })),
+          ])
+        : visible.map((r) => ({ kind: 'row', key: r.key, row: r })),
+    [view, groups, visible],
+  )
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const songs = useMemo(() => tracksFor(have.map((r) => r.path)), [have, props.catalog])
   const totalMs = have.reduce((s, r) => s + r.duration_ms, 0)
@@ -151,13 +213,18 @@ export function PlaylistPage(props: {
   const nowPath = usePlayerValue((s) => current(s)?.path ?? '')
   const nowFrom = usePlayerValue((s) => s.from)
   const playing = usePlayerValue((s) => s.playing)
-  const isNow = nowFrom === name
+  const isNow = fromIs(nowFrom, 'playlist', name)
+  const from = useMemo(() => playlistFrom(name), [name])
 
   const playFrom = (row: Row) => {
     if (row.path === nowPath && isNow) return void toggle()
     const i = have.findIndex((r) => r.key === row.key)
-    void play(root, songs, Math.max(0, i), name)
+    void play(root, songs, Math.max(0, i), from)
   }
+  // Changed while it plays (added, removed, moved, refilled by its rules): what comes next follows.
+  useEffect(() => {
+    if (rows !== null) void follow(root, songs, from)
+  }, [root, songs, from, rows])
 
   async function rename(to: string) {
     const next = to.trim()
@@ -231,12 +298,65 @@ export function PlaylistPage(props: {
       : [
           ['Rename', () => setRenameAsk((n) => n + 1)],
           ['Duplicate', () => void playlistDuplicate(root, name).then((n) => (props.onChanged(), props.onOpen(n)))],
+          ...(props.summary?.source_id && props.onUpdate
+            ? [[`Update from ${fromWhere(props.summary.source ?? '') || 'where it came from'}…`, () => props.onUpdate!(name)]]
+            : []),
           ...(missing ? [['Look for missing songs again', () => void refind()]] : []),
         ]) as [string, () => void][]),
     ...((have.length ? [['Give unrated songs four stars', () => void rateUnrated()]] : []) as [string, () => void][]),
     ['Export as a file…', () => void exportFile()],
     ...((smart ? [] : [['Delete…', () => void remove()]]) as [string, () => void][]),
   ])
+
+  /** "Yes, that's it": the song takes its place. */
+  const takeMaybe = (r: Row) => {
+    const m = r.maybe
+    if (!m) return
+    const before = latest.current
+    const next = before.map((x) =>
+      x.key === r.key
+        ? { ...x, path: m.path, title: m.title, artist: m.artist, album: m.album, duration_ms: m.duration_ms, missing: false, want: undefined, maybe: undefined }
+        : x,
+    )
+    void persist(next, `“${m.title}” is in its place now.`, before)
+  }
+  /** "Not this one": remembered in the playlist, so it isn't offered again. */
+  const refuseMaybe = (r: Row) => {
+    const m = r.maybe
+    if (!m) return
+    const want = { ...(r.want ?? { title: r.title, artist: r.artist, album: r.album, duration_ms: r.duration_ms }) }
+    want.not = [...(want.not ?? []), m.path]
+    const before = latest.current
+    void persist(before.map((x) => (x.key === r.key ? { ...x, want, maybe: undefined } : x)))
+  }
+
+  const rowFor = (r: Row, style: React.CSSProperties, grab: Grab | null, inGroup: boolean) => (
+    <PlaylistRow
+      key={r.key}
+      row={r}
+      index={position.get(r.key) ?? 0}
+      smart={smart}
+      style={style}
+      grab={grab}
+      inGroup={inGroup}
+      state={r.path && r.path === nowPath && isNow ? (playing ? 'playing' : 'paused') : 'no'}
+      onPlay={() => playFrom(r)}
+      onRemove={() => {
+        const before = latest.current
+        void persist(
+          before.filter((x) => x.key !== r.key),
+          `Removed “${r.title}” from ${name}.`,
+          before,
+        )
+      }}
+      onFind={() => setFinding(r)}
+      onYes={() => takeMaybe(r)}
+      onNo={() => refuseMaybe(r)}
+      onAlbum={() => r.path && props.onAlbum(r.path.slice(0, r.path.lastIndexOf('/')))}
+      onAddTo={() => r.path && askAddToPlaylist([r.path], r.title)}
+      root={root}
+    />
+  )
 
   const kind = smart
     ? 'Smart playlist'
@@ -251,7 +371,7 @@ export function PlaylistPage(props: {
       glow={glow}
       tools={
         songs.length > 0 ? (
-          <button onClick={() => (isNow ? void toggle() : void play(root, songs, 0, name))} className="btn-primary btn-sm">
+          <button onClick={() => (isNow ? void toggle() : void playAll(root, songs, from))} className="btn-primary btn-sm">
             {isNow && playing ? <IconPause width={15} height={15} /> : <IconPlay width={15} height={15} />}
             {isNow && playing ? 'Pause' : 'Play'}
           </button>
@@ -272,21 +392,36 @@ export function PlaylistPage(props: {
             onDone={() => props.fresh && have.length === 0 && setAdding(true)}
           />
           <p className="mt-2 text-[13.5px] text-ink/60">
-            {rows === null ? 'Reading…' : plural(have.length, 'song')}
-            {have.length > 0 && `, ${length(totalMs)}`}
-            {missing > 0 && <span className="text-ink/50">, {missing} not in your library</span>}
+            {rows === null
+              ? 'Reading…'
+              : missing > 0
+                ? `${plural(rows.length, 'song')}: ${have.length.toLocaleString('en-IN')} in your library, ${missing.toLocaleString('en-IN')} to get`
+                : plural(have.length, 'song')}
+            {have.length > 0 && `, ${length(totalMs)}${missing > 0 ? ' to play' : ''}`}
           </p>
+          {rows !== null && missing > 0 && (
+            <div
+              className="mt-2.5 h-1 max-w-[320px] overflow-hidden rounded-full bg-ink/[0.1]"
+              role="meter"
+              aria-label="Songs in your library"
+              aria-valuemin={0}
+              aria-valuemax={rows.length}
+              aria-valuenow={have.length}
+            >
+              <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${(have.length / Math.max(1, rows.length)) * 100}%` }} />
+            </div>
+          )}
           {smart && props.rule && <p className="mt-1 max-w-[70ch] text-[12.5px] leading-relaxed text-ink/50">{describeRule(props.rule)}</p>}
           <div className="mt-5 flex flex-wrap items-center gap-2.5">
             <button
               disabled={!songs.length}
-              onClick={() => (isNow ? void toggle() : void play(root, songs, 0, name))}
+              onClick={() => (isNow ? void toggle() : void playAll(root, songs, from))}
               className="btn-primary btn-lg"
             >
               {isNow && playing ? <IconPause /> : <IconPlay />}
               {isNow ? (playing ? 'Pause' : 'Resume') : 'Play'}
             </button>
-            <button disabled={songs.length < 2} onClick={() => void play(root, shuffled(songs), 0, name)} className="btn btn-lg">
+            <button disabled={songs.length < 2} onClick={() => void playAll(root, songs, from, 'shuffle')} className="btn btn-lg">
               <IconShuffle />
               Shuffle
             </button>
@@ -350,39 +485,42 @@ export function PlaylistPage(props: {
         </div>
       )}
 
+      {rows && missing > 0 && !smart && (
+        <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Segmented
+            tabs
+            size="sm"
+            label="Which songs"
+            value={view}
+            onChange={setShow}
+            options={[
+              { value: 'all', label: `All ${rows.length.toLocaleString('en-IN')}` },
+              { value: 'here', label: `In your library ${have.length.toLocaleString('en-IN')}`, disabled: !have.length },
+              { value: 'get', label: `To get ${missing.toLocaleString('en-IN')}` },
+            ]}
+          />
+          {view === 'get' && (
+            <span className="text-[12.5px] text-ink/50">
+              From {plural(groups.length, 'album')}, the ones with most songs first. Venuta never downloads music.
+            </span>
+          )}
+        </div>
+      )}
+
       {rows && rows.length > 0 && (
-        <Reorder.Group
-          as="div"
-          axis="y"
-          values={rows}
-          onReorder={(v: Row[]) => setRows(v)}
-          className="mt-9 grid"
-          role="list"
-        >
-          {rows.map((r, i) => (
-            <PlaylistRow
-              key={r.key}
-              row={r}
-              index={i}
-              smart={smart}
-              state={r.path && r.path === nowPath && isNow ? (playing ? 'playing' : 'paused') : 'no'}
-              onPlay={() => playFrom(r)}
-              onDropped={() => orderOf(latest.current) !== saved.current && void persist(latest.current)}
-              onRemove={() => {
-                const before = latest.current
-                void persist(
-                  before.filter((x) => x.key !== r.key),
-                  `Removed “${r.title}” from ${name}.`,
-                  before,
-                )
-              }}
-              onFind={() => setFinding(r)}
-              onAlbum={() => r.path && props.onAlbum(r.path.slice(0, r.path.lastIndexOf('/')))}
-              onAddTo={() => r.path && askAddToPlaylist([r.path], r.title)}
-              root={root}
-            />
-          ))}
-        </Reorder.Group>
+        <div className={missing > 0 && !smart ? 'mt-4' : 'mt-9'}>
+          <PlaylistList
+            lines={lines}
+            movable={view === 'all' && !smart}
+            onMove={(from, to) => {
+              const next = latest.current.slice()
+              const [moved] = next.splice(from, 1)
+              next.splice(to, 0, moved)
+              void persist(next)
+            }}
+            render={(r, _i, style, grab) => rowFor(r, style, grab, view === 'get')}
+          />
+        </div>
       )}
 
       <AnimatePresence>
@@ -395,7 +533,7 @@ export function PlaylistPage(props: {
               const before = latest.current
               const next = before.map((x) =>
                 x.key === finding.key
-                  ? { ...x, path: t.path, title: t.title, artist: t.artists.join(', '), album: t.album, duration_ms: t.duration_ms, missing: false, want: undefined }
+                  ? { ...x, path: t.path, title: t.title, artist: t.artists.join(', '), album: t.album, duration_ms: t.duration_ms, missing: false, want: undefined, maybe: undefined }
                   : x,
               )
               setFinding(null)
@@ -455,70 +593,82 @@ function Title(props: { name: string; editable: boolean; startEditing: boolean; 
 function PlaylistRow(props: {
   root: string
   row: Row
+  /** Its place in the playlist (shown as its number, whatever is filtered). */
   index: number
   smart: boolean
+  /** Where the list puts it. */
+  style: React.CSSProperties
+  /** Moving it (null: not here, a smart playlist or a filtered view). */
+  grab: Grab | null
+  /** Under its album's heading (To get): the album isn't repeated on the row. */
+  inGroup: boolean
   state: 'no' | 'playing' | 'paused'
   onPlay: () => void
-  onDropped: () => void
   onRemove: () => void
   onFind: () => void
+  onYes: () => void
+  onNo: () => void
   onAlbum: () => void
   onAddTo: () => void
 }) {
-  const { row: r, state } = props
-  const drag = useDragControls()
-  // A drag ends with the button let go over the row: that is not a click to play.
-  const dragged = useRef(false)
+  const { row: r, state, grab } = props
   const cover = useCovers(320)(r.path ? r.path.slice(0, r.path.lastIndexOf('/')) : '')
   const isNow = state !== 'no'
+  const removable = (props.smart ? [] : [['Remove from playlist', props.onRemove]]) as [string, () => void][]
   const ctx = useContextMenu(() =>
     r.missing
-      ? [['Find it in your library…', props.onFind], ...((props.smart ? [] : [['Remove from playlist', props.onRemove]]) as [string, () => void][])]
+      ? [
+          ...((r.maybe ? [[`Use “${r.maybe.title}” from your library`, props.onYes]] : []) as [string, () => void][]),
+          ['Find it in your library…', props.onFind],
+          [`Copy “${wordsFor(r) || r.title}”`, () => void navigator.clipboard.writeText(wordsFor(r) || r.title).then(() => notify('Copied.'))],
+          ['Search the web', () => void searchWeb(`${wordsFor(r)} ${r.album}`.trim())],
+          ...removable,
+        ]
       : [
           ['Play', props.onPlay],
           ['Play next', () => void enqueue(props.root, tracksFor([r.path]), true)],
           ['Add to queue', () => void enqueue(props.root, tracksFor([r.path]), false)],
           ['Add to another playlist…', props.onAddTo],
           ['Go to album', props.onAlbum],
-          ...((props.smart ? [] : [['Remove from playlist', props.onRemove]]) as [string, () => void][]),
+          ...removable,
         ],
   )
   return (
-    <Reorder.Item
-      as="div"
-      value={r}
-      dragListener={false}
-      dragControls={drag}
-      onDragStart={() => (dragged.current = true)}
-      onDragEnd={() => {
-        props.onDropped()
-        window.setTimeout(() => (dragged.current = false), 0)
-      }}
+    <div
       role="listitem"
+      style={props.style}
+      aria-label={r.missing ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
       onContextMenu={ctx.onContextMenu}
       onClick={(e) => {
-        if (dragged.current || (e.target as HTMLElement).closest('button')) return
+        if (grab?.justDropped() || (e.target as HTMLElement).closest('button')) return
         if (!r.missing) props.onPlay()
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
-        if (e.key === 'Enter' && !r.missing) props.onPlay()
+        if (grab && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault()
+          grab.nudge(e.key === 'ArrowUp' ? -1 : 1)
+          return
+        }
+        if (e.key === 'Enter') {
+          if (r.missing) props.onFind()
+          else props.onPlay()
+        }
         if (e.key === 'Delete' && !props.smart) props.onRemove()
       }}
-      whileDrag={{ scale: 1.01, boxShadow: '0 14px 32px -12px rgb(0 0 0 / 0.55)', backgroundColor: 'var(--popover)' }}
-      className={`group relative grid min-h-[56px] grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 py-1.5 transition-colors ${
-        r.missing ? 'cursor-default' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
-      } ${isNow ? 'text-accent-ink' : ''}`}
+      className={`group absolute inset-x-0 grid grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 transition-colors ${
+        r.missing ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
+      } ${isNow ? 'text-accent-ink' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
     >
       {ctx.menu}
-      {props.smart ? (
+      {!grab ? (
         <span />
       ) : (
         <span
-          onPointerDown={(e) => drag.start(e)}
-          className="grid h-8 cursor-grab touch-none place-items-center text-ink/25 opacity-0 transition-opacity hover:text-ink/70 active:cursor-grabbing group-hover:opacity-100"
-          title="Drag to move"
+          onPointerDown={grab.onGrab}
+          className={`grid h-8 cursor-grab touch-none place-items-center text-ink/25 transition-opacity hover:text-ink/70 active:cursor-grabbing group-hover:opacity-100 ${grab.dragging ? 'opacity-100' : 'opacity-0'}`}
+          title="Drag to move (or Alt+Up, Alt+Down)"
           aria-hidden
         >
           <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
@@ -550,27 +700,60 @@ function PlaylistRow(props: {
           </>
         )}
       </span>
-      <span className={`h-11 w-11 overflow-hidden rounded-lg bg-ink/[0.07] ${r.missing ? 'opacity-50' : ''}`}>
-        {cover ? <img src={cover.src} alt="" className="h-full w-full object-cover" draggable={false} /> : <span className="grid h-full w-full place-items-center text-ink/30">♪</span>}
-      </span>
-      <span className={`min-w-0 ${r.missing ? 'opacity-60' : ''}`}>
-        <span className="block truncate text-[14px] font-medium">{r.title}</span>
+      {r.missing ? (
+        // Not here: an empty sleeve, marked, so it reads at a glance without colour alone.
+        <span className="relative grid h-11 w-11 place-items-center rounded-lg border border-dashed border-ink/25 text-ink/35" aria-hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <circle cx="12" cy="12" r="8.5" />
+            <circle cx="12" cy="12" r="1.6" />
+          </svg>
+          <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-[var(--popover)] text-[10px] font-bold leading-none text-ink/70 shadow-[inset_0_0_0_1px_var(--edge)]">
+            +
+          </span>
+        </span>
+      ) : (
+        <span className="h-11 w-11 overflow-hidden rounded-lg bg-ink/[0.07]">
+          {cover ? <img src={cover.src} alt="" className="h-full w-full object-cover" draggable={false} /> : <span className="grid h-full w-full place-items-center text-ink/30">♪</span>}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className={`block truncate text-[14px] font-medium ${r.missing ? 'text-ink/85' : ''}`}>{r.title}</span>
         <span className={`block truncate text-[12.5px] ${isNow ? 'opacity-80' : 'text-ink/55'}`}>{r.artist || '—'}</span>
       </span>
-      <span className="min-w-0 truncate text-[13px] text-ink/55">
-        {r.missing ? (
+      <span className="min-w-0 text-[13px] text-ink/55">
+        {r.missing && r.maybe ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate" title={`${r.maybe.title}, ${r.maybe.artist}, ${r.maybe.album} (${r.maybe.why})`}>
+              <span className="text-ink/45">Maybe </span>
+              <span className="text-ink/80">{r.maybe.title}</span>
+              <span className="text-ink/45">, {r.maybe.album}</span>
+            </span>
+            <button onClick={props.onYes} className="btn-sm btn shrink-0" title={`Use “${r.maybe.title}” from your library here (${r.maybe.why})`}>
+              Yes
+            </button>
+            <button onClick={props.onNo} className="btn-ghost btn-sm shrink-0" title="It isn't this song; don't offer it again">
+              No
+            </button>
+          </span>
+        ) : r.missing ? (
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-ink/40">Not in your library</span>
-            <button onClick={props.onFind} className="btn-ghost btn-sm shrink-0" title="Pick the song in your library">
+            <span className="min-w-0 flex-1">
+              {r.album && !props.inGroup && <span className="block truncate text-ink/55">{r.album}</span>}
+              <span className="block truncate text-[12px] text-ink/40">
+                <span className="hidden lg:inline">Not in your library</span>
+                <span className="lg:hidden">To get</span>
+              </span>
+            </span>
+            <button onClick={props.onFind} className="btn-ghost btn-sm shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" title="Pick the song in your library">
               Find
             </button>
           </span>
         ) : (
-          r.album
+          <span className="block truncate">{r.album}</span>
         )}
       </span>
       <span className="text-right text-[12.5px] tabular-nums text-ink/55">{r.duration_ms ? clock(r.duration_ms) : ''}</span>
-      {props.smart ? (
+      {props.smart || r.missing ? (
         <button onClick={ctx.onContextMenu} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
           <IconMore />
         </button>
@@ -584,7 +767,7 @@ function PlaylistRow(props: {
           ×
         </button>
       )}
-    </Reorder.Item>
+    </div>
   )
 }
 

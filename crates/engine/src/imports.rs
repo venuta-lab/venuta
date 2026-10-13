@@ -21,7 +21,16 @@ pub struct ForeignPlaylist {
     pub name: String,
     /// Where it came from, in words ("Spotify").
     pub source: String,
+    /// Which playlist at the source, to read it again for an update: "spotify:<id>",
+    /// "deezer:<id>", "apple:<name>", or "file:<path>|<name>".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub tracks: Vec<Foreign>,
+}
+
+/// The id of a playlist read from a file: the file and the playlist's name in it.
+pub fn file_id(path: &Path, name: &str) -> String {
+    format!("file:{}|{name}", path.to_string_lossy())
 }
 
 /// Read every playlist in a file another app made.
@@ -49,7 +58,14 @@ pub fn read_file(path: &Path) -> Result<Vec<ForeignPlaylist>, String> {
             ));
         }
     };
-    let found: Vec<ForeignPlaylist> = found.into_iter().filter(|p| !p.tracks.is_empty()).collect();
+    let found: Vec<ForeignPlaylist> = found
+        .into_iter()
+        .filter(|p| !p.tracks.is_empty())
+        .map(|mut p| {
+            p.id = Some(file_id(path, &p.name));
+            p
+        })
+        .collect();
     if found.is_empty() {
         return Err(format!("No songs found in {}.", path.display()));
     }
@@ -89,6 +105,7 @@ fn spotify_json(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
             out.push(ForeignPlaylist {
                 name: s(p, "name"),
                 source: "Spotify".into(),
+                id: None,
                 tracks,
             });
         }
@@ -97,6 +114,7 @@ fn spotify_json(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
         out.push(ForeignPlaylist {
             name: "Liked Songs".into(),
             source: "Spotify".into(),
+            id: None,
             tracks: liked
                 .iter()
                 .map(|t| Foreign {
@@ -277,6 +295,7 @@ fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String>
             tracks: groups.remove(&name).unwrap_or_default(),
             name,
             source: source.into(),
+            id: None,
         })
         .collect())
 }
@@ -495,6 +514,7 @@ fn itunes_xml(text: &str) -> Result<Vec<ForeignPlaylist>, String> {
             out.push(ForeignPlaylist {
                 name,
                 source: "Apple Music".into(),
+                id: None,
                 tracks: items
                     .iter()
                     .filter_map(|i| i.get("Track ID").and_then(Plist::int))
@@ -541,19 +561,20 @@ fn itunes_txt(text: &str, stem: &str) -> Result<ForeignPlaylist, String> {
     Ok(ForeignPlaylist {
         name: stem.to_owned(),
         source: "Apple Music".into(),
+        id: None,
         tracks,
     })
 }
 
-/// The Apple Music library's own playlists (read with your key).
-pub fn apple_library(apple: &crate::apple::AppleLibrary) -> Vec<ForeignPlaylist> {
-    apple
+/// The Apple Music library's own playlists (read with your key), and what couldn't be read:
+/// a playlist entry whose song the library file doesn't describe is counted, never hidden.
+pub fn apple_library(apple: &crate::apple::AppleLibrary) -> (Vec<ForeignPlaylist>, Vec<String>) {
+    let mut problems = Vec::new();
+    let lists = apple
         .playlists
         .iter()
-        .map(|p| ForeignPlaylist {
-            name: p.name.clone(),
-            source: "Apple Music".into(),
-            tracks: p
+        .map(|p| {
+            let tracks: Vec<Foreign> = p
                 .tracks
                 .iter()
                 .filter_map(|id| apple.tracks.get(id))
@@ -561,12 +582,28 @@ pub fn apple_library(apple: &crate::apple::AppleLibrary) -> Vec<ForeignPlaylist>
                     title: t.title.clone(),
                     artist: t.artist.clone(),
                     album: t.album.clone(),
+                    duration_ms: t.duration_ms.filter(|d| *d > 0),
                     ..Default::default()
                 })
-                .collect(),
+                .collect();
+            let unread = p.tracks.len() - tracks.len();
+            if unread > 0 {
+                problems.push(format!(
+                    "Apple Music's library file has no details for {unread} of the {} songs in “{}”, so they can't be brought over.",
+                    p.tracks.len(),
+                    p.name
+                ));
+            }
+            ForeignPlaylist {
+                name: p.name.clone(),
+                source: "Apple Music".into(),
+                id: Some(format!("apple:{}", p.name)),
+                tracks,
+            }
         })
         .filter(|p| !p.tracks.is_empty())
-        .collect()
+        .collect();
+    (lists, problems)
 }
 
 // --- Other players' playlist files ---------------------------------------------------------
@@ -593,14 +630,6 @@ fn tags_of(path: &Path) -> Option<Foreign> {
     })
 }
 
-/// "03 - Tum Hi Ho.flac" → "Tum Hi Ho".
-fn title_from_file(p: &str) -> String {
-    let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
-    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-    let re = regex::Regex::new(r"^\s*\d{1,3}\s*[-._ ]\s*").expect("valid");
-    re.replace(stem, "").trim().to_owned()
-}
-
 /// One entry of another player's list: the file's own tags when it's here, else what the
 /// playlist line says ("Artist - Title" or the file name).
 fn entry(location: &str, extinf: Option<(Option<u64>, String)>, dir: &Path) -> Foreign {
@@ -619,7 +648,7 @@ fn entry(location: &str, extinf: Option<(Option<u64>, String)>, dir: &Path) -> F
     let (artist, title) = match label.split_once(" - ") {
         Some((a, t)) if !label.is_empty() => (a.trim().to_owned(), t.trim().to_owned()),
         _ if !label.is_empty() => (String::new(), label.trim().to_owned()),
-        _ => (String::new(), title_from_file(loc)),
+        _ => (String::new(), playlists::title_from_file(loc)),
     };
     Foreign {
         title,
@@ -661,6 +690,7 @@ fn m3u(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
         } else {
             "Playlist file".into()
         },
+        id: None,
         tracks,
     }
 }
@@ -689,6 +719,7 @@ fn pls(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
     ForeignPlaylist {
         name: stem.to_owned(),
         source: "Playlist file".into(),
+        id: None,
         tracks: files
             .into_values()
             .filter(|(f, _, _)| !f.is_empty())
@@ -755,6 +786,7 @@ pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, Stri
     Ok(ForeignPlaylist {
         name,
         source: "Deezer".into(),
+        id: Some(format!("deezer:{id}")),
         tracks,
     })
 }
@@ -845,12 +877,229 @@ pub struct PreviewItem {
 pub struct PreviewPlaylist {
     pub name: String,
     pub source: String,
+    /// Which playlist at the source (to update it again later).
+    pub source_id: Option<String>,
     /// A playlist by this name is already in the library.
     pub exists: bool,
+    /// The playlist you have that this one would update (by where it came from, else by name).
+    pub target: Option<Target>,
     pub items: Vec<PreviewItem>,
     pub exact: usize,
     pub close: usize,
     pub missing: usize,
+}
+
+/// A playlist you have that an incoming one updates, and what the update would do to it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Target {
+    pub name: String,
+    /// Found by where it came from (it remembers), not only by its name.
+    pub linked: bool,
+    /// Songs in it now, and how many of them are in the library.
+    pub songs: usize,
+    pub here: usize,
+    /// After the update, with every close match taken.
+    pub after: usize,
+    pub after_here: usize,
+    /// Songs the source has that it doesn't yet.
+    pub added: usize,
+    /// Songs you added yourself, which stay.
+    pub yours: usize,
+    /// Songs the source dropped since it was last brought in (they go).
+    pub removed: usize,
+    /// Songs you took out, which stay out even though the source still has them.
+    pub skipped: usize,
+}
+
+/// An incoming song for a merge: the line to write, and the keys that tell which song it is.
+struct Incoming {
+    item: Item,
+    keys: Vec<String>,
+}
+
+fn incoming_of(lib: &Library, items: &[Item]) -> Vec<Incoming> {
+    let by_path: std::collections::HashMap<&str, &crate::library::Track> =
+        lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect();
+    items
+        .iter()
+        .map(|i| {
+            let mut keys = Vec::new();
+            if let Some(t) = i.path.as_deref().and_then(|p| by_path.get(p)) {
+                keys.extend(playlists::track_keys(t));
+            }
+            for w in i.want.iter().chain(i.source.iter()) {
+                keys.extend(playlists::want_keys(w));
+            }
+            Incoming {
+                item: i.clone(),
+                keys,
+            }
+        })
+        .collect()
+}
+
+/// What merging an incoming playlist into one you have gives.
+#[derive(Debug, Default)]
+struct Merged {
+    items: Vec<Item>,
+    /// The source's songs now (for the next update).
+    base: Vec<Vec<String>>,
+    added: usize,
+    yours: usize,
+    removed: usize,
+    skipped: usize,
+}
+
+/// Bring a playlist you have up to date with its source, losing nothing of yours:
+/// - the source's order is the spine; a song you already have keeps the exact file it uses
+///   (a song you picked by hand stays your pick), a song still to get becomes its file once
+///   the library has it;
+/// - songs you added stay, right after the song they followed;
+/// - with what the source had last time (`base`): a song you took out stays out, and a song
+///   the source dropped goes. Without it (an older import), nothing is taken out.
+fn merge(
+    lib: &Library,
+    existing: &[playlists::PlaylistEntry],
+    incoming: &[Incoming],
+    base: Option<&[Vec<String>]>,
+) -> Merged {
+    let by_path: std::collections::HashMap<&str, &crate::library::Track> =
+        lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect();
+    let keys_of = |e: &playlists::PlaylistEntry| -> Vec<String> {
+        let mut k = Vec::new();
+        if let Some(t) = (!e.missing).then(|| by_path.get(e.path.as_str())).flatten() {
+            k.extend(playlists::track_keys(t));
+        }
+        if let Some(w) = &e.want {
+            k.extend(playlists::want_keys(w));
+        } else if e.missing {
+            k.extend(playlists::song_keys(None, &e.title, &e.artist, None));
+        }
+        k
+    };
+    let mine: Vec<Vec<String>> = existing.iter().map(keys_of).collect();
+    let mut where_mine: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (i, ks) in mine.iter().enumerate() {
+        for k in ks {
+            where_mine.entry(k.as_str()).or_default().push(i);
+        }
+    }
+    let in_base: HashSet<&str> = base
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let was_in_base = |ks: &[String]| ks.iter().any(|k| in_base.contains(k.as_str()));
+
+    let mut out = Merged::default();
+    // Each written line, with the entry of yours it came from.
+    let mut lines: Vec<(Item, Option<usize>)> = Vec::new();
+    let mut used = vec![false; existing.len()];
+    for inc in incoming {
+        out.base.push(inc.keys.clone());
+        let mut cands: Vec<usize> = inc
+            .keys
+            .iter()
+            .filter_map(|k| where_mine.get(k.as_str()))
+            .flatten()
+            .copied()
+            .filter(|&j| !used[j])
+            .collect();
+        cands.sort_unstable();
+        match cands.first().copied() {
+            Some(j) => {
+                used[j] = true;
+                let e = &existing[j];
+                // Yours is kept as it is, unless it was waiting and the import found the file.
+                let item = if e.missing && inc.item.path.is_some() {
+                    inc.item.clone()
+                } else {
+                    e.item()
+                };
+                lines.push((item, Some(j)));
+            }
+            None if base.is_some() && was_in_base(&inc.keys) => out.skipped += 1,
+            None => {
+                out.added += 1;
+                lines.push((inc.item.clone(), None));
+            }
+        }
+    }
+    // What's left of yours: dropped by the source, or added by you (kept beside its neighbour).
+    for j in 0..existing.len() {
+        if used[j] {
+            continue;
+        }
+        if base.is_some() && was_in_base(&mine[j]) {
+            out.removed += 1;
+            continue;
+        }
+        out.yours += 1;
+        // Right after the nearest earlier song of yours that is placed (the top if none).
+        let at = (0..j)
+            .rev()
+            .find_map(|k| lines.iter().position(|(_, from)| *from == Some(k)))
+            .map_or(0, |p| p + 1);
+        lines.insert(at, (existing[j].item(), Some(j)));
+        used[j] = true;
+    }
+    out.items = lines.into_iter().map(|(i, _)| i).collect();
+    out
+}
+
+/// A playlist at a source that you don't have all of: an older import kept fewer songs, or it
+/// was never brought over.
+#[derive(Debug, Clone, Serialize)]
+pub struct Behind {
+    /// The source's name for it.
+    pub name: String,
+    /// Yours, when you have it.
+    pub yours: Option<String>,
+    pub have: usize,
+    pub source_songs: usize,
+}
+
+/// The source's playlists you have fewer songs of than it has (counting songs still to get).
+pub fn behind(library_root: &Path, lib: &Library, lists: &[ForeignPlaylist]) -> Vec<Behind> {
+    let have = playlists::list(library_root, lib);
+    lists
+        .iter()
+        .filter_map(|l| {
+            let yours = target_of(library_root, &have, l).map(|(n, _)| n);
+            let count = yours
+                .as_ref()
+                .and_then(|n| have.iter().find(|p| &p.name == n))
+                .map_or(0, |p| p.tracks);
+            (count < l.tracks.len()).then(|| Behind {
+                name: l.name.clone(),
+                yours,
+                have: count,
+                source_songs: l.tracks.len(),
+            })
+        })
+        .collect()
+}
+
+/// The playlist you have that an incoming one is: the one that came from the same place,
+/// else the one with its name (as a file name: "still loves..." is "still loves").
+fn target_of(
+    library_root: &Path,
+    have: &[playlists::PlaylistSummary],
+    l: &ForeignPlaylist,
+) -> Option<(String, bool)> {
+    if let Some(id) = &l.id
+        && let Some(p) = have
+            .iter()
+            .find(|p| !p.smart && p.source_id.as_deref() == Some(id.as_str()))
+    {
+        return Some((p.name.clone(), true));
+    }
+    let file = crate::plan::sanitize(&l.name, 100).to_lowercase();
+    have.iter()
+        .find(|p| !p.smart && p.name.to_lowercase() == file)
+        .filter(|_| playlists::exists(library_root, &l.name))
+        .map(|p| (p.name.clone(), false))
 }
 
 /// Match every song of every playlist, without writing anything.
@@ -860,6 +1109,7 @@ pub fn preview(
     lists: &[ForeignPlaylist],
 ) -> Vec<PreviewPlaylist> {
     let matcher = Matcher::new(lib);
+    let have = playlists::list(library_root, lib);
     // A file that's already in the library is itself, whatever its tags say.
     let root = library_root
         .to_string_lossy()
@@ -913,10 +1163,36 @@ pub fn preview(
                 })
                 .collect();
             let count = |g: Option<Grade>| items.iter().filter(|i| i.grade == g).count();
+            let target = target_of(library_root, &have, l).and_then(|(name, linked)| {
+                let (entries, _) = playlists::read(library_root, lib, &name).ok()?;
+                let header = playlists::header_of(library_root, &name);
+                let lines: Vec<Item> = items.iter().map(PreviewItem::item).collect();
+                let same_source = l.id.is_some() && header.source_id == l.id;
+                let m = merge(
+                    lib,
+                    &entries,
+                    &incoming_of(lib, &lines),
+                    header.base.as_deref().filter(|_| same_source),
+                );
+                Some(Target {
+                    name,
+                    linked,
+                    songs: entries.len(),
+                    here: entries.iter().filter(|e| !e.missing).count(),
+                    after: m.items.len(),
+                    after_here: m.items.iter().filter(|i| i.path.is_some()).count(),
+                    added: m.added,
+                    yours: m.yours,
+                    removed: m.removed,
+                    skipped: m.skipped,
+                })
+            });
             PreviewPlaylist {
                 name: l.name.clone(),
                 source: l.source.clone(),
+                source_id: l.id.clone(),
                 exists: playlists::exists(library_root, &l.name),
+                target,
                 exact: count(Some(Grade::Exact)),
                 close: count(Some(Grade::Close)),
                 missing: count(None),
@@ -926,12 +1202,31 @@ pub fn preview(
         .collect()
 }
 
+impl PreviewItem {
+    /// The line this song becomes when every close match is taken.
+    pub fn item(&self) -> Item {
+        match &self.found {
+            Some(c) => Item {
+                path: Some(c.path.clone()),
+                want: None,
+                source: Some(self.foreign.want()),
+            },
+            None => Item::wanted(self.foreign.want()),
+        }
+    }
+}
+
 /// A playlist to bring in, as you confirmed it: each song a library path or still wanted.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Choice {
     pub name: String,
     pub source: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
     pub items: Vec<Item>,
+    /// Bring this playlist you have up to date instead (see `merge`): nothing of yours is lost.
+    #[serde(default)]
+    pub update: Option<String>,
     /// Replace the playlist of this name (the old one is set aside), else take a free name.
     #[serde(default)]
     pub replace: bool,
@@ -943,6 +1238,11 @@ pub struct Written {
     pub name: String,
     pub songs: usize,
     pub wanted: usize,
+    /// It updated a playlist you had: what changed, and the copy kept of how it was.
+    pub updated: bool,
+    pub added: usize,
+    pub removed: usize,
+    pub copy: Option<String>,
 }
 
 /// Write the playlists you confirmed, and the albums they still want.
@@ -957,18 +1257,72 @@ pub fn apply(
         BTreeMap::new();
     let mut taken: HashSet<String> = HashSet::new();
     for c in choices {
-        // "Replace" means the playlist there before this import, never one this import just wrote.
-        let replace = c.replace && !taken.contains(&c.name.trim().to_lowercase());
-        let name = if replace && playlists::exists(library_root, &c.name) {
-            playlists::delete(library_root, &c.name)?;
-            c.name.trim().to_owned()
-        } else {
-            playlists::free_name(library_root, &c.name)
-        };
         let source = format!("{} {when}", c.source).trim().to_owned();
-        playlists::write_items(library_root, lib, &name, &c.items, false, Some(&source))?;
+        let target = c
+            .update
+            .as_deref()
+            .filter(|t| playlists::exists(library_root, t) && !taken.contains(&t.to_lowercase()));
+        let (name, items, done) = if let Some(t) = target {
+            let (entries, _) = playlists::read(library_root, lib, t)?;
+            let before = playlists::header_of(library_root, t);
+            let same_source = c.source_id.is_some() && before.source_id == c.source_id;
+            let m = merge(
+                lib,
+                &entries,
+                &incoming_of(lib, &c.items),
+                before.base.as_deref().filter(|_| same_source),
+            );
+            let copy = playlists::keep_copy(library_root, t)?;
+            let header = playlists::Header {
+                source: Some(source.clone()),
+                source_id: c.source_id.clone().or(before.source_id),
+                base: Some(m.base.clone()),
+            };
+            playlists::write_with(library_root, lib, t, &m.items, false, &header)?;
+            let done = Written {
+                name: t.to_owned(),
+                songs: m.items.iter().filter(|i| i.path.is_some()).count(),
+                wanted: m.items.iter().filter(|i| i.want.is_some()).count(),
+                updated: true,
+                added: m.added,
+                removed: m.removed,
+                copy: Some(copy.to_string_lossy().into_owned()),
+            };
+            (t.to_owned(), m.items, done)
+        } else {
+            // "Replace" means the playlist there before this import, never one this import
+            // just wrote.
+            let replace = c.replace && !taken.contains(&c.name.trim().to_lowercase());
+            let name = if replace && playlists::exists(library_root, &c.name) {
+                playlists::delete(library_root, &c.name)?;
+                c.name.trim().to_owned()
+            } else {
+                playlists::free_name(library_root, &c.name)
+            };
+            let header = playlists::Header {
+                source: Some(source.clone()),
+                source_id: c.source_id.clone(),
+                base: Some(
+                    incoming_of(lib, &c.items)
+                        .into_iter()
+                        .map(|i| i.keys)
+                        .collect(),
+                ),
+            };
+            playlists::write_with(library_root, lib, &name, &c.items, false, &header)?;
+            let done = Written {
+                name: name.clone(),
+                songs: c.items.iter().filter(|i| i.path.is_some()).count(),
+                wanted: c.items.iter().filter(|i| i.want.is_some()).count(),
+                updated: false,
+                added: c.items.len(),
+                removed: 0,
+                copy: None,
+            };
+            (name, c.items.clone(), done)
+        };
         taken.insert(name.to_lowercase());
-        for w in c.items.iter().filter_map(|i| i.want.as_ref()) {
+        for w in items.iter().filter_map(|i| i.want.as_ref()) {
             let e = groups
                 .entry((w.album.clone(), w.artist.clone()))
                 .or_default();
@@ -979,11 +1333,7 @@ pub fn apply(
             ));
             e.1.insert(name.clone());
         }
-        written.push(Written {
-            name,
-            songs: c.items.iter().filter(|i| i.path.is_some()).count(),
-            wanted: c.items.iter().filter(|i| i.want.is_some()).count(),
-        });
+        written.push(done);
     }
     let wanted = playlists::rank_wanted(
         lib,
@@ -1030,19 +1380,13 @@ fn refind_with(
     let items: Vec<Item> = entries
         .iter()
         .map(|e| {
-            if let Some(w) = e.want.as_ref().filter(|_| e.missing) {
-                let f = Foreign {
-                    title: w.title.clone(),
-                    artist: w.artist.clone(),
-                    album: w.album.clone(),
-                    duration_ms: Some(w.duration_ms).filter(|d| *d > 0),
-                    isrc: w.isrc.clone(),
-                    ..Default::default()
-                };
-                if let Some(h) = matcher.grade(&f).filter(|h| h.grade == Grade::Exact) {
-                    found += 1;
-                    return Item::track(h.track.path.clone());
-                }
+            if let Some(w) = e.want.as_ref().filter(|_| e.missing)
+                && let Some(h) = matcher
+                    .grade(&w.foreign())
+                    .filter(|h| h.grade == Grade::Exact && !w.not.contains(&h.track.path))
+            {
+                found += 1;
+                return Item::track(h.track.path.clone());
             }
             e.item()
         })
@@ -1206,6 +1550,8 @@ mod tests {
                 album: "Al".into(),
                 duration_ms: 0,
                 isrc: None,
+                md5: None,
+                not: Vec::new(),
             })
         };
         playlists::write_items(
@@ -1222,6 +1568,7 @@ mod tests {
             source: "Spotify".into(),
             items: vec![want(t)],
             replace: true,
+            ..Default::default()
         };
         let (written, wanted) =
             apply(root.path(), &lib, &[choice("A"), choice("B")], "2026-10-13").unwrap();
@@ -1242,5 +1589,326 @@ mod tests {
         assert_eq!(duration_ms("1:02:10", false), Some(3_730_000));
         assert_eq!(duration_ms("225", false), Some(225_000));
         assert_eq!(duration_ms("225000", true), Some(225_000));
+    }
+    fn tune(id: i64, path: &str, title: &str, artist: &str) -> crate::library::Track {
+        crate::library::Track {
+            id,
+            path: path.into(),
+            dir: path.rsplit_once('/').map(|p| p.0).unwrap_or("").into(),
+            kind: "flac".into(),
+            size: 1,
+            duration_ms: 200_000,
+            sample_rate: 44_100,
+            bit_depth: 16,
+            audio_md5: Some(vec![id as u8; 16]),
+            vendor: None,
+            tags: std::collections::HashMap::from([
+                ("TITLE".into(), vec![title.into()]),
+                ("ARTIST".into(), vec![artist.into()]),
+            ]),
+            raw_keys: vec![],
+            pictures: vec![],
+            quality: None,
+        }
+    }
+
+    fn shelf(tracks: Vec<crate::library::Track>) -> Library {
+        Library {
+            tracks,
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+        }
+    }
+
+    fn wish(title: &str, artist: &str) -> playlists::WantEntry {
+        playlists::WantEntry {
+            title: title.into(),
+            artist: artist.into(),
+            ..Default::default()
+        }
+    }
+
+    /// What a source lists, as the review step sends it: a file when it was matched (with
+    /// what the source said), else the song to get.
+    fn from_source(lib: &Library, songs: &[(&str, &str)]) -> Vec<Item> {
+        let m = Matcher::new(lib);
+        songs
+            .iter()
+            .map(|(t, a)| {
+                let f = Foreign {
+                    title: (*t).into(),
+                    artist: (*a).into(),
+                    ..Default::default()
+                };
+                match m.grade(&f) {
+                    Some(h) => Item {
+                        path: Some(h.track.path.clone()),
+                        want: None,
+                        source: Some(f.want()),
+                    },
+                    None => Item::wanted(f.want()),
+                }
+            })
+            .collect()
+    }
+
+    fn titles(root: &Path, lib: &Library, name: &str) -> Vec<String> {
+        playlists::read(root, lib, name)
+            .unwrap()
+            .0
+            .into_iter()
+            .map(|e| e.title)
+            .collect()
+    }
+
+    #[test]
+    fn importing_again_fills_a_playlist_in_and_keeps_what_you_added() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = shelf(vec![
+            tune(1, "A/01 - Alpha.flac", "Alpha", "X"),
+            tune(2, "A/02 - Yours.flac", "Yours", "Me"),
+            tune(3, "A/03 - Gamma.flac", "Gamma", "X"),
+        ]);
+        // Made by an older import that kept only what it matched, then you added "Yours".
+        playlists::write(
+            root.path(),
+            &lib,
+            "Hindi",
+            &["A/01 - Alpha.flac".into(), "A/02 - Yours.flac".into()],
+            false,
+        )
+        .unwrap();
+        let source = ForeignPlaylist {
+            name: "Hindi".into(),
+            source: "Apple Music".into(),
+            id: Some("apple:Hindi".into()),
+            tracks: vec![
+                Foreign {
+                    title: "Alpha".into(),
+                    artist: "X".into(),
+                    ..Default::default()
+                },
+                Foreign {
+                    title: "Beta".into(),
+                    artist: "X".into(),
+                    ..Default::default()
+                },
+                Foreign {
+                    title: "Gamma".into(),
+                    artist: "X".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let p = &preview(root.path(), &lib, std::slice::from_ref(&source))[0];
+        let t = p.target.as_ref().expect("it updates the playlist you have");
+        assert_eq!(
+            (t.name.as_str(), t.songs, t.after, t.added, t.yours),
+            ("Hindi", 2, 4, 2, 1)
+        );
+
+        let items = from_source(&lib, &[("Alpha", "X"), ("Beta", "X"), ("Gamma", "X")]);
+        let choice = Choice {
+            name: "Hindi".into(),
+            source: "Apple Music".into(),
+            source_id: Some("apple:Hindi".into()),
+            update: Some("Hindi".into()),
+            items,
+            ..Default::default()
+        };
+        let (written, _) = apply(root.path(), &lib, &[choice], "2026-10-13").unwrap();
+        assert!(written[0].updated);
+        assert_eq!(written[0].added, 2);
+        // In the source's order, yours right after the song it followed, the gap kept.
+        assert_eq!(
+            titles(root.path(), &lib, "Hindi"),
+            ["Alpha", "Yours", "Beta", "Gamma"]
+        );
+        let copy = written[0].copy.as_ref().expect("the old one is kept");
+        assert!(Path::new(copy).is_file());
+        // Undo puts the old one back.
+        playlists::restore_copy(root.path(), "Hindi", Path::new(copy)).unwrap();
+        assert_eq!(titles(root.path(), &lib, "Hindi"), ["Alpha", "Yours"]);
+    }
+
+    #[test]
+    fn an_update_knows_what_you_removed_and_what_the_source_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = shelf(vec![
+            tune(1, "A/01 - Alpha.flac", "Alpha", "X"),
+            tune(2, "A/02 - Beta.flac", "Beta", "X"),
+            tune(3, "A/03 - Mine.flac", "Mine", "Me"),
+            tune(4, "A/04 - Echo.flac", "Echo", "X"),
+        ]);
+        let first = Choice {
+            name: "Road".into(),
+            source: "Spotify".into(),
+            source_id: Some("spotify:1".into()),
+            items: from_source(&lib, &[("Alpha", "X"), ("Beta", "X"), ("Echo", "X")]),
+            ..Default::default()
+        };
+        apply(root.path(), &lib, &[first], "2026-10-01").unwrap();
+        // You take Beta out and add one of yours.
+        playlists::write(
+            root.path(),
+            &lib,
+            "Road",
+            &[
+                "A/01 - Alpha.flac".into(),
+                "A/03 - Mine.flac".into(),
+                "A/04 - Echo.flac".into(),
+            ],
+            false,
+        )
+        .unwrap();
+        // Spotify since: Echo gone, Foxtrot new. Found by where it came from, even renamed.
+        playlists::rename(root.path(), "Road", "Road trip").unwrap();
+        let now = ForeignPlaylist {
+            name: "Road".into(),
+            source: "Spotify".into(),
+            id: Some("spotify:1".into()),
+            tracks: [("Alpha", "X"), ("Beta", "X"), ("Foxtrot", "X")]
+                .iter()
+                .map(|(t, a)| Foreign {
+                    title: (*t).into(),
+                    artist: (*a).into(),
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let p = &preview(root.path(), &lib, &[now])[0];
+        let t = p.target.as_ref().unwrap();
+        assert!(t.linked);
+        assert_eq!(t.name, "Road trip");
+        assert_eq!((t.added, t.skipped, t.removed, t.yours), (1, 1, 1, 1));
+        let update = Choice {
+            name: "Road trip".into(),
+            source: "Spotify".into(),
+            source_id: Some("spotify:1".into()),
+            update: Some("Road trip".into()),
+            items: from_source(&lib, &[("Alpha", "X"), ("Beta", "X"), ("Foxtrot", "X")]),
+            ..Default::default()
+        };
+        apply(root.path(), &lib, &[update], "2026-10-13").unwrap();
+        assert_eq!(
+            titles(root.path(), &lib, "Road trip"),
+            ["Alpha", "Mine", "Foxtrot"]
+        );
+    }
+
+    #[test]
+    fn a_song_you_found_by_hand_stays_the_one_you_chose() {
+        let root = tempfile::tempdir().unwrap();
+        // The source says "Kesariya (From Brahmastra)"; you picked your "Kesariya" for it.
+        let lib = shelf(vec![tune(
+            1,
+            "B/01 - Kesariya.flac",
+            "Kesariya",
+            "Arijit Singh",
+        )]);
+        playlists::write(
+            root.path(),
+            &lib,
+            "still loves",
+            &["B/01 - Kesariya.flac".into()],
+            false,
+        )
+        .unwrap();
+        let source = ForeignPlaylist {
+            name: "still loves...".into(),
+            source: "Apple Music".into(),
+            id: Some("apple:still loves...".into()),
+            tracks: vec![
+                Foreign {
+                    title: "Kesariya (From \"Brahmastra\")".into(),
+                    artist: "Pritam, Arijit Singh".into(),
+                    ..Default::default()
+                },
+                Foreign {
+                    title: "Other".into(),
+                    artist: "Y".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let p = &preview(root.path(), &lib, &[source])[0];
+        let t = p
+            .target
+            .as_ref()
+            .expect("a name made safe for a file is still its name");
+        assert_eq!(t.name, "still loves");
+        assert_eq!((t.after, t.added, t.yours), (2, 1, 0));
+        let items = vec![
+            Item::wanted(wish(
+                "Kesariya (From \"Brahmastra\")",
+                "Pritam, Arijit Singh",
+            )),
+            Item::wanted(wish("Other", "Y")),
+        ];
+        let choice = Choice {
+            name: "still loves...".into(),
+            source: "Apple Music".into(),
+            update: Some("still loves".into()),
+            items,
+            ..Default::default()
+        };
+        apply(root.path(), &lib, &[choice], "2026-10-13").unwrap();
+        let (e, _) = playlists::read(root.path(), &lib, "still loves").unwrap();
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[0].path, "B/01 - Kesariya.flac");
+        assert!(e[1].missing);
+    }
+    #[test]
+    fn playlists_short_of_their_source_are_found() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = shelf(vec![tune(1, "A/01 - Alpha.flac", "Alpha", "X")]);
+        // Kept only what matched (1 of 3), and one with every song.
+        playlists::write(
+            root.path(),
+            &lib,
+            "Hindi",
+            &["A/01 - Alpha.flac".into()],
+            false,
+        )
+        .unwrap();
+        playlists::write_items(
+            root.path(),
+            &lib,
+            "Whole",
+            &[
+                Item::track("A/01 - Alpha.flac"),
+                Item::wanted(wish("Beta", "X")),
+            ],
+            false,
+            None,
+        )
+        .unwrap();
+        let list = |name: &str, n: usize| ForeignPlaylist {
+            name: name.into(),
+            source: "Apple Music".into(),
+            id: Some(format!("apple:{name}")),
+            tracks: (0..n)
+                .map(|i| Foreign {
+                    title: format!("Song {i}"),
+                    artist: "X".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let b = behind(
+            root.path(),
+            &lib,
+            &[list("Hindi", 3), list("Whole", 2), list("Games", 4)],
+        );
+        let got: Vec<(&str, Option<&str>, usize, usize)> = b
+            .iter()
+            .map(|x| (x.name.as_str(), x.yours.as_deref(), x.have, x.source_songs))
+            .collect();
+        assert_eq!(got, [("Hindi", Some("Hindi"), 1, 3), ("Games", None, 0, 4)]);
     }
 }

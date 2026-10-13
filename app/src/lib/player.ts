@@ -85,7 +85,7 @@ export interface PlayerState {
   /** 0–1. */
   volume: number
   signal: Signal | null
-  /** "Taal", "Songs", "Search: rahman" — where the queue came from. */
+  /** Where the queue came from: a `From` as JSON (see `readFrom`), or plain words from before. */
   from: string
   /** The last problem, in words (a file that couldn't be opened…). */
   error: string
@@ -158,13 +158,86 @@ const call = (cmd: string, args: Record<string, unknown> = {}) =>
 /** The folder the queue's songs are in. */
 let queueRoot = ''
 
-/** Play these songs from `index`, replacing the queue. */
-export function play(root: string, tracks: CatalogTrack[], index = 0, from = '') {
+/** Where a queue came from: "Playing from Hindi", and the way back to it. */
+export interface From {
+  kind: 'playlist' | 'album' | 'artist' | 'songs' | 'search'
+  /** The playlist's name, the album's folder, the artist's name, the words searched. */
+  ref: string
+  /** In words: "Hindi", "Taal", "Search: rahman". */
+  label: string
+}
+const fromText = (f: From | string) => (typeof f === 'string' ? f : JSON.stringify(f))
+/** What the player's `from` says (older saves are plain words: a label only). */
+export function readFrom(s: string): From | null {
+  if (!s) return null
+  if (s.startsWith('{'))
+    try {
+      const v = JSON.parse(s) as From
+      if (v && typeof v.label === 'string' && typeof v.kind === 'string') return v
+    } catch {
+      /* plain words */
+    }
+  return { kind: 'songs', ref: '', label: s }
+}
+/** Is the queue from this playlist (or album…)? */
+export const fromIs = (s: string, kind: From['kind'], ref: string) => {
+  const f = readFrom(s)
+  return !!f && f.kind === kind && f.ref === ref
+}
+
+/** What the queue was last set to, to follow its source's changes (see `follow`). */
+let lastSet: { from: string; paths: string[] } | null = null
+
+/** Play these songs from `index`, replacing the queue. Shuffle stays as it is (a song picked
+ *  from a list while shuffling plays, then the rest shuffled). */
+export function play(root: string, tracks: CatalogTrack[], index = 0, from: From | string = '') {
   queueRoot = root
   const items = tracks.map(toItem)
+  const f = fromText(from)
+  lastSet = { from: f, paths: tracks.map((t) => t.path) }
   // Show it at once; the engine confirms within a moment.
-  set({ ...state, queue: items, index, playing: true, position_ms: 0, from, error: '' })
-  return call('player_play', { root, items, index, from })
+  set({ ...state, queue: items, index, playing: true, position_ms: 0, from: f, error: '' })
+  return call('player_play', { root, items, index, from: f })
+}
+
+/** The Play and Shuffle buttons: all of it in order (shuffle off), or shuffled from a random
+ *  song (shuffle on, so the bar shows it and turning it off goes back to the order). */
+export async function playAll(root: string, tracks: CatalogTrack[], from: From | string, how: 'order' | 'shuffle' = 'order') {
+  if (!tracks.length) return
+  const shuffle = how === 'shuffle'
+  if (state.shuffle !== shuffle) {
+    set({ ...state, shuffle })
+    await call('player_options', { shuffle, repeat: state.repeat })
+  }
+  return play(root, tracks, shuffle ? Math.floor(Math.random() * tracks.length) : 0, from)
+}
+
+/**
+ * A source changed while it plays (a playlist edited): the song playing plays on, and what
+ * comes after follows the new list. Only when the queue is still the one the source made
+ * (nothing added or taken out by hand); otherwise the queue is yours and is left alone.
+ */
+export function follow(root: string, tracks: CatalogTrack[], from: From) {
+  const f = fromText(from)
+  if (!lastSet || lastSet.from !== f || !fromIs(state.from, from.kind, from.ref)) return
+  const cur = state.index >= 0 ? state.queue[state.index] : undefined
+  if (!cur) return
+  const queued = state.queue.map((q) => q.path).sort()
+  const made = [...lastSet.paths].sort()
+  if (queued.length !== made.length || queued.some((p, i) => p !== made[i])) return
+  const paths = tracks.map((t) => t.path)
+  if (paths.length === lastSet.paths.length && paths.every((p, i) => p === lastSet!.paths[i])) return
+  const items = tracks.map(toItem)
+  let index = paths.indexOf(cur.path)
+  if (index < 0) {
+    // The playing song left the list: it plays on, where it was among the songs still there.
+    const was = lastSet.paths.indexOf(cur.path)
+    const before = new Set(lastSet.paths.slice(0, Math.max(0, was)))
+    index = paths.filter((p) => before.has(p)).length
+    items.splice(index, 0, cur)
+  }
+  lastSet = { from: f, paths: items.map((i) => i.path) }
+  return call('player_follow', { root, items, index })
 }
 export const toggle = () => call('player_toggle')
 export const next = () => call('player_next')
@@ -188,6 +261,8 @@ export const move = (from: number, to: number) => call('player_move', { from, to
 export const jumpTo = (i: number) => call('player_jump', { index: i })
 
 export const getPlayer = () => state
+// For checking playback from the inspector (development only).
+if (import.meta.env.DEV) (window as unknown as { __venutaPlayer: () => PlayerState }).__venutaPlayer = () => state
 
 export function usePlayer(): PlayerState {
   return useSyncExternalStore(

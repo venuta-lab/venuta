@@ -1,7 +1,6 @@
 import { ensureCatalog, tracksFor } from '../../lib/catalog'
 import { playlistTracks, smartSave, type CatalogTrack, type PlaylistSummary, type SmartRule } from '../../lib/engine'
-import { enqueue, play } from '../../lib/player'
-import { shuffled } from '../listen/model'
+import { enqueue, playAll, type From } from '../../lib/player'
 
 /** "Spotify 2026-10-13" → "Spotify". */
 export const sourceName = (source: string | null | undefined) => (source ?? '').replace(/\s+\d{4}-\d{2}-\d{2}$/, '').trim()
@@ -45,14 +44,16 @@ export async function playableSongs(root: string, name: string, rule?: SmartRule
   return tracksFor(entries.filter((e) => !e.missing).map((e) => e.path))
 }
 
+/** Where a queue from a playlist came from (for "Playing from", and to follow its edits). */
+export const playlistFrom = (name: string): From => ({ kind: 'playlist', ref: name, label: name })
+
 export type PlaylistAction = 'play' | 'shuffle' | 'next' | 'queue'
 
 /** Play a whole playlist, shuffle it, or line it up. */
 export async function playPlaylist(root: string, p: Pick<PlaylistSummary, 'name'>, how: PlaylistAction, rule?: SmartRule) {
   const songs = await playableSongs(root, p.name, rule)
   if (!songs.length) return 0
-  if (how === 'play') await play(root, songs, 0, p.name)
-  else if (how === 'shuffle') await play(root, shuffled(songs), 0, p.name)
+  if (how === 'play' || how === 'shuffle') await playAll(root, songs, playlistFrom(p.name), how === 'play' ? 'order' : 'shuffle')
   else await enqueue(root, songs, how === 'next')
   return songs.length
 }

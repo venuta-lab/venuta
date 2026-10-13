@@ -374,25 +374,50 @@ fn main() -> Result<()> {
             )?;
             let lib = engine::library::Library::load(&idx)?;
             let apple = engine::apple::read(&musicdb, &key).map_err(anyhow::Error::msg)?;
-            let r = engine::playlists::import_apple(&library, &lib, &apple, "", write)
-                .map_err(anyhow::Error::msg)?;
-            println!(
-                "{} of {} unique tracks matched",
-                r.tracks_matched, r.tracks_total
-            );
-            for p in &r.playlists {
-                println!("  {:28} {:4} / {}", p.name, p.matched, p.total);
+            let (lists, problems) = engine::imports::apple_library(&apple);
+            for p in &problems {
+                eprintln!("{p}");
             }
-            let tiers = |n: u8| r.wanted.iter().filter(|w| w.tier == n).count();
-            println!(
-                "want-list: {} albums (tier 1: {}, tier 2: {}, tier 3: {})",
-                r.wanted.len(),
-                tiers(1),
-                tiers(2),
-                tiers(3)
-            );
-            for w in r.wanted.iter().take(8) {
-                println!("  T{} {} / {}: {}", w.tier, w.album, w.artist, w.why);
+            // The same matching and merging as the app's import review: every song is kept,
+            // and a playlist you already have is filled in, never replaced.
+            let preview = engine::imports::preview(&library, &lib, &lists);
+            for p in &preview {
+                let here = p.exact + p.close;
+                match &p.target {
+                    Some(t) => println!(
+                        "  {:28} {here:4} of {:4} here; yours has {} now, {} after (+{}, {} of yours kept, {} dropped, {} you took out)",
+                        p.name,
+                        p.items.len(),
+                        t.songs,
+                        t.after,
+                        t.added,
+                        t.yours,
+                        t.removed,
+                        t.skipped
+                    ),
+                    None => println!("  {:28} {here:4} of {:4} here (new)", p.name, p.items.len()),
+                }
+            }
+            if write {
+                let choices: Vec<engine::imports::Choice> = preview
+                    .iter()
+                    .map(|p| engine::imports::Choice {
+                        name: p.name.clone(),
+                        source: p.source.clone(),
+                        source_id: p.source_id.clone(),
+                        update: p.target.as_ref().map(|t| t.name.clone()),
+                        items: p.items.iter().map(engine::imports::PreviewItem::item).collect(),
+                        replace: false,
+                    })
+                    .collect();
+                let (written, wanted) = engine::imports::apply(&library, &lib, &choices, "")
+                    .map_err(anyhow::Error::msg)?;
+                for w in &written {
+                    println!("wrote {}: {} here, {} to get", w.name, w.songs, w.wanted);
+                }
+                println!("to get: {} albums", wanted.len());
+            } else {
+                println!("(dry run: add --write to save)");
             }
         }
         Command::Lookup { root, rules } => {

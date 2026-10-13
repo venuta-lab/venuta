@@ -49,9 +49,10 @@ There is no AI at runtime, no account and no paid service, and the app never dow
 ## The places
 
 **Music** is where you listen: the album playing (or one picked for today), your playlists,
-shelves (jump back in, most played, top rated, hi-res, your categories), then albums, artists
-and songs. Click to play; right-click a song or an album for the rest, including **Add to
-playlist…**.
+shelves (jump back in, most played, top rated, hi-res, your categories), then albums, artists,
+songs and playlists. Click to play; right-click a song or an album for the rest, including **Add
+to playlist…**. Play goes in order, Shuffle turns shuffle on, and the queue says where it is
+playing from.
 
 **Metadata** lists the albums missing details; open one to edit its fields and song titles, and
 rate songs.
@@ -63,9 +64,12 @@ online, measure loudness and check quality, rescan.
 for you, with its proof; what can't is asked, one question at a time, with the evidence side by
 side.
 
-**Playlists** are ordinary `.m3u8` files in your library, so any player can read them. Make
-them, drag to reorder, import them from elsewhere, or let smart playlists fill themselves from
-rules. **To get** lists the albums your playlists want and your library doesn't have.
+**Playlists** (in Music) are ordinary `.m3u8` files in your library, so any player can read
+them. Make them, drag to reorder, import them from elsewhere, or let smart playlists fill
+themselves from rules. A playlist keeps every song, here or not: the ones you don't have wait
+in their places, marked, until you do. Importing a playlist you already have fills it in and
+keeps your own changes, and **Update from…** brings it up to date with its source. **To get**
+lists the albums your playlists want and your library doesn't have, for every playlist or one.
 
 **Devices** writes each SD card for its player. **Test this player** puts a short test album on
 the card to check what your player reads (artists, covers, lyrics, playlists), and the card is
@@ -79,7 +83,7 @@ media keys, and shows the song in the Windows media flyout.
 
 ![The mini player](docs/screenshots/mini-player.jpg)
 
-Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+6** switch places, **Ctrl+,**
+Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+5** switch places, **Ctrl+,**
 opens Settings, **Space** plays or pauses, **Ctrl+M** opens the mini player, **/** searches,
 **?** lists every shortcut.
 

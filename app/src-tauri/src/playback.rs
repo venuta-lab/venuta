@@ -128,7 +128,10 @@ impl Playback {
             let media = self.media.clone();
             let root = self.root.clone();
             let mut tracker = crate::listening::Tracker::default();
-            let mut saved: (i64, bool, u64, u32) = (-2, false, 0, 0);
+            let mut saved: (i64, bool, u64, u32, bool, Repeat) =
+                (-2, false, 0, 0, false, Repeat::Off);
+            // The order before shuffling, while shuffled (saved with the queue).
+            let mut order: Option<Vec<usize>> = None;
             let (id, exclusive) = self.output.lock().map_err(|e| e.to_string())?.clone();
             // The current song and play state, to tell the media overlay only when they change.
             let mut last: (Option<String>, bool, u64) = (None, false, 0);
@@ -138,6 +141,7 @@ impl Playback {
                 move |s: Status<QueueItem>| {
                     if let Some(q) = &s.queue {
                         queue = q.clone();
+                        order = s.unshuffled.clone();
                     }
                     let folder = root.lock().map(|r| r.clone()).unwrap_or_default();
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
@@ -149,6 +153,7 @@ impl Playback {
                             s.playing,
                             s.position_ms,
                             s.duration_ms,
+                            &s.from,
                         );
                         // Where you were: when the queue, song or play state changes, and every
                         // ten seconds of playing.
@@ -157,6 +162,8 @@ impl Playback {
                             s.playing,
                             s.position_ms / 10_000,
                             (s.volume * 100.0) as u32,
+                            s.shuffle,
+                            s.repeat,
                         );
                         if !folder.is_empty() && (s.queue.is_some() || mark != saved) {
                             let q = s.queue.as_ref().and_then(|q| serde_json::to_string(q).ok());
@@ -166,7 +173,12 @@ impl Playback {
                                 index,
                                 s.position_ms,
                                 &s.from,
-                                s.volume,
+                                &crate::listening::HowItPlays {
+                                    volume: s.volume,
+                                    shuffle: s.shuffle,
+                                    repeat: s.repeat,
+                                    order: order.as_deref(),
+                                },
                             );
                             saved = mark;
                         }
@@ -391,6 +403,22 @@ pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, Stri
     if let Some(v) = place.get("volume").and_then(|v| v.as_f64()) {
         pb.send(Cmd::Volume(v as f32))?;
     }
+    // And shuffle and repeat, the shuffled order as it was (unshuffling still goes back).
+    let order: Option<Vec<usize>> = place
+        .get("order")
+        .and_then(|o| serde_json::from_value(o.clone()).ok());
+    let shuffle = place
+        .get("shuffle")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    if let (true, Some(order)) = (shuffle, order) {
+        pb.send(Cmd::RestoreOrder(order))?;
+    }
+    let repeat: Repeat = place
+        .get("repeat")
+        .and_then(|r| serde_json::from_value(r.clone()).ok())
+        .unwrap_or_default();
+    pb.send(Cmd::Options { shuffle, repeat })?;
     Ok(true)
 }
 
@@ -424,6 +452,21 @@ pub fn player_play(
         start_ms: 0,
         play: true,
         from,
+    })
+}
+
+/// The source the queue came from has a new list (a playlist edited while it plays): the song
+/// playing now (at `index` in `items`) plays on, and the rest follows the new list.
+#[tauri::command]
+pub fn player_follow(
+    root: String,
+    items: Vec<QueueItem>,
+    index: usize,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
+    pb.send(Cmd::Follow {
+        items: resolve(&root, items),
+        index,
     })
 }
 
@@ -714,19 +757,23 @@ pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String
                     let bottom = (area.position.y as f64 + area.size.height as f64) / scale;
                     (right - w - 24.0, bottom - h - 24.0)
                 });
-            let mut b = tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#mini".into()))
-                .title("Venuta")
-                .inner_size(w, h)
-                .min_inner_size(220.0, 56.0)
-                .decorations(false)
-                .transparent(true)
-                .shadow(true)
-                .always_on_top(true)
-                .resizable(true)
-                .effects(tauri::utils::config::WindowEffectsConfig {
-                    effects: vec![tauri::window::Effect::Acrylic],
-                    ..Default::default()
-                });
+            let mut b = tauri::WebviewWindowBuilder::new(
+                &app,
+                "mini",
+                tauri::WebviewUrl::App("index.html#mini".into()),
+            )
+            .title("Venuta")
+            .inner_size(w, h)
+            .min_inner_size(220.0, 56.0)
+            .decorations(false)
+            .transparent(true)
+            .shadow(true)
+            .always_on_top(true)
+            .resizable(true)
+            .effects(tauri::utils::config::WindowEffectsConfig {
+                effects: vec![tauri::window::Effect::Acrylic],
+                ..Default::default()
+            });
             if let Some((x, y)) = place {
                 b = b.position(x, y);
             }
@@ -751,7 +798,11 @@ pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String
 /// A window starts or stops showing a spectrum display; the engine measures band levels while
 /// any window shows one.
 #[tauri::command]
-pub fn player_spectrum(on: bool, webview: tauri::Webview, pb: State<'_, Playback>) -> Result<(), String> {
+pub fn player_spectrum(
+    on: bool,
+    webview: tauri::Webview,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
     let any = {
         let mut set = pb.spectrum.lock().map_err(|e| e.to_string())?;
         if on {

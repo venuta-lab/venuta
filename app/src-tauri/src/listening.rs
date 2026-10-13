@@ -4,7 +4,7 @@
 
 use rusqlite::{Connection, params};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 fn open() -> Result<Connection, String> {
@@ -25,11 +25,26 @@ fn open() -> Result<Connection, String> {
          CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT NOT NULL);",
     )
     .map_err(|e| e.to_string())?;
+    // Where each play came from (a playlist), added later: there already, or added now.
+    let has_ctx = c.prepare("SELECT ctx FROM plays LIMIT 0").is_ok();
+    if !has_ctx {
+        c.execute_batch("ALTER TABLE plays ADD COLUMN ctx TEXT")
+            .map_err(|e| e.to_string())?;
+    }
     Ok(c)
 }
 
 fn key(root: &str) -> String {
     engine::paths::canonical_root_string(Path::new(root))
+}
+
+/// How the player was playing: kept with the place, and put back after a restart.
+pub struct HowItPlays<'a> {
+    pub volume: f32,
+    pub shuffle: bool,
+    pub repeat: player::queue::Repeat,
+    /// While shuffled: the order before shuffling (see `Queue::unshuffled`).
+    pub order: Option<&'a [usize]>,
 }
 
 /// Counts plays as they happen, from the player's status.
@@ -51,6 +66,7 @@ impl Tracker {
         playing: bool,
         position_ms: u64,
         duration_ms: u64,
+        from: &str,
     ) {
         let id = song.map(|(f, _)| f.to_owned());
         if id != self.song {
@@ -82,15 +98,17 @@ impl Tracker {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or_default();
+                // Only a playlist is kept as where it came from (to offer it again).
+                let ctx = playlist_of(from).map(|_| from.to_owned());
                 let _ = c.execute(
-                    "INSERT INTO plays (root, file, dir, at, heard_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![key(root), file, dir, now, self.heard_ms as i64],
+                    "INSERT INTO plays (root, file, dir, at, heard_ms, ctx) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![key(root), file, dir, now, self.heard_ms as i64, ctx],
                 );
             }
         }
     }
 
-    /// Remember where you were (the queue as JSON, the index and position).
+    /// Remember where you were (the queue as JSON, the index and position), and how it plays.
     pub fn save_place(
         &mut self,
         root: &str,
@@ -98,8 +116,14 @@ impl Tracker {
         index: i64,
         position_ms: u64,
         from: &str,
-        volume: f32,
+        how: &HowItPlays,
     ) {
+        let HowItPlays {
+            volume,
+            shuffle,
+            repeat,
+            order,
+        } = how;
         if self.conn.is_none() {
             self.conn = open().ok();
         }
@@ -110,7 +134,16 @@ impl Tracker {
                 params![q],
             );
         }
-        let place = serde_json::json!({ "root": root, "index": index, "position_ms": position_ms, "from": from, "volume": volume });
+        let place = serde_json::json!({
+            "root": root,
+            "index": index,
+            "position_ms": position_ms,
+            "from": from,
+            "volume": volume,
+            "shuffle": shuffle,
+            "repeat": repeat,
+            "order": order,
+        });
         let _ = c.execute(
             "INSERT OR REPLACE INTO state (k, v) VALUES ('place', ?1)",
             params![place.to_string()],
@@ -148,6 +181,14 @@ pub fn saved_place() -> Option<(serde_json::Value, serde_json::Value)> {
     Some((get("queue")?, get("place")?))
 }
 
+/// The playlist a queue came from, when it did (the player's `from` is JSON: kind, ref, label).
+fn playlist_of(from: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(from).ok()?;
+    (v.get("kind")?.as_str()? == "playlist")
+        .then(|| v.get("ref")?.as_str().map(str::to_owned))
+        .flatten()
+}
+
 #[derive(Serialize, Default)]
 pub struct Summary {
     /// Album folders, most recently played first.
@@ -158,6 +199,8 @@ pub struct Summary {
     pub counts: HashMap<String, u32>,
     /// Album folders played at least once, with when they were last played (ms).
     pub last_played: HashMap<String, i64>,
+    /// Playlists played from, most recent first, with when (ms).
+    pub recent_playlists: Vec<(String, i64)>,
 }
 
 /// What you've played in this folder.
@@ -187,6 +230,20 @@ pub async fn listening_summary(root: String) -> Result<Summary, String> {
             .flatten()
             .collect();
         let mut stmt = c
+            .prepare("SELECT ctx, MAX(at) FROM plays WHERE root = ?1 AND ctx IS NOT NULL GROUP BY ctx ORDER BY MAX(at) DESC LIMIT 60")
+            .map_err(|e| e.to_string())?;
+        let mut seen = HashSet::new();
+        for (ctx, at) in stmt
+            .query_map(params![k], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| e.to_string())?
+            .flatten()
+        {
+            // The same playlist under another label: once, at its latest.
+            if let Some(name) = playlist_of(&ctx).filter(|n| seen.insert(n.clone())) {
+                out.recent_playlists.push((name, at));
+            }
+        }
+        let mut stmt = c
             .prepare("SELECT file, COUNT(*) FROM plays WHERE root = ?1 GROUP BY file")
             .map_err(|e| e.to_string())?;
         out.counts = stmt
@@ -204,6 +261,8 @@ pub async fn listening_summary(root: String) -> Result<Summary, String> {
 mod tests {
     use super::Tracker;
 
+    const FROM: &str = r#"{"kind":"playlist","ref":"Hindi","label":"Hindi"}"#;
+
     #[test]
     fn a_play_counts_after_half_the_song_and_seeks_dont_count() {
         // Plays go to a scratch library, never yours.
@@ -214,14 +273,16 @@ mod tests {
         let mut t = Tracker::default();
         // A 3-minute song: 90 s of listening counts.
         let song = Some(("a.flac", "A"));
-        t.update("R", song, true, 0, 180_000);
-        t.update("R", song, true, 100_000, 180_000); // a seek: not heard
+        t.update("R", song, true, 0, 180_000, FROM);
+        t.update("R", song, true, 100_000, 180_000, FROM); // a seek: not heard
         assert_eq!(t.heard_ms, 0);
         for p in (100_000..=190_000).step_by(1_000) {
-            t.update("R", song, true, p, 180_000);
+            t.update("R", song, true, p, 180_000, FROM);
         }
         assert!(t.counted, "heard {} ms", t.heard_ms);
-        t.update("R", Some(("b.flac", "A")), true, 0, 180_000);
+        t.update("R", Some(("b.flac", "A")), true, 0, 180_000, FROM);
         assert!(!t.counted, "a new song starts afresh");
+        assert_eq!(super::playlist_of(FROM).as_deref(), Some("Hindi"));
+        assert_eq!(super::playlist_of("Taal"), None, "plain words from before");
     }
 }

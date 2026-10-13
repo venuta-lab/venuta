@@ -185,6 +185,7 @@ impl Api {
                 Ok(ForeignPlaylist {
                     name: p.name.clone(),
                     source: "Spotify".into(),
+                    id: Some(format!("spotify:{}", p.id)),
                     tracks: self.songs(&p.id)?,
                 })
             })

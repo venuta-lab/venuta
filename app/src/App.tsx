@@ -14,7 +14,6 @@ import {
   IconInbox,
   IconListen,
   IconTag,
-  IconPlaylists,
   IconSettings,
 } from './components/Icons'
 import {
@@ -34,7 +33,9 @@ import {
   setOpenFolder,
   libraryHealth,
   scanLibrary,
+  playlistShelf,
   type HealthReport,
+  type PlaylistSummary,
 } from './lib/engine'
 import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
@@ -48,11 +49,11 @@ import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs,
 import { DeepProgressBar } from './screens/libraryParts'
 import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
-import { ListenScreen } from './screens/ListenScreen'
+import { ListenScreen, showMusicTab } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
 import { CardsScreen } from './screens/CardsScreen'
-import { PlaylistsScreen, showPlaylists } from './screens/PlaylistsScreen'
+import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { ActivityScreen } from './screens/ActivityScreen'
@@ -77,10 +78,11 @@ const normPath = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toL
 const samePath = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && normPath(a) === normPath(b)
 
 // "listen" is the Music home (listening); "music" is the album wall for details (Metadata).
-type Place = 'listen' | 'music' | 'health' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
-const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'playlists', 'devices', 'activity', 'settings']
-/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+6). */
-const MAIN = 6
+// Playlists live in Music (its Playlists tab).
+type Place = 'listen' | 'music' | 'health' | 'inbox' | 'devices' | 'activity' | 'settings'
+const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'devices', 'activity', 'settings']
+/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+5). */
+const MAIN = 5
 
 /**
  * The window's backdrop: the playing song's cover whenever there is one, so the backdrop and the
@@ -124,6 +126,14 @@ export default function App() {
   // Notices from anywhere in the app (added to a playlist, removed with Undo…).
   const shared = useNotice()
   const [palette, setPalette] = useState(false)
+  // Your playlists, for the palette (read when it opens).
+  const [shelf, setShelf] = useState<PlaylistSummary[]>([])
+  useEffect(() => {
+    if (!palette || !root) return
+    playlistShelf(root)
+      .then(setShelf)
+      .catch(() => {})
+  }, [palette, root])
   const [sheet, setSheet] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
   // The guided set-up: shown until a library is chosen, and on request.
@@ -326,18 +336,30 @@ export default function App() {
     }
   }, [])
 
-  // Playlists from elsewhere (the Music home's shelf, a notice's Open).
-  const openPlaylist = useCallback(
-    (name: string) => {
-      showPlaylists({ kind: 'playlist', name })
-      go('playlists')
+  // Playlists, in Music, from anywhere (the Music home's shelf, a notice's Open, the palette).
+  const openPlaylists = useCallback(
+    (place: PlaylistsPlace = { kind: 'home' }) => {
+      showPlaylists(place)
+      showMusicTab('playlists')
+      go('listen')
     },
     [go],
   )
-  const openPlaylists = useCallback(() => {
-    showPlaylists({ kind: 'home' })
-    go('playlists')
-  }, [go])
+  const openPlaylist = useCallback((name: string) => openPlaylists({ kind: 'playlist', name }), [openPlaylists])
+
+  // "Playing from …" (the queue, Now Playing): back to that playlist or album.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const f = (e as CustomEvent<player.From>).detail
+      if (f.kind === 'playlist') openPlaylist(f.ref)
+      else if (f.kind === 'album') {
+        go('listen')
+        setListenAlbum(f.ref)
+      } else go('listen')
+    }
+    window.addEventListener('venuta:open-from', on)
+    return () => window.removeEventListener('venuta:open-from', on)
+  }, [openPlaylist, go])
 
   const deepRunning = useRef(false)
   async function runDeepCheck() {
@@ -445,38 +467,38 @@ export default function App() {
       goTo('music', 'Metadata', 'Ctrl+2', 'tags details edit covers album wall'),
       goTo('health', 'Health', 'Ctrl+3', 'status quality metadata completeness problems tools'),
       goTo('inbox', 'Organize', 'Ctrl+4', 'inbox questions decisions review new music incoming manage library naming'),
-      goTo('playlists', 'Playlists', 'Ctrl+5', 'smart want-list to get'),
+      { id: 'playlists', group: 'Go to', label: 'Playlists', keywords: 'music smart want-list to get', run: () => openPlaylists() },
       {
         id: 'playlist-new',
         group: 'Actions',
         label: 'New playlist',
         keywords: 'make create mix',
-        run: () => {
-          showPlaylists({ kind: 'new' })
-          go('playlists')
-        },
+        run: () => openPlaylists({ kind: 'new' }),
       },
       {
         id: 'playlist-import',
         group: 'Actions',
         label: 'Import playlists',
-        keywords: 'spotify apple music youtube deezer tidal amazon m3u bring over transfer',
-        run: () => {
-          showPlaylists({ kind: 'import' })
-          go('playlists')
-        },
+        keywords: 'spotify apple music youtube deezer tidal amazon m3u bring over transfer update',
+        run: () => openPlaylists({ kind: 'import' }),
       },
       {
         id: 'playlist-wanted',
         group: 'Go to',
         label: 'To get (albums your playlists want)',
         keywords: 'want-list wanted missing buy',
-        run: () => {
-          showPlaylists({ kind: 'wanted' })
-          go('playlists')
-        },
+        run: () => openPlaylists({ kind: 'wanted' }),
       },
-      goTo('devices', 'Devices', 'Ctrl+6', 'cards sd players sync'),
+      ...shelf.map(
+        (p): Command => ({
+          id: `playlist:${p.name}`,
+          group: 'Playlists',
+          label: p.name,
+          keywords: `playlist ${p.source ?? ''}`,
+          run: () => openPlaylist(p.name),
+        }),
+      ),
+      goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
@@ -574,7 +596,7 @@ export default function App() {
     }
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, root, go, prefs, toggleTheme])
+  }, [report, root, go, prefs, toggleTheme, shelf, openPlaylists, openPlaylist])
 
   function focusSearch() {
     // Music and Metadata each have a search: the one showing, or Music from anywhere else.
@@ -601,7 +623,7 @@ export default function App() {
       } else if (e.ctrlKey && k === 'h') {
         e.preventDefault()
         go('activity')
-      } else if (e.ctrlKey && /^[1-6]$/.test(k)) {
+      } else if (e.ctrlKey && /^[1-5]$/.test(k)) {
         e.preventDefault()
         go(ORDER[Number(k) - 1])
       } else if (!e.ctrlKey && !e.altKey && !typing(e.target)) {
@@ -645,8 +667,7 @@ export default function App() {
     { id: 'music', label: 'Metadata', icon: IconTag, keys: 'Ctrl+2' },
     { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+3' },
     { id: 'inbox', label: 'Organize', icon: IconInbox, keys: 'Ctrl+4', badge: inboxCount },
-    { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+5' },
-    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+6' },
+    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+5' },
   ]
   const bottom: Section[] = [
     { id: 'activity', label: 'Activity', icon: IconActivity, keys: 'Ctrl+H' },
@@ -770,17 +791,6 @@ export default function App() {
               openLibrary(path)
               go('listen')
               setNotice(`Now showing your new library in ${path}.`)
-            }}
-          />
-        )
-      case 'playlists':
-        return (
-          <PlaylistsScreen
-            root={root}
-            report={report}
-            onAlbum={(dir) => {
-              go('listen')
-              setListenAlbum(dir)
             }}
           />
         )

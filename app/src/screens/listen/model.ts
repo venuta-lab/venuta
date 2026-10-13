@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
+import type { From } from '../../lib/player'
 
 /*
   The Music home's view of the library: the flat catalog of songs grouped into albums and
@@ -174,6 +175,9 @@ export function featured(albums: Album[], withCover: (dir: string) => boolean, n
   const mixed = Math.imul(day ^ 0x5bd1e995, 0x9e3779b1) >>> 0
   return list[mixed % list.length]
 }
+
+/** Where a queue from an album came from. */
+export const albumFrom = (a: Pick<Album, 'dir' | 'title'>): From => ({ kind: 'album', ref: a.dir, label: a.title })
 
 export function shuffled<T>(xs: T[]): T[] {
   const out = xs.slice()

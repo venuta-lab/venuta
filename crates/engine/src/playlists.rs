@@ -26,6 +26,11 @@ const OLD_MD5_TAG: &str = "#LIBRARIAN-MD5:";
 const OLD_SMART_TAG: &str = "#LIBRARIAN-SMART";
 const WANT_TAG: &str = "#VENUTA-WANT:";
 const SOURCE_TAG: &str = "#VENUTA-SOURCE:";
+/// Which playlist at the source it is ("spotify:37i9…", "apple:Hindi"), to update it later.
+const SOURCE_ID_TAG: &str = "#VENUTA-SOURCE-ID:";
+/// The songs the source had when it was last brought in (short keys), so an update can tell a
+/// song you took out from one the source added, and a song the source dropped from one you added.
+const BASE_TAG: &str = "#VENUTA-BASE:";
 
 /// A song a playlist wants that isn't in the library: enough to find it again later.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -39,6 +44,39 @@ pub struct WantEntry {
     pub duration_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isrc: Option<String>,
+    /// The audio checksum of a file the playlist had, which went away: when the same audio is
+    /// back (anywhere in the library), it is this song.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
+    /// Library files you said are not this song (never offered or filled in again).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not: Vec<String>,
+}
+
+impl WantEntry {
+    /// As a song from elsewhere, for matching.
+    pub fn foreign(&self) -> Foreign {
+        Foreign {
+            title: self.title.clone(),
+            artist: self.artist.clone(),
+            album: self.album.clone(),
+            duration_ms: Some(self.duration_ms).filter(|d| *d > 0),
+            isrc: self.isrc.clone(),
+            ..Default::default()
+        }
+    }
+}
+
+/// A library song that may be one a playlist is waiting for, offered for you to confirm.
+#[derive(Debug, Clone, Serialize)]
+pub struct Maybe {
+    pub path: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_ms: u64,
+    /// Why, in words ("Another version: …").
+    pub why: String,
 }
 
 /// One line of a playlist to write: a song in the library, or one still wanted.
@@ -48,6 +86,10 @@ pub struct Item {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub want: Option<WantEntry>,
+    /// For a song matched to a file on import: what the source called it (so an update later
+    /// knows this file answers that song, even when the names differ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<WantEntry>,
 }
 
 impl Item {
@@ -55,14 +97,111 @@ impl Item {
         Self {
             path: Some(path.into()),
             want: None,
+            source: None,
         }
     }
     pub fn wanted(w: WantEntry) -> Self {
         Self {
             path: None,
             want: Some(w),
+            source: None,
         }
     }
+}
+
+/// A playlist file's own lines about itself.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Header {
+    /// Where it came from, in words, with the day ("Spotify 2026-10-13").
+    pub source: Option<String>,
+    pub source_id: Option<String>,
+    /// The source's songs when last brought in: each song's keys (see `song_keys`).
+    pub base: Option<Vec<Vec<String>>>,
+}
+
+fn header_in(text: &str) -> Header {
+    let mut h = Header::default();
+    for l in text.lines().map(str::trim) {
+        if let Some(s) = l.strip_prefix(SOURCE_ID_TAG) {
+            h.source_id = Some(s.trim().to_owned()).filter(|s| !s.is_empty());
+        } else if let Some(s) = l.strip_prefix(SOURCE_TAG) {
+            h.source = Some(s.trim().to_owned()).filter(|s| !s.is_empty());
+        } else if let Some(s) = l.strip_prefix(BASE_TAG) {
+            h.base = Some(
+                s.split_whitespace()
+                    .map(|song| song.split('.').map(str::to_owned).collect())
+                    .collect(),
+            );
+        }
+    }
+    h
+}
+
+/// What a playlist's file says about itself (nothing, for a playlist that isn't there).
+pub fn header_of(library_root: &Path, name: &str) -> Header {
+    crate::text::read_text(&existing_file(library_root, name))
+        .map(|t| header_in(&t))
+        .unwrap_or_default()
+}
+
+fn short_key(s: &str) -> String {
+    blake3::hash(s.as_bytes()).to_hex()[..10].to_owned()
+}
+
+/// What tells one song from another across playlists, sources and files: the file, the
+/// recording code (ISRC), and the title with each of its artists (film and feature notes
+/// ignored, see `title_key`). Two entries that share a key are the same song.
+pub fn song_keys(
+    path: Option<&str>,
+    title: &str,
+    artists: &str,
+    isrc: Option<&str>,
+) -> Vec<String> {
+    let mut k = Vec::new();
+    if let Some(p) = path.filter(|p| !p.is_empty()) {
+        k.push(short_key(&format!("p:{}", p.to_lowercase())));
+    }
+    if let Some(i) = isrc
+        .map(|i| i.trim().to_uppercase())
+        .filter(|i| i.len() >= 12)
+    {
+        k.push(short_key(&format!("i:{i}")));
+    }
+    let t = title_key(title);
+    if !t.is_empty() {
+        let names: Vec<String> = split_names(artists)
+            .iter()
+            .map(|a| crate::audit::name_key(a))
+            .filter(|a| !a.is_empty())
+            .collect();
+        if names.is_empty() {
+            k.push(short_key(&format!("s:{t}|")));
+        }
+        for a in names {
+            k.push(short_key(&format!("s:{t}|{a}")));
+        }
+    }
+    k
+}
+
+/// A library song's keys (its artists and album artists both count).
+pub fn track_keys(t: &Track) -> Vec<String> {
+    let artists = [t.first("ARTIST"), t.first("ALBUMARTIST")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ");
+    song_keys(
+        Some(&t.path),
+        t.first("TITLE").unwrap_or_default(),
+        &artists,
+        t.first("ISRC"),
+    )
+}
+
+/// A wanted song's keys.
+pub fn want_keys(w: &WantEntry) -> Vec<String> {
+    song_keys(None, &w.title, &w.artist, w.isrc.as_deref())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +217,9 @@ pub struct PlaylistEntry {
     /// For a missing song: what's known about it (from an import), to find it later.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub want: Option<WantEntry>,
+    /// For a missing song: one in your library that may be it (see `suggest`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maybe: Option<Maybe>,
 }
 
 impl PlaylistEntry {
@@ -92,6 +234,8 @@ impl PlaylistEntry {
             album: self.album.clone(),
             duration_ms: self.duration_ms,
             isrc: None,
+            md5: self.audio_md5.clone(),
+            not: Vec::new(),
         }))
     }
 }
@@ -105,6 +249,8 @@ pub struct PlaylistSummary {
     pub missing: usize,
     /// Where it came from ("Spotify", "Apple Music"…), if imported.
     pub source: Option<String>,
+    /// Which playlist at the source, when known (to update it from there).
+    pub source_id: Option<String>,
     /// The first few songs' album folders, for its mosaic cover.
     pub dirs: Vec<String>,
     pub duration_ms: u64,
@@ -128,6 +274,54 @@ fn to_music(library_root: &Path) -> &'static str {
 
 fn file_for(library_root: &Path, name: &str) -> PathBuf {
     folder(library_root).join(format!("{}.m3u8", crate::plan::sanitize(name, 100)))
+}
+
+/// The file a playlist is in: its `.m3u8`, or an `.m3u` another player left there.
+fn existing_file(library_root: &Path, name: &str) -> PathBuf {
+    let m3u8 = file_for(library_root, name);
+    if m3u8.is_file() {
+        return m3u8;
+    }
+    let m3u = m3u8.with_extension("m3u");
+    if m3u.is_file() { m3u } else { m3u8 }
+}
+
+/// "03 - Tum Hi Ho.flac" → "Tum Hi Ho".
+pub(crate) fn title_from_file(p: &str) -> String {
+    let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+    let re = regex::Regex::new(r"^\s*\d{1,3}\s*[-._ ]\s*").expect("valid");
+    re.replace(stem, "").trim().to_owned()
+}
+
+/// What a playlist line says about a song whose file isn't here: its `#EXTINF` ("Artist -
+/// Title" and the length), else the file and folder names.
+fn want_from_line(location: &str, extinf: Option<(u64, String)>, md5: Option<String>) -> WantEntry {
+    let norm = location.replace('\\', "/");
+    let mut parts = norm.rsplit('/');
+    let file = parts.next().unwrap_or_default();
+    let folder = parts.next().unwrap_or_default();
+    let year = regex::Regex::new(r"\s*[(\[]\d{4}[)\]]\s*$").expect("valid");
+    let album = if folder.is_empty() || folder == ".." || folder.ends_with(':') {
+        String::new()
+    } else {
+        year.replace(folder, "").trim().to_owned()
+    };
+    let (ms, label) = extinf.unwrap_or_default();
+    let (artist, title) = match label.trim().split_once(" - ") {
+        Some((a, t)) if !t.trim().is_empty() => (a.trim().to_owned(), t.trim().to_owned()),
+        _ if !label.trim().is_empty() => (String::new(), label.trim().to_owned()),
+        _ => (String::new(), title_from_file(file)),
+    };
+    WantEntry {
+        title,
+        artist,
+        album,
+        duration_ms: ms,
+        isrc: None,
+        md5,
+        not: Vec::new(),
+    }
 }
 
 /// What the index knows, for resolving entries: path → track, and audio MD5 → path.
@@ -162,12 +356,29 @@ pub fn read(
     lib: &Library,
     name: &str,
 ) -> Result<(Vec<PlaylistEntry>, bool), String> {
-    let text = std::fs::read_to_string(file_for(library_root, name)).map_err(|e| e.to_string())?;
+    let text =
+        crate::text::read_text(&existing_file(library_root, name)).map_err(|e| e.to_string())?;
     let r = Resolver::new(lib);
     let mut out = Vec::new();
     let mut pending_md5: Option<String> = None;
+    let mut pending_info: Option<(u64, String)> = None;
     let mut repaired = false;
+    // Paths written in full (another player's list) still count when they're in this library.
+    let root_prefix = format!(
+        "{}/",
+        library_root
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_lowercase()
+    );
     for line in text.lines().map(str::trim) {
+        if let Some(info) = line.strip_prefix("#EXTINF:") {
+            let (secs, label) = info.split_once(',').unwrap_or((info, ""));
+            let secs = secs.trim().parse::<i64>().ok().filter(|s| *s > 0);
+            pending_info = Some((secs.unwrap_or(0) as u64 * 1000, label.trim().to_owned()));
+            continue;
+        }
         if let Some(m) = line
             .strip_prefix(MD5_TAG)
             .or_else(|| line.strip_prefix(OLD_MD5_TAG))
@@ -176,7 +387,19 @@ pub fn read(
             continue;
         }
         if let Some(j) = line.strip_prefix(WANT_TAG) {
+            pending_info = None;
             if let Ok(w) = serde_json::from_str::<WantEntry>(j.trim()) {
+                // The file it was waiting for is back.
+                if let Some(t) = w
+                    .md5
+                    .as_ref()
+                    .and_then(|m| r.by_md5.get(&m.to_uppercase()).copied())
+                {
+                    repaired = true;
+                    out.push(entry(t));
+                    pending_md5 = None;
+                    continue;
+                }
                 out.push(PlaylistEntry {
                     path: String::new(),
                     title: w.title.clone(),
@@ -186,6 +409,7 @@ pub fn read(
                     audio_md5: None,
                     missing: true,
                     want: Some(w),
+                    maybe: None,
                 });
             }
             pending_md5 = None;
@@ -194,12 +418,17 @@ pub fn read(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        let location = line;
         let line = line.replace('\\', "/");
-        let rel = line
-            .strip_prefix(to_music(library_root))
-            .unwrap_or_else(|| line.trim_start_matches("../"))
-            .to_owned();
+        let rel = if line.to_lowercase().starts_with(&root_prefix) {
+            line[root_prefix.len()..].to_owned()
+        } else {
+            line.strip_prefix(to_music(library_root))
+                .unwrap_or_else(|| line.trim_start_matches("../"))
+                .to_owned()
+        };
         let md5 = pending_md5.take();
+        let info = pending_info.take();
         let track = r.by_path.get(rel.as_str()).copied().or_else(|| {
             let t = md5.as_ref().and_then(|m| r.by_md5.get(m).copied());
             repaired |= t.is_some();
@@ -207,16 +436,21 @@ pub fn read(
         });
         out.push(match track {
             Some(t) => entry(t),
-            None => PlaylistEntry {
-                path: String::new(),
-                title: rel.rsplit('/').next().unwrap_or(&rel).to_owned(),
-                artist: String::new(),
-                album: String::new(),
-                duration_ms: 0,
-                audio_md5: md5,
-                missing: true,
-                want: None,
-            },
+            None => {
+                // Not here: kept as a song to get, with what the line says about it.
+                let w = want_from_line(location, info, md5.clone());
+                PlaylistEntry {
+                    path: String::new(),
+                    title: w.title.clone(),
+                    artist: w.artist.clone(),
+                    album: w.album.clone(),
+                    duration_ms: w.duration_ms,
+                    audio_md5: md5,
+                    missing: true,
+                    want: Some(w),
+                    maybe: None,
+                }
+            }
         });
     }
     Ok((out, repaired))
@@ -232,6 +466,27 @@ fn entry(t: &Track) -> PlaylistEntry {
         audio_md5: t.audio_md5.as_deref().map(hex),
         missing: false,
         want: None,
+        maybe: None,
+    }
+}
+
+/// For each missing song with details, a library song that may be it (not one you turned
+/// down), close matches included: a different version, length or credit.
+pub fn suggest(lib: &Library, entries: &mut [PlaylistEntry]) {
+    let m = Matcher::new(lib);
+    for e in entries.iter_mut().filter(|e| e.missing) {
+        let Some(w) = &e.want else { continue };
+        e.maybe = m
+            .grade(&w.foreign())
+            .filter(|h| !w.not.iter().any(|p| p == &h.track.path))
+            .map(|h| Maybe {
+                path: h.track.path.clone(),
+                title: h.track.first("TITLE").unwrap_or_default().to_owned(),
+                artist: h.track.first("ARTIST").unwrap_or_default().to_owned(),
+                album: h.track.first("ALBUM").unwrap_or_default().to_owned(),
+                duration_ms: h.track.duration_ms,
+                why: h.why,
+            });
     }
 }
 
@@ -245,14 +500,14 @@ fn source_in(text: &str) -> Option<String> {
 
 /// A playlist's source line, read from its file.
 pub fn source_of(library_root: &Path, name: &str) -> Option<String> {
-    std::fs::read_to_string(file_for(library_root, name))
+    crate::text::read_text(&existing_file(library_root, name))
         .ok()
         .and_then(|t| source_in(&t))
 }
 
 /// Is there a playlist by this name?
 pub fn exists(library_root: &Path, name: &str) -> bool {
-    file_for(library_root, name).is_file()
+    existing_file(library_root, name).is_file()
 }
 
 /// Write a static playlist from library-relative paths (keeping the source it came from).
@@ -272,8 +527,8 @@ pub fn write(
     write_items(library_root, lib, name, &items, smart, source.as_deref())
 }
 
-/// Write a playlist from songs in the library and songs still wanted, in order. A path that
-/// isn't in the library is dropped; a wanted song keeps its place as a comment line.
+/// Write a playlist from songs in the library and songs still wanted, in order. A wanted song
+/// keeps its place as a comment line; so does a path the library doesn't have (never dropped).
 pub fn write_items(
     library_root: &Path,
     lib: &Library,
@@ -282,6 +537,25 @@ pub fn write_items(
     smart: bool,
     source: Option<&str>,
 ) -> Result<(), String> {
+    // Where it came from stays with it through every edit.
+    let mut header = if smart {
+        Header::default()
+    } else {
+        header_of(library_root, name)
+    };
+    header.source = source.map(str::to_owned);
+    write_with(library_root, lib, name, items, smart, &header)
+}
+
+/// Write a playlist with these lines about itself (see `Header`).
+pub fn write_with(
+    library_root: &Path,
+    lib: &Library,
+    name: &str,
+    items: &[Item],
+    smart: bool,
+    header: &Header,
+) -> Result<(), String> {
     let by_path: HashMap<&str, &Track> = lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect();
     let mut out = String::from("#EXTM3U\n");
     out.push_str(&format!("#PLAYLIST:{name}\n"));
@@ -289,8 +563,19 @@ pub fn write_items(
         out.push_str(SMART_TAG);
         out.push_str(" written from your rules; edit the rule, not this file\n");
     }
-    if let Some(s) = source.filter(|s| !s.is_empty()) {
+    if let Some(s) = header.source.as_deref().filter(|s| !s.is_empty()) {
         out.push_str(&format!("{SOURCE_TAG}{s}\n"));
+    }
+    if let Some(s) = header.source_id.as_deref().filter(|s| !s.is_empty()) {
+        out.push_str(&format!("{SOURCE_ID_TAG}{s}\n"));
+    }
+    if let Some(base) = header.base.as_ref().filter(|b| !b.is_empty()) {
+        let songs: Vec<String> = base
+            .iter()
+            .filter(|k| !k.is_empty())
+            .map(|k| k.join("."))
+            .collect();
+        out.push_str(&format!("{BASE_TAG}{}\n", songs.join(" ")));
     }
     for item in items {
         if let Some(w) = &item.want {
@@ -304,6 +589,11 @@ pub fn write_items(
             continue;
         };
         let Some(t) = by_path.get(p.as_str()) else {
+            let w = want_from_line(p, None, None);
+            out.push_str(&format!(
+                "{WANT_TAG}{}\n",
+                serde_json::to_string(&w).map_err(|e| e.to_string())?
+            ));
             continue;
         };
         let secs = (t.duration_ms + 500) / 1000;
@@ -321,7 +611,13 @@ pub fn write_items(
     std::fs::create_dir_all(folder(library_root)).map_err(|e| e.to_string())?;
     let part = path.with_extension("m3u8.part");
     std::fs::write(&part, out).map_err(|e| e.to_string())?;
-    std::fs::rename(&part, &path).map_err(|e| e.to_string())
+    std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    // An .m3u it was read from is now an .m3u8: the old file goes aside, not left as a twin.
+    let old = path.with_extension("m3u");
+    if old.is_file() {
+        set_aside(library_root, &old, name)?;
+    }
+    Ok(())
 }
 
 pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
@@ -336,7 +632,7 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
         })
         .filter_map(|e| {
             let name = e.path().file_stem()?.to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(e.path()).ok()?;
+            let text = crate::text::read_text(&e.path()).ok()?;
             let (entries, _) = read(library_root, lib, &name).ok()?;
             // Up to four different albums from the top, for the mosaic cover.
             let mut dirs: Vec<String> = Vec::new();
@@ -359,6 +655,7 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
                 tracks: entries.len(),
                 missing: entries.iter().filter(|x| x.missing).count(),
                 source: source_in(&text),
+                source_id: header_in(&text).source_id,
                 duration_ms: entries
                     .iter()
                     .filter(|x| !x.missing)
@@ -377,6 +674,14 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
         })
         .collect();
     out.sort_by_key(|p| p.name.to_lowercase());
+    // "Road.m3u" beside "Road.m3u8" is one playlist (the .m3u8 is the one read).
+    out.dedup_by(|b, a| {
+        let same = a.name.eq_ignore_ascii_case(&b.name);
+        if same && b.file.to_lowercase().ends_with(".m3u8") {
+            std::mem::swap(a, b);
+        }
+        same
+    });
     out
 }
 
@@ -407,18 +712,65 @@ pub fn repair_all(library_root: &Path, lib: &Library) -> usize {
 
 /// Deleted playlists are moved aside, never destroyed.
 pub fn delete(library_root: &Path, name: &str) -> Result<(), String> {
-    let src = file_for(library_root, name);
+    set_aside(library_root, &existing_file(library_root, name), name).map(|_| ())
+}
+
+/// Where a playlist's file goes in Set aside, under a name that is never taken.
+fn aside_path(library_root: &Path, src: &Path, name: &str) -> Result<PathBuf, String> {
     let dir = crate::paths::beside(library_root, crate::paths::Helper::SetAside).join("playlists");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis())
         .unwrap_or_default();
-    std::fs::rename(
-        &src,
-        dir.join(format!("{stamp}-{}.m3u8", crate::plan::sanitize(name, 100))),
-    )
-    .map_err(|e| e.to_string())
+    let ext = src
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "m3u8".into());
+    let base = format!("{stamp}-{}", crate::plan::sanitize(name, 100));
+    let mut to = dir.join(format!("{base}.{ext}"));
+    for n in 2.. {
+        if !to.exists() {
+            break;
+        }
+        to = dir.join(format!("{base}-{n}.{ext}"));
+    }
+    Ok(to)
+}
+
+/// Move a playlist file to Set aside; returns where it went.
+fn set_aside(library_root: &Path, src: &Path, name: &str) -> Result<PathBuf, String> {
+    let to = aside_path(library_root, src, name)?;
+    std::fs::rename(src, &to).map_err(|e| e.to_string())?;
+    Ok(to)
+}
+
+/// Keep a copy of a playlist as it is now in Set aside, before a change; returns where.
+pub fn keep_copy(library_root: &Path, name: &str) -> Result<PathBuf, String> {
+    let src = existing_file(library_root, name);
+    let to = aside_path(library_root, &src, name)?;
+    std::fs::copy(&src, &to).map_err(|e| e.to_string())?;
+    Ok(to)
+}
+
+/// Put back a copy kept by `keep_copy` (undo); the playlist as it is now goes aside first.
+pub fn restore_copy(library_root: &Path, name: &str, copy: &Path) -> Result<(), String> {
+    let aside =
+        crate::paths::beside(library_root, crate::paths::Helper::SetAside).join("playlists");
+    let inside = copy
+        .parent()
+        .zip(aside.canonicalize().ok())
+        .and_then(|(p, a)| p.canonicalize().ok().map(|p| p == a))
+        .unwrap_or(false);
+    if !inside || !copy.is_file() {
+        return Err("That earlier version isn't in Set aside any more.".into());
+    }
+    let now = existing_file(library_root, name);
+    if now.is_file() {
+        set_aside(library_root, &now, name)?;
+    }
+    std::fs::copy(copy, file_for(library_root, name)).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn rename(library_root: &Path, from: &str, to: &str) -> Result<(), String> {
@@ -426,8 +778,8 @@ pub fn rename(library_root: &Path, from: &str, to: &str) -> Result<(), String> {
     if dst.exists() {
         return Err("A playlist with that name already exists.".into());
     }
-    let src = file_for(library_root, from);
-    let text = std::fs::read_to_string(&src).map_err(|e| e.to_string())?;
+    let src = existing_file(library_root, from);
+    let text = crate::text::read_text(&src).map_err(|e| e.to_string())?;
     // Other players show the #PLAYLIST name, so it changes with the file name.
     let renamed: String = text
         .lines()
@@ -585,6 +937,8 @@ impl Foreign {
             album: self.album.clone(),
             duration_ms: self.duration_ms.unwrap_or(0),
             isrc: self.isrc.clone(),
+            md5: None,
+            not: Vec::new(),
         }
     }
 }
@@ -793,13 +1147,6 @@ impl<'a> Matcher<'a> {
 
 // --- Importing Apple playlists and the want-list ---------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportedPlaylist {
-    pub name: String,
-    pub total: usize,
-    pub matched: usize,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WantedAlbum {
     pub album: String,
@@ -812,91 +1159,6 @@ pub struct WantedAlbum {
     /// still wants its songs: only these can be taken off by hand.
     #[serde(default)]
     pub kept: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportReport {
-    pub playlists: Vec<ImportedPlaylist>,
-    pub wanted: Vec<WantedAlbum>,
-    pub tracks_total: usize,
-    pub tracks_matched: usize,
-}
-
-pub fn import_apple(
-    library_root: &Path,
-    lib: &Library,
-    apple: &crate::apple::AppleLibrary,
-    prefix: &str,
-    write_files: bool,
-) -> Result<ImportReport, String> {
-    let matcher = Matcher::new(lib);
-    let mut report = ImportReport {
-        playlists: Vec::new(),
-        wanted: Vec::new(),
-        tracks_total: 0,
-        tracks_matched: 0,
-    };
-    // Unmatched tracks grouped by album, for the want-list.
-    let mut missing: BTreeMap<(String, String), (HashSet<u64>, HashSet<String>)> = BTreeMap::new();
-    let mut seen: HashSet<u64> = HashSet::new();
-    for p in &apple.playlists {
-        let mut paths = Vec::new();
-        for id in &p.tracks {
-            let Some(t) = apple.tracks.get(id) else {
-                continue;
-            };
-            let first_time = seen.insert(*id);
-            match matcher.find(&t.title, &t.artist, &t.album) {
-                Some(local) => {
-                    paths.push(local.path.clone());
-                    if first_time {
-                        report.tracks_matched += 1;
-                    }
-                }
-                None => {
-                    let artist = if t.album_artist.is_empty() {
-                        &t.artist
-                    } else {
-                        &t.album_artist
-                    };
-                    let e = missing
-                        .entry((t.album.clone(), artist.clone()))
-                        .or_default();
-                    e.0.insert(*id);
-                    e.1.insert(p.name.clone());
-                }
-            }
-            if first_time {
-                report.tracks_total += 1;
-            }
-        }
-        let name = format!("{prefix}{}", p.name);
-        if write_files {
-            write(library_root, lib, &name, &paths, false)?;
-        }
-        report.playlists.push(ImportedPlaylist {
-            name,
-            total: p.tracks.len(),
-            matched: paths.len(),
-        });
-    }
-    let groups: Vec<WantGroup> = missing
-        .into_iter()
-        .map(|((album, artist), (ids, lists))| WantGroup {
-            genre: ids
-                .iter()
-                .filter_map(|i| apple.tracks.get(i))
-                .map(|t| t.genre.clone())
-                .next()
-                .unwrap_or_default(),
-            saved: ids.len(),
-            playlists: lists.into_iter().collect(),
-            album,
-            artist,
-        })
-        .collect();
-    report.wanted = rank_wanted(lib, groups);
-    Ok(report)
 }
 
 /// Songs from one album that playlists want, for the want-list.
@@ -1455,6 +1717,8 @@ mod tests {
             album: "Gone".into(),
             duration_ms: 180_000,
             isrc: None,
+            md5: None,
+            not: Vec::new(),
         };
         let items = vec![Item::wanted(want.clone()), Item::track("A/01.flac")];
         write_items(
@@ -1499,6 +1763,8 @@ mod tests {
                 album: album.into(),
                 duration_ms: 0,
                 isrc: None,
+                md5: None,
+                not: Vec::new(),
             })
         };
         write_items(
@@ -1583,5 +1849,156 @@ mod tests {
         assert!(text.contains("#PLAYLIST:Night drive\n"));
         assert!(!folder(root.path()).join("Road.m3u8").exists());
         assert!(rename(root.path(), "Night drive", "Night drive").is_err());
+    }
+    #[test]
+    fn no_song_of_any_playlist_is_ever_dropped() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01 - One.flac", "One", "X", "Al", 200_000)]);
+        // A playlist another player wrote, dropped into the folder: a song here, one whose file
+        // is gone (with its EXTINF), one from another computer, and one Venuta was waiting for.
+        std::fs::create_dir_all(folder(root.path())).unwrap();
+        std::fs::write(
+            folder(root.path()).join("Mixed.m3u8"),
+            "#EXTM3U\n#EXTINF:200,X - One\n../A/01 - One.flac\n#EXTINF:190,Artist B - Song B\n../Gone/02 - Song B.flac\nD:\\Elsewhere\\Album C (2001)\\03 - Song C.flac\n#VENUTA-WANT:{\"title\":\"Song D\",\"artist\":\"Z\"}\n",
+        )
+        .unwrap();
+        let (entries, _) = read(root.path(), &lib, "Mixed").unwrap();
+        assert_eq!(entries.len(), 4);
+        assert!(!entries[0].missing);
+        let b = entries[1].want.as_ref().expect("the gone song is kept");
+        assert_eq!(
+            (b.title.as_str(), b.artist.as_str(), b.duration_ms),
+            ("Song B", "Artist B", 190_000)
+        );
+        let c = entries[2]
+            .want
+            .as_ref()
+            .expect("the other computer's song is kept");
+        assert_eq!((c.title.as_str(), c.album.as_str()), ("Song C", "Album C"));
+        assert_eq!(entries[3].title, "Song D");
+
+        // Saving it back (any edit in the app) keeps all four.
+        let items: Vec<Item> = entries.iter().map(PlaylistEntry::item).collect();
+        write_items(root.path(), &lib, "Mixed", &items, false, None).unwrap();
+        let (again, _) = read(root.path(), &lib, "Mixed").unwrap();
+        assert_eq!(
+            again.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(),
+            ["One", "Song B", "Song C", "Song D"]
+        );
+
+        // A path the library doesn't have is never silently left out of a save.
+        write_items(
+            root.path(),
+            &lib,
+            "Paths",
+            &[
+                Item::track("A/01 - One.flac"),
+                Item::track("Lost/07 - Seven.flac"),
+            ],
+            false,
+            None,
+        )
+        .unwrap();
+        let (p, _) = read(root.path(), &lib, "Paths").unwrap();
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[1].title, "Seven");
+        assert!(p[1].missing);
+    }
+
+    #[test]
+    fn a_song_whose_file_went_away_comes_back_by_its_checksum() {
+        let root = tempfile::tempdir().unwrap();
+        let had = library(vec![track(1, "A/01 One.flac", "One", 7)]);
+        write(root.path(), &had, "Road", &["A/01 One.flac".into()], false).unwrap();
+        // The file is gone for a while, and the playlist is saved meanwhile.
+        let gone = library(vec![]);
+        let (e, _) = read(root.path(), &gone, "Road").unwrap();
+        assert!(e[0].missing);
+        let items: Vec<Item> = e.iter().map(PlaylistEntry::item).collect();
+        write_items(root.path(), &gone, "Road", &items, false, None).unwrap();
+        // It comes back somewhere else: the same audio is the same song.
+        let back = library(vec![track(1, "B/01 One.flac", "One", 7)]);
+        let (e, repaired) = read(root.path(), &back, "Road").unwrap();
+        assert!(repaired);
+        assert_eq!(e[0].path, "B/01 One.flac");
+        assert!(!e[0].missing);
+    }
+
+    #[test]
+    fn m3u_files_in_any_encoding_are_playlists_too() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(
+            1,
+            "A/01 - Café.flac",
+            "Café",
+            "X",
+            "Al",
+            200_000,
+        )]);
+        std::fs::create_dir_all(folder(root.path())).unwrap();
+        // Windows-1252, as older players write .m3u.
+        let mut bytes = b"#EXTM3U\n../A/01 - Caf".to_vec();
+        bytes.push(0xE9);
+        bytes.extend_from_slice(b".flac\n");
+        std::fs::write(folder(root.path()).join("Old.m3u"), bytes).unwrap();
+        let listed = list(root.path(), &lib);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            (listed[0].name.as_str(), listed[0].tracks, listed[0].missing),
+            ("Old", 1, 0)
+        );
+        let (e, _) = read(root.path(), &lib, "Old").unwrap();
+        assert_eq!(e[0].path, "A/01 - Café.flac");
+        // Saved once, it becomes an .m3u8; the old file is set aside, not left as a twin.
+        let items: Vec<Item> = e.iter().map(PlaylistEntry::item).collect();
+        write_items(root.path(), &lib, "Old", &items, false, None).unwrap();
+        assert!(folder(root.path()).join("Old.m3u8").is_file());
+        assert!(!folder(root.path()).join("Old.m3u").exists());
+        assert_eq!(list(root.path(), &lib).len(), 1);
+    }
+    #[test]
+    fn a_close_match_is_offered_once_and_a_no_is_remembered() {
+        let root = tempfile::tempdir().unwrap();
+        // You have another version (a different length) of a song the playlist waits for.
+        let lib = library(vec![song(
+            1,
+            "A/01 - Roja.flac",
+            "Roja",
+            "A. R. Rahman",
+            "Roja",
+            300_000,
+        )]);
+        let want = WantEntry {
+            title: "Roja".into(),
+            artist: "A. R. Rahman".into(),
+            duration_ms: 240_000,
+            ..Default::default()
+        };
+        write_items(
+            root.path(),
+            &lib,
+            "Old",
+            &[Item::wanted(want.clone())],
+            false,
+            None,
+        )
+        .unwrap();
+        let (mut e, _) = read(root.path(), &lib, "Old").unwrap();
+        suggest(&lib, &mut e);
+        let maybe = e[0].maybe.as_ref().expect("offered");
+        assert_eq!(maybe.path, "A/01 - Roja.flac");
+        // Opening Playlists fills in only sure matches: this one waits for you.
+        assert_eq!(crate::imports::refind_all(root.path(), &lib), 0);
+
+        // "Not this one" is kept in the playlist, so it isn't offered again.
+        let no = WantEntry {
+            not: vec!["A/01 - Roja.flac".into()],
+            ..want
+        };
+        write_items(root.path(), &lib, "Old", &[Item::wanted(no)], false, None).unwrap();
+        let (mut e, _) = read(root.path(), &lib, "Old").unwrap();
+        suggest(&lib, &mut e);
+        assert!(e[0].maybe.is_none());
+        assert!(e[0].missing);
     }
 }

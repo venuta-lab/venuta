@@ -640,6 +640,8 @@ export interface PlaylistSummary {
   missing: number
   /** "Spotify 2026-10-13": where it came from, if imported. */
   source: string | null
+  /** Which playlist at the source ("spotify:…", "apple:Hindi"), when known: it can be updated from there. */
+  source_id: string | null
   /** Up to four album folders from the top, for the mosaic cover. */
   dirs: string[]
   duration_ms: number
@@ -654,6 +656,20 @@ export interface WantEntry {
   album: string
   duration_ms: number
   isrc?: string
+  /** The audio of a file it had that went away: the same audio, back anywhere, is this song. */
+  md5?: string
+  /** Library files you said are not this song. */
+  not?: string[]
+}
+
+/** A library song that may be one a playlist waits for. */
+export interface Maybe {
+  path: string
+  title: string
+  artist: string
+  album: string
+  duration_ms: number
+  why: string
 }
 
 export interface PlaylistEntry {
@@ -665,10 +681,11 @@ export interface PlaylistEntry {
   audio_md5: string | null
   missing: boolean
   want?: WantEntry
+  maybe?: Maybe
 }
 
 /** One line of a playlist to save: a library song, or one still wanted. */
-export type PlaylistItem = { path: string } | { want: WantEntry }
+export type PlaylistItem = { path: string; source?: WantEntry } | { want: WantEntry }
 
 /** A song from elsewhere, as an import read it. */
 export interface ForeignSong {
@@ -696,10 +713,31 @@ export interface PreviewItem {
   why: string
 }
 
+/** A playlist you have that an import updates, and what the update does to it. */
+export interface UpdateTarget {
+  name: string
+  /** Found by where it came from, not only by its name. */
+  linked: boolean
+  songs: number
+  here: number
+  after: number
+  after_here: number
+  /** Songs the source has that it doesn't yet. */
+  added: number
+  /** Songs you added, which stay. */
+  yours: number
+  /** Songs the source dropped since last time (they go). */
+  removed: number
+  /** Songs you took out, which stay out. */
+  skipped: number
+}
+
 export interface PreviewPlaylist {
   name: string
   source: string
+  source_id: string | null
   exists: boolean
+  target: UpdateTarget | null
   items: PreviewItem[]
   exact: number
   close: number
@@ -709,14 +747,38 @@ export interface PreviewPlaylist {
 export interface ImportChoice {
   name: string
   source: string
+  source_id: string | null
   items: PlaylistItem[]
+  /** Update this playlist you have instead of writing a new one (nothing of yours is lost). */
+  update: string | null
   replace: boolean
 }
 
+export interface ImportWritten {
+  name: string
+  songs: number
+  wanted: number
+  /** It updated a playlist you had: what changed, and the copy kept of how it was. */
+  updated: boolean
+  added: number
+  removed: number
+  copy: string | null
+}
+
 export interface ImportDone {
-  written: { name: string; songs: number; wanted: number }[]
+  written: ImportWritten[]
   wanted: number
 }
+
+/** A source playlist you have fewer songs of (an older import kept fewer), or never brought over. */
+export interface BehindSource {
+  name: string
+  yours: string | null
+  have: number
+  source_songs: number
+}
+
+export type ImportRead = { lists: PreviewPlaylist[]; problems: string[] }
 
 export interface Condition {
   field: string
@@ -752,13 +814,6 @@ export interface PlaylistsView {
   apple_ready: boolean
 }
 
-export interface ImportReport {
-  playlists: { name: string; total: number; matched: number }[]
-  wanted: WantedAlbum[]
-  tracks_total: number
-  tracks_matched: number
-}
-
 export const playlists = (root: string) =>
   inApp()
     ? invoke<PlaylistsView>('playlists', { root })
@@ -770,7 +825,6 @@ export const playlistDelete = (root: string, name: string) => invoke<void>('play
 export const playlistRename = (root: string, from: string, to: string) =>
   invoke<void>('playlist_rename', { root, from, to })
 export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_save', { root, rule })
-export const appleImport = (root: string) => invoke<ImportReport>('apple_import', { root })
 export const playlistSaveItems = (root: string, name: string, items: PlaylistItem[]) =>
   invoke<void>('playlist_save_items', { root, name, items })
 /** Adds songs (skipping ones already in it); makes the playlist if it's new. Returns how many were added. */
@@ -779,7 +833,14 @@ export const playlistDuplicate = (root: string, name: string) => invoke<string>(
 export const playlistExport = (root: string, name: string, to: string) => invoke<number>('playlist_export', { root, name, to })
 export const playlistRefind = (root: string, name: string) => invoke<number>('playlist_refind', { root, name })
 export const importPreview = (root: string, files: string[], link: string | null, apple: boolean) =>
-  invoke<{ lists: PreviewPlaylist[]; problems: string[] }>('import_preview', { root, files, link, apple })
+  invoke<ImportRead>('import_preview', { root, files, link, apple })
+/** Read a playlist's source again, for an update reviewed like an import. */
+export const playlistUpdateRead = (root: string, name: string) => invoke<ImportRead>('playlist_update_read', { root, name })
+export const playlistSourcesCheck = (root: string) =>
+  inApp() ? invoke<BehindSource[]>('playlist_sources_check', { root }) : Promise.resolve<BehindSource[]>([])
+/** Search the web for these words in your browser. */
+export const searchWeb = (words: string) => invoke<void>('search_web', { words })
+export const playlistRestore = (root: string, name: string, copy: string) => invoke<void>('playlist_restore', { root, name, copy })
 export const importApply = (root: string, choices: ImportChoice[]) => invoke<ImportDone>('import_apply', { root, choices })
 export const playlistShelf = (root: string) =>
   inApp() ? invoke<PlaylistSummary[]>('playlist_shelf', { root }) : Promise.resolve<PlaylistSummary[]>([])
@@ -901,9 +962,11 @@ export interface ListeningSummary {
   /** Plays per song (library-relative path). */
   counts: Record<string, number>
   last_played: Record<string, number>
+  /** Playlists played from, most recent first, with when (ms). */
+  recent_playlists: [string, number][]
 }
 
 export const listeningSummary = (root: string) =>
   inApp()
     ? invoke<ListeningSummary>('listening_summary', { root })
-    : Promise.resolve<ListeningSummary>({ recent: [], top: [], counts: {}, last_played: {} })
+    : Promise.resolve<ListeningSummary>({ recent: [], top: [], counts: {}, last_played: {}, recent_playlists: [] })

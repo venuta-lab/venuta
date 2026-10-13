@@ -1612,7 +1612,10 @@ async fn playlist_tracks(
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let (_, lib) = load_lib(&rootp)?;
-        engine::playlists::read(&rootp, &lib, &name).map(|r| r.0)
+        let (mut entries, _) = engine::playlists::read(&rootp, &lib, &name)?;
+        // Songs it waits for that may be in your library under another name or version.
+        engine::playlists::suggest(&lib, &mut entries);
+        Ok(entries)
     })
     .await
 }
@@ -1647,56 +1650,6 @@ async fn smart_save(root: String, rule: engine::playlists::SmartRule) -> CmdResu
         let rootp = PathBuf::from(&root);
         let (index, lib) = load_lib(&rootp)?;
         engine::playlists::refresh_smart(&rootp, &rules_dir, &lib, &index).map(|_| ())
-    })
-    .await
-}
-
-/// Bring your Apple Music playlists over: matched tracks become playlists, the rest the want-list.
-#[tauri::command]
-async fn apple_import(root: String) -> CmdResult<engine::playlists::ImportReport> {
-    blocking(move || {
-        let s = settings_with_defaults();
-        let key = s
-            .apple_key
-            .ok_or("Enter your Apple Music library key in settings first.")?;
-        let file = s
-            .apple_library
-            .map(PathBuf::from)
-            .or_else(engine::apple::default_library_path)
-            .ok_or("Couldn't find your Apple Music library.")?;
-        let apple = engine::apple::read(&file, &key)?;
-        let rootp = PathBuf::from(&root);
-        let (_, lib) = load_lib(&rootp)?;
-        let report = engine::playlists::import_apple(&rootp, &lib, &apple, "", true)?;
-        // Albums you added yourself (better copies to get) stay on the list.
-        let mut wanted = report.wanted.clone();
-        for w in load_wanted()
-            .into_iter()
-            .filter(|w| w.why.starts_with(BETTER_COPY))
-        {
-            if !wanted
-                .iter()
-                .any(|x| x.album == w.album && x.artist == w.artist)
-            {
-                wanted.push(w);
-            }
-        }
-        let _ = std::fs::write(
-            wantlist_path(),
-            serde_json::to_vec(&wanted).unwrap_or_default(),
-        );
-        // A copy you can open in a spreadsheet, next to your rules.
-        if let Some(meta) = s
-            .rules_dir
-            .as_ref()
-            .and_then(|r| Path::new(r).parent().map(Path::to_path_buf))
-        {
-            let _ = std::fs::write(
-                meta.join("wanted-albums.csv"),
-                engine::playlists::wanted_csv(&report.wanted),
-            );
-        }
-        Ok(report)
     })
     .await
 }
@@ -1793,6 +1746,120 @@ async fn playlist_refind(root: String, name: String) -> CmdResult<usize> {
     .await
 }
 
+/// Your Apple Music library's playlists (with your key), and what couldn't be read.
+fn apple_lists() -> CmdResult<(Vec<engine::imports::ForeignPlaylist>, Vec<String>)> {
+    let s = settings_with_defaults();
+    let key = s
+        .apple_key
+        .ok_or("Enter your Apple Music library key in Settings, Online sources, first.")?;
+    let file = s
+        .apple_library
+        .map(PathBuf::from)
+        .or_else(engine::apple::default_library_path)
+        .ok_or("Couldn't find your Apple Music library on this computer.")?;
+    let apple = engine::apple::read(&file, &key)?;
+    Ok(engine::imports::apple_library(&apple))
+}
+
+/// Playlists you have fewer songs of than the source still has (an older import kept only the
+/// songs it matched), and the source's playlists you never brought over. Only sources read on
+/// this computer are checked (Apple Music's library); nothing is written.
+#[tauri::command]
+async fn playlist_sources_check(root: String) -> CmdResult<Vec<engine::imports::Behind>> {
+    blocking(move || {
+        let s = settings_with_defaults();
+        if s.apple_key.is_none() {
+            return Ok(vec![]);
+        }
+        let Ok((lists, _)) = apple_lists() else {
+            return Ok(vec![]);
+        };
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        Ok(engine::imports::behind(&rootp, &lib, &lists))
+    })
+    .await
+}
+
+/// Read a playlist's source again, to update the playlist from it (the review shows what would
+/// change; nothing is written yet).
+#[tauri::command]
+async fn playlist_update_read(
+    root: String,
+    name: String,
+    acc: State<'_, accounts::Accounts>,
+) -> CmdResult<ImportRead> {
+    let acc = acc.inner().clone();
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let header = engine::playlists::header_of(&rootp, &name);
+        let id = header.source_id.ok_or_else(|| {
+            format!("Venuta doesn't know where “{name}” came from. Import it again, and choose to update this playlist in the review.")
+        })?;
+        let (kind, rest) = id.split_once(':').unwrap_or(("", ""));
+        let mut problems = Vec::new();
+        let lists: Vec<engine::imports::ForeignPlaylist> = match kind {
+            "spotify" => accounts::read_one(&acc, rest, &name)?,
+            "deezer" => {
+                let http = engine::net::Http::open()?;
+                vec![engine::imports::deezer(&http, rest)?]
+            }
+            "apple" => {
+                let (all, p) = apple_lists()?;
+                problems = p;
+                all.into_iter().filter(|l| l.id.as_deref() == Some(id.as_str())).collect()
+            }
+            "file" => {
+                let (path, list) = rest.rsplit_once('|').unwrap_or((rest, ""));
+                if !Path::new(path).is_file() {
+                    return Err(format!(
+                        "The file “{name}” came from is gone ({path}). Export it again and import that file; the review offers to update this playlist."
+                    ));
+                }
+                let mut all = engine::imports::read_file(Path::new(path))?;
+                if all.len() > 1 {
+                    all.retain(|l| l.name == list);
+                }
+                all
+            }
+            _ => return Err(format!("Venuta can't read “{name}”'s source again.")),
+        };
+        if lists.is_empty() {
+            return Err(format!("“{name}” isn't at its source any more."));
+        }
+        let (_, lib) = load_lib(&rootp)?;
+        Ok(ImportRead {
+            lists: engine::imports::preview(&rootp, &lib, &lists),
+            problems,
+        })
+    })
+    .await
+}
+
+/// Look a song up on the web, in your browser (Venuta itself never downloads music). The
+/// address is made here from the words, so the page can only ever ask for a search.
+#[tauri::command]
+fn search_web(app: AppHandle, words: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let q: String = words.chars().filter(|c| !c.is_control()).take(300).collect();
+    if q.trim().is_empty() {
+        return Ok(());
+    }
+    let url = format!(
+        "https://www.google.com/search?q={}",
+        urlencoding::encode(q.trim())
+    );
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Put back how a playlist was before an update (the copy kept in Set aside).
+#[tauri::command]
+fn playlist_restore(root: String, name: String, copy: String) -> CmdResult<()> {
+    engine::playlists::restore_copy(Path::new(&root), &name, Path::new(&copy))
+}
+
 /// What an import read: the playlists, and what couldn't be read (one file of three, say).
 #[derive(serde::Serialize)]
 struct ImportRead {
@@ -1839,17 +1906,9 @@ async fn import_preview(
             engine::imports::youtube_titles(&http, &mut lists, &mut |_, _| {});
         }
         if apple {
-            let s = settings_with_defaults();
-            let key = s
-                .apple_key
-                .ok_or("Enter your Apple Music library key in Settings, Online sources, first.")?;
-            let file = s
-                .apple_library
-                .map(PathBuf::from)
-                .or_else(engine::apple::default_library_path)
-                .ok_or("Couldn't find your Apple Music library on this computer.")?;
-            let apple = engine::apple::read(&file, &key)?;
-            lists.extend(engine::imports::apple_library(&apple));
+            let (mut l, mut p) = apple_lists()?;
+            lists.append(&mut l);
+            problems.append(&mut p);
         }
         if lists.is_empty() {
             return Err(if problems.is_empty() {
@@ -2139,6 +2198,7 @@ pub fn run() {
             playback::player_enqueue,
             playback::player_remove,
             playback::player_move,
+            playback::player_follow,
             playback::player_jump,
             playback::player_devices,
             playback::player_output,
@@ -2213,12 +2273,15 @@ pub fn run() {
             playlist_delete,
             playlist_rename,
             smart_save,
-            apple_import,
             playlist_save_items,
             playlist_add,
             playlist_duplicate,
             playlist_export,
             playlist_refind,
+            playlist_sources_check,
+            playlist_update_read,
+            playlist_restore,
+            search_web,
             import_preview,
             import_apply,
             set_apple,

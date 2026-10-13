@@ -6,7 +6,9 @@
 //!
 //! Format (community reverse-engineering): `hfma` header, then a payload whose first N bytes
 //! are AES-128-ECB encrypted (N stored in the header), then zlib-compressed. Inside: tracks
-//! (`itma`) with string records (`boma`), playlists (`lpma`) with item records (`ipfa`).
+//! (`itma`) with string records (`boma`), playlists (`lpma`) with item records (`ipfa`). A
+//! track's numbers record (`boma` sub-type 1) holds its length in ms at +176 (checked against
+//! songs of known length, 2026-10-13).
 
 use aes::Aes128;
 use aes::cipher::{Array, BlockCipherDecrypt, KeyInit};
@@ -24,6 +26,8 @@ pub struct AppleTrack {
     pub album_artist: String,
     pub composer: String,
     pub genre: String,
+    /// Its length, when the library file gives it.
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +65,11 @@ pub fn default_library_path() -> Option<std::path::PathBuf> {
 }
 
 pub fn read(path: &Path, key: &str) -> Result<AppleLibrary, String> {
+    Ok(parse(&decrypt(path, key)?))
+}
+
+/// The library file, decrypted and unpacked.
+fn decrypt(path: &Path, key: &str) -> Result<Vec<u8>, String> {
     let key: [u8; 16] = key
         .as_bytes()
         .try_into()
@@ -84,7 +93,7 @@ pub fn read(path: &Path, key: &str) -> Result<AppleLibrary, String> {
     flate2::read::ZlibDecoder::new(&payload[..])
         .read_to_end(&mut data)
         .map_err(|_| "Couldn't unpack the library. Check the key.".to_owned())?;
-    Ok(parse(&data))
+    Ok(data)
 }
 
 fn u32_at(d: &[u8], i: usize) -> Option<u32> {
@@ -126,6 +135,14 @@ fn parse(d: &[u8]) -> AppleLibrary {
             }
             b"boma" => {
                 let total = u32_at(d, i + 8).unwrap_or(8).max(8) as usize;
+                // The numbers record (sub-type 1): the length in ms at +176.
+                if u32_at(d, i + 12) == Some(0x1)
+                    && let (Some(id), Some(ms)) = (current, u32_at(d, i + 176))
+                    && (1_000..36_000_000).contains(&ms)
+                    && let Some(t) = tracks.get_mut(&id)
+                {
+                    t.duration_ms = Some(ms as u64);
+                }
                 if let (Some(id), Some(sub)) = (current, u32_at(d, i + 12))
                     && let Some(s) = boma_string(d, i)
                     && let Some(t) = tracks.get_mut(&id)

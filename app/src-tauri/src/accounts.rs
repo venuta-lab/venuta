@@ -190,6 +190,23 @@ fn with_api<T>(
     }
 }
 
+/// One Spotify playlist read again by its id (to update the playlist made from it).
+pub fn read_one(
+    acc: &Accounts,
+    id: &str,
+    name: &str,
+) -> Result<Vec<engine::imports::ForeignPlaylist>, String> {
+    let one = SpotifyPlaylist {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        owner: String::new(),
+        songs: 0,
+        readable: true,
+        image: None,
+    };
+    with_api(acc, |api, _| api.read(std::slice::from_ref(&one)))
+}
+
 /// Your Spotify playlists (Liked Songs first), and which of them Spotify will share.
 #[tauri::command]
 pub async fn spotify_playlists(acc: State<'_, Accounts>) -> Result<Vec<SpotifyPlaylist>, String> {

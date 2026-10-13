@@ -22,6 +22,7 @@ serde_json.workspace = true
 ureq.workspace = true
 blake3.workspace = true
 walkdir.workspace = true
+urlencoding.workspace = true
 tauri = { version = "2.12.3", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2.8"
 souvlaki = "0.8"

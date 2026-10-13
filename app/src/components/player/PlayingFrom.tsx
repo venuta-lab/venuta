@@ -1,0 +1,31 @@
+import { readFrom, usePlayerValue, type From } from '../../lib/player'
+
+/** Ask the app to show where the queue came from (App listens, see `venuta:open-from`). */
+const openFrom = (f: From) => window.dispatchEvent(new CustomEvent<From>('venuta:open-from', { detail: f }))
+
+/** "Playing from Hindi": the playlist, album or artist the queue came from, as a way back to it. */
+export function PlayingFrom(props: { className?: string; onOpen?: () => void }) {
+  const raw = usePlayerValue((s) => s.from)
+  const f = readFrom(raw)
+  if (!f?.label) return null
+  const linked = f.kind === 'playlist' || f.kind === 'album' || f.kind === 'artist'
+  return (
+    <span className={props.className}>
+      Playing from{' '}
+      {linked ? (
+        <button
+          onClick={() => {
+            openFrom(f)
+            props.onOpen?.()
+          }}
+          className="font-medium text-ink/80 underline-offset-4 hover:text-ink hover:underline"
+          title={f.kind === 'playlist' ? `Open the playlist “${f.label}”` : f.kind === 'album' ? `Open the album “${f.label}”` : `Open ${f.label}`}
+        >
+          {f.label}
+        </button>
+      ) : (
+        <span className="text-ink/80">{f.label}</span>
+      )}
+    </span>
+  )
+}

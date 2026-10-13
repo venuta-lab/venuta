@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { clock, jumpTo, move, removeAt, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { IconClose } from '../Icons'
+import { PlayingFrom } from './PlayingFrom'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
 
@@ -98,7 +99,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
             <div className="min-w-0 flex-1">
               <h2 className="title text-[18px]">Queue</h2>
               <p className="mt-0.5 truncate text-[12px] text-ink/55">
-                {s.from ? `Playing from ${s.from}. ` : ''}
+                <PlayingFrom />
+                {s.from ? '. ' : ''}
                 {upcoming > 0 ? `${upcoming} up next, ${clock(left)}` : 'Nothing after this song'}
               </p>
             </div>

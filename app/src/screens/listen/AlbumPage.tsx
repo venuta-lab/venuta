@@ -4,7 +4,7 @@ import { quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, usePageAccent } from '../../lib/covers'
 import { clock, play, toggle } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
-import { coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
+import { albumFrom, coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
 import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
 
@@ -17,7 +17,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
 
   const meta = [a.year, a.genre].filter(Boolean).join(', ')
   return (
-    <Detail title={a.title} onBack={onBack} glow={cover?.src} tools={<PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} size="sm" />}>
+    <Detail title={a.title} onBack={onBack} glow={cover?.src} tools={<PlayButtons tracks={a.tracks} from={albumFrom(a)} dir={a.dir} size="sm" />}>
       <div className="relative">
         <div className="relative flex flex-wrap items-end gap-8">
           <motion.div
@@ -49,7 +49,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
               {a.hiRes && <HiResPill />}
             </div>
             <div className="mt-5 flex flex-wrap items-center gap-2.5">
-              <PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} />
+              <PlayButtons tracks={a.tracks} from={albumFrom(a)} dir={a.dir} />
               <button onClick={() => nav.editDetails(a.dir)} className="btn-ghost btn-lg">
                 Edit details
               </button>
@@ -77,7 +77,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
     return [...m.entries()]
   }, [a.tracks])
 
-  const playAt = (i: number) => void play(root, a.tracks, i, a.title)
+  const playAt = (i: number) => void play(root, a.tracks, i, albumFrom(a))
   const move = (i: number, by: number) => {
     const to = Math.min(a.tracks.length - 1, Math.max(0, i + by))
     list.current?.querySelector<HTMLElement>(`[data-index="${to}"]`)?.focus()

@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
-import { wantedExport, wantRemove, type WantedAlbum } from '../../lib/engine'
+import { searchWeb, wantedExport, wantRemove, type WantedAlbum } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { Detail, Segmented } from '../../components/ui'
 import { plural } from './common'
@@ -14,11 +14,16 @@ const TIERS = {
 
 /** Albums your playlists want and your library doesn't have, best first. It never downloads anything. */
 export function WantList(props: { root: string; wanted: WantedAlbum[]; onBack: () => void; onOpen: (playlist: string) => void; onChanged: () => void }) {
-  const { wanted } = props
+  // What one playlist needs, or all of them.
+  const [only, setOnly] = useState('')
+  const lists = useMemo(() => [...new Set(props.wanted.flatMap((w) => w.playlists))].sort((a, b) => a.localeCompare(b)), [props.wanted])
+  const wanted = only ? props.wanted.filter((w) => w.playlists.includes(only)) : props.wanted
   const counts = { 1: 0, 2: 0, 3: 0 } as Record<1 | 2 | 3, number>
   for (const w of wanted) counts[w.tier]++
   const first = ([1, 2, 3] as const).find((t) => counts[t] > 0) ?? 1
-  const [tier, setTier] = useState<'1' | '2' | '3'>(String(first) as '1')
+  const [tierAsked, setTier] = useState<'1' | '2' | '3'>(String(first) as '1')
+  // A tier with nothing in it (after choosing a playlist) gives way to the first that has some.
+  const tier = counts[Number(tierAsked) as 1] > 0 ? tierAsked : (String(first) as '1')
   const shown = wanted.filter((w) => String(w.tier) === tier)
 
   async function exportFile() {
@@ -59,9 +64,27 @@ export function WantList(props: { root: string; wanted: WantedAlbum[]; onBack: (
           ? `${plural(wanted.length, 'album')} with songs your playlists want and your library doesn't have yet, best first. When you add one to your library, its songs take their places in your playlists. Venuta never downloads anything.`
           : "Nothing to get. When a playlist you bring over has songs your library doesn't, their albums are listed here."}
       </p>
-      {wanted.length > 0 && (
+      {props.wanted.length > 0 && (
         <>
           <div className="mt-6 flex flex-wrap items-center gap-3">
+            {lists.length > 1 && (
+              <label className="flex items-center gap-2 text-[13px] text-ink/60">
+                For
+                <select
+                  value={only}
+                  onChange={(e) => setOnly(e.target.value)}
+                  className="field max-w-[240px] py-1.5 text-[13px]"
+                  aria-label="Albums for which playlist"
+                >
+                  <option value="">All playlists</option>
+                  {lists.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <Segmented
               label="Which albums"
               tabs
@@ -84,7 +107,7 @@ export function WantList(props: { root: string; wanted: WantedAlbum[]; onBack: (
           <p className="mt-3 text-[12.5px] text-ink/50">{TIERS[Number(tier) as 1].line}</p>
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={tier}
+              key={`${only}:${tier}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
@@ -113,6 +136,9 @@ export function WantList(props: { root: string; wanted: WantedAlbum[]; onBack: (
                     {w.playlists.length > 3 && <span className="px-1 py-1 text-[11.5px] text-ink/45">+{w.playlists.length - 3}</span>}
                   </span>
                   <span className="flex shrink-0 gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    <button onClick={() => void searchWeb(`${w.artist} ${w.album}`)} className="btn-ghost btn-sm" title="Look this album up in your browser">
+                      Search the web
+                    </button>
                     <button onClick={() => void copy(w)} className="btn-ghost btn-sm" title="Copy the album and artist">
                       Copy name
                     </button>

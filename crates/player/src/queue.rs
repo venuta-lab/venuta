@@ -201,6 +201,35 @@ impl<T: Clone> Queue<T> {
         Some(it)
     }
 
+    /// A new list for the same source (a playlist edited while it plays), with the song
+    /// playing now at `index`: it plays on, and what follows is the new list (shuffled again
+    /// if shuffle is on).
+    pub fn follow(&mut self, items: Vec<T>, index: usize) {
+        let shuffle = self.shuffled();
+        self.set(items, index);
+        if shuffle {
+            self.set_shuffle(true);
+        }
+    }
+
+    /// While shuffled: where each song of the order before shuffling is now (to save it, and
+    /// put it back with `restore_order` after a restart).
+    pub fn unshuffled(&self) -> Option<Vec<usize>> {
+        let orig = self.original.as_ref()?;
+        Some(
+            orig.iter()
+                .filter_map(|id| self.ids.iter().position(|x| x == id))
+                .collect(),
+        )
+    }
+
+    /// The queue is a shuffled one, and this was its order before (see `unshuffled`).
+    pub fn restore_order(&mut self, positions: &[usize]) {
+        if positions.iter().all(|&p| p < self.ids.len()) {
+            self.original = Some(positions.iter().map(|&p| self.ids[p]).collect());
+        }
+    }
+
     pub fn move_item(&mut self, from: usize, to: usize) {
         if from >= self.items.len() || to >= self.items.len() || from == to {
             return;
@@ -269,6 +298,43 @@ mod tests {
         a.set_shuffle(false);
         assert_eq!(a.items(), (0..20).collect::<Vec<_>>().as_slice());
         assert_eq!(a.current(), Some(&now), "still on the same song");
+    }
+
+    #[test]
+    fn a_playlist_edited_while_playing_carries_on_from_the_same_song() {
+        let mut a = q(5, 2); // [0 1 2 3 4], on 2
+        a.follow(vec![0, 2, 9, 3], 1); // 1 and 4 taken out, 9 added after 2
+        assert_eq!(a.current(), Some(&2));
+        assert_eq!(a.peek_next(), Some(2));
+        assert_eq!(a.items()[2], 9);
+        // Shuffled: the song plays on and the new list is shuffled after it.
+        let mut b = q(20, 3);
+        b.set_shuffle(true);
+        b.follow((0..25).collect(), 3);
+        assert!(b.shuffled());
+        assert_eq!(b.current(), Some(&3));
+        assert_eq!(b.index, Some(0));
+        assert_eq!(b.items().len(), 25);
+    }
+
+    #[test]
+    fn a_shuffled_queue_and_its_order_survive_a_restart() {
+        let mut a = q(12, 4);
+        a.set_shuffle(true);
+        a.skip_next();
+        let saved: Vec<usize> = a.items().to_vec();
+        let order = a.unshuffled().unwrap();
+        let at = a.index.unwrap();
+        // Read back after a restart: the same play order, and unshuffling still works.
+        let mut b = Queue::default();
+        b.set(saved.clone(), at);
+        b.restore_order(&order);
+        assert!(b.shuffled());
+        assert_eq!(b.items(), saved.as_slice());
+        let now = *b.current().unwrap();
+        b.set_shuffle(false);
+        assert_eq!(b.items(), (0..12).collect::<Vec<_>>().as_slice());
+        assert_eq!(b.current(), Some(&now));
     }
 
     #[test]

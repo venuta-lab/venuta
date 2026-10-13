@@ -1,6 +1,6 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { type HealthReport } from '../lib/engine'
 import { useCatalog } from '../lib/catalog'
 import { current, usePlayer } from '../lib/player'
@@ -11,14 +11,34 @@ import { AlbumPage } from './listen/AlbumPage'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
 import { buildLibrary, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
+import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 
-type Tab = 'home' | 'albums' | 'artists' | 'songs'
+export type Tab = 'home' | 'albums' | 'artists' | 'songs' | 'playlists'
 const TABS: [Tab, string][] = [
   ['home', 'Home'],
   ['albums', 'Albums'],
   ['artists', 'Artists'],
   ['songs', 'Songs'],
+  ['playlists', 'Playlists'],
 ]
+
+/*
+  A view of Music asked for from outside (a playlist to open, the palette's Playlists): taken
+  when the screen shows, or at once if it is showing.
+*/
+let askedTab: Tab | null = null
+const tabListeners = new Set<() => void>()
+export function showMusicTab(tab: Tab) {
+  askedTab = tab
+  kept.tab = tab
+  tabListeners.forEach((l) => l())
+}
+const onTabAsked = (l: () => void) => {
+  tabListeners.add(l)
+  return () => {
+    tabListeners.delete(l)
+  }
+}
 
 type Page = { kind: 'album'; dir: string; origin?: string } | { kind: 'artist'; name: string }
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
@@ -79,6 +99,7 @@ function Listen(props: Props) {
   const [fadeIn, setFadeIn] = useState(true)
   const [shown, setShown] = useState<string | null>(null)
   const typed = useDeferredValue(query)
+  const playlistsAt = usePlaylistsKind()
 
   // A new report means the folder was read again: the catalog is read again with it (shared
   // with Playlists and the add-to-playlist picker).
@@ -166,6 +187,18 @@ function Listen(props: Props) {
     return () => window.removeEventListener('mouseup', onMouse)
   }, [stack, back])
 
+  // Asked from outside for a view (Playlists, with a playlist open).
+  const tabAsked = useSyncExternalStore(onTabAsked, () => askedTab)
+  useEffect(() => {
+    if (!tabAsked) return
+    askedTab = null
+    restore.current = 0
+    setStack([])
+    setQuery('')
+    setFadeIn(true)
+    setTab(tabAsked)
+  }, [tabAsked])
+
   // Music chosen again in the rail: close pages and search, back to the top.
   const resets = useRef(props.reset)
   useEffect(() => {
@@ -174,7 +207,9 @@ function Listen(props: Props) {
     restore.current = 0
     setStack([])
     setQuery('')
+    if (tab === 'playlists') showPlaylists({ kind: 'home' })
     scrollerOf(box.current)?.scrollTo({ top: 0, behavior: 'smooth' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.reset])
 
   const results = useMemo(() => search(lib, typed), [lib, typed])
@@ -190,6 +225,10 @@ function Listen(props: Props) {
     : s
       ? `${fmtNum(s.albums)} albums, ${fmtNum(s.tracks)} songs`
       : busy || 'Reading your music…'
+
+  // Playlists live here too: their home among the tabs, a playlist (or an import) as its own page.
+  const playlists = <PlaylistsScreen root={root} report={report} embedded onAlbum={(dir) => push({ kind: 'album', dir })} />
+  const playlistOpen = tab === 'playlists' && playlistsAt !== 'home' && !typed.trim() && !query.trim()
 
   const body = (() => {
     if (!report) return <Reading busy={busy} />
@@ -221,13 +260,15 @@ function Listen(props: Props) {
         onOpenPlaylist={props.onOpenPlaylist}
         onPlaylists={props.onPlaylists}
       />
+    ) : tab === 'playlists' ? (
+      playlists
     ) : tab === 'albums' ? (
       <AlbumsView lib={lib} filter={filter} onFilter={setFilter} />
     ) : tab === 'artists' ? (
       <ArtistsView artists={lib.artists} />
     ) : (
       <div className="pb-16">
-        <SongList tracks={lib.tracks} from="Songs" sortBy="title" pin />
+        <SongList tracks={lib.tracks} from={{ kind: 'songs', ref: '', label: 'Songs' }} sortBy="title" pin />
       </div>
     )
     return (
@@ -247,6 +288,13 @@ function Listen(props: Props) {
     return (
       <NavContext value={nav}>
         <div ref={box}>{body}</div>
+      </NavContext>
+    )
+  // A playlist, an import or To get: its own page, with Back to Playlists.
+  if (report && playlistOpen)
+    return (
+      <NavContext value={nav}>
+        <div ref={box}>{playlists}</div>
       </NavContext>
     )
 
