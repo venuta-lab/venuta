@@ -5,14 +5,7 @@
 
 function Action(props: { onClick: () => void; primary?: boolean; children: React.ReactNode }) {
   return (
-    <button
-      onClick={props.onClick}
-      className={
-        props.primary
-          ? 'rounded-full bg-accent px-6 py-2.5 text-[14px] font-medium text-on-accent'
-          : 'rounded-full bg-ink/[0.08] px-5 py-2.5 text-[14px] hover:bg-ink/[0.14]'
-      }
-    >
+    <button onClick={props.onClick} className={`${props.primary ? 'btn-primary' : 'btn'} btn-lg`}>
       {props.children}
     </button>
   )
@@ -22,7 +15,7 @@ function Shell(props: { title: string; text: React.ReactNode; children: React.Re
   return (
     <div className="grid h-full place-items-center px-6">
       <div className="glass max-w-[560px] rounded-[26px] px-9 py-8">
-        <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.025em]">{props.title}</h1>
+        <h1 className="title break-words text-[28px] leading-tight">{props.title}</h1>
         <div className="mt-3 text-[14.5px] leading-relaxed text-ink/65">{props.text}</div>
         <div className="mt-7 flex flex-wrap gap-2">{props.children}</div>
       </div>

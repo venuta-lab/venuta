@@ -219,7 +219,7 @@ function Changes(props: {
               .join(', ') || 'Nothing needed changing'}
             {result.errors.length ? `; ${plural(result.errors.length, 'file', 'files')} could not be changed and stayed as they were` : ''}.
           </span>
-          <button onClick={() => void undo()} className="rounded-full bg-ink/[0.08] px-4 py-1.5 text-[12.5px] hover:bg-ink/[0.14]">
+          <button onClick={() => void undo()} className="btn btn-sm">
             Undo
           </button>
         </div>
@@ -259,7 +259,7 @@ function Changes(props: {
               <button
                 onClick={() => void apply()}
                 disabled={!inApp() || chosen.length === 0}
-                className="rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-on-accent disabled:opacity-40"
+                className="btn-primary btn-lg"
               >
                 {chosen.length === doable.length ? 'Apply changes' : `Apply to ${plural(chosen.length, 'album', 'albums')}`}
               </button>
@@ -452,10 +452,10 @@ function Naming(props: { root: string; onSaved: (previous: string) => void }) {
                   ))}
                 </ul>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button onClick={() => void use()} disabled={busy} className="rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-on-accent disabled:opacity-50">
+                  <button onClick={() => void use()} disabled={busy} className="btn-primary">
                     Use this naming
                   </button>
-                  <button onClick={() => setDraft(parse(saved))} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
+                  <button onClick={() => setDraft(parse(saved))} className="btn">
                     Keep it as it is
                   </button>
                 </div>

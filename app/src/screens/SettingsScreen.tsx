@@ -340,7 +340,7 @@ function Folders(props: {
       >
         <div className="flex gap-2">
           {props.home && !showingLibrary && (
-            <button onClick={props.onOpenLibrary} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
+            <button onClick={props.onOpenLibrary} className="btn">
               Open
             </button>
           )}
@@ -356,7 +356,7 @@ function Folders(props: {
                 setError(e instanceof Error ? e.message : String(e))
               }
             }}
-            className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]"
+            className="btn"
           >
             {props.home ? 'Use another library' : 'Choose'}
           </button>
@@ -370,7 +370,7 @@ function Folders(props: {
             : `${props.root}. Only read, never changed; Organize builds a clean copy of it in your library.`
         }
       >
-        <button onClick={props.onChooseLibrary} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
+        <button onClick={props.onChooseLibrary} className="btn">
           Choose a folder
         </button>
       </Row>
@@ -380,7 +380,7 @@ function Folders(props: {
             const p = await pick('Folder for your organising rules')
             if (p) await save({ rules_dir: p })
           }}
-          className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]"
+          className="btn"
         >
           Choose
         </button>
@@ -428,12 +428,12 @@ function KeyField(props: {
         <button
           disabled={!dirty || !valid}
           onClick={() => props.onSave(v.trim() || null)}
-          className="rounded-full bg-accent px-4 py-2 text-[13px] font-medium text-on-accent disabled:opacity-35"
+          className="btn-primary"
         >
           Save
         </button>
         {props.value && (
-          <button onClick={() => props.onSave(null)} className="rounded-full px-3 py-2 text-[13px] text-ink/65 hover:bg-ink/10">
+          <button onClick={() => props.onSave(null)} className="btn-ghost">
             Remove
           </button>
         )}

@@ -116,7 +116,7 @@ export function ArtistNames(props: { onSaved?: (previous: Aliases) => void }) {
                 </span>
                 <button
                   onClick={() => void save({ ...view, distinct: view.distinct.filter((_, j) => j !== i) }, 'They can be suggested as one artist again.')}
-                  className="rounded-full px-3 py-1 text-[12.5px] text-ink/60 hover:bg-ink/10"
+                  className="btn-ghost btn-sm"
                 >
                   Ask again
                 </button>

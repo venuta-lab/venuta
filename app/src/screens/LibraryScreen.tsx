@@ -266,7 +266,7 @@ export function DeepProgressBar(props: {
             />
           </div>
         </div>
-        <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10 hover:text-ink">
+        <button onClick={props.onCancel} className="btn-ghost">
           Stop
         </button>
       </div>

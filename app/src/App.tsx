@@ -609,6 +609,7 @@ export default function App() {
             setSetup(false)
             go('inbox')
           }}
+          onClose={root && home ? () => setSetup(false) : undefined}
         />
       )
     if (!ready) return null

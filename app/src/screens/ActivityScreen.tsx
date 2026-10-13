@@ -72,7 +72,20 @@ export function ActivityScreen(props: { root: string }) {
   return (
     <Page title="Activity" line="Everything that changed, newest first. Undo puts things back exactly; your originals are never touched by a build.">
       <div className="max-w-[880px]">
-      {nothing && <p className="py-16 text-center text-[14px] text-ink/50">Nothing yet. Builds, edits and your answers will appear here.</p>}
+      {nothing && (
+        <div className="glass grid place-items-center rounded-[24px] px-6 py-14 text-center">
+          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-ink/[0.07] text-ink/60" aria-hidden>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+          </span>
+          <p className="mt-4 text-[15px] font-medium">Nothing has changed yet</p>
+          <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-ink/55">
+            Builds, edits to tags and ratings, and your answers in Organize are listed here as they happen, each one with Undo.
+          </p>
+        </div>
+      )}
 
       {(runs?.length ?? 0) > 0 && (
         <section>

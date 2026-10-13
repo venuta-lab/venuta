@@ -23,6 +23,8 @@ import { FormatBar, SpectrogramView } from './LibraryScreen'
 */
 
 const fmt = (n: number) => n.toLocaleString('en-IN')
+/** "1 album", "3 albums". */
+const albums = (n: number) => `${fmt(n)} ${n === 1 ? 'album' : 'albums'}`
 const spring = { type: 'spring', stiffness: 360, damping: 32 } as const
 
 /** Whether the plan gives an album this detail. */
@@ -134,7 +136,7 @@ export function HealthScreen(props: {
     )
 
   return (
-    <Page title="Health" line={`${fmt(s.albums)} albums, ${fmt(s.tracks)} songs, ${Math.round(s.hours)} hours, ${(s.bytes / 1e9).toFixed(1)} GB`}>
+    <Page title="Health" line={`${albums(s.albums)}, ${fmt(s.tracks)} ${s.tracks === 1 ? 'song' : 'songs'}, ${Math.round(s.hours)} hours, ${(s.bytes / 1e9).toFixed(1)} GB`}>
       {props.progress}
 
       {/* The overview and the tools. */}
@@ -208,7 +210,7 @@ export function HealthScreen(props: {
                 ? 'Every album has it.'
                 : plan && d.after > d.now
                   ? `${d.after}% after you build${d.left.length ? `; ${fmt(d.left.length)} still without` : ''}`
-                  : `${fmt(d.missing.length)} albums without`}
+                  : `${albums(d.missing.length)} without`}
             </div>
             {/* The albums still without it, and the way to them: one row, one click. */}
             <div className="min-h-3 flex-1" />
@@ -216,7 +218,7 @@ export function HealthScreen(props: {
               <button
                 onClick={() =>
                   setSheet({
-                    title: `${d.label}: ${fmt(d.left.length)} albums still without`,
+                    title: `${d.label}: ${albums(d.left.length)} still without`,
                     text:
                       d.fix === 'lookup'
                         ? 'Looking up details online may find these. You can also add them yourself: open an album and edit it.'
@@ -277,7 +279,7 @@ export function HealthScreen(props: {
           <h2 className="text-[15px] font-semibold">Duplicates</h2>
           <div className="mt-1 text-[12.5px] text-ink/60">
             {dupes
-              ? `${fmt(dupes)} albums hold songs that exist elsewhere. Organize compares them and sets copies aside, with proof.`
+              ? `${albums(dupes)} ${dupes === 1 ? 'holds' : 'hold'} songs that exist elsewhere. Organize compares them and sets copies aside, with proof.`
               : 'No duplicates found.'}
           </div>
           {dupes > 0 && (
@@ -425,7 +427,7 @@ function AlbumsSheet(props: { root: string; sheet: Sheet; albums: AlbumSummary[]
                 {props.sheet.sound && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {spectral && (
-                      <button onClick={() => setSpectrum(a)} className="rounded-full bg-ink/[0.08] px-2.5 py-0.5 text-[11.5px] hover:bg-ink/[0.14]">
+                      <button onClick={() => setSpectrum(a)} className="btn btn-sm">
                         Spectrogram
                       </button>
                     )}
@@ -435,7 +437,7 @@ function AlbumsSheet(props: { root: string; sheet: Sheet; albums: AlbumSummary[]
                         await wantAdd(a.title, a.album_artist, props.sheet.title.toLowerCase())
                         setWanted(new Set([...wanted, a.dir]))
                       }}
-                      className="rounded-full bg-ink/[0.08] px-2.5 py-0.5 text-[11.5px] hover:bg-ink/[0.14] disabled:opacity-60"
+                      className="btn btn-sm"
                     >
                       {isWanted ? 'On To get ✓' : 'Add to To get'}
                     </button>

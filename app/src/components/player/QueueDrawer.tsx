@@ -1,51 +1,21 @@
 import { askAddToPlaylist } from '../AddToPlaylist'
 import { useEscape } from '../../lib/layers'
-import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion, Reorder } from 'motion/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { clock, jumpTo, move, removeAt, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { IconClose } from '../Icons'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
 
-function Row(props: {
-  item: QueueItem
-  index: number
-  current: boolean
-  playing: boolean
-  onDragStart: (i: number) => void
-  onDrop: (i: number) => void
-}) {
+type Entry = { q: QueueItem; i: number; key: string }
+
+/** One song in the queue: click plays it (the one playing now pauses or resumes). */
+function RowBody(props: { item: QueueItem; index: number; current: boolean }) {
   const cover = useCovers(320)
   const art = cover(props.item.dir)
-  const [over, setOver] = useState(false)
   return (
-    <li
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move'
-        props.onDragStart(props.index)
-      }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        setOver(true)
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={() => {
-        setOver(false)
-        props.onDrop(props.index)
-      }}
-      // One click plays it (the song playing now pauses or resumes); drag to reorder.
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
-        void (props.current ? toggle() : jumpTo(props.index))
-      }}
-      onKeyDown={(e) => e.key === 'Enter' && void jumpTo(props.index)}
-      tabIndex={0}
-      className={`group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 active:cursor-grabbing ${
-        props.current ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05] active:bg-ink/[0.09]'
-      } ${over ? 'ring-1 ring-[var(--accent)]' : ''}`}
-    >
+    <>
       <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
         {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
       </div>
@@ -58,19 +28,25 @@ function Row(props: {
         <button
           aria-label={`Remove ${props.item.title} from the queue`}
           onClick={() => void removeAt(props.index)}
-          className="grid h-6 w-6 place-items-center rounded-full text-ink/45 opacity-0 hover:bg-ink/10 hover:text-ink group-hover:opacity-100 focus:opacity-100"
+          className="grid h-6 w-6 place-items-center rounded-full text-ink/45 opacity-0 hover:bg-ink/10 hover:text-ink focus:opacity-100 group-hover:opacity-100"
         >
           <IconClose width={14} height={14} />
         </button>
       )}
-    </li>
+    </>
   )
+}
+
+const ROW = 'group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5'
+
+function play(e: React.MouseEvent, index: number, current: boolean) {
+  if ((e.target as HTMLElement).closest('button')) return
+  void (current ? toggle() : jumpTo(index))
 }
 
 /** What's playing and what comes next: click to play, drag to reorder, × to remove. */
 export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   const s = usePlayer()
-  const dragging = useRef<number | null>(null)
   const list = useRef<HTMLDivElement>(null)
 
   // Bring the playing song into view when the drawer opens.
@@ -87,6 +63,24 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props
   useEscape(open, onClose)
 
+  // "Up next" in the order shown; it follows the player except while you drag.
+  const sig = `${s.index}|${s.queue.map((q) => q.path).join('\n')}`
+  const after = useMemo<Entry[]>(
+    () => s.queue.slice(s.index + 1).map((q, k) => ({ q, i: s.index + 1 + k, key: `${q.path}#${s.index + 1 + k}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sig],
+  )
+  const [order, setOrder] = useState(after)
+  useEffect(() => setOrder(after), [after])
+  const dragged = useRef(false)
+
+  /** Where the dragged song landed, sent to the player as one move. */
+  function dropped(e: Entry) {
+    const to = s.index + 1 + order.findIndex((x) => x.key === e.key)
+    if (to !== e.i) void move(e.i, to)
+    window.setTimeout(() => (dragged.current = false), 0)
+  }
+
   const upcoming = s.queue.length - s.index - 1
   const left = s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0)
   return (
@@ -102,7 +96,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
         >
           <header className="flex items-start gap-3 px-5 pb-2 pt-4">
             <div className="min-w-0 flex-1">
-              <h2 className="text-[18px] font-semibold tracking-[-0.01em]">Queue</h2>
+              <h2 className="title text-[18px]">Queue</h2>
               <p className="mt-0.5 truncate text-[12px] text-ink/55">
                 {s.from ? `Playing from ${s.from}. ` : ''}
                 {upcoming > 0 ? `${upcoming} up next, ${clock(left)}` : 'Nothing after this song'}
@@ -125,24 +119,56 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
             {s.queue.length === 0 ? (
               <p className="px-2 py-10 text-center text-[13px] text-ink/55">Play an album or a song, and it lines up here.</p>
             ) : (
-              <ol className="grid gap-0.5">
-                {s.queue.map((q, i) => (
-                  <div key={`${q.path}#${i}`} data-current={i === s.index} className="min-w-0">
-                    {i === s.index + 1 && <div className="px-2 pb-1 pt-3 text-[12px] text-ink/50">Up next</div>}
-                    <Row
-                      item={q}
-                      index={i}
-                      current={i === s.index}
-                      playing={s.playing}
-                      onDragStart={(k) => (dragging.current = k)}
-                      onDrop={(k) => {
-                        if (dragging.current !== null && dragging.current !== k) void move(dragging.current, k)
-                        dragging.current = null
-                      }}
-                    />
-                  </div>
-                ))}
-              </ol>
+              <>
+                <ol className="grid gap-0.5">
+                  {s.queue.slice(0, s.index + 1).map((q, i) => (
+                    <li
+                      key={`${q.path}#${i}`}
+                      data-current={i === s.index}
+                      tabIndex={0}
+                      onClick={(e) => play(e, i, i === s.index)}
+                      onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && void (i === s.index ? toggle() : jumpTo(i))}
+                      className={`${ROW} ${i === s.index ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05] active:bg-ink/[0.09]'}`}
+                    >
+                      <RowBody item={q} index={i} current={i === s.index} />
+                    </li>
+                  ))}
+                </ol>
+                {order.length > 0 && (
+                  <>
+                    <div className="px-2 pb-1 pt-3 text-[12px] text-ink/50">Up next</div>
+                    <Reorder.Group as="ol" axis="y" values={order} onReorder={setOrder} className="grid gap-0.5">
+                      {order.map((e) => (
+                        <Reorder.Item
+                          key={e.key}
+                          value={e}
+                          as="li"
+                          tabIndex={0}
+                          onDragStart={() => (dragged.current = true)}
+                          onDragEnd={() => dropped(e)}
+                          onClick={(ev) => !dragged.current && play(ev, e.i, false)}
+                          onKeyDown={(ev) => {
+                            if (ev.target !== ev.currentTarget) return
+                            if (ev.key === 'Enter') void jumpTo(e.i)
+                            // Alt+arrows move a song without dragging.
+                            if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+                              ev.preventDefault()
+                              const to = e.i + (ev.key === 'ArrowUp' ? -1 : 1)
+                              if (to > s.index && to < s.queue.length) void move(e.i, to)
+                            }
+                            if (ev.key === 'Delete') void removeAt(e.i)
+                          }}
+                          whileDrag={{ scale: 1.02, boxShadow: '0 12px 28px -12px rgb(0 0 0 / 0.55)', backgroundColor: 'var(--popover)' }}
+                          title="Drag to move; Alt+↑/↓ with the keyboard"
+                          className={`${ROW} relative hover:bg-ink/[0.05] active:cursor-grabbing active:bg-ink/[0.09]`}
+                        >
+                          <RowBody item={e.q} index={e.i} current={false} />
+                        </Reorder.Item>
+                      ))}
+                    </Reorder.Group>
+                  </>
+                )}
+              </>
             )}
           </div>
         </motion.aside>

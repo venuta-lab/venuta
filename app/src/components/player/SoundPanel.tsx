@@ -198,7 +198,7 @@ export function SoundPanel() {
             </button>
           ))}
           {sleepMin !== null && (
-            <button onClick={() => void setSleep(null)} className="rounded-full px-3 py-1 text-[12px] text-ink/60 hover:bg-ink/10">
+            <button onClick={() => void setSleep(null)} className="btn-ghost btn-sm">
               Cancel
             </button>
           )}

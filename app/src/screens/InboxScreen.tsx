@@ -723,7 +723,7 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
             Your new library is ready in {target}. Switch to it to browse, sync cards and add new music there from now on. You can
             switch back any time in Settings.
           </div>
-          <button onClick={() => props.onSwitch(target)} className="rounded-full bg-accent px-5 py-2 text-[13.5px] font-medium text-on-accent">
+          <button onClick={() => props.onSwitch(target)} className="btn-primary">
             Switch to the new library
           </button>
         </div>
@@ -752,7 +752,7 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
           onClick={() => void build()}
           disabled={!inApp() || !!building || !ready.length || !target}
           title={inApp() ? '' : 'The library is built by the desktop app'}
-          className="rounded-full bg-accent px-6 py-2.5 text-[14px] font-medium text-on-accent disabled:opacity-40"
+          className="btn-primary btn-lg"
         >
           {building ? 'Building…' : 'Build library'}
         </button>

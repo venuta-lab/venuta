@@ -90,7 +90,7 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
         }),
       )
       setMessage(
-        `Looked up ${r.albums_looked_up} albums; found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} tracks.`,
+        `Looked up ${r.albums_looked_up} ${r.albums_looked_up === 1 ? 'album' : 'albums'}; found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} ${r.lyrics_checked === 1 ? 'track' : 'tracks'}.`,
       )
       await load()
     } catch (e) {
@@ -153,7 +153,7 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
         <div className="mt-3 text-[15px] font-medium">{dragging ? 'Let go to add these' : 'Drop album folders or files anywhere on this window'}</div>
         <div className="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink/55">
           {albums.length
-            ? `${albums.length} albums waiting.`
+            ? `${albums.length} ${albums.length === 1 ? 'album' : 'albums'} waiting.`
             : `They are copied into ${view?.folder ?? 'Add music here'} and planned with your rules. Nothing reaches your library until you import it.`}
         </div>
       </motion.div>
@@ -165,7 +165,7 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
           </PillButton>
           <button
             onClick={() => setSelected(Object.fromEntries(ready.map((a) => [a.id, true])))}
-            className="rounded-full px-4 py-2 text-[13px] text-ink/75 hover:bg-ink/10"
+            className="btn-ghost"
           >
             Select all {ready.length}
           </button>

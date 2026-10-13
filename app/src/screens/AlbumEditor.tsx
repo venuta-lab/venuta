@@ -10,8 +10,9 @@ import {
   type AlbumSummary,
   type TagEdit,
 } from '../lib/engine'
-
 import { askAddToPlaylist } from '../components/AddToPlaylist'
+import { confirmAsk } from '../components/Confirm'
+import { IconClose } from '../components/Icons'
 
 const spring = { type: 'spring', stiffness: 300, damping: 30 } as const
 
@@ -32,6 +33,17 @@ const values = (s: string) =>
     .map((v) => v.trim())
     .filter(Boolean)
 
+/** Edits change files: the first one ever waits for "I have a backup". */
+async function backupFirst(): Promise<boolean> {
+  const ok = await confirmAsk({
+    title: 'Before your first edit',
+    text: 'Edits change your music files. Every change is checked so the audio is never touched, and each one can be undone. Even so, keep a backup of this library somewhere else, like another drive or an SD card.',
+    confirm: 'I have a backup',
+  })
+  if (ok) await confirmBackup()
+  return ok
+}
+
 /**
  * Album view that doubles as an editor. Album fields and titles are edited inline and saved
  * together; star ratings save the moment they are clicked.
@@ -44,22 +56,41 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
   const [titles, setTitles] = useState<Record<string, string>>({})
   const [stars, setStars] = useState<Record<string, number>>({})
   const [status, setStatus] = useState('')
-  const [askBackup, setAskBackup] = useState<null | (() => Promise<void>)>(null)
+  const [problem, setProblem] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let live = true
     albumDetail(props.root, a.dir).then(
       (d) => live && setDetail(d),
-      (e) => live && setStatus(e instanceof Error ? e.message : String(e)),
+      (e) => {
+        if (!live) return
+        setStatus(e instanceof Error ? e.message : String(e))
+        setProblem(true)
+      },
     )
     return () => {
       live = false
     }
   }, [props.root, a.dir])
 
-  useEscape(true, props.onClose)
-
   const dirty = Object.keys(fields).length + Object.keys(titles).length
+
+  /** Close, but never lose typed changes without asking. */
+  async function close() {
+    if (dirty) {
+      const ok = await confirmAsk({
+        title: `Discard ${dirty === 1 ? 'your change' : `${dirty} changes`}?`,
+        text: "They haven't been saved to the files yet.",
+        confirm: 'Discard',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    props.onClose()
+  }
+  useEscape(true, () => void close())
+
   const edits = useMemo<TagEdit[]>(() => {
     if (!detail) return []
     const albumSets: [string, string[]][] = []
@@ -78,44 +109,48 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
   }, [detail, fields, titles])
 
   /** Run an edit; on the first ever edit, ask for the backup confirmation and retry. */
-  async function run(edit: TagEdit[], after: () => void) {
+  async function run(edit: TagEdit[]): Promise<boolean> {
     try {
       const r = await editTags(props.root, edit)
-      setStatus(r.errors.length ? `${r.errors.length} files could not be saved: ${r.errors[0][1]}` : '')
-      after()
+      if (r.errors.length) {
+        setStatus(`${r.errors.length === 1 ? 'A file' : `${r.errors.length} files`} could not be saved: ${r.errors[0][1]}`)
+        setProblem(true)
+        return false
+      }
+      setProblem(false)
+      return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes('BACKUP_NOT_CONFIRMED')) {
-        setAskBackup(() => async () => {
-          await confirmBackup()
-          setAskBackup(null)
-          await run(edit, after)
-        })
-      } else {
-        setStatus(msg)
-      }
+      if (msg.includes('BACKUP_NOT_CONFIRMED')) return (await backupFirst()) ? run(edit) : false
+      setStatus(msg)
+      setProblem(true)
+      return false
     }
   }
 
   async function save() {
+    setSaving(true)
     setStatus('Saving…')
-    await run(edits, async () => {
-      setFields({})
-      setTitles({})
-      setDetail(await albumDetail(props.root, a.dir))
-      setStatus('Saved. Every change can be undone from its journal.')
-    })
+    setProblem(false)
+    const ok = await run(edits)
+    setSaving(false)
+    if (!ok) return
+    setFields({})
+    setTitles({})
+    setDetail(await albumDetail(props.root, a.dir))
+    setStatus('Saved. Every change can be undone in Activity.')
   }
 
   async function rate(path: string, value: number) {
-    const current = stars[path] ?? detail?.tracks.find((t) => t.path === path)?.stars ?? 0
-    const next = current === value ? 0 : value // clicking the same star clears it
+    const before = stars[path] ?? detail?.tracks.find((t) => t.path === path)?.stars ?? 0
+    const next = before === value ? 0 : value // clicking the same star clears it
     setStars((s) => ({ ...s, [path]: next }))
-    await run([{ file: path, set: [['RATING', next ? [String(next * 20)] : []]] }], () => {})
+    if (!(await run([{ file: path, set: [['RATING', next ? [String(next * 20)] : []]] }]))) setStars((s) => ({ ...s, [path]: before }))
   }
 
   const value = (k: AlbumField) => fields[k] ?? detail?.[k] ?? ''
   const totalMin = detail ? Math.round(detail.tracks.reduce((s, t) => s + t.duration_ms, 0) / 60000) : 0
+  const discs = new Set(detail?.tracks.map((t) => t.disc || 1)).size
 
   return (
     <motion.div
@@ -123,10 +158,12 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={props.onClose}
+      onClick={() => void close()}
     >
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-md" />
+      <div className="absolute inset-0 bg-[var(--scrim)] backdrop-blur-md" />
       <motion.div
+        role="dialog"
+        aria-label={`${value('album') || a.title}, details`}
         onClick={(e) => e.stopPropagation()}
         className="popover relative flex max-h-full w-full max-w-[1120px] flex-col overflow-hidden rounded-[28px]"
         initial={{ y: 30, opacity: 0 }}
@@ -139,81 +176,85 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
         dragConstraints={{ top: 0, bottom: 0 }}
         dragElastic={0.4}
         onDragEnd={(_, info) => {
-          if (Math.abs(info.offset.y) > 120) props.onClose()
+          if (Math.abs(info.offset.y) > 120) void close()
         }}
       >
         {/* Grab handle: swipe down here to close. */}
-        <div
-          onPointerDown={(e) => drag.start(e)}
-          className="flex cursor-grab justify-center pb-1 pt-3 active:cursor-grabbing"
-          aria-hidden
-        >
+        <div onPointerDown={(e) => drag.start(e)} className="flex cursor-grab justify-center pb-1 pt-3 active:cursor-grabbing" aria-hidden>
           <span className="h-1.5 w-12 rounded-full bg-ink/25" />
         </div>
-        <div className="flex min-h-0 gap-8 px-8 pb-8">
-          <div className="w-[300px] shrink-0">
-            <motion.div
-              layoutId={`cover-${a.dir}`}
-              className="aspect-square overflow-hidden rounded-2xl shadow-2xl shadow-black/50"
-              transition={spring}
-            >
+        <button
+          onClick={() => void close()}
+          aria-label="Close (Esc)"
+          title="Close (Esc)"
+          className="absolute right-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-full text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink active:scale-90"
+        >
+          <IconClose />
+        </button>
+        <div className="flex min-h-0 flex-1 gap-8 px-8 pb-6">
+          <div className="thin-scroll -mr-2 w-[300px] shrink-0 overflow-y-auto pb-2 pr-2">
+            <motion.div layoutId={`cover-${a.dir}`} className="aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-2xl shadow-black/50" transition={spring}>
               {props.src && <img src={props.src} alt="" draggable={false} className="h-full w-full object-cover" />}
             </motion.div>
             <div className="mt-5 grid gap-3">
               {FIELDS.map((f) => (
                 <label key={f.key} className="grid gap-1">
-                  <span className="text-[11.5px] text-ink/50">{f.label}</span>
+                  <span className="text-[12px] text-ink/55">{f.label}</span>
                   <input
                     value={value(f.key)}
-                    disabled={!inApp()}
+                    disabled={!inApp() || !detail}
                     placeholder={detail && !detail[f.key] ? 'Not set, or differs between tracks' : ''}
                     onChange={(e) => setFields((s) => ({ ...s, [f.key]: e.target.value }))}
-                    className={`rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13.5px] outline-none ring-1 ring-transparent placeholder:text-ink/30 focus:ring-[var(--accent)] ${
-                      fields[f.key] !== undefined ? 'ring-[color-mix(in_oklab,var(--accent)_60%,transparent)]' : ''
-                    }`}
+                    className={`field w-full ${fields[f.key] !== undefined ? 'ring-1 ring-[color-mix(in_oklab,var(--accent)_60%,transparent)]' : ''}`}
                   />
                 </label>
               ))}
-              <p className="text-[11.5px] leading-relaxed text-ink/40">
+              <p className="text-[12px] leading-relaxed text-ink/45">
                 Separate several names with “;”. {detail?.tracks.length ?? a.tracks} tracks, {totalMin} minutes.
               </p>
             </div>
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <h2 className="text-[32px] font-semibold leading-tight tracking-[-0.03em]">{value('album') || a.title}</h2>
+            <h2 className="title pr-12 text-[32px] leading-tight">{value('album') || a.title}</h2>
             <p className="mt-1 text-[16px] text-ink/70">{value('album_artist') || a.album_artist}</p>
-            <div className="no-scrollbar mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              {detail?.tracks.map((t) => (
-                <div
-                  key={t.path}
-                  className="group grid grid-cols-[36px_1fr_auto_auto] items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.05]"
-                >
-                  <span className="text-right text-[13px] tabular-nums text-ink/45">
-                    {t.disc > 1 ? `${t.disc}-` : ''}
-                    {t.track || ''}
-                  </span>
-                  <div className="min-w-0">
-                    <input
-                      value={titles[t.path] ?? t.title}
-                      disabled={!inApp()}
-                      onChange={(e) => setTitles((s) => ({ ...s, [t.path]: e.target.value }))}
-                      className={`w-full truncate rounded-md bg-transparent px-1 text-[14px] outline-none focus:bg-ink/[0.06] ${
-                        titles[t.path] !== undefined ? 'text-accent-ink' : ''
-                      }`}
-                    />
-                    {t.artist && <div className="truncate px-1 text-[12px] text-ink/45">{t.artist}</div>}
+            <div className="thin-scroll mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              {!detail && !problem && (
+                <div className="grid gap-2" aria-hidden>
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <div key={i} className="shimmer h-11 rounded-xl" />
+                  ))}
+                </div>
+              )}
+              {detail?.tracks.map((t, i) => (
+                <div key={t.path}>
+                  {discs > 1 && (i === 0 || (t.disc || 1) !== (detail.tracks[i - 1].disc || 1)) ? (
+                    <div className="px-2 pb-1 pt-3 text-[12px] font-medium text-ink/50">Disc {t.disc || 1}</div>
+                  ) : null}
+                  <div className="group grid grid-cols-[36px_1fr_auto_auto] items-center gap-3 rounded-xl px-2 py-1.5 transition-colors hover:bg-ink/[0.04]">
+                    <span className="text-right text-[13px] tabular-nums text-ink/45">{t.track || ''}</span>
+                    <div className="min-w-0">
+                      <input
+                        value={titles[t.path] ?? t.title}
+                        disabled={!inApp()}
+                        aria-label={`Title of track ${t.track || i + 1}`}
+                        title="Click to edit the title"
+                        onChange={(e) => setTitles((s) => ({ ...s, [t.path]: e.target.value }))}
+                        className={`-mx-1 w-full cursor-text truncate rounded-md bg-transparent px-1 py-0.5 text-[14px] outline-none transition-colors hover:bg-ink/[0.06] focus:bg-ink/[0.08] focus:ring-1 focus:ring-[color-mix(in_oklab,var(--accent)_60%,transparent)] ${
+                          titles[t.path] !== undefined ? 'text-accent-ink' : ''
+                        }`}
+                      />
+                      {t.artist && <div className="truncate text-[12px] text-ink/50">{t.artist}</div>}
+                    </div>
+                    <Stars value={stars[t.path] ?? t.stars} onRate={(n) => void rate(t.path, n)} disabled={!inApp()} />
+                    <span className="w-12 text-right text-[12px] tabular-nums text-ink/50">{t.duration_ms ? fmtDuration(t.duration_ms) : ''}</span>
                   </div>
-                  <Stars value={stars[t.path] ?? t.stars} onRate={(n) => rate(t.path, n)} disabled={!inApp()} />
-                  <span className="w-12 text-right text-[12px] tabular-nums text-ink/45">
-                    {t.duration_ms ? fmtDuration(t.duration_ms) : ''}
-                  </span>
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex items-center gap-3 border-t border-ink/[0.06] pt-4">
-              <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/55">
-                {status || (inApp() ? 'Edit any field or title. Ratings save as soon as you click.' : 'Editing works in the desktop app.')}
+            <div className="mt-4 flex items-center gap-3 border-t border-edge pt-4">
+              <span role="status" className={`min-w-0 flex-1 truncate text-[12.5px] ${problem ? 'text-problem' : 'text-ink/55'}`} title={status}>
+                {status || (inApp() ? 'Click a field or a title to change it. Ratings save as soon as you click a star.' : 'Editing works in the desktop app.')}
               </span>
               {!dirty && inApp() && !!detail?.tracks.length && (
                 <button onClick={() => askAddToPlaylist(detail.tracks.map((t) => t.path), detail.album || a.title)} className="btn-ghost btn-sm">
@@ -227,56 +268,22 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                       onClick={() => {
                         setFields({})
                         setTitles({})
+                        setStatus('')
                       }}
-                      className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-ink/10"
+                      disabled={saving}
+                      className="btn"
                     >
                       Discard
                     </button>
-                    <motion.button
-                      whileTap={{ scale: 0.96 }}
-                      onClick={save}
-                      className="rounded-full px-5 py-2 text-[13.5px] font-medium text-on-accent"
-                      style={{ background: 'var(--accent)' }}
-                    >
-                      Save {dirty} {dirty === 1 ? 'change' : 'changes'}
-                    </motion.button>
+                    <button onClick={() => void save()} disabled={saving} className="btn-primary">
+                      {saving ? 'Saving…' : `Save ${dirty} ${dirty === 1 ? 'change' : 'changes'}`}
+                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
           </div>
         </div>
-
-        <AnimatePresence>
-          {askBackup && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 grid place-items-center bg-black/55 p-8 backdrop-blur-sm"
-            >
-              <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} className="popover max-w-[460px] rounded-3xl p-7">
-                <h3 className="text-[20px] font-semibold">Before your first edit</h3>
-                <p className="mt-3 text-[14px] leading-relaxed text-ink/70">
-                  Edits change your music files. Every change is checked so the audio is never touched, and each one
-                  can be undone. Even so, keep a backup of this library somewhere else (another drive or SD card).
-                </p>
-                <div className="mt-6 flex justify-end gap-2">
-                  <button onClick={() => setAskBackup(null)} className="rounded-full px-4 py-2 text-[13px] text-ink/70 hover:bg-ink/10">
-                    Not yet
-                  </button>
-                  <button
-                    onClick={() => void askBackup()}
-                    className="rounded-full px-5 py-2 text-[13.5px] font-medium text-on-accent"
-                    style={{ background: 'var(--accent)' }}
-                  >
-                    I have a backup
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </motion.div>
     </motion.div>
   )
@@ -286,19 +293,25 @@ function Stars(props: { value: number; onRate: (n: number) => void; disabled?: b
   const [hover, setHover] = useState(0)
   const shown = hover || props.value
   return (
-    <div className="flex" onMouseLeave={() => setHover(0)} aria-label={`${props.value} of 5 stars`}>
+    <div
+      className={`flex transition-opacity ${props.value || hover ? '' : 'opacity-40 group-hover:opacity-100'}`}
+      onMouseLeave={() => setHover(0)}
+      role="group"
+      aria-label={props.value ? `Rated ${props.value} of 5` : 'Not rated'}
+    >
       {[1, 2, 3, 4, 5].map((n) => (
         <motion.button
           key={n}
           disabled={props.disabled}
           whileTap={{ scale: 1.35 }}
           onMouseEnter={() => setHover(n)}
+          onFocus={() => setHover(n)}
+          onBlur={() => setHover(0)}
           onClick={() => props.onRate(n)}
-          className={`px-[1px] text-[15px] leading-none transition-opacity ${
-            props.value || hover ? '' : 'opacity-0 group-hover:opacity-100'
-          }`}
+          className="px-[1px] text-[15px] leading-none"
           style={{ color: n <= shown ? 'var(--accent)' : 'color-mix(in oklab, var(--ink) 22%, transparent)' }}
-          aria-label={`${n} stars`}
+          aria-label={n === props.value ? `${n} stars (click again to clear)` : `${n} ${n === 1 ? 'star' : 'stars'}`}
+          title={n === props.value ? 'Click again to clear the rating' : undefined}
         >
           ★
         </motion.button>

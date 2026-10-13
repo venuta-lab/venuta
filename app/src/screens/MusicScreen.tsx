@@ -173,7 +173,7 @@ export function MusicScreen({
                       </span>
                     ))
                   ) : (
-                    <span className="py-0.5 text-[12px] text-good">Nothing</span>
+                    <span className="py-0.5 text-[12px] text-good">✓ Complete</span>
                   )}
                 </span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-ink/30 transition-colors group-hover:text-ink/70" aria-hidden>

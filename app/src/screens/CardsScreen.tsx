@@ -197,7 +197,7 @@ function CardTile(props: {
             {card?.player && card.player !== 'standard' ? `. Written for ${PLAYER_NAMES[card.player]}` : ''}
           </div>
         </div>
-        <button onClick={() => setEditing(!editing)} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/65 hover:bg-ink/10">
+        <button onClick={() => setEditing(!editing)} className="btn-ghost btn-sm">
           {editing ? 'Close' : 'Settings'}
         </button>
       </div>
@@ -242,7 +242,7 @@ function CardTile(props: {
             </PillButton>
             <PillButton onClick={props.onEject}>Eject</PillButton>
             {card && !testing && (
-              <button onClick={() => setTesting(true)} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10">
+              <button onClick={() => setTesting(true)} className="btn-ghost">
                 Test this player
               </button>
             )}
@@ -263,7 +263,7 @@ function CardTile(props: {
                 Not enough space. Choose fewer folders in Settings.
               </span>
             )}
-            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
+            <button onClick={props.onDismiss} className="btn-ghost">
               Cancel
             </button>
           </>
@@ -278,7 +278,7 @@ function CardTile(props: {
                 <motion.div className="h-full rounded-full" style={{ background: 'var(--accent)' }} animate={{ width: `${b.total ? (b.done / b.total) * 100 : 0}%` }} />
               </div>
             </div>
-            <button onClick={props.onCancel} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10">
+            <button onClick={props.onCancel} className="btn-ghost">
               Stop
             </button>
           </div>
@@ -292,7 +292,7 @@ function CardTile(props: {
             <PillButton onClick={props.onEject} accent>
               Eject
             </PillButton>
-            <button onClick={props.onDismiss} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
+            <button onClick={props.onDismiss} className="btn-ghost">
               Done
             </button>
           </>
@@ -479,7 +479,7 @@ function PlayerTest(props: { root: string; card: string; saved: Record<string, b
           <PillButton onClick={() => void write()} accent>
             Write the test to the card
           </PillButton>
-          <button onClick={props.onClose} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
+          <button onClick={props.onClose} className="btn-ghost">
             Close
           </button>
         </div>
@@ -534,7 +534,7 @@ function PlayerTest(props: { root: string; card: string; saved: Record<string, b
                 setItems(null)
                 setStatus('The test was removed from the card.')
               }}
-              className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10"
+              className="btn-ghost"
             >
               Remove the test from the card
             </button>
