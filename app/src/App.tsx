@@ -1,5 +1,5 @@
 import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'motion/react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Backdrop } from './components/Backdrop'
 import { ThemeFx } from './components/ThemeFx'
@@ -51,15 +51,17 @@ import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/Fold
 import { MusicScreen } from './screens/MusicScreen'
 import { ListenScreen, showMusicTab } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
-import { InboxScreen } from './screens/InboxScreen'
-import { CardsScreen } from './screens/CardsScreen'
 import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
-import { ActivityScreen } from './screens/ActivityScreen'
-import { SettingsScreen, settingsSection } from './screens/SettingsScreen'
+import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
-import { SetupScreen } from './screens/SetupScreen'
+// Places opened now and then load the first time they are opened, so the start is quicker.
+const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
+const CardsScreen = lazy(() => import('./screens/CardsScreen').then((m) => ({ default: m.CardsScreen })))
+const ActivityScreen = lazy(() => import('./screens/ActivityScreen').then((m) => ({ default: m.ActivityScreen })))
+const SettingsScreen = lazy(() => import('./screens/SettingsScreen').then((m) => ({ default: m.SettingsScreen })))
+const SetupScreen = lazy(() => import('./screens/SetupScreen').then((m) => ({ default: m.SetupScreen })))
 
 // Before the open folder was kept with the library, this computer remembered it; read once.
 const ROOT_KEY = 'library-root'
@@ -868,7 +870,9 @@ export default function App() {
                 exit="exit"
                 className="place thin-scroll absolute inset-0 overflow-y-auto overflow-x-hidden px-10"
               >
-                <LayoutGroup id={`${active}-${visit}`}>{screen}</LayoutGroup>
+                <LayoutGroup id={`${active}-${visit}`}>
+                  <Suspense fallback={null}>{screen}</Suspense>
+                </LayoutGroup>
               </motion.div>
             </AnimatePresence>
             </div>

@@ -16,10 +16,11 @@ import { ACCENTS, STYLES, accentRoles, colourDistance, styleInfo, type StyleInfo
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
+import { takeSettingsSection, type SettingsPage } from './settingsPage'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
-type Page = 'look' | 'desktop' | 'folders' | 'online' | 'safety' | 'about'
+type Page = SettingsPage
 const PAGES: { id: Page; label: string }[] = [
   { id: 'look', label: 'Look and feel' },
   { id: 'desktop', label: 'Startup and tray' },
@@ -28,12 +29,6 @@ const PAGES: { id: Page; label: string }[] = [
   { id: 'safety', label: 'Safety and undo' },
   { id: 'about', label: 'About' },
 ]
-
-let askedPage: Page | null = null
-/** Open Settings on this section next time it shows. */
-export function settingsSection(p: Page) {
-  askedPage = p
-}
 
 export function SettingsScreen(props: {
   root: string
@@ -46,8 +41,7 @@ export function SettingsScreen(props: {
 }) {
   const [page, setPage] = useState<Page>(() => {
     // Opened to a section from elsewhere (the update notice opens About).
-    const p = askedPage ?? props.page ?? 'look'
-    askedPage = null
+    const p = takeSettingsSection() ?? props.page ?? 'look'
     return p
   })
   return (

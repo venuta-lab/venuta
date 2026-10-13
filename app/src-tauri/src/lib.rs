@@ -20,6 +20,7 @@ use tauri::{AppHandle, Manager, State};
 
 mod accounts;
 mod desktop;
+mod libcache;
 mod listening;
 mod playback;
 mod updates;
@@ -189,10 +190,9 @@ async fn scan_library(
     blocking(move || {
         let root = PathBuf::from(root);
         let mut index = open_index(&root)?;
-        engine::scan_with(&mut index, &root, &|p| {
+        libcache::scan_with(&mut index, &root, &|p| {
             let _ = on_progress.send(p);
         })
-        .map_err(|e| e.to_string())
     })
     .await
 }
@@ -202,7 +202,7 @@ async fn scan_library(
 async fn library_health(root: String) -> CmdResult<HealthReport> {
     blocking(move || {
         let index = open_index(Path::new(&root))?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, Path::new(&root))?;
         Ok(engine::audit::run(&lib))
     })
     .await
@@ -214,7 +214,7 @@ async fn album_covers(root: String, dirs: Vec<String>, size: u32) -> CmdResult<V
     blocking(move || {
         let root = PathBuf::from(root);
         let index = open_index(&root)?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, &root)?;
         let requests = lib.cover_requests(&dirs);
         Ok(engine::art::thumbnails(
             &root,
@@ -244,7 +244,7 @@ async fn deep_check(
     let result = blocking(move || {
         let root = PathBuf::from(root);
         let mut index = open_index(&root)?;
-        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &root)?;
         engine::quality::run(&mut index, &root, &p, &|done, total| {
             let _ = on_progress.send(DeepProgress {
                 done,
@@ -276,7 +276,7 @@ async fn album_spectrogram(root: String, dir: String) -> CmdResult<String> {
     blocking(move || {
         let root = PathBuf::from(root);
         let index = open_index(&root)?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, &root)?;
         let track = lib
             .tracks
             .iter()
@@ -787,7 +787,7 @@ fn tag_number(v: Option<&str>) -> Option<f32> {
 async fn music_catalog(root: String) -> CmdResult<Vec<CatalogTrack>> {
     blocking(move || {
         let index = open_index(Path::new(&root))?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, Path::new(&root))?;
         let num = |t: &engine::library::Track, k: &str| {
             t.first(k)
                 .and_then(|v| v.split('/').next()?.trim().parse::<u32>().ok())
@@ -862,7 +862,7 @@ pub(crate) fn fresh_gains(
     mut items: Vec<playback::QueueItem>,
 ) -> Vec<playback::QueueItem> {
     if let Ok(index) = open_index(Path::new(root))
-        && let Ok(lib) = Library::load(&index)
+        && let Ok(lib) = libcache::indexed(&index, Path::new(root))
     {
         let by: std::collections::HashMap<&str, &engine::library::Track> =
             lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect();
@@ -922,7 +922,7 @@ async fn tidy_preview(root: String, jobs: State<'_, Jobs>) -> CmdResult<engine::
     let (plan, preview) = blocking(move || {
         let root = PathBuf::from(r);
         let mut index = open_index(&root)?;
-        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &root)?;
         let plan = library_plan(&root, None)?;
         let preview = engine::tidy::preview(&root, &plan);
         Ok((plan, preview))
@@ -969,8 +969,8 @@ async fn tidy_apply(
             });
         })?;
         let mut index = open_index(&root)?;
-        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
-        if let Ok(lib) = Library::load(&index) {
+        libcache::scan(&mut index, &root)?;
+        if let Ok(lib) = libcache::indexed(&index, &root) {
             engine::playlists::repair_all(&root, &lib);
         }
         Ok(report)
@@ -992,8 +992,8 @@ async fn tidy_undo(root: String, journal: String) -> CmdResult<usize> {
         let n = engine::tidy::undo(Path::new(&journal))?;
         let root = PathBuf::from(root);
         let mut index = open_index(&root)?;
-        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
-        if let Ok(lib) = Library::load(&index) {
+        libcache::scan(&mut index, &root)?;
+        if let Ok(lib) = libcache::indexed(&index, &root) {
             engine::playlists::repair_all(&root, &lib);
         }
         Ok(n)
@@ -1357,7 +1357,7 @@ async fn plan_card(root: String, card: String) -> CmdResult<engine::sync::SyncPl
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let mut index = open_index(&rootp)?;
-        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &rootp)?;
         engine::sync::plan(&rootp, Path::new(&card))
     })
     .await
@@ -1383,7 +1383,7 @@ async fn sync_card(
     let result = blocking(move || {
         let rootp = PathBuf::from(&root);
         let mut index = open_index(&rootp)?;
-        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &rootp)?;
         let plan = engine::sync::plan(&rootp, Path::new(&c))?;
         engine::sync::run(&rootp, Path::new(&c), &plan, &p, &|done, total, bytes| {
             let _ = on_progress.send(SyncProgressMsg { done, total, bytes });
@@ -1412,11 +1412,8 @@ async fn eject_card(card: String) -> CmdResult<()> {
 
 // --- Playlists -------------------------------------------------------------------------
 
-fn load_lib(root: &Path) -> CmdResult<(Index, Library)> {
-    let mut index = open_index(root)?;
-    engine::scan(&mut index, root).map_err(|e| e.to_string())?;
-    let lib = Library::load(&index).map_err(|e| e.to_string())?;
-    Ok((index, lib))
+fn load_lib(root: &Path) -> CmdResult<(Index, Arc<Library>)> {
+    libcache::fresh(root)
 }
 
 fn wantlist_path() -> PathBuf {
@@ -1539,7 +1536,7 @@ async fn playlist_shelf(root: String) -> CmdResult<Vec<engine::playlists::Playli
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let index = open_index(&rootp)?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, &rootp)?;
         Ok(engine::playlists::list(&rootp, &lib))
     })
     .await
@@ -1746,8 +1743,24 @@ async fn playlist_refind(root: String, name: String) -> CmdResult<usize> {
     .await
 }
 
-/// Your Apple Music library's playlists (with your key), and what couldn't be read.
-fn apple_lists() -> CmdResult<(Vec<engine::imports::ForeignPlaylist>, Vec<String>)> {
+type AppleLists = (Vec<engine::imports::ForeignPlaylist>, Vec<String>);
+
+/// Apple Music's library as last read, and what it was read from: the file (with its size and
+/// time, so a change in Apple Music is seen) and the key.
+struct AppleRead {
+    file: PathBuf,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+    key: blake3::Hash,
+    lists: AppleLists,
+}
+
+static APPLE: std::sync::LazyLock<Mutex<Option<AppleRead>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Your Apple Music library's playlists (with your key), and what couldn't be read. Decrypting
+/// the library takes a while, so it is read once and again only when its file changes.
+fn apple_lists() -> CmdResult<AppleLists> {
     let s = settings_with_defaults();
     let key = s
         .apple_key
@@ -1757,8 +1770,31 @@ fn apple_lists() -> CmdResult<(Vec<engine::imports::ForeignPlaylist>, Vec<String
         .map(PathBuf::from)
         .or_else(engine::apple::default_library_path)
         .ok_or("Couldn't find your Apple Music library on this computer.")?;
+    let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
+    let (size, modified, key_hash) = (
+        meta.len(),
+        meta.modified().ok(),
+        blake3::hash(key.as_bytes()),
+    );
+    let mut kept = APPLE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(k) = kept.as_ref()
+        && k.file == file
+        && k.size == size
+        && k.modified == modified
+        && k.key == key_hash
+    {
+        return Ok(k.lists.clone());
+    }
     let apple = engine::apple::read(&file, &key)?;
-    Ok(engine::imports::apple_library(&apple))
+    let lists = engine::imports::apple_library(&apple);
+    *kept = Some(AppleRead {
+        file,
+        size,
+        modified,
+        key: key_hash,
+        lists: lists.clone(),
+    });
+    Ok(lists)
 }
 
 /// Playlists you have fewer songs of than the source still has (an older import kept only the
@@ -1841,7 +1877,11 @@ async fn playlist_update_read(
 #[tauri::command]
 fn search_web(app: AppHandle, words: String) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let q: String = words.chars().filter(|c| !c.is_control()).take(300).collect();
+    let q: String = words
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect();
     if q.trim().is_empty() {
         return Ok(());
     }
@@ -2006,7 +2046,7 @@ async fn rate_playlist(
             .collect();
         let report = engine::edit::edit_in_place(&rootp, &edits)?;
         let mut index = open_index(&rootp)?;
-        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &rootp)?;
         Ok(report)
     })
     .await
@@ -2043,7 +2083,7 @@ struct AlbumDetail {
 async fn album_detail(root: String, dir: String) -> CmdResult<AlbumDetail> {
     blocking(move || {
         let index = open_index(Path::new(&root))?;
-        let lib = Library::load(&index).map_err(|e| e.to_string())?;
+        let lib = libcache::indexed(&index, Path::new(&root))?;
         let mut tracks: Vec<&engine::library::Track> =
             lib.tracks.iter().filter(|t| t.dir == dir).collect();
         let num = |t: &engine::library::Track, k: &str| {
@@ -2118,7 +2158,7 @@ async fn edit_tags(
         let report = engine::edit::edit_in_place(&rootp, &edits)?;
         // Refresh the index so every screen sees the change.
         let mut index = open_index(&rootp)?;
-        engine::scan(&mut index, &rootp).map_err(|e| e.to_string())?;
+        libcache::scan(&mut index, &rootp)?;
         Ok(report)
     })
     .await

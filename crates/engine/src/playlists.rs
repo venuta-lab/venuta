@@ -326,27 +326,30 @@ fn want_from_line(location: &str, extinf: Option<(u64, String)>, md5: Option<Str
 
 /// What the index knows, for resolving entries: path → track, and audio MD5 → path.
 struct Resolver<'a> {
-    by_path: HashMap<&'a str, &'a Track>,
-    by_md5: HashMap<String, &'a Track>,
+    lib: &'a Library,
+    look: &'a crate::library::Lookup,
 }
 
 impl<'a> Resolver<'a> {
     fn new(lib: &'a Library) -> Self {
-        let mut by_md5 = HashMap::new();
-        for t in &lib.tracks {
-            if let Some(m) = &t.audio_md5 {
-                by_md5.insert(hex(m), t);
-            }
-        }
         Self {
-            by_path: lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect(),
-            by_md5,
+            lib,
+            look: lib.lookup(),
         }
+    }
+
+    fn path(&self, p: &str) -> Option<&'a Track> {
+        self.look.by_path.get(p).map(|&i| &self.lib.tracks[i])
+    }
+
+    /// `m` in upper-case hex.
+    fn md5(&self, m: &str) -> Option<&'a Track> {
+        self.look.by_md5.get(m).map(|&i| &self.lib.tracks[i])
     }
 }
 
 fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect()
+    crate::library::hex_upper(b)
 }
 
 /// Read a playlist; entries whose file moved are found again by audio checksum.
@@ -390,11 +393,7 @@ pub fn read(
             pending_info = None;
             if let Ok(w) = serde_json::from_str::<WantEntry>(j.trim()) {
                 // The file it was waiting for is back.
-                if let Some(t) = w
-                    .md5
-                    .as_ref()
-                    .and_then(|m| r.by_md5.get(&m.to_uppercase()).copied())
-                {
+                if let Some(t) = w.md5.as_ref().and_then(|m| r.md5(&m.to_uppercase())) {
                     repaired = true;
                     out.push(entry(t));
                     pending_md5 = None;
@@ -429,8 +428,8 @@ pub fn read(
         };
         let md5 = pending_md5.take();
         let info = pending_info.take();
-        let track = r.by_path.get(rel.as_str()).copied().or_else(|| {
-            let t = md5.as_ref().and_then(|m| r.by_md5.get(m).copied());
+        let track = r.path(&rel).or_else(|| {
+            let t = md5.as_ref().and_then(|m| r.md5(m));
             repaired |= t.is_some();
             t
         });
@@ -609,9 +608,13 @@ pub fn write_with(
     }
     let path = file_for(library_root, name);
     std::fs::create_dir_all(folder(library_root)).map_err(|e| e.to_string())?;
-    let part = path.with_extension("m3u8.part");
-    std::fs::write(&part, out).map_err(|e| e.to_string())?;
-    std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    // Smart playlists are written again on every visit to Playlists: one that says the same is
+    // left alone, so it isn't a change (to rescan, to sync, for other players to reload).
+    if !std::fs::read(&path).is_ok_and(|now| now == out.as_bytes()) {
+        let part = path.with_extension("m3u8.part");
+        std::fs::write(&part, out).map_err(|e| e.to_string())?;
+        std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    }
     // An .m3u it was read from is now an .m3u8: the old file goes aside, not left as a twin.
     let old = path.with_extension("m3u");
     if old.is_file() {
@@ -1573,6 +1576,7 @@ mod tests {
             pairs: Default::default(),
             identities: Default::default(),
             in_library: false,
+            lookup: Default::default(),
         }
     }
 
@@ -1922,6 +1926,31 @@ mod tests {
         assert!(repaired);
         assert_eq!(e[0].path, "B/01 One.flac");
         assert!(!e[0].missing);
+    }
+
+    #[test]
+    fn saving_the_same_playlist_again_leaves_the_file_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![track(1, "A/01 One.flac", "One", 7)]);
+        write(root.path(), &lib, "Road", &["A/01 One.flac".into()], true).unwrap();
+        let file = file_for(root.path(), "Road");
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        write(root.path(), &lib, "Road", &["A/01 One.flac".into()], true).unwrap();
+        assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), old);
+        // A real change is still written.
+        let more = library(vec![
+            track(1, "A/01 One.flac", "One", 7),
+            track(2, "A/02 Two.flac", "Two", 8),
+        ]);
+        let both = ["A/01 One.flac".into(), "A/02 Two.flac".into()];
+        write(root.path(), &more, "Road", &both, true).unwrap();
+        assert_ne!(std::fs::metadata(&file).unwrap().modified().unwrap(), old);
     }
 
     #[test]

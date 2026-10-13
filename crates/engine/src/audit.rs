@@ -680,6 +680,7 @@ mod tests {
             pairs: Default::default(),
             identities: Default::default(),
             in_library: false,
+            lookup: Default::default(),
         };
         let report = run(&lib);
         let issue = report

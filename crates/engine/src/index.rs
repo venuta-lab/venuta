@@ -8,7 +8,33 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Latest schema version; `migrate` applies every step up to it.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
+
+/// v6: a change counter. Every write to what a library is built from (files, deep-check
+/// results, lookups, comparisons) adds one, so a library kept in memory knows it is out of date
+/// whoever wrote, without reading everything again to find out.
+const SCHEMA_V6: &str = r#"
+CREATE TABLE generation (n INTEGER NOT NULL);
+INSERT INTO generation (n) VALUES (0);
+CREATE TRIGGER gen_files_i AFTER INSERT ON files BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_files_u AFTER UPDATE ON files BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_files_d AFTER DELETE ON files BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_quality_i AFTER INSERT ON quality BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_quality_u AFTER UPDATE ON quality BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_quality_d AFTER DELETE ON quality BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_album_meta_i AFTER INSERT ON album_meta BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_album_meta_u AFTER UPDATE ON album_meta BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_album_meta_d AFTER DELETE ON album_meta BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_lyrics_i AFTER INSERT ON track_lyrics BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_lyrics_u AFTER UPDATE ON track_lyrics BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_lyrics_d AFTER DELETE ON track_lyrics BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_audio_pairs_i AFTER INSERT ON audio_pairs BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_audio_pairs_u AFTER UPDATE ON audio_pairs BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_audio_pairs_d AFTER DELETE ON audio_pairs BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_identity_i AFTER INSERT ON track_identity BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_identity_u AFTER UPDATE ON track_identity BEGIN UPDATE generation SET n = n + 1; END;
+CREATE TRIGGER gen_track_identity_d AFTER DELETE ON track_identity BEGIN UPDATE generation SET n = n + 1; END;
+"#;
 
 /// v5: optional sources. Discogs results per album (checked separately, so albums looked up
 /// before a token was added still get them), and AcoustID identities for files without tags.
@@ -149,6 +175,29 @@ pub struct ObservedFile {
     pub read_error: Option<String>,
 }
 
+/// WAL lets readers and the writer work at once. It stays set in the file, so only a new index
+/// needs it; switching needs the database to itself and SQLite does not wait for that (the
+/// busy timeout doesn't apply), so when several open a new index at once the others try again.
+pub fn use_wal(conn: &Connection) -> Result<()> {
+    let mut tries = 0;
+    loop {
+        let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+        if mode.eq_ignore_ascii_case("wal") {
+            return Ok(());
+        }
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::DatabaseBusy && tries < 200 =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
 pub struct Index {
     conn: Connection,
 }
@@ -166,7 +215,7 @@ impl Index {
         // Several parts of the app open the index at once (most of all the first time a
         // library is read): wait for one another instead of failing with "database is locked".
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        use_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let mut index = Self { conn };
@@ -189,19 +238,29 @@ impl Index {
         let version: i32 = self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version >= SCHEMA_VERSION {
+            return Ok(());
+        }
         for (target, sql) in [
             (1, SCHEMA_V1),
             (2, SCHEMA_V2),
             (3, SCHEMA_V3),
             (4, SCHEMA_V4),
             (5, SCHEMA_V5),
+            (6, SCHEMA_V6),
         ] {
-            if version < target {
-                let tx = self.conn.transaction()?;
+            // Several commands open the index at once (most of all the first start after an
+            // update): each step takes the write lock first and looks again, so only one of
+            // them makes it and the others find it made.
+            let tx = self
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let now: i32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            if now < target {
                 tx.execute_batch(sql)?;
                 tx.pragma_update(None, "user_version", target)?;
-                tx.commit()?;
             }
+            tx.commit()?;
         }
         Ok(())
     }
@@ -403,6 +462,14 @@ impl Index {
     }
 
     /// Read-only access for queries elsewhere in the engine (audit, reports).
+    /// The change counter (schema v6): it moves whenever anything a library is built from is
+    /// written, by any connection.
+    pub fn generation(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT n FROM generation", [], |r| r.get(0))?)
+    }
+
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
@@ -410,5 +477,25 @@ impl Index {
     /// Write access for engine modules that keep their own tables (lookups, lyrics).
     pub fn conn_mut(&mut self) -> &mut Connection {
         &mut self.conn
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn many_opening_a_new_index_at_once_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("index.sqlite");
+        let handles: Vec<_> = (0..12)
+            .map(|_| {
+                let db = db.clone();
+                std::thread::spawn(move || Index::open(&db, "D:/Library").map(|i| i.generation()))
+            })
+            .collect();
+        for h in handles {
+            assert_eq!(h.join().unwrap().unwrap().unwrap(), 0);
+        }
     }
 }

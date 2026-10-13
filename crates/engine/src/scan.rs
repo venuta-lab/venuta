@@ -246,4 +246,30 @@ mod tests {
                 .any(|p| p.stage == ScanStage::Reading && p.done > 0)
         );
     }
+    #[test]
+    fn generation_moves_only_when_something_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let album = dir.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("01.flac"), b"not audio").unwrap();
+        let mut index = Index::open_in_memory(&dir.path().to_string_lossy()).unwrap();
+        let start = index.generation().unwrap();
+
+        scan(&mut index, dir.path()).unwrap();
+        let after_first = index.generation().unwrap();
+        assert!(after_first > start);
+
+        // A scan that finds nothing new leaves it alone, so a kept library stays valid.
+        scan(&mut index, dir.path()).unwrap();
+        assert_eq!(index.generation().unwrap(), after_first);
+
+        // A song arriving moves it, and so does one going away.
+        std::fs::write(album.join("02.flac"), b"also not audio").unwrap();
+        scan(&mut index, dir.path()).unwrap();
+        let after_add = index.generation().unwrap();
+        assert!(after_add > after_first);
+        std::fs::remove_file(album.join("01.flac")).unwrap();
+        scan(&mut index, dir.path()).unwrap();
+        assert!(index.generation().unwrap() > after_add);
+    }
 }

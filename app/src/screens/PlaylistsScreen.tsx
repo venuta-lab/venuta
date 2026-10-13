@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { useCatalog } from '../lib/catalog'
 import {
@@ -18,10 +18,13 @@ import { notify } from '../lib/notify'
 import { confirmAsk } from '../components/Confirm'
 import { playlistsChanged } from '../components/AddToPlaylist'
 import { playableSongs, plural } from './playlists/common'
-import { ImportSheet, type ImportStart } from './playlists/ImportSheet'
+import type { ImportStart } from './playlists/ImportSheet'
 import { PlaylistPage } from './playlists/PlaylistPage'
 import { PlaylistsHome, type PlaylistMenu } from './playlists/PlaylistsHome'
 import { WantList } from './playlists/WantList'
+
+// Importing is opened now and then: it loads the first time.
+const ImportSheet = lazy(() => import('./playlists/ImportSheet').then((m) => ({ default: m.ImportSheet })))
 
 export type PlaylistsPlace =
   | { kind: 'home' }
@@ -250,15 +253,17 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
           )}
           {view.kind === 'wanted' && <WantList root={root} wanted={data?.wanted ?? []} onBack={home} onOpen={(name) => setView(at({ kind: 'playlist', name }))} onChanged={() => void load()} />}
           {view.kind === 'import' && (
-            <ImportSheet
-              root={root}
-              appleReady={!!data?.apple_ready}
-              start={view.start}
-              onBack={home}
-              onOpen={(name) => setView(at({ kind: 'playlist', name }))}
-              onOpenWanted={() => setView(at({ kind: 'wanted' }))}
-              onChanged={() => void load()}
-            />
+            <Suspense fallback={null}>
+              <ImportSheet
+                root={root}
+                appleReady={!!data?.apple_ready}
+                start={view.start}
+                onBack={home}
+                onOpen={(name) => setView(at({ kind: 'playlist', name }))}
+                onOpenWanted={() => setView(at({ kind: 'wanted' }))}
+                onChanged={() => void load()}
+              />
+            </Suspense>
           )}
         </motion.div>
       </AnimatePresence>

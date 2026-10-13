@@ -57,9 +57,11 @@ impl Http {
         let dir = crate::paths::app_data_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let conn = Connection::open(dir.join("cache.sqlite")).map_err(|e| e.to_string())?;
+        conn.busy_timeout(Duration::from_secs(30))
+            .map_err(|e| e.to_string())?;
+        crate::index::use_wal(&conn).map_err(|e| e.to_string())?;
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS http (
+            "CREATE TABLE IF NOT EXISTS http (
                 url        TEXT PRIMARY KEY,
                 status     INTEGER NOT NULL,
                 body       BLOB,

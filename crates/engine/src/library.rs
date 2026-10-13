@@ -105,9 +105,44 @@ pub struct Library {
     /// This is a library's own Music folder: where an album belongs comes from its tags
     /// (written when it was built), not from rules about the folders music came from.
     pub in_library: bool,
+    /// Songs by path and by checksum, made the first time they're needed (a playlist being
+    /// read) and then shared by every read of this library.
+    pub(crate) lookup: std::sync::OnceLock<Lookup>,
+}
+
+/// Where each song is in [`Library::tracks`], by relative path and by audio checksum
+/// (upper-case hex, as playlists write it).
+#[derive(Default)]
+pub(crate) struct Lookup {
+    pub by_path: HashMap<String, usize>,
+    pub by_md5: HashMap<String, usize>,
+}
+
+/// Upper-case hex, in one allocation (a checksum per song, thousands at a time).
+pub(crate) fn hex_upper(b: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mut s = String::with_capacity(b.len() * 2);
+    for x in b {
+        s.push(DIGITS[(x >> 4) as usize] as char);
+        s.push(DIGITS[(x & 15) as usize] as char);
+    }
+    s
 }
 
 impl Library {
+    pub(crate) fn lookup(&self) -> &Lookup {
+        self.lookup.get_or_init(|| {
+            let mut look = Lookup::default();
+            for (i, t) in self.tracks.iter().enumerate() {
+                look.by_path.insert(t.path.clone(), i);
+                if let Some(m) = &t.audio_md5 {
+                    look.by_md5.insert(hex_upper(m), i);
+                }
+            }
+            look
+        })
+    }
+
     pub fn load(index: &Index) -> Result<Self> {
         let conn = index.conn();
         let mut tracks: Vec<Track> = Vec::new();
@@ -227,6 +262,7 @@ impl Library {
             pairs: crate::compare::load(index)?,
             identities: crate::enrich::load_identities(index)?,
             in_library: false,
+            lookup: Default::default(),
         })
     }
 

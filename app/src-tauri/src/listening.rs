@@ -11,9 +11,12 @@ fn open() -> Result<Connection, String> {
     let dir = engine::paths::app_data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let c = Connection::open(dir.join("listening.sqlite")).map_err(|e| e.to_string())?;
+    // Plays are written while summaries are read and the place is saved: wait for one another.
+    c.busy_timeout(std::time::Duration::from_secs(30))
+        .map_err(|e| e.to_string())?;
+    engine::index::use_wal(&c).map_err(|e| e.to_string())?;
     c.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         CREATE TABLE IF NOT EXISTS plays (
+        "CREATE TABLE IF NOT EXISTS plays (
              id INTEGER PRIMARY KEY,
              root TEXT NOT NULL,
              file TEXT NOT NULL,

@@ -1542,6 +1542,7 @@ mod tests {
             pairs: Default::default(),
             identities: Default::default(),
             in_library: false,
+            lookup: Default::default(),
         };
         let want = |t: &str| {
             Item::wanted(playlists::WantEntry {
@@ -1622,6 +1623,7 @@ mod tests {
             pairs: Default::default(),
             identities: Default::default(),
             in_library: false,
+            lookup: Default::default(),
         }
     }
 
