@@ -33,11 +33,11 @@ Everything asked for on 2026-10-13, in working order. Ticked when built **and** 
 - [ ] General review of industry-standard behaviours (hover/press/focus everywhere, consistent click targets, context menus, keyboard).
 
 ## Added 2026-10-13 (round 3)
-- [ ] Settings (and Playlists): scrolling, the side menu slid under the pinned bar and showed through it.
-- [ ] Accents still clash with the glass theme (an orange accent over a teal-violet backdrop): calmer album accents, follow what's playing rather than what's hovered, and use the accent for fewer things.
-- [ ] Mini player: retro versions (Neo-Tokyo capsule, Sync Ratio meter, Skin '99 LCD).
-- [ ] Skin '99's spectrum analyser from real audio (engine computes band levels).
-- [ ] Layer Zero's red-static shadow, behind the player bar.
-- [ ] Continue the spacing / button-placement pass on every screen.
-- [ ] Every window size: the player bar's right group spilled over the controls; the quality badge needs a better home; set a sensible minimum window size and check each place at it.
-- [ ] Focus rings: a global radius on :focus-visible squared the round play button.
+- [x] Settings (and Playlists): scrolling, the side menu slid under the pinned bar and showed through it.
+- [x] Accents still clash with the glass theme (an orange accent over a teal-violet backdrop): calmer album accents, follow what's playing rather than what's hovered, and use the accent for fewer things.
+- [x] Mini player: retro versions (Neo-Tokyo capsule, Sync Ratio meter, Skin '99 LCD).
+- [x] Skin '99's spectrum analyser from real audio (engine computes band levels).
+- [x] Layer Zero's red-static shadow, behind the player bar.
+- [x] Continue the spacing / button-placement pass on every screen (all places checked at 960x620, 1280 and 1920 wide).
+- [x] Every window size: the player bar's right group spilled over the controls; the quality badge needs a better home; set a sensible minimum window size and check each place at it.
+- [x] Focus rings: a global radius on :focus-visible squared the round play button.

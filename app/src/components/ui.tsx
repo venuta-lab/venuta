@@ -140,7 +140,7 @@ export function InBar({ children }: { children: ReactNode }) {
 }
 
 /** Every place's width: content lines up on one left edge across the whole app. */
-const PAGE = 'mx-auto w-full max-w-[1180px]'
+const PAGE = 'mx-auto w-full max-w-[1440px]'
 
 /**
  * The frame of a place. Its title and line, then a bar that pins to the top as you scroll

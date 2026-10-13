@@ -315,3 +315,11 @@ kbd {
     animation: none;
   }
 }
+
+/* A short window: the rail's places tighten so all of them fit without crowding. */
+@media (max-height: 720px) {
+  .rail-item {
+    padding-block: 6px;
+    gap: 2px;
+  }
+}
