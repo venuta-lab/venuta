@@ -262,7 +262,7 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
 export function SignalPath(props: { signal: Signal | null }) {
   const s = props.signal
   const [check, setCheck] = useState<{ state: 'running' } | { state: 'done'; v: Verification } | { state: 'error'; message: string } | null>(null)
-  if (!s) return <p className="text-ink/55">Play something to see where the sound goes.</p>
+  if (!s) return <p className="text-ink/55">Press play to see each step the sound takes, from the file to your speakers.</p>
   const out = s.output
   const khz = (r: number) => `${r % 1000 ? (r / 1000).toFixed(1) : r / 1000} kHz`
   const channels = s.source.channels === 1 ? 'mono' : s.source.channels === 2 ? 'stereo' : `${s.source.channels} channels`
@@ -439,7 +439,13 @@ export function NowPlayingBar(props: {
           transition={spring}
           className="glass relative z-30 mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] items-center gap-6 rounded-[22px] px-4 py-3"
         >
-          <div className="flex min-w-0 items-center gap-3">
+          {/* Shown large in Now Playing while that is open, so it steps aside here. */}
+          <motion.div
+            animate={{ opacity: props.expanded ? 0 : 1, x: props.expanded ? -8 : 0 }}
+            transition={{ duration: 0.2 }}
+            className={`flex min-w-0 items-center gap-3 ${props.expanded ? 'pointer-events-none' : ''}`}
+            aria-hidden={props.expanded}
+          >
             <button
               onClick={props.onExpand}
               aria-label="Open Now Playing"
@@ -469,7 +475,7 @@ export function NowPlayingBar(props: {
                   : song.album_artist}
               </div>
             </div>
-          </div>
+          </motion.div>
 
           <div className="flex min-w-0 flex-col items-center gap-1">
             <div className="flex items-center gap-2">

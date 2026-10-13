@@ -132,19 +132,11 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
   const ready = albums.filter((a) => a.action.kind === 'migrate')
 
   return (
-    <div className="mx-auto max-w-[980px] pb-20">
-      <header className="pt-6">
-        <h1 className="text-[44px] font-semibold leading-none tracking-[-0.035em]">Incoming</h1>
-        <p className="mt-4 max-w-[66ch] text-[15px] leading-relaxed text-ink/70">
-          Drop albums anywhere on this window. They are copied into {view?.folder ?? 'Incoming'} and planned with your
-          rules. Nothing reaches your library until you import it.
-        </p>
-      </header>
-
+    <div className="pb-20">
       <motion.div
         animate={{ scale: dragging ? 1.015 : 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 24 }}
-        className="glass mt-6 grid place-items-center rounded-3xl border-dashed px-6 py-10 text-center"
+        className="glass grid place-items-center rounded-3xl border-dashed px-6 py-10 text-center"
         style={{
           borderStyle: 'dashed',
           borderWidth: 1.5,
@@ -158,9 +150,11 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
         >
           <IconIncoming />
         </div>
-        <div className="mt-3 text-[15px]">{dragging ? 'Let go to add these' : 'Drop album folders or files here'}</div>
-        <div className="mt-1 text-[12.5px] text-ink/50">
-          {albums.length ? `${albums.length} albums waiting` : 'Nothing waiting yet'}
+        <div className="mt-3 text-[15px] font-medium">{dragging ? 'Let go to add these' : 'Drop album folders or files anywhere on this window'}</div>
+        <div className="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink/55">
+          {albums.length
+            ? `${albums.length} albums waiting.`
+            : `They are copied into ${view?.folder ?? 'Add music here'} and planned with your rules. Nothing reaches your library until you import it.`}
         </div>
       </motion.div>
 

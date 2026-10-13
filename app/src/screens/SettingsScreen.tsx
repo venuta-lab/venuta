@@ -12,15 +12,15 @@ import {
   type Settings,
 } from '../lib/engine'
 import { ACCENTS, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
+import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
-type Page = 'look' | 'folders' | 'online' | 'players' | 'safety' | 'about'
+type Page = 'look' | 'folders' | 'online' | 'safety' | 'about'
 const PAGES: { id: Page; label: string }[] = [
   { id: 'look', label: 'Look and feel' },
   { id: 'folders', label: 'Music folders' },
   { id: 'online', label: 'Online sources' },
-  { id: 'players', label: 'Players' },
   { id: 'safety', label: 'Safety and undo' },
   { id: 'about', label: 'About' },
 ]
@@ -36,10 +36,10 @@ export function SettingsScreen(props: {
 }) {
   const [page, setPage] = useState<Page>(props.page ?? 'look')
   return (
-    <div className="mx-auto flex h-full max-w-[1040px] gap-6 pb-8 pt-6">
-      <aside className="w-[220px] shrink-0">
-        <h1 className="text-[34px] font-semibold tracking-[-0.03em]">Settings</h1>
-        <nav aria-label="Settings sections" className="mt-5 grid gap-0.5">
+    <Frame title="Settings" line="Set up once: how it looks, where your music lives, and where details come from.">
+      <div className="flex items-start gap-6">
+      <aside className="sticky top-4 w-[220px] shrink-0">
+        <nav aria-label="Settings sections" className="grid gap-0.5">
           {PAGES.map((p) => (
             <button
               key={p.id}
@@ -59,7 +59,13 @@ export function SettingsScreen(props: {
           ))}
         </nav>
       </aside>
-      <main className="glass no-scrollbar min-w-0 flex-1 overflow-y-auto rounded-[24px] px-7 py-6">
+      <motion.section
+        key={page}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="glass min-w-0 flex-1 rounded-[24px] px-7 py-6"
+      >
         {page === 'look' && <LookAndFeel />}
         {page === 'folders' && (
           <Folders
@@ -72,11 +78,11 @@ export function SettingsScreen(props: {
           />
         )}
         {page === 'online' && <Online />}
-        {page === 'players' && <Players />}
         {page === 'safety' && <Safety />}
         {page === 'about' && <About />}
-      </main>
-    </div>
+      </motion.section>
+      </div>
+    </Frame>
   )
 }
 
@@ -98,32 +104,7 @@ function Segmented<T extends string>(props: {
   options: { value: T; label: string; disabled?: boolean }[]
   onChange: (v: T) => void
 }) {
-  return (
-    <div role="radiogroup" className="inline-flex rounded-full bg-ink/[0.07] p-1">
-      {props.options.map((o) => {
-        const on = o.value === props.value
-        return (
-          <button
-            key={o.value}
-            role="radio"
-            aria-checked={on}
-            disabled={o.disabled}
-            onClick={() => props.onChange(o.value)}
-            className={`relative rounded-full px-3.5 py-1.5 text-[12.5px] disabled:opacity-35 ${on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-          >
-            {on && (
-              <motion.span
-                layoutId={`seg-${props.id}`}
-                transition={spring}
-                className="absolute inset-0 rounded-full bg-ink/[0.14] shadow-sm"
-              />
-            )}
-            <span className="relative">{o.label}</span>
-          </button>
-        )
-      })}
-    </div>
-  )
+  return <Choice label={props.id} value={props.value} options={props.options} onChange={props.onChange} size="sm" />
 }
 
 function LookAndFeel() {
@@ -195,15 +176,7 @@ function LookAndFeel() {
         </div>
       </Row>
       <Row title="Album background" hint="The blurred artwork behind everything. Not shown with Solid or AMOLED.">
-        <Segmented
-          id="backdrop"
-          value={p.backdrop ? 'on' : 'off'}
-          onChange={(v) => set({ backdrop: v === 'on' })}
-          options={[
-            { value: 'on', label: 'On' },
-            { value: 'off', label: 'Off' },
-          ]}
-        />
+        <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
       </Row>
       <Row title="Motion" hint="Reduced keeps fades and drops springs, slides and the drifting background.">
         <Segmented
@@ -392,28 +365,24 @@ function Online() {
         ] as const
       ).map(([key, title, hint]) => (
         <Row key={key} title={title} hint={hint}>
-          <Segmented
-            id={`source-${key}`}
-            value={(s?.sources?.[key] ?? true) ? 'on' : 'off'}
-            onChange={(v) =>
+          <Switch
+            label={title}
+            on={s?.sources?.[key] ?? true}
+            onChange={(on) =>
               save({
                 sources: {
                   musicbrainz: s?.sources?.musicbrainz ?? true,
                   apple: s?.sources?.apple ?? true,
                   deezer: s?.sources?.deezer ?? true,
                   lrclib: s?.sources?.lrclib ?? true,
-                  [key]: v === 'on',
+                  [key]: on,
                 },
               })
             }
-            options={[
-              { value: 'on', label: 'On' },
-              { value: 'off', label: 'Off' },
-            ]}
           />
         </Row>
       ))}
-      <h3 className="mt-6 text-[15px] font-medium">Optional keys</h3>
+      <h3 className="mt-8 text-[15px] font-semibold">Optional keys</h3>
       <KeyField
         id="acoustid"
         title="AcoustID"
@@ -444,18 +413,6 @@ function Online() {
   )
 }
 
-function Players() {
-  return (
-    <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Players</h2>
-      <p className="mt-2 max-w-[62ch] text-[13.5px] leading-relaxed text-ink/65">
-        Each card is written for the player that reads it: Poweramp, Snowsky Disc, Echo Mini or Astell&amp;Kern. The
-        profiles and the player test are set up from Devices when you connect a card.
-      </p>
-    </div>
-  )
-}
-
 function Safety() {
   const { s, save, saved } = useSettings()
   return (
@@ -465,17 +422,9 @@ function Safety() {
         title="I have a backup of my music"
         hint="Editing tags or ratings changes your music files (safely, and each change can be undone). This confirms you have a copy elsewhere."
       >
-        <Segmented
-          id="backup"
-          value={s?.backup_confirmed ? 'yes' : 'no'}
-          onChange={(v) => save({ backup_confirmed: v === 'yes' })}
-          options={[
-            { value: 'yes', label: 'Yes' },
-            { value: 'no', label: 'Not yet' },
-          ]}
-        />
+        <Switch label="I have a backup of my music" on={!!s?.backup_confirmed} onChange={(on) => save({ backup_confirmed: on })} />
       </Row>
-      <Row title="Nothing is ever deleted" hint="Duplicates and removed playlists are set aside in _Quarantine, and every change is recorded in Activity, where it can be undone." >
+      <Row title="Nothing is ever deleted" hint="Duplicates and removed playlists go to the Set aside folder beside your music, and every change is recorded in Activity, where it can be undone.">
         <span />
       </Row>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}

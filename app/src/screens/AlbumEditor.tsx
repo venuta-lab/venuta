@@ -131,7 +131,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
       <div className="absolute inset-0 bg-black/45 backdrop-blur-md" />
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="glass relative flex max-h-full w-full max-w-[1120px] flex-col overflow-hidden rounded-[28px]"
+        className="popover relative flex max-h-full w-full max-w-[1120px] flex-col overflow-hidden rounded-[28px]"
         initial={{ y: 30, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 20, opacity: 0 }}
@@ -254,7 +254,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
               exit={{ opacity: 0 }}
               className="absolute inset-0 grid place-items-center bg-black/55 p-8 backdrop-blur-sm"
             >
-              <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} className="glass max-w-[460px] rounded-3xl p-7">
+              <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} className="popover max-w-[460px] rounded-3xl p-7">
                 <h3 className="text-[20px] font-semibold">Before your first edit</h3>
                 <p className="mt-3 text-[14px] leading-relaxed text-ink/70">
                   Edits change your music files. Every change is checked so the audio is never touched, and each one

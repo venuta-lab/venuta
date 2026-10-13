@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { FIELD_NAMES, tidyUndo, undoRun, type AlbumView, type ApplyReport, type Decision, type Run } from '../lib/engine'
 import { setAccent, useCovers } from '../lib/covers'
 import { IconChevron } from './Icons'
+import { when } from '../lib/format'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 
@@ -171,14 +172,16 @@ export function BuildResult(props: { report: ApplyReport; onDismiss: () => void 
 export function RunRow(props: { run: Run; onUndone: () => void }) {
   const [state, setState] = useState<'idle' | 'confirm' | 'working'>('idle')
   const [open, setOpen] = useState(false)
-  const when = new Date(props.run.started_ms).toLocaleString()
   const failed = props.run.failed ?? []
   const tidy = props.run.kind === 'tidy'
   return (
     <div className="glass rounded-2xl px-5 py-3 text-[13.5px]">
     <div className="flex items-center gap-4">
       <div className="min-w-0 flex-1">
-        <div>{when}</div>
+        <div className="font-medium">
+          {tidy ? 'Tidied your library' : 'Built your library'}
+          <span className="font-normal text-ink/50">, {when(props.run.started_ms)}</span>
+        </div>
         <div className="truncate text-[12px] text-ink/50">
           {tidy
             ? `${props.run.files.toLocaleString()} changes in ${props.run.target} (renamed or updated in place)`
@@ -204,11 +207,11 @@ export function RunRow(props: { run: Run; onUndone: () => void }) {
               else await undoRun(props.run.journal)
               props.onUndone()
             }}
-            className="rounded-full bg-[color-mix(in_oklab,var(--color-problem)_30%,transparent)] px-3 py-1.5"
+            className="btn btn-sm bg-[color-mix(in_oklab,var(--color-problem)_26%,transparent)] hover:bg-[color-mix(in_oklab,var(--color-problem)_36%,transparent)]"
           >
             {tidy ? 'Undo tidy' : 'Undo build'}
           </button>
-          <button onClick={() => setState('idle')} className="rounded-full px-3 py-1.5 text-ink/60 hover:bg-ink/10">
+          <button onClick={() => setState('idle')} className="btn-ghost btn-sm">
             Keep
           </button>
         </>
@@ -216,9 +219,9 @@ export function RunRow(props: { run: Run; onUndone: () => void }) {
         <button
           disabled={state === 'working'}
           onClick={() => setState('confirm')}
-          className="rounded-full px-3 py-1.5 text-ink/70 hover:bg-ink/10"
+          className="btn btn-sm"
         >
-          {state === 'working' ? 'Undoing…' : 'Undo…'}
+          {state === 'working' ? 'Undoing…' : 'Undo'}
         </button>
       )}
     </div>

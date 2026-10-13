@@ -86,7 +86,7 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
     <AnimatePresence>
       {props.open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[12vh]"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-[var(--scrim)] pt-[12vh]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -122,7 +122,7 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
               />
               <kbd>Esc</kbd>
             </div>
-            <div ref={list} id="palette-list" role="listbox" className="no-scrollbar max-h-[56vh] overflow-y-auto p-2">
+            <div ref={list} id="palette-list" role="listbox" className="no-scrollbar fade-y max-h-[56vh] overflow-y-auto p-2">
               {results.length === 0 && (
                 <p className="px-4 py-8 text-center text-[13.5px] text-ink/50">Nothing matches “{q}”.</p>
               )}

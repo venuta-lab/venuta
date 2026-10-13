@@ -23,6 +23,7 @@ import {
 } from '../lib/engine'
 import { PillButton } from './LibraryScreen'
 import { IconCards } from '../components/Icons'
+import { Page } from '../components/ui'
 import { track } from '../lib/jobs'
 
 const PLAYER_NAMES: Record<PlayerId, string> = {
@@ -107,15 +108,10 @@ export function CardsScreen({ root }: { root: string }) {
   const blank = cards.filter((c) => !c.card)
 
   return (
-    <div className="mx-auto max-w-[980px] pb-20">
-      <header className="pt-6">
-        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Devices</h1>
-        <p className="mt-4 max-w-[66ch] text-[15px] leading-relaxed text-ink/70">
-          Each SD card carries your library, written for the player that reads it. Only changes are written: new music
-          is copied, edited tags are updated in place, and music already on a card is recognised and moved instead of
-          copied again. Files this app didn’t put on a card are never touched.
-        </p>
-      </header>
+    <Page
+      title="Devices"
+      line="Each SD card carries your library, written for the player that reads it. Only changes are written, and files this app didn’t put on a card are never touched."
+    >
       {message && (
         <p className="mt-4 cursor-pointer text-[13.5px] text-ink/80" onClick={() => setMessage('')}>
           {message}
@@ -124,11 +120,11 @@ export function CardsScreen({ root }: { root: string }) {
 
       {!inApp() && <p className="mt-8 text-[14px] text-ink/55">Cards are detected by the desktop app.</p>}
       {inApp() && cards.length === 0 && (
-        <div className="glass mt-8 grid place-items-center rounded-3xl px-6 py-12 text-center">
+        <div className="glass grid place-items-center rounded-3xl px-6 py-12 text-center">
           <div className="grid h-12 w-12 place-items-center rounded-2xl" style={{ background: 'color-mix(in oklab, var(--accent) 28%, transparent)' }}>
             <IconCards />
           </div>
-          <p className="mt-3 text-[15px]">Insert an SD card</p>
+          <p className="mt-3 text-[15px] font-medium">Insert an SD card</p>
           <p className="mt-1 text-[12.5px] text-ink/50">It appears here within a few seconds.</p>
         </div>
       )}
@@ -161,7 +157,7 @@ export function CardsScreen({ root }: { root: string }) {
           </div>
         </section>
       )}
-    </div>
+    </Page>
   )
 }
 

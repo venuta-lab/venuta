@@ -1,167 +1,199 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { forwardRef, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AlbumSummary, HealthReport } from '../lib/engine'
 import { AlbumEditor } from './AlbumEditor'
 import { setAccent, useCovers } from '../lib/covers'
 import { IconSearch } from '../components/Icons'
 import { Bar } from '../components/Activity'
+import { Chip, Page } from '../components/ui'
 import { counted, fraction, timeLeft, useJob, useNow } from '../lib/jobs'
-
-const spring = { type: 'spring', stiffness: 300, damping: 30 } as const
-
-/** "01_Indian_Film_Music/…" → "Indian Film Music": your own top-level folders as filters. */
-function shelfOf(dir: string): string {
-  const top = dir.split('/')[0] ?? ''
-  return top.replace(/^\d+[_\s-]*/, '').replace(/_/g, ' ').trim() || 'Other'
-}
 
 const fmtNum = (n: number) => n.toLocaleString('en-IN')
 
-/** Your albums as a wall of covers, with search and filters. */
-export const MusicWall = forwardRef<HTMLInputElement, { root: string; report: HealthReport | null; busy: string }>(
-  function MusicWall({ root, report, busy }, searchRef) {
-    const cover = useCovers(320)
-    const making = !!useJob('covers')
-    const [query, setQuery] = useState('')
-    const [shelf, setShelf] = useState<string>('all')
-    const [selected, setSelected] = useState<AlbumSummary | null>(null)
-    const albums = useMemo(() => report?.albums ?? [], [report])
+/**
+ * The details an album can be missing, from the health report's findings. (Volume levelling
+ * is measured from the sound by Health's quality check, not written in, so it isn't here.)
+ */
+const GAPS: { issue: string; label: string }[] = [
+  { issue: 'missing_album_artist', label: 'Album artist' },
+  { issue: 'missing_genre', label: 'Genre' },
+  { issue: 'missing_composer', label: 'Composer' },
+  { issue: 'no_lyrics', label: 'Synced lyrics' },
+  { issue: 'art_small', label: 'Sharp cover' },
+]
+const ROW = 'grid grid-cols-[48px_minmax(0,1.3fr)_56px_minmax(0,1.7fr)_16px] items-center gap-4 px-2'
+const NEEDS = 'needs'
 
-    const shelves = useMemo(() => {
-      const m = new Map<string, number>()
-      for (const a of albums) m.set(shelfOf(a.dir), (m.get(shelfOf(a.dir)) ?? 0) + 1)
-      return [...m.entries()].sort((a, b) => b[1] - a[1])
-    }, [albums])
-
-    const shown = useMemo(() => {
-      const q = query.trim().toLowerCase()
-      return albums
-        .filter((a) => shelf === 'all' || shelfOf(a.dir) === shelf)
-        .filter((a) => !q || `${a.title} ${a.album_artist} ${a.year ?? ''}`.toLowerCase().includes(q))
-        .sort((a, b) => a.title.localeCompare(b.title))
-    }, [albums, query, shelf])
-
-    const chip = (id: string, label: string, count: number) => (
-      <button
-        key={id}
-        onClick={() => setShelf(id)}
-        aria-pressed={shelf === id}
-        className={`relative shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] ${shelf === id ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-      >
-        {shelf === id && (
-          <motion.span
-            layoutId="shelf-pill"
-            transition={spring}
-            className="absolute inset-0 rounded-full"
-            style={{ background: 'color-mix(in oklab, var(--accent) 26%, color-mix(in oklab, var(--ink) 6%, transparent))' }}
-          />
-        )}
-        <span className="relative">
-          {label} <span className="text-ink/45">{fmtNum(count)}</span>
-        </span>
-      </button>
-    )
-
-    return (
-      <div className="pb-16">
-        <div className="sticky top-0 z-10 -mx-2 px-2 pb-3 pt-1">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="glass flex min-w-[240px] flex-1 items-center gap-2 rounded-full px-4">
-              <IconSearch className="shrink-0 text-ink/45" />
-              <input
-                ref={searchRef}
-                id="music-search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Escape' && (setQuery(''), (e.target as HTMLInputElement).blur())}
-                placeholder="Search albums, artists, years"
-                className="min-w-0 flex-1 bg-transparent py-2.5 text-[14px] text-ink outline-none placeholder:text-ink/45"
-              />
-              <kbd>/</kbd>
-            </div>
-          </div>
-          {albums.length > 0 && (
-            <div className="no-scrollbar mt-3 flex gap-1 overflow-x-auto">
-              {chip('all', 'All', albums.length)}
-              {shelves.map(([s, n]) => chip(s, s, n))}
-            </div>
-          )}
-        </div>
-
-        {!report && <Reading busy={busy} />}
-        {report && shown.length === 0 && (
-          <p className="py-20 text-center text-[14px] text-ink/55">No albums match “{query}”.</p>
-        )}
-
-        <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-x-5 gap-y-7">
-          {shown.map((a) => {
-            const c = cover(a.dir)
-            return (
-              <motion.button
-                key={a.dir}
-                onClick={() => {
-                  setAccent(c?.accent)
-                  setSelected(a)
-                }}
-                onHoverStart={() => setAccent(c?.accent)}
-                whileHover={{ y: -6 }}
-                transition={spring}
-                className="group relative text-left"
-              >
-                <motion.div
-                  layoutId={`cover-${a.dir}`}
-                  className="aspect-square overflow-hidden rounded-2xl bg-ink/[0.06] shadow-xl shadow-black/30"
-                >
-                  {c ? (
-                    <CoverImage src={c.src} title={a.title} />
-                  ) : making && a.cover_track ? (
-                    <div className="shimmer h-full w-full" />
-                  ) : (
-                    <NoCover title={a.title} />
-                  )}
-                </motion.div>
-                <div className="mt-2.5 truncate text-[14px] font-medium">{a.title}</div>
-                <div className="truncate text-[12.5px] text-ink/55">
-                  {a.album_artist || (a.untagged ? 'No tags yet' : 'Unknown artist')}
-                  {a.year ? `, ${a.year}` : ''}
-                </div>
-              </motion.button>
-            )
-          })}
-        </div>
-
-        {createPortal(
-          <AnimatePresence>
-            {selected && (
-              <AlbumEditor root={root} album={selected} src={cover(selected.dir)?.src} onClose={() => setSelected(null)} />
-            )}
-          </AnimatePresence>,
-          document.body,
-        )}
-      </div>
-    )
-  },
-)
-
-/** Music: every album, to find, play, edit and rate. */
-export function MusicScreen(props: {
+/**
+ * Metadata: every album as a row with what it is missing, to find the ones that need work and
+ * open them in the editor. Music is the place to browse and play; this is the workbench.
+ */
+export function MusicScreen({
+  root,
+  report,
+  busy,
+  searchRef,
+}: {
   root: string
   report: HealthReport | null
   busy: string
   searchRef: React.Ref<HTMLInputElement>
 }) {
-  const s = props.report?.summary
+  const cover = useCovers(320)
+  const making = !!useJob('covers')
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<string>('all')
+  const [selected, setSelected] = useState<AlbumSummary | null>(null)
+  const albums = useMemo(() => report?.albums ?? [], [report])
+
+  // Which details each album lacks.
+  const gaps = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const g of GAPS) {
+      const issue = report?.issues.find((i) => i.id === g.issue)
+      for (const dir of issue?.albums ?? []) m.set(dir, [...(m.get(dir) ?? []), g.label])
+    }
+    return m
+  }, [report])
+  const counts = useMemo(
+    () => GAPS.map((g) => ({ ...g, n: report?.issues.find((i) => i.id === g.issue)?.albums.length ?? 0 })).filter((g) => g.n > 0),
+    [report],
+  )
+  const needs = (a: AlbumSummary) => !!a.untagged || (gaps.get(a.dir)?.length ?? 0) > 0
+  const needing = albums.filter(needs).length
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return albums
+      .filter((a) =>
+        filter === 'all'
+          ? true
+          : filter === NEEDS
+            ? !!a.untagged || (gaps.get(a.dir)?.length ?? 0) > 0
+            : (gaps.get(a.dir) ?? []).includes(filter),
+      )
+      .filter((a) => !q || `${a.title} ${a.album_artist} ${a.year ?? ''}`.toLowerCase().includes(q))
+      .sort((a, b) => a.title.localeCompare(b.title))
+  }, [albums, query, filter, gaps])
+
+  const s = report?.summary
   return (
-    <div className="mx-auto max-w-[1180px]">
-      <header className="pb-4 pt-6">
-        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Metadata</h1>
-        <p className="mt-2.5 text-[14px] text-ink/60">
-          {s ? `${fmtNum(s.albums)} albums, ${fmtNum(s.tracks)} songs` : props.busy || 'Reading your music…'}
-        </p>
-      </header>
-      <MusicWall ref={props.searchRef} root={props.root} report={props.report} busy={props.busy} />
-    </div>
+    <Page
+      title="Metadata"
+      line={
+        s
+          ? `${fmtNum(s.albums)} albums, ${fmtNum(s.tracks)} songs. ${needing ? `${fmtNum(needing)} could use more details; open one to edit it.` : 'Every album has its details.'}`
+          : busy || 'Reading your music…'
+      }
+      bar={
+        <div className="flex min-w-[240px] max-w-[420px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
+          <IconSearch className="shrink-0 text-ink/45" />
+          <input
+            ref={searchRef}
+            id="music-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && (setQuery(''), (e.target as HTMLInputElement).blur())}
+            placeholder="Search albums, artists, years"
+            className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45"
+          />
+          <kbd>/</kbd>
+        </div>
+      }
+      under={
+        albums.length > 0 && (
+          <>
+          <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+            <Chip group="meta-filter" on={filter === 'all'} label="All" count={albums.length} onClick={() => setFilter('all')} />
+            <Chip group="meta-filter" on={filter === NEEDS} label="Needs details" count={needing} onClick={() => setFilter(NEEDS)} />
+            {counts.map((g) => (
+              <Chip
+                key={g.issue}
+                group="meta-filter"
+                on={filter === g.label}
+                label={`No ${g.label.toLowerCase()}`}
+                count={g.n}
+                onClick={() => setFilter(g.label)}
+              />
+            ))}
+          </div>
+          {shown.length > 0 && (
+            <div className={`${ROW} mt-2 border-b border-edge pb-1.5 text-[12px] text-ink/55`}>
+              <span />
+              <span>Album</span>
+              <span>Year</span>
+              <span>Missing</span>
+              <span />
+            </div>
+          )}
+          </>
+        )
+      }
+    >
+      {!report && <Reading busy={busy} />}
+      {report && shown.length === 0 && (
+        <p className="py-20 text-center text-[14px] text-ink/55">{query ? `No albums match “${query}”.` : 'None: every album has this.'}</p>
+      )}
+      {shown.length > 0 && (
+        <div role="list" className="grid gap-0.5">
+          {shown.map((a) => {
+            const c = cover(a.dir)
+            const missing = gaps.get(a.dir) ?? []
+            return (
+              <button
+                key={a.dir}
+                role="listitem"
+                onClick={() => {
+                  setAccent(c?.accent)
+                  setSelected(a)
+                }}
+                onMouseEnter={() => setAccent(c?.accent)}
+                className={`group ${ROW} rounded-2xl py-2 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07]`}
+              >
+                <motion.div layoutId={`cover-${a.dir}`} className="h-12 w-12 overflow-hidden rounded-[10px] bg-ink/[0.06] shadow-md shadow-black/25">
+                  {c ? (
+                    <CoverImage src={c.src} title={a.title} />
+                  ) : making && a.cover_track ? (
+                    <div className="shimmer h-full w-full" />
+                  ) : (
+                    <NoCover title={a.title} small />
+                  )}
+                </motion.div>
+                <span className="min-w-0">
+                  <span className="block truncate text-[14px] font-medium">{a.title}</span>
+                  <span className="block truncate text-[12.5px] text-ink/55">{a.album_artist || (a.untagged ? 'No tags yet' : 'Unknown artist')}</span>
+                </span>
+                <span className="text-[13px] tabular-nums text-ink/55">{a.year ?? ''}</span>
+                <span className="flex h-[22px] min-w-0 flex-wrap gap-1.5 overflow-hidden">
+                  {a.untagged ? (
+                    <span className="rounded-full bg-problem/15 px-2 py-0.5 text-[11.5px] text-problem">No tags</span>
+                  ) : missing.length ? (
+                    missing.map((m) => (
+                      <span key={m} className="rounded-full bg-ink/[0.07] px-2 py-0.5 text-[11.5px] text-ink/65">
+                        {m}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="py-0.5 text-[12px] text-good">Nothing</span>
+                  )}
+                </span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-ink/30 transition-colors group-hover:text-ink/70" aria-hidden>
+                  <path d="m9 6 6 6-6 6" />
+                </svg>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {createPortal(
+        <AnimatePresence>
+          {selected && <AlbumEditor root={root} album={selected} src={cover(selected.dir)?.src} onClose={() => setSelected(null)} />}
+        </AnimatePresence>,
+        document.body,
+      )}
+    </Page>
   )
 }
 
@@ -220,16 +252,16 @@ export function CoverImage({ src, title }: { src: string; title: string }) {
 }
 
 /** A cover for albums without art: the first letters on a soft tint of the accent. */
-export function NoCover({ title }: { title: string }) {
+export function NoCover({ title, small = false }: { title: string; small?: boolean }) {
   const letters = title
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((w) => /^\p{L}/u.test(w))
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase())
     .join('')
   return (
     <div
-      className="grid h-full w-full place-items-center text-[38px] font-semibold tracking-[-0.03em] text-ink/45"
+      className={`grid h-full w-full place-items-center font-semibold tracking-[-0.03em] text-ink/45 ${small ? 'text-[15px]' : 'text-[38px]'}`}
       style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 22%, transparent), color-mix(in oklab, var(--ink) 4%, transparent))' }}
     >
       {letters || '♪'}

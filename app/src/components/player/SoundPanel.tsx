@@ -1,8 +1,7 @@
-import { motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { setSleep, setSound, setStopAfter, usePlayer, SOUND_OFF, type Sound } from '../../lib/player'
+import { Segmented as Choice, Switch } from '../ui'
 
-const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 const BAND_LABELS = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k']
 
 /** Equalizer starting points; any slider moved makes it "Custom". */
@@ -17,37 +16,8 @@ const PRESETS: [string, number[]][] = [
   ['Acoustic', [3, 3, 2, 1, 1, 1, 2, 2, 2, 1]],
 ]
 
-function Switch(props: { on: boolean; onChange: (on: boolean) => void; label: string }) {
-  return (
-    <button
-      role="switch"
-      aria-checked={props.on}
-      aria-label={props.label}
-      onClick={() => props.onChange(!props.on)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${props.on ? 'bg-accent' : 'bg-ink/20'}`}
-    >
-      <motion.span layout transition={spring} className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow ${props.on ? 'right-0.5' : 'left-0.5'}`} />
-    </button>
-  )
-}
-
 function Segmented<T extends string>(props: { value: T; options: [T, string][]; onChange: (v: T) => void; name: string }) {
-  return (
-    <div role="radiogroup" aria-label={props.name} className="inline-flex flex-wrap rounded-full bg-ink/[0.08] p-1">
-      {props.options.map(([id, label]) => (
-        <button
-          key={id}
-          role="radio"
-          aria-checked={props.value === id}
-          onClick={() => props.onChange(id)}
-          className={`relative rounded-full px-3 py-1 text-[12px] ${props.value === id ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-        >
-          {props.value === id && <motion.span layoutId={`seg-${props.name}`} transition={spring} className="absolute inset-0 rounded-full bg-ink/[0.14]" />}
-          <span className="relative">{label}</span>
-        </button>
-      ))}
-    </div>
-  )
+  return <Choice label={props.name} value={props.value} options={props.options.map(([value, label]) => ({ value, label }))} onChange={props.onChange} size="sm" />
 }
 
 /** A dB slider: -12 to +12, double-click to reset. */
@@ -239,7 +209,7 @@ export function SoundPanel() {
         </label>
       </Card>
 
-      <button onClick={() => change(SOUND_OFF)} className="justify-self-start rounded-full px-3 py-1.5 text-[12.5px] text-ink/60 hover:bg-ink/10 hover:text-ink">
+      <button onClick={() => change(SOUND_OFF)} className="btn-ghost btn-sm justify-self-start">
         Turn everything off (bit-perfect)
       </button>
     </div>

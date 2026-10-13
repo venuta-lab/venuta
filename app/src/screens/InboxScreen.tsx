@@ -20,6 +20,7 @@ import { AlbumRow, BuildResult } from '../components/AlbumRow'
 import { IconChevron } from '../components/Icons'
 import { DeepProgressBar } from './LibraryScreen'
 import { IncomingScreen } from './IncomingScreen'
+import { Page, Segmented } from '../components/ui'
 import { LibraryTidy } from './LibraryTidy'
 import { ArtistNames } from '../components/ArtistNames'
 import { track, useJob } from '../lib/jobs'
@@ -144,41 +145,31 @@ export function InboxScreen(props: {
     : 'Working out what each album should look like…'
 
   return (
-    <div className="mx-auto max-w-[1080px] pb-40">
-      <header className="flex flex-wrap items-end gap-6 pb-4 pt-6">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Organize</h1>
-          <p className="mt-2.5 text-[14px] text-ink/60">{summary}</p>
-        </div>
-        {tab === 'library' && questions.length > 0 && (
-          <button
-            onClick={() => void acceptAll()}
-            disabled={saving}
-            className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-on-accent disabled:opacity-50"
-          >
+    <Page
+      title="Organize"
+      line={summary}
+      className="pb-40"
+      actions={
+        tab === 'library' &&
+        questions.length > 0 && (
+          <button onClick={() => void acceptAll()} disabled={saving} className="btn-primary btn-lg">
             Accept all recommendations <kbd className="border-black/20 bg-black/10 text-on-accent">Ctrl Enter</kbd>
           </button>
-        )}
-      </header>
-      <div role="tablist" aria-label="Organize" className="mb-5 inline-flex rounded-full bg-ink/[0.07] p-1">
-        {(
-          [
-            ['library', inLibrary ? 'Your library' : `Bringing in ${folderName(props.root)}`],
-            ['new', 'New music'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            className={`relative rounded-full px-4 py-1.5 text-[13px] ${tab === id ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-          >
-            {tab === id && <motion.span layoutId="inbox-tab" transition={spring} className="absolute inset-0 rounded-full bg-ink/[0.14]" />}
-            <span className="relative">{label}</span>
-          </button>
-        ))}
-      </div>
+        )
+      }
+      bar={
+        <Segmented
+          tabs
+          label="Organize"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'library', label: inLibrary ? 'Your library' : `Bringing in ${folderName(props.root)}` },
+            { value: 'new', label: 'New music' },
+          ]}
+        />
+      }
+    >
 
       {error && <p className="mb-4 text-[13px] text-problem">{error}</p>}
 
@@ -214,7 +205,7 @@ export function InboxScreen(props: {
           <BuildBar root={props.root} data={data} onSwitch={props.onSwitchLibrary} />
         </>
       )}
-    </div>
+    </Page>
   )
 }
 

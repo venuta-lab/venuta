@@ -9,6 +9,8 @@ import {
   type Run,
 } from '../lib/engine'
 import { RunRow } from '../components/AlbumRow'
+import { Page } from '../components/ui'
+import { when } from '../lib/format'
 
 /** What an answer was about, in words ("year:01_Hindi/…/2006_Gangster" → "Gangster: year"). */
 function describeAnswer(id: string, choice: string): { what: string; answer: string } {
@@ -68,23 +70,20 @@ export function ActivityScreen(props: { root: string }) {
   const answerList = Object.entries(answers)
   const nothing = runs?.length === 0 && edits.length === 0 && answerList.length === 0
   return (
-    <div className="mx-auto max-w-[820px] pb-16 pt-6">
-      <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Activity</h1>
-      <p className="mt-2.5 max-w-[60ch] text-[14px] text-ink/60">
-        Everything that changed, newest first. Undo puts things back exactly; your originals are never touched by a build.
-      </p>
+    <Page title="Activity" line="Everything that changed, newest first. Undo puts things back exactly; your originals are never touched by a build.">
+      <div className="max-w-[880px]">
       {nothing && <p className="py-16 text-center text-[14px] text-ink/50">Nothing yet. Builds, edits and your answers will appear here.</p>}
 
       {(runs?.length ?? 0) > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Builds</h2>
+        <section>
+          <h2 className="mb-3 text-[17px] font-semibold tracking-[-0.01em]">Builds and tidies</h2>
           <div className="grid gap-2">{runs?.map((r) => <RunRow key={r.journal} run={r} onUndone={load} />)}</div>
         </section>
       )}
 
       {edits.length > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Edits to your files</h2>
+        <section className="mt-10">
+          <h2 className="mb-3 text-[17px] font-semibold tracking-[-0.01em]">Edits to your files</h2>
           <div className="grid gap-2">
             {edits.map((e) => (
               <EditRow key={e.journal} change={e} onUndone={load} />
@@ -94,8 +93,8 @@ export function ActivityScreen(props: { root: string }) {
       )}
 
       {answerList.length > 0 && (
-        <section className="mt-8">
-          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Your answers in Organize</h2>
+        <section className="mt-10">
+          <h2 className="mb-3 text-[17px] font-semibold tracking-[-0.01em]">Your answers in Organize</h2>
           <div className="grid gap-1">
             {answerList.map(([id, choice]) => {
               const d = describeAnswer(id, choice)
@@ -108,7 +107,7 @@ export function ActivityScreen(props: { root: string }) {
                       await clearAnswerQuick(props.root, id)
                       load()
                     }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[12.5px] text-ink/60 hover:bg-ink/10"
+                    className="btn-ghost btn-sm"
                   >
                     Undo
                   </button>
@@ -116,10 +115,11 @@ export function ActivityScreen(props: { root: string }) {
               )
             })}
           </div>
-          <p className="mt-2 px-4 text-[12px] text-ink/45">Answers about artist names are kept in Settings, Artist names.</p>
+          <p className="mt-2 px-4 text-[12px] text-ink/45">Answers about artist names are kept in Organize, How artists are written.</p>
         </section>
       )}
-    </div>
+      </div>
+    </Page>
   )
 }
 
@@ -129,8 +129,9 @@ function EditRow(props: { change: EditChange; onUndone: () => void }) {
   return (
     <div className="glass flex items-center gap-4 rounded-2xl px-5 py-3 text-[13.5px]">
       <div className="min-w-0 flex-1">
-        <div>
-          {new Date(c.started_ms).toLocaleString()} · {c.files.toLocaleString()} {c.files === 1 ? 'file' : 'files'} changed
+        <div className="font-medium">
+          {c.files.toLocaleString('en-IN')} {c.files === 1 ? 'file' : 'files'} edited
+          <span className="font-normal text-ink/50">, {when(c.started_ms)}</span>
         </div>
         <div className="truncate text-[12px] text-ink/50">{c.examples.map((x) => x.split('/').pop()).join(', ')}</div>
       </div>
@@ -141,7 +142,7 @@ function EditRow(props: { change: EditChange; onUndone: () => void }) {
           await undoEdit(c.journal)
           props.onUndone()
         }}
-        className="rounded-full px-3 py-1.5 text-ink/70 hover:bg-ink/10"
+        className="btn btn-sm"
       >
         {state === 'working' ? 'Undoing…' : 'Undo'}
       </button>

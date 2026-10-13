@@ -3,9 +3,10 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, current, jumpTo, seek, sourceLabel, usePlayer, useWaveform } from '../../lib/player'
+import { clock, current, jumpTo, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
-import { SeekBar, SignalPath } from './NowPlayingBar'
+import { SignalPath } from './NowPlayingBar'
+import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
 import { Stars } from './Stars'
 
@@ -133,8 +134,6 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
   }, [open, onClose])
-  const duration = s.duration_ms || song?.duration_ms || 0
-  const wave = useWaveform(song?.path)
   return (
     <AnimatePresence>
       {open && song && (
@@ -186,58 +185,40 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
                 <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
                   {song.album}
                 </button>
-                <div className="mt-2 flex justify-center">
+                <div className="mt-3 flex justify-center">
                   <Stars path={song.path} stars={song.stars} size={18} />
                 </div>
-                <SeekBar position={s.position_ms} duration={duration} wave={wave} waveHeight={38} className="mt-6" />
-                {s.signal && (
-                  <button
-                    onClick={() => props.onPanel('signal')}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-ink/[0.07] px-3 py-1 text-[12px] text-ink/70 hover:bg-ink/[0.12]"
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${s.signal.bit_perfect ? 'bg-good' : 'bg-fix'}`} aria-hidden />
-                    {sourceLabel(s.signal.source)}, {s.signal.bit_perfect ? 'bit-perfect' : s.signal.mode === 'shared' ? 'shared mode' : 'changed on the way'}
-                  </button>
-                )}
               </div>
             </div>
 
             <div className="flex min-h-0 min-w-0 flex-col">
-              <div role="tablist" aria-label="Now Playing" className="inline-flex self-start rounded-full bg-ink/[0.08] p-1">
-                {(
-                  [
-                    ['lyrics', 'Lyrics'],
-                    ['next', 'Up next'],
-                    ['sound', 'Sound'],
-                    ['signal', 'Signal'],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    role="tab"
-                    aria-selected={props.panel === id}
-                    onClick={() => props.onPanel(id)}
-                    className={`relative rounded-full px-4 py-1.5 text-[13px] ${props.panel === id ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-                  >
-                    {props.panel === id && <motion.span layoutId="np-tab" transition={spring} className="absolute inset-0 rounded-full bg-ink/[0.14]" />}
-                    <span className="relative">{label}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="mt-4 min-h-0 flex-1 overflow-hidden">
+              <Segmented
+                tabs
+                label="Now Playing"
+                className="self-start"
+                value={props.panel}
+                onChange={props.onPanel}
+                options={[
+                  { value: 'lyrics', label: 'Lyrics' },
+                  { value: 'next', label: 'Up next' },
+                  { value: 'sound', label: 'Sound' },
+                  { value: 'signal', label: 'Signal' },
+                ]}
+              />
+              <div className="fade-y mt-3 min-h-0 flex-1 overflow-hidden">
                 {props.panel === 'lyrics' && <LyricsView lyrics={lyrics} position={s.position_ms} />}
                 {props.panel === 'next' && (
-                  <div className="h-full overflow-y-auto">
+                  <div className="thin-scroll h-full overflow-y-auto pt-3">
                     <UpNext />
                   </div>
                 )}
                 {props.panel === 'sound' && (
-                  <div className="no-scrollbar h-full overflow-y-auto">
+                  <div className="thin-scroll h-full overflow-y-auto pr-1 pt-3">
                     <SoundPanel />
                   </div>
                 )}
                 {props.panel === 'signal' && (
-                  <div className="glass rounded-2xl p-5 text-[13px]">
+                  <div className="glass mt-3 rounded-2xl p-5 text-[13px]">
                     <SignalPath signal={s.signal} />
                   </div>
                 )}

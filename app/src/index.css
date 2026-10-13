@@ -46,9 +46,14 @@
   --highlight: rgb(255 255 255 / 0.08);
   --shadow: 0 20px 50px -20px rgb(0 0 0 / 0.45);
   --blur: blur(28px) saturate(1.4);
+  /* Layers over content (bars, menus, drawers, dialogs) blur what's beneath them. */
+  --blur-over: blur(36px) saturate(1.6);
   --app-bg: transparent;
   --scrim: rgb(9 9 12 / 0.42);
-  --popover: rgb(24 22 30 / 0.94);
+  --popover: rgb(26 23 32 / 0.86);
+  /* A bar pinned over scrolling content. */
+  --bar: rgb(24 21 30 / 0.62);
+  --bar-edge: rgb(255 255 255 / 0.07);
   /* Fully opaque, for full views laid over everything (Now Playing). */
   --solid: #17151c;
   --backdrop-opacity: 1;
@@ -61,13 +66,17 @@
   --blur: blur(44px) saturate(1.6);
   --app-bg: rgb(14 12 18 / 0.5);
   --scrim: rgb(10 9 14 / 0.55);
+  --bar: rgb(22 19 28 / 0.74);
 }
 
 :root[data-surface="solid"] {
   --glass: #1c1a22;
   --edge: rgb(255 255 255 / 0.07);
   --blur: none;
+  --blur-over: none;
   --app-bg: #131117;
+  --popover: #201d27;
+  --bar: #131117;
   --backdrop-opacity: 0;
 }
 
@@ -78,15 +87,18 @@
   --highlight: transparent;
   --shadow: none;
   --blur: none;
+  --blur-over: none;
   --app-bg: #000;
-  --popover: #050505;
+  --popover: #0b0b0b;
+  --bar: #000;
+  --bar-edge: rgb(255 255 255 / 0.1);
   --backdrop-opacity: 0;
 }
 
 /* Light. The accent is darkened wherever it is used as text, so it stays readable. */
 :root[data-theme="light"] {
   --ink: #1b1822;
-  --on-accent: #ffffff;
+  --on-accent: #17141c;
   --accent-ink: color-mix(in oklab, var(--accent) 62%, #000);
   --problem: #c62828;
   --fix: #8a5a00;
@@ -98,7 +110,9 @@
   --shadow: 0 18px 44px -22px rgb(40 30 60 / 0.28);
   --app-bg: rgb(247 245 251 / 0.35);
   --scrim: rgb(250 248 253 / 0.55);
-  --popover: rgb(252 251 254 / 0.96);
+  --popover: rgb(252 251 254 / 0.84);
+  --bar: rgb(248 246 251 / 0.7);
+  --bar-edge: rgb(20 16 30 / 0.07);
   --solid: #f6f4f9;
   color-scheme: light;
 }
@@ -107,6 +121,7 @@
   --glass: rgb(255 255 255 / 0.66);
   --app-bg: rgb(247 245 251 / 0.62);
   --scrim: rgb(250 248 253 / 0.7);
+  --bar: rgb(248 246 251 / 0.8);
 }
 
 /* AMOLED is a dark-only look; in light it behaves as Solid. */
@@ -117,6 +132,7 @@
   --highlight: transparent;
   --app-bg: #f3f1f6;
   --popover: #ffffff;
+  --bar: #f3f1f6;
   --backdrop-opacity: 0;
 }
 
@@ -143,24 +159,129 @@ body {
   transition: background-color 300ms ease;
 }
 
-/* Panel: the one surface style used everywhere. */
+/*
+  Three layers, so panes read clearly when they stack:
+    .glass    a panel on the page. Only the (already blurred) backdrop is behind it, so it is
+              a tint and needs no blur of its own: cheap enough to use anywhere.
+    .bar      a bar pinned over scrolling content: blurs what slides beneath it.
+    .popover  menus, the palette, drawers and dialogs, over everything: blurred and nearly
+              opaque, so text over busy artwork stays readable.
+  Only the unprefixed backdrop-filter is written: the minifier folds a -webkit- twin into a
+  single prefixed declaration, which WebView2 (Chromium) ignores.
+*/
 .glass {
   background: var(--glass);
   border: 1px solid var(--edge);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
   box-shadow:
     inset 0 1px 0 var(--highlight),
     var(--shadow);
 }
 
-/* Menus, the palette and dialogs: nearly opaque so text over busy artwork stays readable. */
+.bar {
+  background: var(--bar);
+  backdrop-filter: var(--blur-over);
+  box-shadow:
+    0 1px 0 var(--bar-edge),
+    0 14px 30px -20px rgb(0 0 0 / 0.4);
+}
+
 .popover {
   background: var(--popover);
   border: 1px solid var(--edge);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  box-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.55);
+  backdrop-filter: var(--blur-over);
+  box-shadow:
+    inset 0 1px 0 var(--highlight),
+    0 30px 80px -24px rgb(0 0 0 / 0.55);
+}
+
+/* Something that sits on artwork (a badge on a cover): its own dark surface in every theme. */
+.on-art {
+  background: rgb(12 10 16 / 0.6);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+}
+
+/* A scroll area inside a pane fades out at its edges instead of being cut off. */
+.fade-y {
+  mask-image: linear-gradient(to bottom, transparent, #000 20px, #000 calc(100% - 36px), transparent);
+}
+
+/*
+  Buttons: one shape (a pill), three weights, three sizes.
+    .btn-primary  the one main action of a place (accent)
+    .btn          a normal action (a quiet tint)
+    .btn-ghost    a minor one (text until hovered)
+*/
+.btn,
+.btn-primary,
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease,
+    opacity 160ms ease;
+}
+.btn {
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+.btn:hover {
+  background: color-mix(in oklab, var(--ink) 13%, transparent);
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.btn-primary:hover {
+  background: color-mix(in oklab, var(--accent) 86%, var(--ink));
+}
+.btn-ghost {
+  color: color-mix(in oklab, var(--ink) 70%, transparent);
+}
+.btn-ghost:hover {
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+:is(.btn, .btn-primary, .btn-ghost):active:not(:disabled) {
+  transform: scale(0.97);
+}
+:is(.btn, .btn-primary, .btn-ghost):disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+.btn-lg {
+  padding: 10px 20px;
+  font-size: 13.5px;
+}
+
+/* Thin, quiet scrollbars for scroll areas inside panes. */
+.thin-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ink) 16%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -171,6 +292,10 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius: 10px;
+}
+/* A text field shows it has focus by its caret and its own field style, not a ring. */
+:is(input:not([type="range"], [type="checkbox"], [type="radio"]), textarea, select):focus-visible {
+  outline: none;
 }
 
 kbd {

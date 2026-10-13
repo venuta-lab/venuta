@@ -15,7 +15,8 @@ import {
   type Artist,
   type Library,
 } from './model'
-import { AlbumGrid, Art, Avatar, BackButton, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
+import { Detail, InBar } from '../../components/ui'
+import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
 
 export const HI_RES = 'Hi-Res'
@@ -176,11 +177,13 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
   )
   return (
     <div className="pb-16">
-      <div className="no-scrollbar -mx-1 mb-5 flex gap-1 overflow-x-auto px-1">
-        {chip('all', 'All', lib.albums.length)}
-        {lib.hiRes.length > 0 && chip(HI_RES, 'Hi-Res', lib.hiRes.length)}
-        {lib.categories.map(([c, n]) => chip(c, c, n))}
-      </div>
+      <InBar>
+        <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+          {chip('all', 'All', lib.albums.length)}
+          {lib.hiRes.length > 0 && chip(HI_RES, 'Hi-Res', lib.hiRes.length)}
+          {lib.categories.map(([c, n]) => chip(c, c, n))}
+        </div>
+      </InBar>
       <AlbumGrid albums={shown} origin="albums" />
     </div>
   )
@@ -240,8 +243,12 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
   ].filter(Boolean)
 
   return (
-    <div className="pb-16">
-      <BackButton onClick={onBack} />
+    <Detail
+      title={ar.name}
+      onBack={onBack}
+      glow={cover?.src}
+      tools={<PlayButtons tracks={own.length ? own : also} from={ar.name} label="Play all" size="sm" />}
+    >
       <div className="flex flex-wrap items-end gap-7">
         <div className="w-[168px] shrink-0">
           <Avatar name={ar.name} cover={cover} />
@@ -271,7 +278,7 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
           <SongList tracks={also} from={ar.name} />
         </section>
       )}
-    </div>
+    </Detail>
   )
 }
 
@@ -291,7 +298,7 @@ export function SearchResults(props: { query: string; albums: Album[]; artists: 
             <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
             <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
           </div>
-          <SongList tracks={props.tracks} from={`Search: ${props.query.trim()}`} />
+          <SongList tracks={props.tracks} from={`Search: ${props.query.trim()}`} pin />
         </section>
       )}
     </div>

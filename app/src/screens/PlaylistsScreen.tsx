@@ -19,6 +19,7 @@ import {
   type SmartRule,
 } from '../lib/engine'
 import { PillButton } from './LibraryScreen'
+import { Page as Frame } from '../components/ui'
 import { track } from '../lib/jobs'
 
 const spring = { type: 'spring', stiffness: 360, damping: 32 } as const
@@ -71,16 +72,12 @@ export function PlaylistsScreen({ root }: { root: string }) {
 
   const own = data?.playlists.filter((p) => !p.smart) ?? []
   const smartNames = new Set(data?.smart.map((s) => s.name) ?? [])
+  // Open on something rather than an empty pane: the first smart playlist.
+  const first = data?.smart[0]?.name
+  if (!view && first) setView({ kind: 'smart', name: first })
 
-  return (
-    <div className="mx-auto flex h-full max-w-[1120px] gap-6 pb-8 pt-6">
-      <aside className="no-scrollbar w-[280px] shrink-0 overflow-y-auto">
-        <h1 className="text-[34px] font-semibold tracking-[-0.03em]">Playlists</h1>
-        <p className="mt-2 text-[12.5px] leading-relaxed text-ink/55">
-          Saved as .m3u8 files in {data?.folder || 'your library'}, so every player and card can use them.
-        </p>
-
-        <div className="glass mt-5 rounded-2xl p-4">
+  const apple = (
+        <div className="glass mt-6 rounded-2xl p-4">
           <div className="text-[13.5px] font-medium">Apple Music</div>
           {data?.apple_ready ? (
             <>
@@ -103,11 +100,17 @@ export function PlaylistsScreen({ root }: { root: string }) {
             </p>
           )}
         </div>
+  )
+
+  return (
+    <Frame title="Playlists" line={`Saved as .m3u8 files in ${data?.folder || 'your library'}, so every player and card can use them.`}>
+      <div className="flex items-start gap-6">
+      <aside className="thin-scroll sticky top-4 max-h-[calc(100vh-150px)] w-[260px] shrink-0 overflow-y-auto pr-1">
 
         <Section title="Smart">
           {data?.smart.map((s) => (
             <NavItem key={s.name} active={view?.kind === 'smart' && view.name === s.name} onClick={() => setView({ kind: 'smart', name: s.name })}>
-              <span className="text-accent-ink">✦</span>
+              <span className="text-accent-ink" aria-hidden>✦</span>
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <span className="text-[11.5px] text-ink/40">{data.smart_counts[s.name] ?? 0}</span>
             </NavItem>
@@ -133,9 +136,10 @@ export function PlaylistsScreen({ root }: { root: string }) {
           </NavItem>
         </Section>
         {message && <p className="mt-4 text-[12.5px] text-problem">{message}</p>}
+        {apple}
       </aside>
 
-      <main className="glass no-scrollbar min-w-0 flex-1 overflow-y-auto rounded-[24px] p-6">
+      <section className="glass min-h-[420px] min-w-0 flex-1 rounded-[24px] p-6">
         <AnimatePresence mode="wait">
           <motion.div key={view ? JSON.stringify(view) : 'none'} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             {!view && <p className="py-20 text-center text-[14px] text-ink/50">Choose a playlist, or bring yours over from Apple Music.</p>}
@@ -148,14 +152,15 @@ export function PlaylistsScreen({ root }: { root: string }) {
             {view?.kind === 'wanted' && <WantList wanted={data?.wanted ?? []} />}
           </motion.div>
         </AnimatePresence>
-      </main>
-    </div>
+      </section>
+      </div>
+    </Frame>
   )
 }
 
 function Section(props: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="mt-6">
+    <div className="mt-5 first:mt-0">
       <div className="mb-1.5 flex items-center px-2 text-[12px] text-ink/45">
         <span className="flex-1">{props.title}</span>
         {props.action}
@@ -447,7 +452,7 @@ export function AddToPlaylist({ root, paths }: { root: string; paths: string[] }
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
             transition={spring}
-            className="glass absolute bottom-full right-0 z-10 mb-2 w-64 rounded-2xl p-2"
+            className="popover absolute bottom-full right-0 z-10 mb-2 w-64 rounded-2xl p-2"
             style={{ background: 'rgb(26 26 32 / 0.94)' }}
           >
             <div className="no-scrollbar max-h-60 overflow-y-auto">

@@ -12,6 +12,8 @@ import {
 } from '../lib/engine'
 import { setAccent, useCovers } from '../lib/covers'
 import { AlbumEditor } from './AlbumEditor'
+import { NoCover } from './MusicScreen'
+import { Page } from '../components/ui'
 import { FormatBar, SpectrogramView } from './LibraryScreen'
 
 /*
@@ -57,7 +59,6 @@ export function HealthScreen(props: {
   onLookup: () => void
   onCheck: () => void
   onRescan: () => void
-  onChooseFolder: () => void
   onOrganize: () => void
   running: { lookup: boolean; check: boolean }
 }) {
@@ -112,7 +113,7 @@ export function HealthScreen(props: {
         const c = cover(d)
         return (
           <div key={d} className="h-9 w-9 overflow-hidden rounded-lg bg-ink/[0.1] shadow-md shadow-black/25 ring-2 ring-[var(--glass)]">
-            {c && <img src={c.src} alt="" className="h-full w-full object-cover" />}
+            {c ? <img src={c.src} alt="" className="h-full w-full object-cover" /> : <NoCover title="" small />}
           </div>
         )
       })}
@@ -124,20 +125,19 @@ export function HealthScreen(props: {
     </div>
   )
 
-  if (!s) return <p className="py-24 text-center text-[14px] text-ink/55">{props.busy || 'Reading your music…'}</p>
+  if (!s)
+    return (
+      <Page title="Health" line={props.busy || 'Reading your music…'}>
+        <span />
+      </Page>
+    )
 
   return (
-    <div className="mx-auto max-w-[1100px] pb-16">
-      <header className="pb-5 pt-6">
-        <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Health</h1>
-        <p className="mt-2.5 text-[14px] text-ink/60">
-          {fmt(s.albums)} albums, {fmt(s.tracks)} songs, {Math.round(s.hours)} hours, {(s.bytes / 1e9).toFixed(1)} GB
-        </p>
-      </header>
+    <Page title="Health" line={`${fmt(s.albums)} albums, ${fmt(s.tracks)} songs, ${Math.round(s.hours)} hours, ${(s.bytes / 1e9).toFixed(1)} GB`}>
       {props.progress}
 
       {/* The overview and the tools. */}
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1.25fr_1fr]">
+      <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
         <section className="glass flex flex-wrap items-center gap-6 rounded-[24px] p-6">
           <Ring now={overallNow} after={plan ? overallAfter : overallNow} />
           <div className="min-w-[200px] flex-1">
@@ -149,19 +149,16 @@ export function HealthScreen(props: {
               Credits, lyrics, genres, covers and volume levels, across all albums. The build fills most gaps; looking up
               details online finds more.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <ActionButton accent onClick={props.onOrganize}>
+            <div className="mt-4">
+              <button onClick={props.onOrganize} className="btn-primary">
                 Review and build
-              </ActionButton>
-              <ActionButton onClick={props.onLookup} disabled={props.running.lookup}>
-                {props.running.lookup ? 'Looking up…' : 'Look up details online'}
-              </ActionButton>
+              </button>
             </div>
           </div>
         </section>
 
-        <section className="glass rounded-[24px] p-5">
-          <div className="text-[13px] font-medium text-ink/70">Tools</div>
+        <section className="glass rounded-[24px] px-5 pb-2 pt-4">
+          <h2 className="text-[15px] font-semibold">Tools</h2>
           <Tool
             title="Look up details online"
             text="Original years, composers and lyricists, sharper covers, synced lyrics."
@@ -176,13 +173,12 @@ export function HealthScreen(props: {
             disabled={props.running.check}
             onClick={props.onCheck}
           />
-          <Tool title="Rescan" text="Reads the folder again for new or changed files." action="Rescan" onClick={props.onRescan} />
-          <Tool title="Music folder" text={props.root} action="Change" onClick={props.onChooseFolder} />
+          <Tool title="Look for changes" text="Reads the folder again for new or changed files." action="Rescan" onClick={props.onRescan} />
         </section>
       </div>
 
       {/* Details: one tile each. */}
-      <h2 className="mb-3 mt-9 text-[15px] font-medium text-ink/80">Details</h2>
+      <Section title="Details" />
       <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
         {details.map((d) => (
           <section key={d.label} className="glass flex flex-col rounded-[20px] p-4">
@@ -228,7 +224,7 @@ export function HealthScreen(props: {
                       albums: d.left,
                     })
                   }
-                  className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-[12.5px] text-ink/70 hover:bg-ink/10"
+                  className="btn-ghost btn-sm"
                 >
                   See albums
                 </button>
@@ -241,11 +237,10 @@ export function HealthScreen(props: {
       {/* Sound: problems a better copy fixes. */}
       {sound.length > 0 && (
         <>
-          <h2 className="mb-1 mt-9 text-[15px] font-medium text-ink/80">Sound</h2>
-          <p className="mb-3 max-w-[66ch] text-[13px] text-ink/55">
-            Problems in the files themselves. Open one to see the albums and their spectrograms, or put an album on “To get”
-            to find a better copy.
-          </p>
+          <Section
+            title="Sound"
+            text="Problems in the files themselves. Open one to see the albums and their spectrograms, or put an album on “To get” to find a better copy."
+          />
           <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
             {sound.map((x) => (
               <button
@@ -268,12 +263,13 @@ export function HealthScreen(props: {
       )}
 
       {/* Formats and duplicates. */}
-      <div className="mt-9 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
-        <section className="glass rounded-[22px] px-5 pb-5 pt-1">
+      <div className="mt-10 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+        <section className="glass rounded-[22px] p-5">
+          <h2 className="text-[15px] font-semibold">Formats</h2>
           <FormatBar formats={s.formats} total={s.tracks} />
         </section>
         <section className="glass flex flex-col rounded-[22px] p-5">
-          <div className="text-[13.5px] font-medium">Duplicates</div>
+          <h2 className="text-[15px] font-semibold">Duplicates</h2>
           <div className="mt-1 text-[12.5px] text-ink/60">
             {dupes
               ? `${fmt(dupes)} albums hold songs that exist elsewhere. Organize compares them and sets copies aside, with proof.`
@@ -281,7 +277,9 @@ export function HealthScreen(props: {
           </div>
           {dupes > 0 && (
             <div className="mt-auto pt-3">
-              <ActionButton onClick={props.onOrganize}>Open Organize</ActionButton>
+              <button onClick={props.onOrganize} className="btn btn-sm">
+                Open Organize
+              </button>
             </div>
           )}
         </section>
@@ -293,6 +291,16 @@ export function HealthScreen(props: {
         </AnimatePresence>,
         document.body,
       )}
+    </Page>
+  )
+}
+
+/** A heading for a group of tiles, with a line about it. */
+function Section(props: { title: string; text?: string }) {
+  return (
+    <div className="mb-3 mt-10">
+      <h2 className="text-[17px] font-semibold tracking-[-0.01em]">{props.title}</h2>
+      {props.text && <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-ink/55">{props.text}</p>}
     </div>
   )
 }
@@ -348,7 +356,7 @@ function Tool(props: { title: string; text: string; action: string; disabled?: b
   return (
     <div className="flex items-center gap-3 border-b border-edge py-3 last:border-b-0">
       <div className="min-w-0 flex-1">
-        <div className="text-[13.5px]">{props.title}</div>
+        <div className="text-[13.5px] font-medium">{props.title}</div>
         <div className="truncate text-[12px] text-ink/50" title={props.text}>
           {props.text}
         </div>
@@ -356,24 +364,11 @@ function Tool(props: { title: string; text: string; action: string; disabled?: b
       <button
         onClick={props.onClick}
         disabled={props.disabled}
-        className="shrink-0 rounded-full bg-ink/[0.08] px-3.5 py-1.5 text-[12.5px] hover:bg-ink/[0.14] disabled:opacity-50"
+        className="btn btn-sm min-w-[72px]"
       >
         {props.action}
       </button>
     </div>
-  )
-}
-
-function ActionButton(props: { onClick: () => void; disabled?: boolean; accent?: boolean; children: React.ReactNode }) {
-  return (
-    <motion.button
-      whileTap={{ scale: 0.97 }}
-      onClick={props.onClick}
-      disabled={props.disabled}
-      className={`rounded-full px-4 py-2 text-[13px] disabled:opacity-50 ${props.accent ? 'bg-accent font-medium text-on-accent' : 'bg-ink/[0.08] hover:bg-ink/[0.14]'}`}
-    >
-      {props.children}
-    </motion.button>
   )
 }
 

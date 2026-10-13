@@ -3,6 +3,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { musicCatalog, type CatalogTrack, type HealthReport } from '../lib/engine'
 import { current, usePlayer } from '../lib/player'
 import { IconSearch } from '../components/Icons'
+import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
 import { SongList } from './listen/SongList'
@@ -213,7 +214,7 @@ function Listen(props: Props) {
       <ArtistsView artists={lib.artists} />
     ) : (
       <div className="pb-16">
-        <SongList tracks={lib.tracks} from="Songs" sortBy="title" />
+        <SongList tracks={lib.tracks} from="Songs" sortBy="title" pin />
       </div>
     )
     return (
@@ -228,45 +229,36 @@ function Listen(props: Props) {
     )
   })()
 
+  // An album or artist open: its own page, with Back.
+  if (report && tracks && top)
+    return (
+      <NavContext value={nav}>
+        <div ref={box}>{body}</div>
+      </NavContext>
+    )
+
   return (
     <NavContext value={nav}>
-      <div ref={box} className="mx-auto max-w-[1180px]">
-        <header className="pb-5 pt-6">
-          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Music</h1>
-          <p className="mt-2.5 text-[14px] text-ink/60">{line}</p>
-        </header>
-
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <div role="tablist" aria-label="Music views" className="glass flex rounded-full p-1">
-            {TABS.map(([id, label]) => {
-              const on = tab === id && !query.trim() && !top
-              return (
-                <button
-                  key={id}
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => {
-                    setQuery('')
-                    leavePages()
-                    setFadeIn(true)
-                    if (id === 'albums' && tab !== 'albums') setFilter('all')
-                    setTab(id)
-                  }}
-                  className={`relative rounded-full px-4 py-1.5 text-[13px] ${on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-                >
-                  {tab === id && (
-                    <motion.span
-                      layoutId="listen-tab"
-                      transition={spring}
-                      className={`absolute inset-0 rounded-full ${on ? 'bg-ink/[0.14]' : 'bg-ink/[0.06]'}`}
-                    />
-                  )}
-                  <span className="relative">{label}</span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="glass ml-auto flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full px-4">
+      <div ref={box}>
+        <Page
+          title="Music"
+          line={line}
+          bar={
+            <>
+              <Segmented
+                tabs
+                label="Music views"
+                value={query.trim() ? ('' as Tab) : tab}
+                options={TABS.map(([value, label]) => ({ value, label }))}
+                onChange={(id) => {
+                  setQuery('')
+                  leavePages()
+                  setFadeIn(true)
+                  if (id === 'albums' && tab !== 'albums') setFilter('all')
+                  setTab(id)
+                }}
+              />
+          <div className="ml-auto flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1] focus-within:shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_60%,transparent)]">
             <IconSearch className="shrink-0 text-ink/45" />
             <input
               ref={searchRef}
@@ -286,13 +278,15 @@ function Listen(props: Props) {
               }}
               placeholder="Search albums, artists, songs"
               aria-label="Search your music"
-              className="min-w-0 flex-1 bg-transparent py-2.5 text-[14px] text-ink outline-none placeholder:text-ink/45 [&::-webkit-search-cancel-button]:hidden"
+              className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45 [&::-webkit-search-cancel-button]:hidden"
             />
             <kbd>/</kbd>
           </div>
-        </div>
-
-        {body}
+            </>
+          }
+        >
+          {body}
+        </Page>
       </div>
     </NavContext>
   )

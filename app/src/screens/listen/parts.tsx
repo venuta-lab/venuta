@@ -5,7 +5,7 @@ import type { CatalogTrack } from '../../lib/engine'
 import { setAccent, useCovers, type Cover } from '../../lib/covers'
 import { enqueue, play, toggle } from '../../lib/player'
 import { useJob } from '../../lib/jobs'
-import { IconBack, IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
+import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { CoverImage, NoCover } from '../MusicScreen'
 import { coverId, shuffled, smooth, spring, useNav, useNowPlaying, type Album } from './model'
 
@@ -22,7 +22,7 @@ export function QualityBadge({ text }: { text: string }) {
 export function HiResPill({ onArt = false }: { onArt?: boolean }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-full px-2 py-[3px] text-[11px] font-medium leading-none ${onArt ? 'glass text-ink' : 'text-accent-ink'}`}
+      className={`inline-flex shrink-0 items-center rounded-full px-2 py-[3px] text-[11px] font-medium leading-none ${onArt ? 'on-art' : 'text-accent-ink'}`}
       style={onArt ? undefined : { background: 'color-mix(in oklab, var(--accent) 20%, transparent)' }}
     >
       Hi-Res
@@ -42,72 +42,33 @@ export function Equalizer({ playing, className = '' }: { playing: boolean; class
 }
 
 /** The primary action. Plays the album, or pauses and resumes it when it is the one playing. */
-export function PlayButtons(props: { tracks: CatalogTrack[]; from: string; dir?: string; label?: string }) {
+export function PlayButtons(props: { tracks: CatalogTrack[]; from: string; dir?: string; label?: string; size?: 'sm' | 'lg' }) {
   const { tracks, from, dir, label = 'Play' } = props
+  const sm = props.size === 'sm'
   const { root } = useNav()
   const now = useNowPlaying()
   const isNow = !!dir && now.dir === dir
   return (
     <div className="flex flex-wrap items-center gap-2.5">
-      <motion.button
-        whileTap={{ scale: 0.96 }}
-        transition={spring}
+      <button
         disabled={!tracks.length}
         onClick={() => (isNow ? void toggle() : void play(root, tracks, 0, from))}
-        className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-on-accent disabled:opacity-40"
+        className={`btn-primary ${sm ? 'btn-sm' : 'btn-lg'}`}
       >
         {isNow && now.playing ? <IconPause /> : <IconPlay />}
         {isNow ? (now.playing ? 'Pause' : 'Resume') : label}
-      </motion.button>
-      <motion.button
-        whileTap={{ scale: 0.96 }}
-        transition={spring}
-        disabled={tracks.length < 2}
-        onClick={() => void play(root, shuffled(tracks), 0, from)}
-        className="flex items-center gap-2 rounded-full bg-ink/[0.08] px-5 py-2.5 text-[13.5px] hover:bg-ink/[0.14] disabled:opacity-40"
-      >
-        <IconShuffle />
-        Shuffle
-      </motion.button>
+      </button>
+      {!sm && (
+        <button disabled={tracks.length < 2} onClick={() => void play(root, shuffled(tracks), 0, from)} className="btn btn-lg">
+          <IconShuffle />
+          Shuffle
+        </button>
+      )}
     </div>
   )
 }
 
-export function BackButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="-ml-2 mb-5 flex items-center gap-1 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink"
-    >
-      <IconBack />
-      Back
-    </button>
-  )
-}
-
-/** A filter chip, with the shared sliding pill. */
-export function Chip(props: { on: boolean; label: string; count?: number; group: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={props.onClick}
-      aria-pressed={props.on}
-      className={`relative shrink-0 rounded-full px-3.5 py-1.5 text-[12.5px] ${props.on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-    >
-      {props.on && (
-        <motion.span
-          layoutId={props.group}
-          transition={spring}
-          className="absolute inset-0 rounded-full"
-          style={{ background: 'color-mix(in oklab, var(--accent) 26%, color-mix(in oklab, var(--ink) 6%, transparent))' }}
-        />
-      )}
-      <span className="relative">
-        {props.label}
-        {props.count !== undefined && <span className="text-ink/45"> {props.count.toLocaleString('en-IN')}</span>}
-      </span>
-    </button>
-  )
-}
+export { Chip } from '../../components/ui'
 
 /** The cover itself, or a shimmer while covers are still being made, or the lettered tile. */
 export function Art({ cover, album, round = false }: { cover: Cover | undefined; album: { title: string }; round?: boolean }) {

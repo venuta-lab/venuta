@@ -4,6 +4,7 @@ import { useCovers, type Cover } from '../../lib/covers'
 import { clock, play } from '../../lib/player'
 import { IconPlay } from '../../components/Icons'
 import { compareText, scrollerOf, useNav, useNowPlaying } from './model'
+import { InBar } from '../../components/ui'
 import { Equalizer, QualityBadge, TrackMenu } from './parts'
 
 const ROW = 44
@@ -43,6 +44,8 @@ export const SongList = memo(function SongList(props: {
   from: string
   /** Start sorted, or keep the order given. */
   sortBy?: SortKey
+  /** Keep the column heads in the page's pinned bar while the list scrolls. */
+  pin?: boolean
 }) {
   const { root } = useNav()
   const now = useNowPlaying()
@@ -109,13 +112,16 @@ export const SongList = memo(function SongList(props: {
   }
 
   if (!sorted.length) return null
+  const head = (
+    <div className={`grid ${COLS} items-center gap-3 border-b border-edge px-2 pb-1.5`}>
+      <span />
+      {HEADERS.map(([k, l]) => heading(k, l, k === 'time'))}
+      <span />
+    </div>
+  )
   return (
     <div>
-      <div className={`glass sticky top-2 z-[5] grid ${COLS} items-center gap-3 rounded-2xl px-2 py-1.5`}>
-        <span />
-        {HEADERS.map(([k, l]) => heading(k, l, k === 'time'))}
-        <span />
-      </div>
+      {props.pin ? <InBar>{head}</InBar> : head}
       <div ref={list} role="list" className="relative mt-1" style={{ height: sorted.length * ROW }}>
         {sorted.slice(range.start, range.end).map((t, k) => {
           const i = range.start + k
@@ -180,7 +186,7 @@ const SongRow = memo(function SongRow(props: {
             className="grid h-full w-full place-items-center text-[12px] font-semibold text-ink/45"
             style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 22%, transparent), color-mix(in oklab, var(--ink) 4%, transparent))' }}
           >
-            {(t.album || t.title).trim()[0]?.toUpperCase() ?? '♪'}
+            {/^\p{L}/u.test((t.album || t.title).trim()) ? (t.album || t.title).trim()[0].toUpperCase() : '♪'}
           </span>
         )}
         <span

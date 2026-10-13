@@ -13,10 +13,11 @@ export function TitleBar(props: { onPalette: () => void }) {
       </span>
       <button
         onClick={props.onPalette}
-        className="absolute left-1/2 top-1/2 flex w-[min(420px,40vw)] -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-ink/[0.07] px-3.5 py-1 text-[12.5px] text-ink/50 transition-colors hover:bg-ink/[0.11] hover:text-ink/70"
+        title="Go to a place, an album or an artist, or run a command"
+        className="absolute left-1/2 top-1/2 flex w-[min(320px,32vw)] -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
       >
         <IconSearch width={14} height={14} />
-        <span className="flex-1 truncate text-left">Search or run a command</span>
+        <span className="flex-1 truncate text-left">Jump to…</span>
         <kbd>Ctrl K</kbd>
       </button>
       <div className="ml-auto flex h-full items-center">

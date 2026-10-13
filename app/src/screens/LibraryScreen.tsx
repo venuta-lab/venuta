@@ -305,7 +305,7 @@ export function SpectrogramView(props: { root: string; album: AlbumSummary; onCl
         animate={{ y: 0, scale: 1 }}
         exit={{ y: 16, scale: 0.98 }}
         transition={spring}
-        className="glass relative w-full max-w-[1040px] rounded-[26px] p-7"
+        className="popover relative w-full max-w-[1040px] rounded-[26px] p-7"
       >
         <h2 className="text-[22px] font-semibold tracking-[-0.02em]">{props.album.title}</h2>
         <p className="mt-1 text-[13.5px] text-ink/60">First track, from start to end.</p>
@@ -347,7 +347,7 @@ export function FormatBar(props: { formats: HealthReport['summary']['formats']; 
     `${f.bit_depth}-bit ${f.sample_rate / 1000} kHz`
   const shades = [0.9, 0.62, 0.42, 0.28, 0.18, 0.12]
   return (
-    <div className="mt-8">
+    <div className="mt-4">
       <div className="flex h-2.5 overflow-hidden rounded-full bg-ink/5">
         {props.formats.map((f, i) => (
           <motion.div
@@ -401,20 +401,9 @@ export function PillButton(props: {
   children: React.ReactNode
 }) {
   return (
-    <motion.button
-      whileTap={{ scale: 0.95 }}
-      whileHover={{ scale: 1.03 }}
-      transition={spring}
-      onClick={props.onClick}
-      disabled={props.disabled}
-      title={props.title}
-      className={`flex items-center gap-2 rounded-full px-4 py-2.5 text-[13.5px] font-medium disabled:opacity-60 ${
-        props.accent ? 'text-on-accent' : 'glass text-ink'
-      }`}
-      style={props.accent ? { background: 'var(--accent)' } : undefined}
-    >
+    <button onClick={props.onClick} disabled={props.disabled} title={props.title} className={`${props.accent ? 'btn-primary' : 'btn'} btn-lg`}>
       {props.children}
-    </motion.button>
+    </button>
   )
 }
 

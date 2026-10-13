@@ -5,7 +5,8 @@ import { setAccent, useCovers } from '../../lib/covers'
 import { clock, play } from '../../lib/player'
 import { IconPlay } from '../../components/Icons'
 import { coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
-import { Art, BackButton, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
+import { Detail } from '../../components/ui'
+import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
 
 /** One album: its cover large, what it is, and its songs to play. */
 export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?: string; onBack: () => void }) {
@@ -16,14 +17,8 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
 
   const meta = [a.year, a.genre].filter(Boolean).join(', ')
   return (
-    <div className="pb-16">
-      <BackButton onClick={onBack} />
+    <Detail title={a.title} onBack={onBack} glow={cover?.src} tools={<PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} size="sm" />}>
       <div className="relative">
-        {cover && (
-          <div aria-hidden className="pointer-events-none absolute -inset-x-10 -top-24 h-[420px] overflow-hidden opacity-40 [mask-image:linear-gradient(to_bottom,black,transparent)]">
-            <img src={cover.src} alt="" className="h-full w-full scale-125 object-cover blur-3xl" />
-          </div>
-        )}
         <div className="relative flex flex-wrap items-end gap-8">
           <motion.div
             layoutId={coverId(origin, a.dir)}
@@ -55,10 +50,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
             </div>
             <div className="mt-5 flex flex-wrap items-center gap-2.5">
               <PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} />
-              <button
-                onClick={() => nav.editDetails(a.dir)}
-                className="rounded-full px-4 py-2.5 text-[13.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink"
-              >
+              <button onClick={() => nav.editDetails(a.dir)} className="btn-ghost btn-lg">
                 Edit details
               </button>
             </div>
@@ -66,7 +58,7 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
         </div>
       </div>
       <TrackList album={a} />
-    </div>
+    </Detail>
   )
 }
 

@@ -584,7 +584,6 @@ export default function App() {
             onLookup={runLookup}
             onCheck={runDeepCheck}
             onRescan={() => void refresh(root, true)}
-            onChooseFolder={() => void chooseRoot()}
             onOrganize={() => go('inbox')}
             running={{ lookup: !!lookup, check: !!deep }}
             progress={
@@ -662,16 +661,16 @@ export default function App() {
               <motion.div
                 key={active}
                 custom={direction}
+                // The rail is a column, so places move up and down with it: a short rise, quick.
                 variants={{
-                  enter: (d: number) => ({ x: d * 70, opacity: 0, scale: 0.985 }),
-                  center: { x: 0, opacity: 1, scale: 1 },
-                  exit: (d: number) => ({ x: d * -70, opacity: 0, scale: 0.985 }),
+                  enter: (d: number) => ({ y: d * 18, opacity: 0 }),
+                  center: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 420, damping: 38, opacity: { duration: 0.18 } } },
+                  exit: (d: number) => ({ y: d * -10, opacity: 0, transition: { duration: 0.12 } }),
                 }}
                 initial="enter"
                 animate="center"
                 exit="exit"
-                transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-                className="no-scrollbar absolute inset-0 overflow-y-auto px-10"
+                className="thin-scroll absolute inset-0 overflow-y-auto overflow-x-hidden px-10"
               >
                 {screen}
               </motion.div>
