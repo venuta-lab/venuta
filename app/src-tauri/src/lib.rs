@@ -99,6 +99,11 @@ struct Run {
 
 fn settings_with_defaults() -> Settings {
     let mut s = engine::settings::load();
+    // Your library is where everything is built and kept; an older saved target is only a
+    // suggestion until a library is chosen.
+    if let Some(home) = paths::home() {
+        s.new_library = Some(home.to_string_lossy().replace('\\', "/"));
+    }
     if s.rules_dir.is_none() {
         s.rules_dir = Some(
             paths::app_data_dir()
@@ -284,6 +289,111 @@ fn check_new_library(root: String, target: String) -> CmdResult<()> {
 #[tauri::command]
 fn set_settings(settings: Settings) -> CmdResult<()> {
     engine::settings::save(&settings)
+}
+
+/// Remember which folder is open (your library, or music being brought in).
+#[tauri::command]
+fn set_open_folder(path: String) -> CmdResult<()> {
+    let mut s = engine::settings::load();
+    s.open_folder = Some(path);
+    engine::settings::save(&s)
+}
+
+/// Remember the look and feel with the library.
+#[tauri::command]
+fn save_appearance(appearance: serde_json::Value) -> CmdResult<()> {
+    let mut s = engine::settings::load();
+    s.appearance = Some(appearance);
+    engine::settings::save(&s)
+}
+
+#[derive(Serialize)]
+struct HomeInfo {
+    /// Your library, once chosen.
+    library: Option<String>,
+    /// Where Venuta keeps its data (`<library>/.venuta`, or the per-user folder before).
+    data_dir: String,
+    /// A good place for a new library on this computer.
+    suggestion: String,
+}
+
+/// Where your library is, and where a new one could go.
+#[tauri::command]
+fn library_home() -> HomeInfo {
+    let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let saved = engine::settings::load().new_library;
+    HomeInfo {
+        library: paths::home().map(|h| slash(&h)),
+        data_dir: slash(&paths::app_data_dir()),
+        suggestion: saved.unwrap_or_else(suggest_home),
+    }
+}
+
+/// `X:/Music Library` on the first drive after C: that exists, else in your Music folder.
+fn suggest_home() -> String {
+    if cfg!(windows) {
+        for letter in 'D'..='Z' {
+            if Path::new(&format!("{letter}:\\")).is_dir() {
+                return format!("{letter}:/Music Library");
+            }
+        }
+    }
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|h| {
+            PathBuf::from(h)
+                .join("Music")
+                .join("Music Library")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .unwrap_or_else(|| "Music Library".into())
+}
+
+/// Whether a folder can be your library: new or empty, or already one.
+#[tauri::command]
+fn check_home(path: String) -> CmdResult<paths::HomeKind> {
+    paths::check_home(Path::new(&path))
+}
+
+/// A music folder to bring in must be outside your library (and your library outside it):
+/// the build copies one into the other. Opening the library itself is fine.
+#[tauri::command]
+fn check_music_folder(path: String, library: Option<String>) -> CmdResult<()> {
+    let Some(home) = library.map(PathBuf::from).or_else(paths::home) else {
+        return Ok(());
+    };
+    let music = Path::new(&path);
+    if paths::canonical_root_string(music)
+        .eq_ignore_ascii_case(&paths::canonical_root_string(&home))
+    {
+        return Ok(());
+    }
+    engine::apply::check_target(music, &home).map_err(|_| {
+        format!(
+            "{} and your library ({}) can't be inside one another. Keep them as separate folders.",
+            music.display(),
+            home.display()
+        )
+    })
+}
+
+/// Make a folder your library and move Venuta's data into it.
+#[tauri::command]
+async fn choose_home(app: AppHandle, path: String) -> CmdResult<paths::HomeKind> {
+    let kind = blocking(move || paths::set_home(Path::new(&path))).await?;
+    allow_data_assets(&app);
+    Ok(kind)
+}
+
+/// Covers and spectrograms are files in the data folder; let the window show them.
+fn allow_data_assets(app: &AppHandle) {
+    let data = paths::app_data_dir();
+    for sub in ["thumbs", "spectrograms"] {
+        let dir = data.join(sub);
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    }
 }
 
 /// Build the plan for a library and return what the Review screen shows.
@@ -1225,6 +1335,10 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            allow_data_assets(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             engine_version,
             scan_library,
@@ -1235,6 +1349,12 @@ pub fn run() {
             album_spectrogram,
             get_settings,
             set_settings,
+            library_home,
+            check_home,
+            choose_home,
+            check_music_folder,
+            set_open_folder,
+            save_appearance,
             check_new_library,
             review,
             answer_decisions,

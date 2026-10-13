@@ -1,5 +1,5 @@
-//! Small persistent settings: where the rules live, where the new library goes, and the
-//! owner's review decisions per album. Plain JSON in the app data folder.
+//! Small persistent settings: where the rules live, which folder is open, your keys and look,
+//! and the owner's review decisions per album. Plain JSON in the library's `.venuta` folder.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,8 +9,15 @@ use std::path::{Path, PathBuf};
 pub struct Settings {
     /// Folder holding the rules TOML files.
     pub rules_dir: Option<String>,
-    /// Where the migrated library is built.
+    /// Where the migrated library is built. Kept for older files; your library (see
+    /// `paths::home`) is the one place it goes now.
     pub new_library: Option<String>,
+    /// The folder showing in the app: your library, or a music folder being brought in.
+    #[serde(default)]
+    pub open_folder: Option<String>,
+    /// Look and feel (theme, surface, accent…), as the app stores it.
+    #[serde(default)]
+    pub appearance: Option<serde_json::Value>,
     /// The owner confirmed they have a backup; required before editing files in place.
     #[serde(default)]
     pub backup_confirmed: bool,

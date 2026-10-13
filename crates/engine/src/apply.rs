@@ -573,7 +573,7 @@ fn file_len(p: &Path) -> Option<u64> {
 pub const LIBRARY_MARKER: &str = ".venuta-library";
 
 /// The marker written before the app was named; still recognised.
-const OLD_LIBRARY_MARKER: &str = ".music-librarian-library";
+pub(crate) const OLD_LIBRARY_MARKER: &str = ".music-librarian-library";
 
 /// The new library must be its own folder: not the current one, not inside it (or around it),
 /// and either empty or one this app built. A folder of other music is never mixed in.

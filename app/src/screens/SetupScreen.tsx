@@ -1,55 +1,64 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { checkNewLibrary, getSettings, inApp, setSettings, type HealthReport, type Settings } from '../lib/engine'
+import { checkHome, getSettings, inApp, type HealthReport, type Settings } from '../lib/engine'
 import { DeepProgressBar } from './LibraryScreen'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 
-const STEPS = ['Your music', 'The new library', 'Reading', 'Details online', 'Your questions'] as const
+const STEPS = ['Your library', 'Music to bring in', 'Reading', 'Details online', 'Your questions'] as const
 
 const SOUND_ISSUES = new Set(['damaged_audio', 'lossy_files', 'upsampled_hires', 'padded_24bit', 'limited_highs'])
 
+const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+
 /**
- * Setting up, once: where your music is, where the clean copy goes, reading it, looking up
- * details online, then Organize. Every step can be revisited; nothing is changed until you
- * build from Organize.
+ * Setting up, once: where your library lives (Venuta keeps everything there), the music to
+ * bring in (or none), reading it, looking up details online, then Organize. Every step can be
+ * revisited; your music folder is only read, and nothing is built until you choose Build.
  */
 export function SetupScreen(props: {
   root: string
+  home: string | null
+  suggestion: string
   report: HealthReport | null
   busy: string
   lookup: { done: number; total: number; note?: string } | null
+  onChooseHome: (path: string) => Promise<void>
   onChooseMusic: () => Promise<void>
+  onStartEmpty: () => void
   onLookup: () => Promise<void>
   onCancelLookup: () => void
   onDone: () => void
 }) {
-  const [step, setStep] = useState(props.root ? 1 : 0)
+  const bringing = !!props.root && !!props.home && norm(props.root) !== norm(props.home)
+  const [step, setStep] = useState(props.home ? (bringing ? 2 : 1) : 0)
   const [settings, setS] = useState<Settings | null>(null)
   const [error, setError] = useState('')
+  const [working, setWorking] = useState(false)
   const [looked, setLooked] = useState(false)
+  const [empty, setEmpty] = useState(false)
 
   useEffect(() => {
     getSettings().then(setS)
   }, [])
+  // A music folder was chosen: on to reading it.
+  const chosen = bringing && step === 1
   useEffect(() => {
-    if (props.root && step === 0) setStep(1)
-  }, [props.root, step])
+    if (chosen) setStep(2)
+  }, [chosen])
 
-  const parent = props.root.replace(/[\\/]+$/, '').split(/[\\/]/).slice(0, -1).join('/') || props.root
-  const suggestion = `${parent}/Music Library`
-
-  async function chooseTarget(path: string) {
+  async function chooseHome(path: string) {
+    setWorking(true)
     try {
-      await checkNewLibrary(props.root, path)
-      const next = { ...(settings ?? { rules_dir: null, new_library: null }), new_library: path }
-      await setSettings(next)
-      setS(next)
+      await checkHome(path)
+      await props.onChooseHome(path)
       setError('')
-      setStep(2)
+      setStep(1)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
     }
   }
 
@@ -59,18 +68,25 @@ export function SetupScreen(props: {
     setStep(4)
   }
 
+  function startEmpty() {
+    setEmpty(true)
+    props.onStartEmpty()
+    setStep(4)
+  }
+
   const s = props.report?.summary
   const sound = new Set(
     (props.report?.issues ?? []).filter((i) => SOUND_ISSUES.has(i.id)).flatMap((i) => i.albums),
   ).size
   const keys = [settings?.discogs_token && 'Discogs', settings?.acoustid_key && 'AcoustID'].filter(Boolean)
+  const reachable = (i: number) => i <= step || (i <= 3 && bringing)
 
   return (
     <div className="mx-auto max-w-[760px] pb-24 pt-10">
       <h1 className="text-[40px] font-semibold leading-none tracking-[-0.035em]">Set up your library</h1>
       <p className="mt-3 max-w-[58ch] text-[14.5px] leading-relaxed text-ink/60">
-        A clean copy of your music is built in a new folder, with full details, lyrics and covers. Your current folder is
-        only read. Nothing is written until you choose Build in Organize.
+        Your library is one folder: your music, tagged and with covers and lyrics, plus everything Venuta knows about it. Music
+        you already have is only read; a clean copy is built in your library when you choose Build.
       </p>
 
       <ol className="mt-8 flex flex-wrap gap-2" aria-label="Steps">
@@ -80,7 +96,7 @@ export function SetupScreen(props: {
           return (
             <li key={label}>
               <button
-                onClick={() => (i <= step || (i === 2 && props.root)) && setStep(i)}
+                onClick={() => reachable(i) && setStep(i)}
                 aria-current={on ? 'step' : undefined}
                 className={`relative flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12.5px] ${on ? 'text-ink' : done ? 'text-ink/75' : 'text-ink/40'}`}
               >
@@ -108,39 +124,60 @@ export function SetupScreen(props: {
           className="glass mt-6 rounded-[24px] p-7"
         >
           {step === 0 && (
-            <Step title="Where is your music?" text="Choose the folder that holds your albums. It is read, never changed.">
-              <Primary onClick={() => void props.onChooseMusic()} disabled={!inApp()}>
-                Choose your music folder
-              </Primary>
+            <Step
+              title="Where should your library live?"
+              text="A new or empty folder, or a library Venuta made before. Your music is built here, and Venuta keeps its own data with it (in a hidden .venuta folder), so the whole library moves or backs up as one folder."
+            >
+              {props.home ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-[14px]">Your library is {props.home}.</span>
+                  <Primary onClick={() => setStep(1)}>Continue</Primary>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Primary onClick={() => void chooseHome(props.suggestion)} disabled={working || !inApp()}>
+                    Use {props.suggestion}
+                  </Primary>
+                  <Secondary
+                    onClick={async () => {
+                      const p = inApp() ? await open({ directory: true, title: 'Where should your library live?' }) : null
+                      if (typeof p === 'string') await chooseHome(p)
+                    }}
+                  >
+                    Choose another folder
+                  </Secondary>
+                </div>
+              )}
+              {error && <p className="mt-3 text-[13px] text-problem">{error}</p>}
             </Step>
           )}
 
           {step === 1 && (
             <Step
-              title="Where should the clean library go?"
-              text="An empty folder (or one this app made before). The new library is built here; your current folder stays as it is."
+              title="Do you have music to bring in?"
+              text="Choose the folder that holds your albums. It is only read, never changed; a clean copy is built in your library. No collection yet? Start empty and add music as you get it."
             >
               <div className="flex flex-wrap gap-2">
-                {settings?.new_library && (
-                  <Primary onClick={() => void chooseTarget(settings.new_library!)}>Use {settings.new_library}</Primary>
-                )}
-                {!settings?.new_library && <Primary onClick={() => void chooseTarget(suggestion)}>Use {suggestion}</Primary>}
-                <Secondary
-                  onClick={async () => {
-                    const p = inApp() ? await open({ directory: true, title: 'Where should the new library be built?' }) : null
-                    if (typeof p === 'string') await chooseTarget(p)
-                  }}
-                >
-                  Choose another folder
-                </Secondary>
+                <Primary onClick={() => void props.onChooseMusic()} disabled={!inApp()}>
+                  Choose your music folder
+                </Primary>
+                <Secondary onClick={startEmpty}>Start empty</Secondary>
               </div>
-              {error && <p className="mt-3 text-[13px] text-problem">{error}</p>}
             </Step>
           )}
 
           {step === 2 && (
             <Step title="Reading your music" text={s ? 'Done. Here is what is there.' : props.busy || 'Reading every file once…'}>
-              {s && (
+              {s && s.tracks === 0 && (
+                <div>
+                  <p className="text-[14px] text-ink/70">No songs were found in {props.root}. Choose the folder that holds your albums.</p>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <Primary onClick={() => void props.onChooseMusic()}>Choose another folder</Primary>
+                    <Secondary onClick={startEmpty}>Start empty instead</Secondary>
+                  </div>
+                </div>
+              )}
+              {s && s.tracks > 0 && (
                 <>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <Stat n={s.albums} label="albums" />
@@ -177,14 +214,22 @@ export function SetupScreen(props: {
             </Step>
           )}
 
-          {step === 4 && (
-            <Step
-              title="Your questions are ready"
-              text={`${looked ? 'Details are in. ' : ''}Organize shows the few things only you can decide, what was handled for you with proof, and what the build will change. Then build.`}
-            >
-              <Primary onClick={props.onDone}>Open Organize</Primary>
-            </Step>
-          )}
+          {step === 4 &&
+            (empty ? (
+              <Step
+                title="Your library is ready"
+                text="Add music you've bought or downloaded in Organize, New music. It comes in tagged, named and with covers and lyrics. You can bring in a music folder later from Settings."
+              >
+                <Primary onClick={props.onDone}>Open Organize</Primary>
+              </Step>
+            ) : (
+              <Step
+                title="Your questions are ready"
+                text={`${looked ? 'Details are in. ' : ''}Organize shows the few things only you can decide, what was handled for you with proof, and what the build will change. Then build.`}
+              >
+                <Primary onClick={props.onDone}>Open Organize</Primary>
+              </Step>
+            ))}
         </motion.section>
       </AnimatePresence>
     </div>

@@ -193,7 +193,33 @@ export interface Settings {
   acoustid_key?: string | null
   discogs_token?: string | null
   sources?: { musicbrainz: boolean; apple: boolean; deezer: boolean; lrclib: boolean }
+  /** The folder showing in the app: your library, or music being brought in. */
+  open_folder?: string | null
+  appearance?: Record<string, unknown> | null
 }
+
+export interface HomeInfo {
+  /** Your library, once chosen. Venuta keeps everything it knows in its .venuta folder. */
+  library: string | null
+  data_dir: string
+  /** A good place for a new library on this computer. */
+  suggestion: string
+}
+
+export type HomeKind = 'new' | 'existing'
+
+export const libraryHome = () =>
+  inApp()
+    ? invoke<HomeInfo>('library_home')
+    : Promise.resolve<HomeInfo>({ library: 'D:/Music Library', data_dir: 'D:/Music Library/.venuta', suggestion: 'D:/Music Library' })
+export const checkHome = (path: string) => invoke<HomeKind>('check_home', { path })
+export const chooseHome = (path: string) => invoke<HomeKind>('choose_home', { path })
+/** Refuses a music folder inside your library, or around it (`library`: the one about to be chosen). */
+export const checkMusicFolder = (path: string, library?: string) =>
+  inApp() ? invoke<void>('check_music_folder', { path, library: library ?? null }) : Promise.resolve()
+export const setOpenFolder = (path: string) => (inApp() ? invoke<void>('set_open_folder', { path }) : Promise.resolve())
+export const saveAppearance = (appearance: object) =>
+  inApp() ? invoke<void>('save_appearance', { appearance }) : Promise.resolve()
 
 export interface EditChange {
   kind: 'edit'

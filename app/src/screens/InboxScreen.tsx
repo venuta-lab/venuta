@@ -41,14 +41,26 @@ function itemFor(d: PlanDecision, choice: string): AnswerItem {
     : { id: d.id, choice }
 }
 
-/** Everything waiting for you: questions, what was handled for you, and new music. */
+const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+const folderName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
+
+/**
+ * Everything waiting for you: questions about the music you are bringing in, what was handled
+ * for you, the build, and new music. New music always goes into your library, never into the
+ * folder you are bringing in.
+ */
 export function InboxScreen(props: {
   root: string
+  /** Your library: where the build goes and where new music comes in. */
+  home: string | null
+  onChooseMusic: () => void
   onImported: () => void
   onCount: (n: number) => void
   onSwitchLibrary: (path: string) => void
 }) {
-  const [tab, setTab] = useState<'library' | 'new'>('library')
+  // Inside your library there is nothing to bring in or build: only new music to add.
+  const inLibrary = !!props.home && norm(props.root) === norm(props.home)
+  const [tab, setTab] = useState<'library' | 'new'>(inLibrary ? 'new' : 'library')
   const [data, setData] = useState<Review | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -69,11 +81,11 @@ export function InboxScreen(props: {
   )
 
   useEffect(() => {
-    if (!props.root) return
+    if (!props.root || inLibrary) return
     review(props.root)
       .then(take)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-  }, [props.root, take])
+  }, [props.root, take, inLibrary])
 
   const answer = useCallback(
     async (items: AnswerItem[]) => {
@@ -116,7 +128,9 @@ export function InboxScreen(props: {
 
   useEffect(() => () => stopClips(), [])
 
-  const summary = data
+  const summary = inLibrary
+    ? 'Add music you have bought or downloaded; it comes into your library tagged, with covers and lyrics.'
+    : data
     ? [
         questions.length ? plural(questions.length, 'question for you', 'questions for you') : 'No questions for you',
         newHandled.length ? `${plural(newHandled.length, 'thing', 'things')} handled for you to approve` : '',
@@ -142,10 +156,19 @@ export function InboxScreen(props: {
           </button>
         )}
       </header>
+      {inLibrary ? (
+        <p className="mb-5 text-[13px] text-ink/55">
+          Have a folder of music to bring in?{' '}
+          <button onClick={props.onChooseMusic} className="text-accent-ink underline-offset-2 hover:underline">
+            Choose it
+          </button>{' '}
+          and Venuta builds a clean copy of it here.
+        </p>
+      ) : (
       <div role="tablist" aria-label="Organize" className="mb-5 inline-flex rounded-full bg-ink/[0.07] p-1">
         {(
           [
-            ['library', 'Your library'],
+            ['library', `Bringing in ${folderName(props.root)}`],
             ['new', 'New music'],
           ] as const
         ).map(([id, label]) => (
@@ -161,11 +184,16 @@ export function InboxScreen(props: {
           </button>
         ))}
       </div>
+      )}
 
       {error && <p className="mb-4 text-[13px] text-problem">{error}</p>}
 
-      {tab === 'new' ? (
-        <IncomingScreen root={props.root} onImported={props.onImported} />
+      {tab === 'new' || inLibrary ? (
+        props.home ? (
+          <IncomingScreen root={props.home} onImported={props.onImported} />
+        ) : (
+          <p className="py-20 text-center text-[14px] text-ink/55">Choose where your library lives first (Settings, Music folders).</p>
+        )
       ) : !data ? (
         <p className="py-20 text-center text-[14px] text-ink/55">{summary}</p>
       ) : (
@@ -722,8 +750,14 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
             {plural(ready.length - copies, 'album', 'albums')} into {target ?? 'a folder you choose in Settings'}
             {copies ? `, and ${plural(copies, 'copy', 'copies')} set aside in _Quarantine` : ''}.
             {waiting ? ` ${plural(waiting, 'album waits', 'albums wait')} for your answers and will be built later.` : ''} Your
-            current library is only read, never changed.
+            music folder is only read, never changed.
           </div>
+          {!target && (
+            <div className="mt-1 text-[12.5px] text-fix">Choose where your library lives first, in Settings, Music folders.</div>
+          )}
+          {target && !ready.length && waiting > 0 && (
+            <div className="mt-1 text-[12.5px] text-fix">Answer the questions above, and those albums are ready to build.</div>
+          )}
           {error && <div className="mt-1 text-[12.5px] text-problem">{error}</div>}
         </div>
         <button

@@ -24,14 +24,20 @@ import {
   syncCard,
   lookupOnline,
   inApp,
+  chooseHome,
+  checkMusicFolder,
+  getSettings,
+  libraryHome,
+  setOpenFolder,
   libraryHealth,
   scanLibrary,
   type HealthReport,
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { track } from './lib/jobs'
-import { getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Surface } from './lib/prefs'
-import { DeepProgressBar, EmptyState } from './screens/LibraryScreen'
+import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Prefs, type Surface } from './lib/prefs'
+import { DeepProgressBar } from './screens/LibraryScreen'
+import { MissingFolder, NoLibrary, NoMusic } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
@@ -41,6 +47,7 @@ import { ActivityScreen } from './screens/ActivityScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { SetupScreen } from './screens/SetupScreen'
 
+// Before the open folder was kept with the library, this computer remembered it; read once.
 const ROOT_KEY = 'library-root'
 const store = {
   get: () => {
@@ -50,14 +57,11 @@ const store = {
       return ''
     }
   },
-  set: (v: string) => {
-    try {
-      localStorage.setItem(ROOT_KEY, v)
-    } catch {
-      // Not remembered this time; harmless.
-    }
-  },
 }
+
+/** Same folder, whatever the slashes or letter case (Windows paths). */
+const normPath = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+const samePath = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && normPath(a) === normPath(b)
 
 type Place = 'music' | 'health' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
 const ORDER: Place[] = ['music', 'health', 'inbox', 'playlists', 'devices', 'activity', 'settings']
@@ -66,7 +70,13 @@ const MAIN = 5
 
 export default function App() {
   const prefs = usePrefs()
-  const [root, setRoot] = useState(() => store.get() || (inApp() ? '' : 'D:/Collection'))
+  // The folder showing: your library, or music being brought in. `home` is your library,
+  // where everything Venuta builds and knows is kept.
+  const [root, setRoot] = useState(inApp() ? '' : 'D:/Collection')
+  const [home, setHome] = useState<string | null>(inApp() ? null : 'D:/Music Library')
+  const [suggestion, setSuggestion] = useState('D:/Music Library')
+  const [ready, setReady] = useState(!inApp())
+  const [missing, setMissing] = useState('')
   const [report, setReport] = useState<HealthReport | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -79,8 +89,8 @@ export default function App() {
   const [palette, setPalette] = useState(false)
   const [sheet, setSheet] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
-  // The guided set-up: shown until a music folder is chosen, and on request.
-  const [setup, setSetup] = useState(() => !store.get() && inApp())
+  // The guided set-up: shown until a library is chosen, and on request.
+  const [setup, setSetup] = useState(false)
   const search = useRef<HTMLInputElement>(null)
   const closeNotice = useCallback(() => setNotice(''), [])
   const closeError = useCallback(() => setError(''), [])
@@ -130,8 +140,29 @@ export default function App() {
       })
     } catch (e) {
       setBusy('')
-      setError(String(e))
+      // A folder that has gone (drive unplugged, renamed) gets its own screen, not an error.
+      if (/does not exist or is not a directory/.test(String(e))) setMissing(dir)
+      else setError(String(e))
     }
+  }, [])
+
+  // On start: where the library is, which folder was open, and the look saved with it.
+  useEffect(() => {
+    if (!inApp()) return
+    void (async () => {
+      try {
+        const [h, s] = await Promise.all([libraryHome(), getSettings()])
+        adoptPrefs(s.appearance as Partial<Prefs> | null)
+        setSuggestion(h.suggestion)
+        setHome(h.library)
+        if (!h.library) setSetup(true)
+        else setRoot(s.open_folder || store.get() || h.library)
+      } catch (e) {
+        setError(String(e))
+      } finally {
+        setReady(true)
+      }
+    })()
   }, [])
 
   // Cards set to sync on insert: sync when they appear, whatever screen is open.
@@ -229,16 +260,23 @@ export default function App() {
   async function chooseRoot() {
     const picked = inApp() ? await open({ directory: true, title: 'Choose the folder that holds your music' }) : null
     if (typeof picked !== 'string') return
+    try {
+      await checkMusicFolder(picked)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return
+    }
     openLibrary(picked)
   }
 
   function openLibrary(path: string) {
-    store.set(path)
+    void setOpenFolder(path).catch(() => {})
+    setMissing('')
     setReport(null)
     setBackdrop([])
     // Show the wall filling in rather than leaving you on the screen you chose it from.
     go('music')
-    if (path === root) void refresh(path, true)
+    if (samePath(path, root)) void refresh(path, true)
     else {
       readNext.current = true
       setRoot(path)
@@ -419,10 +457,17 @@ export default function App() {
       return (
         <SetupScreen
           root={root}
+          home={home}
+          suggestion={suggestion}
           report={report}
           busy={busy}
           lookup={lookup}
+          onChooseHome={async (path) => {
+            await chooseHome(path)
+            setHome(path)
+          }}
           onChooseMusic={chooseRoot}
+          onStartEmpty={() => home && openLibrary(home)}
           onLookup={runLookup}
           onCancelLookup={() => void cancelLookup()}
           onDone={() => {
@@ -431,9 +476,27 @@ export default function App() {
           }}
         />
       )
-    if (!root && active !== 'settings') return <EmptyState onChoose={chooseRoot} />
+    if (!ready) return null
+    if (missing && samePath(missing, root) && active !== 'settings')
+      return (
+        <MissingFolder
+          path={missing}
+          isLibrary={samePath(missing, home)}
+          onRetry={() => {
+            setMissing('')
+            void refresh(root, true)
+          }}
+          onChoose={() => void chooseRoot()}
+          onLibrary={home && !samePath(missing, home) ? () => openLibrary(home) : undefined}
+        />
+      )
+    if (!root && active !== 'settings') return <NoLibrary onSetup={() => setSetup(true)} />
     switch (active) {
       case 'music':
+        if (report && report.summary.tracks === 0)
+          return (
+            <NoMusic path={root} isLibrary={samePath(root, home)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
+          )
         return <MusicScreen root={root} report={report} busy={busy} searchRef={search} />
       case 'health':
         return (
@@ -465,6 +528,8 @@ export default function App() {
         return (
           <InboxScreen
             root={root}
+            home={home}
+            onChooseMusic={() => void chooseRoot()}
             onImported={() => void refresh(root, false)}
             onCount={setInboxCount}
             onSwitchLibrary={(path) => {
@@ -481,7 +546,20 @@ export default function App() {
       case 'activity':
         return <ActivityScreen root={root} />
       case 'settings':
-        return <SettingsScreen root={root} onChooseLibrary={chooseRoot} />
+        return (
+          <SettingsScreen
+            root={root}
+            home={home}
+            onChooseLibrary={chooseRoot}
+            onOpenLibrary={() => home && openLibrary(home)}
+            onChooseHome={async (path) => {
+              if (root) await checkMusicFolder(root, path)
+              await chooseHome(path)
+              setHome(path)
+              openLibrary(path)
+            }}
+          />
+        )
     }
   })()
 

@@ -2,7 +2,9 @@ import { motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
-  checkNewLibrary,
+  checkHome,
+  libraryHome,
+  type HomeInfo,
   engineVersion,
   getAliases,
   getSettings,
@@ -27,7 +29,14 @@ const PAGES: { id: Page; label: string }[] = [
   { id: 'about', label: 'About' },
 ]
 
-export function SettingsScreen(props: { root: string; onChooseLibrary: () => void; page?: Page }) {
+export function SettingsScreen(props: {
+  root: string
+  home: string | null
+  onChooseLibrary: () => void
+  onOpenLibrary: () => void
+  onChooseHome: (path: string) => Promise<void>
+  page?: Page
+}) {
   const [page, setPage] = useState<Page>(props.page ?? 'look')
   return (
     <div className="mx-auto flex h-full max-w-[1040px] gap-6 pb-8 pt-6">
@@ -55,7 +64,15 @@ export function SettingsScreen(props: { root: string; onChooseLibrary: () => voi
       </aside>
       <main className="glass no-scrollbar min-w-0 flex-1 overflow-y-auto rounded-[24px] px-7 py-6">
         {page === 'look' && <LookAndFeel />}
-        {page === 'folders' && <Folders root={props.root} onChooseLibrary={props.onChooseLibrary} />}
+        {page === 'folders' && (
+          <Folders
+            root={props.root}
+            home={props.home}
+            onChooseLibrary={props.onChooseLibrary}
+            onOpenLibrary={props.onOpenLibrary}
+            onChooseHome={props.onChooseHome}
+          />
+        )}
         {page === 'organising' && <ArtistNames />}
         {page === 'online' && <Online />}
         {page === 'players' && <Players />}
@@ -224,37 +241,70 @@ function useSettings() {
   return { s, save, saved }
 }
 
-function Folders(props: { root: string; onChooseLibrary: () => void }) {
+function Folders(props: {
+  root: string
+  home: string | null
+  onChooseLibrary: () => void
+  onOpenLibrary: () => void
+  onChooseHome: (path: string) => Promise<void>
+}) {
   const { s, save, saved } = useSettings()
   const [error, setError] = useState('')
+  const [info, setInfo] = useState<HomeInfo | null>(null)
+  useEffect(() => {
+    void libraryHome().then(setInfo)
+  }, [props.home])
   async function pick(title: string) {
     const picked = inApp() ? await open({ directory: true, title }) : null
     return typeof picked === 'string' ? picked : null
   }
+  const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+  const showingLibrary = !!props.home && norm(props.root) === norm(props.home)
   return (
     <div>
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Music folders</h2>
-      <Row title="Your music" hint={props.root || 'Not chosen yet'}>
-        <button onClick={props.onChooseLibrary} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
-          Choose another folder
-        </button>
+      <Row
+        title="Your library"
+        hint={
+          props.home
+            ? `${props.home}. Your music is built here, and everything Venuta knows (settings, answers, history, covers) is kept with it in ${info?.data_dir ?? '.venuta'}. Move or back up the folder and it all goes along.`
+            : 'Not chosen yet.'
+        }
+      >
+        <div className="flex gap-2">
+          {props.home && !showingLibrary && (
+            <button onClick={props.onOpenLibrary} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
+              Open
+            </button>
+          )}
+          <button
+            onClick={async () => {
+              const p = await pick('Choose your library (a new, empty folder or one Venuta made)')
+              if (!p) return
+              try {
+                await checkHome(p)
+                await props.onChooseHome(p)
+                setError('')
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]"
+          >
+            {props.home ? 'Use another library' : 'Choose'}
+          </button>
+        </div>
       </Row>
-      <Row title="New library" hint={(s?.new_library ?? 'Not chosen yet') + '. Where the clean copy is built; it must be empty or one this app made.'}>
-        <button
-          onClick={async () => {
-            const p = await pick('Where should the new library be built?')
-            if (!p) return
-            try {
-              await checkNewLibrary(props.root, p)
-              setError('')
-              await save({ new_library: p })
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e))
-            }
-          }}
-          className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]"
-        >
-          Choose
+      <Row
+        title="Music to bring in"
+        hint={
+          !props.root || showingLibrary
+            ? 'A folder of music you already have. It is only read, never changed; Venuta builds a clean copy in your library.'
+            : `${props.root}. Only read, never changed; Organize builds a clean copy of it in your library.`
+        }
+      >
+        <button onClick={props.onChooseLibrary} className="rounded-full bg-ink/[0.08] px-4 py-2 text-[13px] hover:bg-ink/[0.14]">
+          Choose a folder
         </button>
       </Row>
       <Row title="Organising rules" hint={(s?.rules_dir ?? '') + '. Artist names, categories, folder layout and genres, as plain text files.'}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { inApp } from './engine'
+import { inApp, saveAppearance } from './engine'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -55,15 +55,25 @@ function load(): Prefs {
 
 export const getPrefs = () => current
 
-export function setPrefs(change: Partial<Prefs>) {
+/**
+ * Change the look. It is kept with your library (so it travels with it) and also on this
+ * computer, so the very first frame on start already has it.
+ */
+export function setPrefs(change: Partial<Prefs>, opts: { save?: boolean } = {}) {
   current = { ...current, ...change }
   try {
     localStorage.setItem(KEY, JSON.stringify(current))
   } catch {
-    // Not remembered this time; the change still applies now.
+    // Not remembered on this computer this time; the library copy still is.
   }
+  if (opts.save !== false) void saveAppearance(current).catch(() => {})
   applyPrefs()
   listeners.forEach((l) => l(current))
+}
+
+/** Take the look saved with the library (on start), without saving it straight back. */
+export function adoptPrefs(saved: Partial<Prefs> | null | undefined) {
+  if (saved) setPrefs({ ...DEFAULTS, ...saved }, { save: false })
 }
 
 /** The theme actually showing ("system" resolved). */
