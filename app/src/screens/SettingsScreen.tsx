@@ -12,7 +12,7 @@ import {
   type Settings,
 } from '../lib/engine'
 import { resolvedTheme, setPrefs, surfaceShown, usePrefs, type Prefs } from '../lib/prefs'
-import { ACCENTS, STYLES, styleInfo, tuneAccent, type StyleInfo } from '../lib/themes'
+import { ACCENTS, STYLES, accentRoles, colourDistance, styleInfo, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
@@ -123,6 +123,142 @@ function Segmented<T extends string>(props: {
   return <Choice label={props.id} value={props.value} options={props.options} onChange={props.onChange} size="sm" />
 }
 
+/**
+ * Lumen's colour: from the music, one colour you keep (a swatch or your own), or none; how
+ * colourful; and a preview with the colours as they show now.
+ */
+function ColourRows() {
+  const p = usePrefs()
+  const set = (c: Partial<Prefs>) => setPrefs(c)
+  const light = resolvedTheme(p) === 'light'
+  const own = p.accent.startsWith('#') ? p.accent : null
+  const fixed = p.accentMode === 'fixed'
+  // Your own colour, as it shows: moved in lightness only when it wouldn't read.
+  const shown = own ? accentRoles(own, light, p.intensity)?.accent : null
+  const adjusted = own && shown && colourDistance(own, shown) > 0.08
+  return (
+    <>
+      <Row
+        title="Colour"
+        hint={
+          p.accentMode === 'album'
+            ? 'Each album brings its own colour: the one playing, or the one you open. Covers without colour use the one below.'
+            : fixed
+              ? 'Always this colour, whatever plays.'
+              : 'No accent: white controls on dark, graphite on light. The album art is the only colour.'
+        }
+      >
+        <Segmented
+          id="colour"
+          value={p.accentMode}
+          onChange={(accentMode) => set({ accentMode })}
+          options={[
+            { value: 'album', label: 'From the music' },
+            { value: 'fixed', label: 'One colour' },
+            { value: 'neutral', label: 'Neutral' },
+          ]}
+        />
+      </Row>
+      {p.accentMode !== 'neutral' && (
+        <>
+          <Row title="Intensity" hint="How colourful the accent may be. Every setting stays readable: buttons, text and the progress bar keep their contrast.">
+            <Segmented
+              id="intensity"
+              value={p.intensity}
+              onChange={(intensity) => set({ intensity })}
+              options={[
+                { value: 'subtle', label: 'Subtle' },
+                { value: 'balanced', label: 'Balanced' },
+                { value: 'vivid', label: 'Vivid' },
+              ]}
+            />
+          </Row>
+          <Row
+            title={fixed ? 'Your colour' : 'For covers without colour'}
+            hint={
+              adjusted
+                ? `Made a little ${light ? 'darker' : 'lighter'} so it reads on the ${light ? 'page' : 'glass'}.`
+                : fixed
+                  ? 'One of these, or any colour you pick.'
+                  : 'Black-and-white and grey covers use this one.'
+            }
+          >
+            <div role="radiogroup" aria-label="Colour" className="flex flex-wrap items-center gap-2">
+              {ACCENTS.map((a) => {
+                const on = !own && p.accent === a.name
+                // As it will show on this theme.
+                const hex = accentRoles(a.seed, light, p.intensity)?.accent ?? a.seed
+                return (
+                  <button
+                    key={a.name}
+                    role="radio"
+                    aria-checked={on}
+                    aria-label={a.name}
+                    title={a.name}
+                    onClick={() => set({ accent: a.name })}
+                    className="keep-round grid h-8 w-8 place-items-center rounded-full transition-transform hover:scale-110"
+                    style={{ background: hex, boxShadow: on ? `0 0 0 2px var(--solid), 0 0 0 4px ${hex}` : 'inset 0 0 0 1px rgb(0 0 0 / 0.15)' }}
+                  />
+                )
+              })}
+              <label
+                title="Your own colour"
+                className="keep-round relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full transition-transform hover:scale-110"
+                style={{
+                  background: shown ?? 'conic-gradient(#f0624a, #f2a33a, #d2c23a, #2fbf7f, #20b5c4, #3d8bff, #b45be6, #ec4f8c, #f0624a)',
+                  boxShadow: own ? `0 0 0 2px var(--solid), 0 0 0 4px ${shown}` : 'inset 0 0 0 1px rgb(0 0 0 / 0.15)',
+                }}
+              >
+                <input
+                  type="color"
+                  aria-label="Your own colour"
+                  value={own ?? '#3d8bff'}
+                  onChange={(e) => set({ accent: e.target.value })}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
+                {!own && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                )}
+              </label>
+            </div>
+          </Row>
+        </>
+      )}
+      <Row title="Preview" hint={p.accentMode === 'album' ? "With the colour of what's playing now." : undefined}>
+        <AccentPreview />
+      </Row>
+    </>
+  )
+}
+
+/** The accent where it shows: the main button, progress, the playing song, a choice. */
+function AccentPreview() {
+  return (
+    <div className="glass flex flex-wrap items-center gap-4 rounded-2xl px-4 py-3" aria-hidden>
+      <span className="btn-primary btn-sm">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 4.5v15l13-7.5z" />
+        </svg>
+        Play
+      </span>
+      <span className="h-1 w-24 overflow-hidden rounded-full bg-ink/15">
+        <span className="block h-full w-3/5 rounded-full bg-accent" />
+      </span>
+      <span className="flex items-center gap-2 text-[13px] font-medium text-accent-ink">
+        <span className="flex h-3 items-end gap-[2px]">
+          <span className="h-full w-[3px] rounded-sm bg-current" />
+          <span className="h-2/3 w-[3px] rounded-sm bg-current" />
+          <span className="h-1/3 w-[3px] rounded-sm bg-current" />
+        </span>
+        The song playing
+      </span>
+      <span className="rounded-full bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] px-2.5 py-1 text-[12px] font-medium text-accent-ink">Chosen</span>
+    </div>
+  )
+}
+
 function LookAndFeel() {
   const p = usePrefs()
   const set = (c: Partial<Prefs>) => setPrefs(c)
@@ -168,7 +304,7 @@ function LookAndFeel() {
             title="Surface"
             hint={
               surfaceShown(p) !== p.surface
-                ? 'Windows has transparency effects turned off, so Venuta is Solid for now. Your choice comes back when they are on again (Windows Settings, Personalisation, Colours).'
+                ? 'Windows has transparency effects turned off, so Lumen is Solid for now. Your choice comes back when they are on again (Windows Settings, Personalisation, Colours).'
                 : 'Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only.'
             }
           >
@@ -184,41 +320,7 @@ function LookAndFeel() {
               ]}
             />
           </Row>
-          <Row title="Accent colour" hint="From the album you're looking at or playing, or always the colour you pick below.">
-            <Segmented
-              id="accent"
-              value={p.accentMode}
-              onChange={(accentMode) => set({ accentMode })}
-              options={[
-                { value: 'album', label: 'From the album' },
-                { value: 'fixed', label: 'Fixed' },
-              ]}
-            />
-          </Row>
-          <Row
-            title={p.accentMode === 'fixed' ? 'Accent' : 'When a cover has no colour'}
-            hint={p.accentMode === 'fixed' ? undefined : 'Black-and-white and grey covers use this one.'}
-          >
-            <div role="radiogroup" aria-label="Accent" className="flex flex-wrap gap-2">
-              {ACCENTS.map((a) => {
-                const on = p.accent === a.name
-                // As it will show: dark-theme accents are softened the same way album colours are.
-                const hex = light ? a.light : (tuneAccent(a.dark, false) ?? a.dark)
-                return (
-                  <button
-                    key={a.name}
-                    role="radio"
-                    aria-checked={on}
-                    aria-label={a.name}
-                    title={a.name}
-                    onClick={() => set({ accent: a.name })}
-                    className="keep-round grid h-8 w-8 place-items-center rounded-full transition-transform hover:scale-110"
-                    style={{ background: hex, boxShadow: on ? `0 0 0 2px var(--solid), 0 0 0 4px ${hex}` : 'inset 0 0 0 1px rgb(0 0 0 / 0.15)' }}
-                  />
-                )
-              })}
-            </div>
-          </Row>
+          <ColourRows />
         </>
       )}
       {!['bounty', 'skin99', 'green-room', 'orchard', 'redline', 'glasshouse'].includes(p.style) && (

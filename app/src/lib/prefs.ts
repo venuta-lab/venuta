@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
-import { ACCENTS, accentByName, colourDistance, styleInfo, tuneAccent, type Style } from './themes'
+import { accentByName, accentRoles, neutralRoles, styleInfo, type AccentRoles, type Intensity, type Style } from './themes'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -8,7 +8,8 @@ import { ACCENTS, accentByName, colourDistance, styleInfo, tuneAccent, type Styl
 */
 export type Theme = 'dark' | 'light' | 'system'
 export type Surface = 'glass' | 'frosted' | 'solid' | 'amoled'
-export type AccentMode = 'album' | 'fixed'
+/** From the music playing (or the album open), one colour you keep, or none at all. */
+export type AccentMode = 'album' | 'fixed' | 'neutral'
 export type Motion = 'full' | 'reduced' | 'system'
 
 export interface Prefs {
@@ -17,8 +18,11 @@ export interface Prefs {
   theme: Theme
   surface: Surface
   accentMode: AccentMode
-  /** A fixed accent's name (see ACCENTS in lib/themes.ts); also the fallback for grey covers. */
+  /** A swatch's name (see ACCENTS in lib/themes.ts) or your own colour as #rrggbb; also the
+   *  colour for grey covers. */
   accent: string
+  /** How colourful the accent may be. */
+  intensity: Intensity
   backdrop: boolean
   motion: Motion
 }
@@ -29,6 +33,7 @@ const DEFAULTS: Prefs = {
   surface: 'glass',
   accentMode: 'album',
   accent: 'Azure',
+  intensity: 'balanced',
   backdrop: true,
   motion: 'system',
 }
@@ -46,11 +51,10 @@ function load(): Prefs {
   }
 }
 
-/** Older saves kept the accent as a colour; the accents are named now: take the nearest. */
+/** Older saves: a swatch that was renamed finds its nearest (a colour kept as #rrggbb is yours). */
 function upgrade(p: Prefs): Prefs {
-  if (!p.accent.startsWith('#')) return p
-  const nearest = ACCENTS.reduce((a, b) => (colourDistance(p.accent, b.dark) < colourDistance(p.accent, a.dark) ? b : a))
-  return { ...p, accent: nearest.name }
+  if (p.accent.startsWith('#') || accentByName(p.accent).name === p.accent) return p
+  return { ...p, accent: accentByName(p.accent).name }
 }
 
 export const getPrefs = () => current
@@ -106,12 +110,13 @@ export function applyPrefs() {
   // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
   el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
   if (p.style !== 'venuta') {
-    // The retro themes bring their own accent (Bounty's follows the album, in its blocks).
-    el.style.removeProperty('--accent')
+    // The other themes bring their own accent (Bounty's follows the album, in its blocks;
+    // Glasshouse's the cover, set by lib/covers.ts).
+    setAccentVars(null)
     if (p.style !== 'bounty') el.style.removeProperty('--block')
   } else {
-    // Fixed, or the fallback until an album's colour arrives.
-    el.style.setProperty('--accent', fixedAccent(p))
+    // The colour you chose, or the fallback until an album's colour arrives.
+    setAccentVars(chosenRoles(p))
   }
   // The window's own glass (acrylic) follows the theme too.
   if (inApp()) {
@@ -170,11 +175,24 @@ export function usePrefs(): Prefs {
 export const motionSetting = (p: Prefs) =>
   p.motion === 'reduced' ? 'always' : p.motion === 'full' ? 'never' : 'user'
 
-/** The chosen fixed accent, in the version for the theme showing. */
-export function fixedAccent(p = current): string {
-  const a = accentByName(p.accent)
-  // Through the same calm band as album colours, so a swatch sits with the glass too.
-  return resolvedTheme(p) === 'light' ? a.light : (tuneAccent(a.dark, false) ?? a.dark)
+/** The colour you chose (a swatch or your own), as it shows on the theme: also the colour for grey covers. */
+export function chosenRoles(p = current): AccentRoles {
+  const light = resolvedTheme(p) === 'light'
+  if (p.accentMode === 'neutral') return neutralRoles(light)
+  const seed = p.accent.startsWith('#') ? p.accent : accentByName(p.accent).seed
+  return accentRoles(seed, light, p.intensity) ?? neutralRoles(light)
+}
+
+/** Put an accent's colours on the page (null: the theme's own, from its CSS). */
+export function setAccentVars(r: AccentRoles | null) {
+  const st = document.documentElement.style
+  if (!r) {
+    for (const v of ['--accent', '--on-accent', '--accent-ink']) st.removeProperty(v)
+    return
+  }
+  st.setProperty('--accent', r.accent)
+  st.setProperty('--on-accent', r.onAccent)
+  st.setProperty('--accent-ink', r.ink)
 }
 
 // Development builds only: lets the screenshot scripts try a look without saving it.

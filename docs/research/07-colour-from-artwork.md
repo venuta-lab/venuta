@@ -91,3 +91,21 @@ live preview (a button, a progress bar, a playing row) shows the result.
 
 A contact sheet of 40 real covers from his library, the current accent beside the new palette
 (accent, tint, text), including the label-badge covers, so he can see it before it ships.
+
+## Built (2026-10-13)
+
+- The default theme is **Lumen** (its id stays `venuta`, so saved looks carry over).
+- `engine::palette`: the cover is grouped by OKLCH hue and scored after Material (share of the
+  cover with its 15-degree neighbours ×70, chroma above or below CAM16's 48, scaled ×420 from
+  OKLCH). The middle counts fully, edges less, and corners a fifth, so label badges lose. A second
+  colour is picked as far away in hue as the cover allows (90 degrees, down to 30). Tests cover
+  the corner badge, two colours never becoming mud, grey covers, and a thin detail.
+- `accentRoles` (lib/themes.ts) gives the accent at 3:1 against the page, the type on it
+  (white or near-black, whichever reads), and accent text at 4.5:1. It moves lightness only as
+  far as contrast needs, and the intensity sets the chroma range (Subtle, Balanced, Vivid).
+- Colour: From the music, One colour (ten swatches designed as seeds, or any colour picked,
+  with a note when it was lightened or darkened), Neutral. A live preview shows the main button,
+  progress, the playing song and a choice. The accent crossfades (600 ms) when it changes.
+- Judged on 60 of his own covers (a contact sheet from the cached thumbnails, read only:
+  `palette::sheet::covers_sheet`). The T-Series and Sony badges no longer win, grey covers fall
+  back to his colour, and two-colour covers keep both.

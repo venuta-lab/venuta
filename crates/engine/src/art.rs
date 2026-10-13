@@ -1,9 +1,9 @@
-//! Cover thumbnails for the UI, and an accent colour picked from each cover.
+//! Cover thumbnails for the UI, and the colours of each cover (crate::palette).
 //! Thumbnails are cached by the hash of the embedded image, so they are made once.
 
 use crate::paths;
+use image::ImageReader;
 use image::imageops::FilterType;
-use image::{ImageReader, RgbImage};
 use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
 use lofty::flac::FlacFile;
@@ -20,8 +20,10 @@ pub struct CoverThumb {
     pub dir: String,
     /// Absolute path of the cached JPEG thumbnail.
     pub path: String,
-    /// A vivid colour from the cover, as `#rrggbb`.
+    /// The cover's own colour, as `#rrggbb` (see `palette`); none for a grey cover.
     pub accent: Option<String>,
+    /// A second colour of the cover, far from the first in hue, when it has one.
+    pub second: Option<String>,
 }
 
 pub struct CoverRequest {
@@ -76,10 +78,12 @@ fn thumbnail(root: &Path, dir: &Path, req: CoverRequest, size: u32) -> Result<Co
         std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
         small
     };
+    let colours = crate::palette::palette(&img);
     Ok(CoverThumb {
         dir: req.dir,
         path: out.to_string_lossy().into_owned(),
-        accent: accent_color(&img),
+        accent: colours.seed,
+        second: colours.second,
     })
 }
 
@@ -157,41 +161,4 @@ pub fn cover_file_for(track: &Path) -> Option<PathBuf> {
         }
     }
     Some(out)
-}
-
-/// Pick a vivid, mid-bright colour: average the most saturated pixels of a small copy.
-pub fn accent_color(img: &RgbImage) -> Option<String> {
-    let small = image::imageops::thumbnail(img, 32, 32);
-    let mut scored: Vec<(f32, [u8; 3])> = small
-        .pixels()
-        .map(|p| {
-            let [r, g, b] = p.0;
-            let (rf, gf, bf) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-            let max = rf.max(gf).max(bf);
-            let min = rf.min(gf).min(bf);
-            let sat = if max == 0.0 { 0.0 } else { (max - min) / max };
-            // Prefer saturated colours that are neither near-black nor near-white.
-            let light = 1.0 - (max - 0.65).abs() * 1.6;
-            (sat * light.max(0.0), [r, g, b])
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let top = &scored[..(scored.len() / 7).max(1)];
-    if top[0].0 < 0.12 {
-        return None; // greyscale cover: let the UI use its default accent
-    }
-    let n = top.len() as u32;
-    let sum = top.iter().fold([0u32; 3], |acc, (_, c)| {
-        [
-            acc[0] + c[0] as u32,
-            acc[1] + c[1] as u32,
-            acc[2] + c[2] as u32,
-        ]
-    });
-    Some(format!(
-        "#{:02x}{:02x}{:02x}",
-        sum[0] / n,
-        sum[1] / n,
-        sum[2] / n
-    ))
 }

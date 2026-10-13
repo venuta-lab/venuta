@@ -28,7 +28,7 @@ export interface StyleInfo {
 }
 
 export const STYLES: StyleInfo[] = [
-  { id: 'venuta', name: 'Venuta', line: 'Glass over your album art, in the colour of what you play.', modes: true, albumAccent: true },
+  { id: 'venuta', name: 'Lumen', line: 'Light through glass, over your album art, in the colour of what you play.', modes: true, albumAccent: true },
   // The players people know (research 08): their own names here, what they are after in the line.
   { id: 'green-room', name: 'Green Room', line: 'Black panels, a green Play and big bold titles. After Spotify.', modes: false, albumAccent: false },
   { id: 'orchard', name: 'Orchard', line: 'Quiet greys, a red-pink key and a floating player. After Apple Music.', modes: true, albumAccent: false },
@@ -44,21 +44,26 @@ export const STYLES: StyleInfo[] = [
 
 export const styleInfo = (id: string) => STYLES.find((s) => s.id === id) ?? STYLES[0]
 
-/** Fixed accents: a dark-theme and a light-theme version of each (research §2.3). */
-export const ACCENTS: { name: string; dark: string; light: string }[] = [
-  { name: 'Azure', dark: '#5aa8ff', light: '#1f66d1' },
-  { name: 'Iris', dark: '#8c8cff', light: '#4b49d6' },
-  { name: 'Violet', dark: '#c084fc', light: '#8b3fd9' },
-  { name: 'Rose', dark: '#ff6fae', light: '#d02f7a' },
-  { name: 'Ember', dark: '#ff6b4a', light: '#d9432a' },
-  { name: 'Amber', dark: '#ffb547', light: '#b86e00' },
-  { name: 'Lime', dark: '#b5e655', light: '#5e8c12' },
-  { name: 'Mint', dark: '#3ddc97', light: '#0f8a5f' },
-  { name: 'Lagoon', dark: '#3ccfe0', light: '#0a7f91' },
-  { name: 'Graphite', dark: '#d6d9e0', light: '#3a3f4a' },
+/**
+ * Colours to keep (One colour), designed for Lumen as seeds: a hue and how colourful. Each is
+ * made into the theme's colours the same way an album's is (accentRoles), so it reads in light
+ * and dark alike. The names of older swatches still find their nearest.
+ */
+export const ACCENTS: { name: string; seed: string }[] = [
+  { name: 'Azure', seed: '#3d8bff' },
+  { name: 'Iris', seed: '#6f6cf6' },
+  { name: 'Orchid', seed: '#b45be6' },
+  { name: 'Rose', seed: '#ec4f8c' },
+  { name: 'Coral', seed: '#f0624a' },
+  { name: 'Amber', seed: '#f2a33a' },
+  { name: 'Citrine', seed: '#d2c23a' },
+  { name: 'Jade', seed: '#2fbf7f' },
+  { name: 'Lagoon', seed: '#20b5c4' },
+  { name: 'Slate', seed: '#7d8ba6' },
 ]
+const RENAMED: Record<string, string> = { Violet: 'Orchid', Ember: 'Coral', Lime: 'Citrine', Mint: 'Jade', Graphite: 'Slate' }
 
-export const accentByName = (name: string) => ACCENTS.find((a) => a.name === name) ?? ACCENTS[0]
+export const accentByName = (name: string) => ACCENTS.find((a) => a.name === (RENAMED[name] ?? name)) ?? ACCENTS[0]
 
 // --- OKLCH ------------------------------------------------------------------------------------
 
@@ -122,29 +127,68 @@ export function oklchToHex(lch: Lch): string {
   )
 }
 
-/**
- * An album's colour, made into an accent that reads on the theme (research §2.4): lightness and
- * chroma clamped in OKLCH, hue kept. Greys (no real colour) give null: keep the fixed accent.
- */
-export function tuneAccent(hex: string, light: boolean): string | null {
-  const lch = hexToOklch(hex)
-  if (!lch) return null
-  if (lch.c < 0.045) return null
-  let { l, c } = lch
-  const h = lch.h
-  // Calmer than the cover itself: a soft, light version of its colour sits with the glass and
-  // the backdrop instead of shouting over them (a saturated orange on teal glass jarred).
-  if (light) {
-    const top = h >= 85 && h <= 125 ? 0.52 : 0.58
-    l = Math.min(Math.max(l, 0.48), top)
-    c = Math.min(Math.max(c, 0.07), 0.15)
-  } else {
-    const floor = h >= 250 && h <= 300 ? 0.76 : 0.76
-    l = Math.min(Math.max(l, floor), 0.86)
-    c = Math.min(Math.max(c, 0.06), 0.13)
-  }
-  return oklchToHex({ l, c, h })
+
+// --- An accent's colours, solved for contrast (research 07) -----------------------------------
+
+export type Intensity = 'subtle' | 'balanced' | 'vivid'
+
+/** What an accent becomes on a theme: the colour, type on it, and text in it. */
+export interface AccentRoles {
+  /** Fills: the main button, progress, the playing row, selection. 3:1 against the page. */
+  accent: string
+  /** Type on the accent: white or near-black, whichever reads (4.5:1 or better). */
+  onAccent: string
+  /** Text in the accent's colour on the page: 4.5:1. */
+  ink: string
 }
+
+/** The pages accents sit on (Lumen's glass is a little lighter or darker; these are the worst case). */
+const SURFACE = { dark: '#1d1e23', light: '#f3f3f5' }
+/** How colourful an accent may be, per intensity: at least, at most (OKLCH chroma). */
+const CHROMA: Record<Intensity, [number, number]> = { subtle: [0.03, 0.085], balanced: [0.06, 0.145], vivid: [0.09, 0.22] }
+
+function luminance(hex: string): number {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return 0
+  const [r, g, b] = rgb.map(toLinear)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** WCAG 2 contrast ratio of two colours (1 to 21). */
+export function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p)
+  return (x + 0.05) / (y + 0.05)
+}
+
+/** The accent's colours on a dark or light theme. Greys (no real colour) give null. */
+export function accentRoles(seed: string, light: boolean, intensity: Intensity = 'balanced'): AccentRoles | null {
+  const lch = hexToOklch(seed)
+  if (!lch || lch.c < 0.03) return null
+  const [lo, hi] = CHROMA[intensity]
+  const c = Math.min(Math.max(lch.c, lo), hi)
+  const h = lch.h
+  const surface = light ? SURFACE.light : SURFACE.dark
+  // Lightness that keeps the cover's character, moved only as far as contrast needs.
+  let l = light ? Math.min(Math.max(lch.l, 0.46), 0.62) : Math.min(Math.max(lch.l, 0.66), 0.84)
+  let accent = oklchToHex({ l, c, h })
+  for (let i = 0; i < 60 && contrast(accent, surface) < 3.2; i++) {
+    l += light ? -0.01 : 0.01
+    accent = oklchToHex({ l, c, h })
+  }
+  const onAccent = contrast(accent, '#ffffff') >= contrast(accent, '#0b0c10') ? '#ffffff' : '#0b0c10'
+  let li = light ? Math.min(l, 0.54) : Math.max(l, 0.74)
+  const ci = Math.min(c, 0.16)
+  let ink = oklchToHex({ l: li, c: ci, h })
+  for (let i = 0; i < 60 && contrast(ink, surface) < 4.6; i++) {
+    li += light ? -0.01 : 0.01
+    ink = oklchToHex({ l: li, c: ci, h })
+  }
+  return { accent, onAccent, ink }
+}
+
+/** No colour at all: white controls on dark, graphite on light (Neutral). */
+export const neutralRoles = (light: boolean): AccentRoles =>
+  light ? { accent: '#26272c', onAccent: '#ffffff', ink: '#1d1d1f' } : { accent: '#e6e7ea', onAccent: '#0b0c10', ink: '#f2f3f5' }
 
 /**
  * An album's colour as a tint for a page (a playlist or album header, the stage): deep enough

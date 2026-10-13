@@ -96,7 +96,7 @@ function NowBackdrop({ covers }: { covers: string[] }) {
   useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
   // And finds its right variant again when the look changes.
   const look = usePrefs()
-  useEffect(() => refreshAccent(), [look.style, look.theme, look.surface, look.accentMode, look.accent])
+  useEffect(() => refreshAccent(), [look.style, look.theme, look.surface, look.accentMode, look.accent, look.intensity])
   return <Backdrop covers={covers} focus={art ? art.src : null} />
 }
 
@@ -570,9 +570,16 @@ export default function App() {
       {
         id: 'accent-album',
         group: 'Look and feel',
-        label: 'Accent colour from the album',
-        keywords: 'color dynamic',
+        label: 'Colour from the music',
+        keywords: 'accent color dynamic album lumen',
         run: () => setPrefs({ accentMode: 'album' }),
+      },
+      {
+        id: 'accent-neutral',
+        group: 'Look and feel',
+        label: 'Neutral colour (no accent)',
+        keywords: 'accent color monochrome white grey lumen',
+        run: () => setPrefs({ accentMode: 'neutral' }),
       },
       {
         id: 'backdrop',

@@ -21,6 +21,7 @@ pub mod intake;
 pub mod library;
 pub mod media;
 pub mod net;
+pub mod palette;
 pub mod paths;
 pub mod plan;
 pub mod playlists;

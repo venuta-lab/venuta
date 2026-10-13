@@ -607,6 +607,23 @@
   color-scheme: dark;
 }
 
+/* The accent changes colour gently (a new album, a new song), never with a jump. */
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #5aa8ff;
+}
+@property --accent-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #5aa8ff;
+}
+:root[data-motion="full"] {
+  transition:
+    --accent 600ms ease,
+    --accent-ink 600ms ease;
+}
+
 /* ---------------------------------------------------------------------------------------- */
 /* Pieces every theme styles through tokens.                                                 */
 /* ---------------------------------------------------------------------------------------- */

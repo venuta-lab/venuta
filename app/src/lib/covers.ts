@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { albumCovers, assetUrl, type CoverThumb } from './engine'
-import { fixedAccent, getPrefs, resolvedTheme } from './prefs'
-import { artTone, colourDistance, nearestBlock, styleInfo, tuneAccent } from './themes'
+import { chosenRoles, getPrefs, resolvedTheme, setAccentVars } from './prefs'
+import { accentRoles, artTone, colourDistance, nearestBlock, neutralRoles, styleInfo, type AccentRoles } from './themes'
 
 export interface Cover {
   src: string
@@ -73,19 +73,22 @@ function apply() {
     return
   }
   if (!styleInfo(p.style).albumAccent) return
-  // Glasshouse always follows the cover (its own red when there is none); Venuta as you chose.
-  const own = p.style === 'venuta' ? fixedAccent(p) : null
-  const tuned = hex ? tuneAccent(hex, resolvedTheme(p) === 'light') : null
-  const next = p.style === 'venuta' && p.accentMode === 'fixed' ? own : (tuned ?? own)
+  // Glasshouse always follows the cover (its own red when there is none); Lumen as you chose.
+  const lumen = p.style === 'venuta'
+  const light = resolvedTheme(p) === 'light'
+  let next: AccentRoles | null
+  if (lumen && p.accentMode === 'neutral') next = neutralRoles(light)
+  else if (lumen && p.accentMode === 'fixed') next = chosenRoles(p)
+  else next = (hex ? accentRoles(hex, light, lumen ? p.intensity : 'balanced') : null) ?? (lumen ? chosenRoles(p) : null)
   if (!next) {
     shown = ''
-    root.removeProperty('--accent')
+    setAccentVars(null)
     return
   }
   // Similar covers (one album's songs) keep one accent instead of shimmering between near-twins.
-  if (shown && root.getPropertyValue('--accent').trim() === shown && colourDistance(shown, next) < 0.06) return
-  shown = next
-  root.setProperty('--accent', next)
+  if (shown && root.getPropertyValue('--accent').trim() === shown && colourDistance(shown, next.accent) < 0.04) return
+  shown = next.accent
+  setAccentVars(next)
 }
 
 /** The playing song's cover colour (set by the app when the song changes). */
