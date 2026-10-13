@@ -183,9 +183,9 @@ body {
 }
 
 :focus-visible {
+  /* The ring follows the element's own shape (a radius here squared round buttons). */
   outline: 2px solid var(--accent);
   outline-offset: 3px;
-  border-radius: 10px;
 }
 /* A text field shows it has focus by its caret and its own field style, not a ring. */
 :is(input:not([type="range"], [type="checkbox"], [type="radio"]), textarea, select):focus-visible {

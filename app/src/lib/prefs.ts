@@ -109,6 +109,18 @@ export function applyPrefs() {
   }
 }
 
+// Another window (the mini player, or the main one) changed the look: follow it here too.
+try {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY) return
+    current = load()
+    applyPrefs()
+    listeners.forEach((l) => l(current))
+  })
+} catch {
+  // No storage events: this window catches up when it next opens.
+}
+
 // Follow Windows when the theme is "Match Windows".
 try {
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {

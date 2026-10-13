@@ -95,6 +95,8 @@ export interface PlayerState {
   sleep_in_s: number | null
   /** The folder the queue's songs are in. */
   root?: string
+  /** Band levels of what's playing (0-255, bass to treble) while a spectrum display asks. */
+  bands?: number[] | null
 }
 
 const idle: PlayerState = {
@@ -300,6 +302,18 @@ export const setSound = (sound: Sound) => {
   set({ ...state, sound })
   return call('player_sound', { sound })
 }
+/** Band levels for a spectrum display: asks the engine to measure while mounted. */
+export function useSpectrum(): number[] | null {
+  useEffect(() => {
+    if (!inApp()) return
+    void invoke('player_spectrum', { on: true }).catch(() => {})
+    return () => {
+      void invoke('player_spectrum', { on: false }).catch(() => {})
+    }
+  }, [])
+  return usePlayerValue((s) => s.bands ?? null)
+}
+
 /** The mini player: open it (the main window steps aside) or close it and come back. */
 export const miniPlayer = (open: boolean) => call('mini_player', { open })
 

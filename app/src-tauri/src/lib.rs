@@ -1784,6 +1784,7 @@ pub fn run() {
             playback::player_stop_after,
             playback::player_sleep,
             playback::mini_player,
+            playback::player_spectrum,
             listening::listening_summary,
             tidy_preview,
             tidy_apply,

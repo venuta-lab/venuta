@@ -39,3 +39,5 @@ Everything asked for on 2026-10-13, in working order. Ticked when built **and** 
 - [ ] Skin '99's spectrum analyser from real audio (engine computes band levels).
 - [ ] Layer Zero's red-static shadow, behind the player bar.
 - [ ] Continue the spacing / button-placement pass on every screen.
+- [ ] Every window size: the player bar's right group spilled over the controls; the quality badge needs a better home; set a sensible minimum window size and check each place at it.
+- [ ] Focus rings: a global radius on :focus-visible squared the round play button.

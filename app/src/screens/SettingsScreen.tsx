@@ -12,7 +12,7 @@ import {
   type Settings,
 } from '../lib/engine'
 import { resolvedTheme, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
-import { ACCENTS, STYLES, styleInfo, type StyleInfo } from '../lib/themes'
+import { ACCENTS, STYLES, styleInfo, tuneAccent, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
@@ -183,7 +183,8 @@ function LookAndFeel() {
             <div role="radiogroup" aria-label="Accent" className="flex flex-wrap gap-2">
               {ACCENTS.map((a) => {
                 const on = p.accent === a.name
-                const hex = light ? a.light : a.dark
+                // As it will show: dark-theme accents are softened the same way album colours are.
+                const hex = light ? a.light : (tuneAccent(a.dark, false) ?? a.dark)
                 return (
                   <button
                     key={a.name}

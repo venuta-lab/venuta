@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { usePrefs } from '../../lib/prefs'
+import { LcdSpectrum } from './Spectrum'
 import {
   clock,
   miniPlayer,
@@ -122,7 +123,7 @@ function Wave(props: { wave: number[]; pct: number; height: number }) {
 }
 
 /** The retro themes' seek bars (research §3): each its own track and playhead. */
-function ThemedTrack({ style, pct }: { style: string; pct: number }) {
+export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
   if (style === 'sync-ratio') {
     const lit = Math.round((pct / 100) * 24)
     return (
@@ -269,7 +270,7 @@ function Volume(props: { volume: number }) {
   const muted = props.volume === 0
   return (
     <div
-      className="flex items-center gap-2"
+      className="group/vol relative flex items-center gap-2"
       onWheel={(e) => void setVolume(props.volume + (e.deltaY < 0 ? 0.05 : -0.05))}
       title="Volume (Ctrl ↑ / ↓). At 100% nothing changes the sound."
     >
@@ -293,8 +294,19 @@ function Volume(props: { volume: number }) {
         value={Math.round(props.volume * 100)}
         onChange={(e) => void setVolume(Number(e.target.value) / 100)}
         aria-label="Volume"
-        className="h-1 w-24 accent-[var(--accent)]"
+        className="hidden h-1 w-24 accent-[var(--accent)] @[1000px]:block"
       />
+      <div className="popover absolute bottom-full right-0 mb-2 hidden rounded-xl px-3 py-2.5 group-hover/vol:block group-focus-within/vol:block @[1000px]:!hidden">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={Math.round(props.volume * 100)}
+          onChange={(e) => void setVolume(Number(e.target.value) / 100)}
+          aria-label="Volume"
+          className="block h-1 w-28 accent-[var(--accent)]"
+        />
+      </div>
     </div>
   )
 }
@@ -318,12 +330,12 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-ink/[0.07] px-3 py-1 text-[11.5px] text-ink/75 hover:bg-ink/[0.12]"
-        title="Where the sound goes"
+        className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-ink/[0.07] px-2 py-[3px] text-[10.5px] font-medium leading-none text-ink/70 transition-colors hover:bg-ink/[0.13] hover:text-ink"
+        title={s ? `${label}, ${s.bit_perfect ? 'bit-perfect' : s.mode === 'shared' ? 'shared mode' : 'changed on the way'}. Where the sound goes.` : 'Where the sound goes'}
       >
-        {s && <span className={`h-1.5 w-1.5 rounded-full ${s.bit_perfect ? 'bg-good' : 'bg-fix'}`} aria-hidden />}
-        <span>{label}</span>
-        {s && <span className="text-ink/50">{s.bit_perfect ? 'Bit-perfect' : s.mode === 'shared' ? 'Shared' : 'Changed'}</span>}
+        {s && <span className={`keep-round h-1.5 w-1.5 rounded-full ${s.bit_perfect ? 'bg-good' : 'bg-fix'}`} aria-hidden />}
+        <span className="readout">{label}</span>
+        {s && <span className="hidden font-normal text-ink/50 @[1240px]:inline">{s.bit_perfect ? 'Bit-perfect' : s.mode === 'shared' ? 'Shared' : 'Changed'}</span>}
       </button>
       <AnimatePresence>
         {open && (
@@ -334,7 +346,7 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
             transition={{ duration: 0.16 }}
             role="dialog"
             aria-label="Signal path"
-            className="popover absolute bottom-11 right-0 z-50 w-[340px] rounded-2xl p-4 text-[12.5px]"
+            className="popover absolute bottom-9 left-0 z-50 w-[340px] rounded-2xl p-4 text-[12.5px]"
           >
             <SignalPath signal={s} />
             {choices && (
@@ -549,6 +561,7 @@ export function NowPlayingBar(props: {
   const song = current(s)
   const cover = useCovers(320)
   useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
+  const style = usePrefs().style
   const art = song ? cover(song.dir) : undefined
   const duration = s.duration_ms || song?.duration_ms || 0
   const wave = useWaveform(song?.path)
@@ -561,7 +574,7 @@ export function NowPlayingBar(props: {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 90, opacity: 0 }}
           transition={spring}
-          className="np relative z-30 mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] items-center gap-6 px-4 py-3"
+          className="np @container relative mx-3 mb-3 grid grid-cols-[minmax(0,1fr)_minmax(280px,1.5fr)_minmax(0,1fr)] items-center gap-4 px-4 py-3 @[1100px]:gap-6"
         >
           {/* Shown large in Now Playing while that is open, so it steps aside here. */}
           <motion.div
@@ -585,7 +598,10 @@ export function NowPlayingBar(props: {
               </span>
             </button>
             <div className="min-w-0">
-              <div className="truncate text-[14px] font-medium">{song.title}</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[14px] font-medium">{song.title}</span>
+                <SignalBadge signal={s.signal} fallback={song.format} />
+              </div>
               <div className="truncate text-[12.5px] text-ink/60">
                 {song.artists.length
                   ? song.artists.map((a, i) => (
@@ -644,7 +660,7 @@ export function NowPlayingBar(props: {
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            <SignalBadge signal={s.signal} fallback={song.format} />
+            {style === 'skin99' && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
             {song.lyrics && (
               <Round label="Lyrics (L)" onClick={props.onLyrics}>
                 <IconLyrics />
@@ -653,9 +669,11 @@ export function NowPlayingBar(props: {
             <Round label="Queue (Q)" on={props.queueOpen} onClick={props.onQueue}>
               <IconQueue />
             </Round>
+            <span className="hidden @[900px]:contents">
             <Round label="Mini player (Ctrl M)" onClick={() => void miniPlayer(true)}>
               <IconMini />
             </Round>
+            </span>
             <Volume volume={s.volume} />
           </div>
           {s.error && (

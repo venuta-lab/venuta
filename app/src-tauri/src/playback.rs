@@ -67,6 +67,7 @@ pub struct WindowStatus {
     sound: player::dsp::Sound,
     stop_after_current: bool,
     sleep_in_s: Option<u64>,
+    bands: Option<Vec<u8>>,
 }
 
 /// What the Windows media overlay (and media keys) show.
@@ -86,6 +87,8 @@ pub struct Playback {
     media: Arc<Mutex<Option<std::sync::mpsc::Sender<NowPlaying>>>>,
     /// Every window listening (the main one, the mini player), by label.
     window: Arc<Mutex<std::collections::HashMap<String, Channel<WindowStatus>>>>,
+    /// Windows showing a spectrum display (the engine measures while any is).
+    spectrum: Mutex<std::collections::HashSet<String>>,
     /// The folder the queue's songs are in (for plays and picking up where you were).
     root: Arc<Mutex<String>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
@@ -98,6 +101,7 @@ impl Default for Playback {
             player: Arc::default(),
             media: Arc::default(),
             window: Arc::default(),
+            spectrum: Mutex::default(),
             root: Arc::default(),
             // Bit-perfect unless you choose otherwise.
             output: Mutex::new((None, true)),
@@ -201,6 +205,7 @@ impl Playback {
                             sound: s.sound,
                             stop_after_current: s.stop_after_current,
                             sleep_in_s: s.sleep_in_s,
+                            bands: s.bands,
                         };
                         // A window that has closed stops listening.
                         w.retain(|_, ch| ch.send(status.clone()).is_ok());
@@ -705,4 +710,20 @@ pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String
         }
     }
     Ok(())
+}
+
+/// A window starts or stops showing a spectrum display; the engine measures band levels while
+/// any window shows one.
+#[tauri::command]
+pub fn player_spectrum(on: bool, webview: tauri::Webview, pb: State<'_, Playback>) -> Result<(), String> {
+    let any = {
+        let mut set = pb.spectrum.lock().map_err(|e| e.to_string())?;
+        if on {
+            set.insert(webview.label().to_string());
+        } else {
+            set.remove(webview.label());
+        }
+        !set.is_empty()
+    };
+    pb.send(Cmd::Spectrum(any))
 }

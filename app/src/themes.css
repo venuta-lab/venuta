@@ -722,10 +722,17 @@
   font-family: "Major Mono Display", "IBM Plex Mono", monospace;
   font-weight: 400;
 }
-:root[data-style="layer-zero"] .np {
-  box-shadow:
-    inset 0 0 0 1px var(--np-edge),
-    inset 0 -2px 0 rgb(200 25 60 / 0.55);
+/* The player bar casts a shadow of red static (the bar makes no stacking context of its own,
+   so the dots sit behind it). */
+:root[data-style="layer-zero"] .np::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translate(7px, 7px);
+  background: radial-gradient(#c8193c 1px, transparent 1.4px) 0 0 / 4px 4px;
+  opacity: 0.45;
+  z-index: -1;
+  pointer-events: none;
 }
 
 /* ---- Bounty Session: ink borders, hard offset shadows, cut-in buttons. */

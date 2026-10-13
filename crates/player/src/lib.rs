@@ -5,6 +5,7 @@ pub mod dsp;
 pub mod engine;
 pub mod output;
 pub mod queue;
+pub mod spectrum;
 pub mod verify;
 #[cfg(windows)]
 pub mod wasapi_out;

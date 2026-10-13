@@ -78,6 +78,8 @@ pub enum Cmd<T> {
     StopAfterCurrent(bool),
     /// Fade out and pause after this long (`None`: cancel).
     SleepIn(Option<Duration>),
+    /// Measure band levels of what's playing (for a spectrum display), or stop measuring.
+    Spectrum(bool),
     /// Send the whole status again, queue included (a new window listening).
     Refresh,
     Quit,
@@ -118,6 +120,8 @@ pub struct Status<T: Serialize> {
     pub stop_after_current: bool,
     /// Seconds until the sleep timer pauses playback.
     pub sleep_in_s: Option<u64>,
+    /// Band levels of what's playing, 0-255 (see `spectrum`), while asked for and playing.
+    pub bands: Option<Vec<u8>>,
 }
 
 pub struct Player<T> {
@@ -199,6 +203,9 @@ struct Engine<T: Item + Serialize> {
     sound: Sound,
     stop_after_current: bool,
     sleep_at: Option<Instant>,
+    /// Measuring band levels (a spectrum display is showing), and the recent sound for it.
+    spectrum: bool,
+    recent: std::collections::VecDeque<f32>,
     /// A crossfade is blending two songs right now (for the signal path).
     fading: bool,
     scratch: Vec<i32>,
@@ -227,6 +234,8 @@ impl<T: Item + Serialize> Engine<T> {
             sound: Sound::default(),
             stop_after_current: false,
             sleep_at: None,
+            spectrum: false,
+            recent: std::collections::VecDeque::new(),
             fading: false,
             scratch: Vec::new(),
             mapped: Vec::new(),
@@ -365,6 +374,12 @@ impl<T: Item + Serialize> Engine<T> {
             }
             Cmd::StopAfterCurrent(on) => self.stop_after_current = on,
             Cmd::SleepIn(d) => self.sleep_at = d.map(|d| Instant::now() + d),
+            Cmd::Spectrum(on) => {
+                self.spectrum = on;
+                if !on {
+                    self.recent = std::collections::VecDeque::new();
+                }
+            }
             Cmd::Refresh => self.queue_changed = true,
             Cmd::Quit => {}
         }
@@ -629,6 +644,17 @@ impl<T: Item + Serialize> Engine<T> {
         }
         // Silence for the rest of the period (end of the queue, or before a format change).
         taken.resize(want * src_ch, 0);
+        // What's heard (after the sound tools), kept as mono for a spectrum display.
+        if self.spectrum {
+            let full = i32::MAX as f32;
+            for frame in taken.chunks_exact(src_ch) {
+                let sum: f32 = frame.iter().map(|&s| s as f32 / full).sum();
+                self.recent.push_back(sum / src_ch as f32);
+            }
+            while self.recent.len() > crate::spectrum::WINDOW {
+                self.recent.pop_front();
+            }
+        }
         output::remap(&taken, fmt.channels, dev_fmt.channels, &mut self.mapped);
         // The sleep timer fades the last ten seconds out, then pauses.
         let mut fade = 1.0f32;
@@ -822,6 +848,10 @@ impl<T: Item + Serialize> Engine<T> {
             sleep_in_s: self
                 .sleep_at
                 .map(|t| t.saturating_duration_since(Instant::now()).as_secs()),
+            bands: (self.spectrum && self.playing).then(|| {
+                let rate = self.segs.front().map(|s| s.source.format.rate).unwrap_or(44_100);
+                crate::spectrum::levels(self.recent.make_contiguous(), rate)
+            }),
         };
         self.queue_changed = false;
         (self.on_status)(status);
