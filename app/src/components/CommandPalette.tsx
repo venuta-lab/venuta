@@ -172,7 +172,7 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
 export function ShortcutSheet(props: { open: boolean; onClose: () => void }) {
   const rows: [string, string][] = [
     ['Ctrl+K', 'Command palette: go anywhere, find anything, run any action'],
-    ['Ctrl+1 … Ctrl+4', 'Music, Inbox, Playlists, Devices'],
+    ['Ctrl+1 … Ctrl+5', 'Music, Health, Inbox, Playlists, Devices'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+H', 'Activity (history and undo)'],
     ['/', 'Search your music'],

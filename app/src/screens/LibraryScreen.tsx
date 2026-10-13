@@ -131,7 +131,7 @@ export function LibraryScreen(props: {
   )
 }
 
-function IssueRow(props: {
+export function IssueRow(props: {
   issue: Issue
   open: boolean
   onToggle: () => void
@@ -275,7 +275,7 @@ export function DeepProgressBar(props: {
   )
 }
 
-function SpectrogramView(props: { root: string; album: AlbumSummary; onClose: () => void }) {
+export function SpectrogramView(props: { root: string; album: AlbumSummary; onClose: () => void }) {
   const [result, setResult] = useState<{ dir: string; src?: string; error?: string } | null>(null)
   useEffect(() => {
     let live = true
@@ -342,7 +342,7 @@ function SpectrogramView(props: { root: string; album: AlbumSummary; onClose: ()
   )
 }
 
-function FormatBar(props: { formats: HealthReport['summary']['formats']; total: number }) {
+export function FormatBar(props: { formats: HealthReport['summary']['formats']; total: number }) {
   const label = (f: { bit_depth: number; sample_rate: number }) =>
     `${f.bit_depth}-bit ${f.sample_rate / 1000} kHz`
   const shades = [0.9, 0.62, 0.42, 0.28, 0.18, 0.12]

@@ -8,6 +8,7 @@ import { CommandPalette, ShortcutSheet, type Command } from './components/Comman
 import {
   IconActivity,
   IconCards,
+  IconHealth,
   IconInbox,
   IconMusic,
   IconPlaylists,
@@ -29,8 +30,9 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Surface } from './lib/prefs'
-import { DeepProgressBar, EmptyState, LibraryScreen, PillButton } from './screens/LibraryScreen'
+import { DeepProgressBar, EmptyState, PillButton } from './screens/LibraryScreen'
 import { MusicScreen } from './screens/MusicScreen'
+import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
 import { CardsScreen } from './screens/CardsScreen'
 import { PlaylistsScreen } from './screens/PlaylistsScreen'
@@ -56,8 +58,10 @@ const store = {
   },
 }
 
-type Place = 'music' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
-const ORDER: Place[] = ['music', 'inbox', 'playlists', 'devices', 'activity', 'settings']
+type Place = 'music' | 'health' | 'inbox' | 'playlists' | 'devices' | 'activity' | 'settings'
+const ORDER: Place[] = ['music', 'health', 'inbox', 'playlists', 'devices', 'activity', 'settings']
+/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+5). */
+const MAIN = 5
 
 export default function App() {
   const prefs = usePrefs()
@@ -66,7 +70,6 @@ export default function App() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [active, setActive] = useState<Place>('music')
-  const [musicView, setMusicView] = useState<'albums' | 'quality'>('albums')
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
@@ -213,10 +216,11 @@ export default function App() {
       ['amoled', 'AMOLED (true black)'],
     ]
     const list: Command[] = [
-      goTo('music', 'Music', 'Ctrl+1', 'albums library home'),
-      goTo('inbox', 'Inbox', 'Ctrl+2', 'questions decisions review new music incoming'),
-      goTo('playlists', 'Playlists', 'Ctrl+3', 'smart want-list to get'),
-      goTo('devices', 'Devices', 'Ctrl+4', 'cards sd players sync'),
+      goTo('music', 'Music', 'Ctrl+1', 'albums library home browse'),
+      goTo('health', 'Health', 'Ctrl+2', 'status quality metadata completeness problems tools'),
+      goTo('inbox', 'Inbox', 'Ctrl+3', 'questions decisions review new music incoming'),
+      goTo('playlists', 'Playlists', 'Ctrl+4', 'smart want-list to get'),
+      goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
       goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
       goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
@@ -226,8 +230,7 @@ export default function App() {
         label: 'Check quality',
         keywords: 'deep check integrity lossy upsampled loudness',
         run: () => {
-          go('music')
-          setMusicView('quality')
+          go('health')
           void runDeepCheck()
         },
       },
@@ -275,7 +278,6 @@ export default function App() {
         detail: `${a.album_artist}${a.year ? `, ${a.year}` : ''}`,
         run: () => {
           go('music')
-          setMusicView('albums')
           window.setTimeout(() => {
             if (search.current) {
               const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
@@ -292,7 +294,6 @@ export default function App() {
 
   function focusSearch() {
     go('music')
-    setMusicView('albums')
     window.setTimeout(() => search.current?.focus(), 80)
   }
 
@@ -314,7 +315,7 @@ export default function App() {
       } else if (e.ctrlKey && k === 'h') {
         e.preventDefault()
         go('activity')
-      } else if (e.ctrlKey && /^[1-4]$/.test(k)) {
+      } else if (e.ctrlKey && /^[1-5]$/.test(k)) {
         e.preventDefault()
         go(ORDER[Number(k) - 1])
       } else if (!e.ctrlKey && !e.altKey && !typing(e.target)) {
@@ -344,7 +345,7 @@ export default function App() {
     if (now < s.lock) return
     s.acc += e.deltaX
     if (Math.abs(s.acc) > 160) {
-      const places = ORDER.slice(0, 4)
+      const places = ORDER.slice(0, MAIN)
       const i = places.indexOf(active)
       const next = i >= 0 ? places[i + (s.acc > 0 ? 1 : -1)] : undefined
       s.acc = 0
@@ -355,9 +356,10 @@ export default function App() {
 
   const top: Section[] = [
     { id: 'music', label: 'Music', icon: IconMusic, keys: 'Ctrl+1' },
-    { id: 'inbox', label: 'Inbox', icon: IconInbox, keys: 'Ctrl+2', badge: inboxCount },
-    { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+3' },
-    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+4' },
+    { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+2' },
+    { id: 'inbox', label: 'Inbox', icon: IconInbox, keys: 'Ctrl+3', badge: inboxCount },
+    { id: 'playlists', label: 'Playlists', icon: IconPlaylists, keys: 'Ctrl+4' },
+    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+5' },
   ]
   const bottom: Section[] = [
     { id: 'activity', label: 'Activity', icon: IconActivity, keys: 'Ctrl+H' },
@@ -384,17 +386,16 @@ export default function App() {
     if (!root && active !== 'settings') return <EmptyState onChoose={chooseRoot} />
     switch (active) {
       case 'music':
+        return <MusicScreen root={root} report={report} busy={busy} searchRef={search} />
+      case 'health':
         return (
-          <MusicScreen
+          <HealthScreen
             root={root}
             report={report}
             busy={busy}
-            view={musicView}
-            onView={setMusicView}
-            searchRef={search}
             actions={
               <>
-                <PillButton onClick={runLookup} disabled={!!busy || !!lookup} title="Original years, credits, sharper covers and lyrics. Nothing changes until you approve it in the Inbox.">
+                <PillButton onClick={runLookup} disabled={!!busy || !!lookup} title="Original years, credits, sharper covers and lyrics. Nothing changes until you build from the Inbox.">
                   Look up details online
                 </PillButton>
                 <PillButton onClick={runDeepCheck} disabled={!!busy || !!deep} title="Decode every new or changed song: integrity, quality and loudness. Changes nothing.">
@@ -416,22 +417,6 @@ export default function App() {
                   )}
                 </AnimatePresence>
               </>
-            }
-            quality={
-              <LibraryScreen
-                bare
-                root={root}
-                report={report}
-                busy={busy}
-                onChoose={chooseRoot}
-                onRescan={() => refresh(root, true)}
-                deep={deep}
-                onDeepCheck={runDeepCheck}
-                onCancelDeep={() => void cancelDeepCheck()}
-                lookup={lookup}
-                onLookup={runLookup}
-                onCancelLookup={() => void cancelLookup()}
-              />
             }
           />
         )
