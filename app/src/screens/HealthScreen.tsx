@@ -31,7 +31,7 @@ const spring = { type: 'spring', stiffness: 360, damping: 32 } as const
 const has = (a: AlbumView, field: string) =>
   a.changes.some((c) => c.field.toUpperCase() === field && c.after.some((v) => v.trim() !== ''))
 
-type Fix = 'build' | 'lookup'
+type Fix = 'build' | 'lookup' | 'measure'
 const DETAILS: { label: string; issue: string; fix: Fix; filled: (a: AlbumView) => boolean }[] = [
   { label: 'Composer', issue: 'missing_composer', fix: 'lookup', filled: (a) => has(a, 'COMPOSER') },
   { label: 'Synced lyrics', issue: 'no_lyrics', fix: 'lookup', filled: (a) => has(a, 'LYRICS') },
@@ -39,7 +39,8 @@ const DETAILS: { label: string; issue: string; fix: Fix; filled: (a: AlbumView) 
   { label: 'Album artist', issue: 'missing_album_artist', fix: 'build', filled: (a) => has(a, 'ALBUMARTIST') },
   { label: 'Sharp cover', issue: 'art_small', fix: 'lookup', filled: (a) => !!a.cover_upgrade },
   { label: 'Cover every player shows', issue: 'art_progressive', fix: 'build', filled: (a) => a.art.kind === 'reencode' },
-  { label: 'Volume levelling', issue: 'no_replaygain', fix: 'build', filled: (a) => has(a, 'REPLAYGAIN_ALBUM_GAIN') },
+  // Measured by Check quality (no file changes); a build also writes it into the files.
+  { label: 'Volume levelling', issue: 'no_replaygain', fix: 'measure', filled: () => false },
 ]
 
 /** Problems in the sound files themselves; only a better copy fixes them. */
@@ -171,7 +172,7 @@ export function HealthScreen(props: {
           />
           <Tool
             title="Check quality"
-            text="Decodes every new or changed song: damage, lossy sources, fake hi-res, loudness."
+            text="Reads every new or changed song once: measures loudness for volume levelling, and finds damage, lossy sources and fake hi-res."
             action={props.running.check ? 'Running…' : 'Run'}
             disabled={props.running.check}
             onClick={props.onCheck}
@@ -207,14 +208,25 @@ export function HealthScreen(props: {
             </div>
             <div className="mt-1.5 text-[12px] text-ink/55">
               {d.missing.length === 0
-                ? 'Every album has it.'
+                ? d.fix === 'measure'
+                  ? 'Every song is measured.'
+                  : 'Every album has it.'
+                : d.fix === 'measure'
+                  ? props.running.check
+                    ? 'Measuring…'
+                    : `${albums(d.missing.length)} not measured yet`
                 : plan && d.after > d.now
                   ? `${d.after}% after you build${d.left.length ? `; ${fmt(d.left.length)} still without` : ''}`
                   : `${albums(d.missing.length)} without`}
             </div>
             {/* The albums still without it, and the way to them: one row, one click. */}
             <div className="min-h-3 flex-1" />
-            {d.left.length > 0 && (
+            {d.fix === 'measure' && d.left.length > 0 && (
+              <button onClick={props.onCheck} disabled={props.running.check} className="btn btn-sm self-start" title="Reads every song not measured yet, once; changes nothing in the files">
+                {props.running.check ? 'Measuring…' : 'Measure loudness'}
+              </button>
+            )}
+            {d.fix !== 'measure' && d.left.length > 0 && (
               <button
                 onClick={() =>
                   setSheet({

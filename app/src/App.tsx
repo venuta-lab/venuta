@@ -145,7 +145,7 @@ export default function App() {
   const closeNotice = useCallback(() => setNotice(''), [])
   const closeError = useCallback(() => setError(''), [])
 
-  const refresh = useCallback(async (dir: string, rescan: boolean): Promise<void> => {
+  const refresh = useCallback(async (dir: string, rescan: boolean): Promise<HealthReport | null> => {
     try {
       const r = await track({ id: 'scan', label: 'Reading your music', unit: 'files' }, async (update, relabel) => {
         // Walk, read tags, save: each stage gets its own words and its own count.
@@ -187,11 +187,13 @@ export default function App() {
         setBackdrop(loaded.map((c) => c.src))
         await loadCovers(dir, dirs, 320, update)
       })
+      return r
     } catch (e) {
       setBusy('')
       // A folder that has gone (drive unplugged, renamed) gets its own screen, not an error.
       if (/does not exist or is not a directory/.test(String(e))) setMissing(dir)
       else setError(String(e))
+      return null
     }
   }, [])
 
@@ -311,10 +313,13 @@ export default function App() {
     go('playlists')
   }, [go])
 
+  const deepRunning = useRef(false)
   async function runDeepCheck() {
+    if (deepRunning.current) return
+    deepRunning.current = true
     setDeep({ done: 0, total: 0 })
     try {
-      await track({ id: 'deep', label: 'Checking sound quality', unit: 'songs', cancel: () => void cancelDeepCheck() }, (update) =>
+      await track({ id: 'deep', label: 'Measuring loudness and checking quality', unit: 'songs', cancel: () => void cancelDeepCheck() }, (update) =>
         deepCheck(root, (done, total) => {
           setDeep({ done, total })
           update(done, total)
@@ -325,7 +330,18 @@ export default function App() {
       setError(String(e))
     } finally {
       setDeep(null)
+      deepRunning.current = false
     }
+  }
+
+  /**
+   * New music came in: read it, and measure it in the background when the rest of the library
+   * is measured already (the first full measurement stays your choice, in Health).
+   */
+  async function afterImport() {
+    const r = await refresh(root, false)
+    const unmeasured = r?.issues.find((i) => i.id === 'no_replaygain')?.tracks ?? 0
+    if (r && unmeasured > 0 && unmeasured <= Math.max(300, r.summary.tracks * 0.1)) void runDeepCheck()
   }
 
   async function runLookup() {
@@ -692,7 +708,7 @@ export default function App() {
             progress={
               <>
                 <AnimatePresence>
-                  {deep && <DeepProgressBar deep={deep} label="Checking quality" unit="songs" onCancel={() => void cancelDeepCheck()} />}
+                  {deep && <DeepProgressBar deep={deep} label="Measuring loudness and checking quality" unit="songs" onCancel={() => void cancelDeepCheck()} />}
                 </AnimatePresence>
                 <AnimatePresence>
                   {lookup && (
@@ -709,7 +725,7 @@ export default function App() {
             root={root}
             home={libMusic}
             onChooseMusic={() => void chooseRoot()}
-            onImported={() => void refresh(root, false)}
+            onImported={() => void afterImport()}
             onCount={setInboxCount}
             onSwitchLibrary={(path) => {
               openLibrary(path)

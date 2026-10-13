@@ -371,6 +371,7 @@ pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, Stri
     if !same || items.is_empty() || index < 0 {
         return Ok(false);
     }
+    let items = crate::fresh_gains(&root, items);
     *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
     pb.send(Cmd::Set {
         items: resolve(&root, items),

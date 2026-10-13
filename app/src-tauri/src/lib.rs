@@ -837,12 +837,7 @@ async fn music_catalog(root: String) -> CmdResult<Vec<CatalogTrack>> {
                             .first("RATING")
                             .map(engine::edit::rating_to_stars)
                             .unwrap_or(0),
-                        rg: player::dsp::Gain {
-                            track_db: tag_number(t.first("REPLAYGAIN_TRACK_GAIN")),
-                            album_db: tag_number(t.first("REPLAYGAIN_ALBUM_GAIN")),
-                            track_peak: tag_number(t.first("REPLAYGAIN_TRACK_PEAK")),
-                            album_peak: tag_number(t.first("REPLAYGAIN_ALBUM_PEAK")),
-                        },
+                        rg: gain_of(t),
                     }
                 })
                 .collect();
@@ -857,6 +852,46 @@ async fn music_catalog(root: String) -> CmdResult<Vec<CatalogTrack>> {
         Ok(out)
     })
     .await
+}
+
+/// The saved queue's levelling values as they are now (songs measured since it was saved).
+pub(crate) fn fresh_gains(
+    root: &str,
+    mut items: Vec<playback::QueueItem>,
+) -> Vec<playback::QueueItem> {
+    if let Ok(index) = open_index(Path::new(root))
+        && let Ok(lib) = Library::load(&index)
+    {
+        let by: std::collections::HashMap<&str, &engine::library::Track> =
+            lib.tracks.iter().map(|t| (t.path.as_str(), t)).collect();
+        for it in &mut items {
+            if let Some(t) = by.get(it.path.as_str()) {
+                it.rg = gain_of(t);
+            }
+        }
+    }
+    items
+}
+
+/// A song's volume levelling: its ReplayGain tags, else Venuta's own loudness measurement
+/// (the same ReplayGain 2.0 reference), so levelling works without writing to the files.
+fn gain_of(t: &engine::library::Track) -> player::dsp::Gain {
+    let q = t.quality.as_ref();
+    let db = |lufs: Option<f64>| {
+        lufs.filter(|l| l.is_finite())
+            .map(|l| engine::quality::replaygain_db(l) as f32)
+    };
+    let peak = |p: Option<f64>| p.filter(|p| p.is_finite() && *p > 0.0).map(|p| p as f32);
+    player::dsp::Gain {
+        track_db: tag_number(t.first("REPLAYGAIN_TRACK_GAIN"))
+            .or_else(|| db(q.and_then(|q| q.lufs))),
+        album_db: tag_number(t.first("REPLAYGAIN_ALBUM_GAIN"))
+            .or_else(|| db(q.and_then(|q| q.album_lufs))),
+        track_peak: tag_number(t.first("REPLAYGAIN_TRACK_PEAK"))
+            .or_else(|| peak(q.and_then(|q| q.peak))),
+        album_peak: tag_number(t.first("REPLAYGAIN_ALBUM_PEAK"))
+            .or_else(|| peak(q.and_then(|q| q.album_peak))),
+    }
 }
 
 // --- Your library, tidied in place -----------------------------------------------------------

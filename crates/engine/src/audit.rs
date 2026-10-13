@@ -509,14 +509,17 @@ pub fn run(lib: &Library) -> HealthReport {
     // --- Listening comfort ------------------------------------------------------------------
     let mut b = Builder::new(
         "no_replaygain",
-        "No volume levelling",
-        "Without ReplayGain, loud modern masters and quiet older albums jump in volume between tracks.",
+        "Loudness not measured",
+        "Without it, loud modern masters and quiet older albums jump in volume between songs. Measuring reads each song once and changes nothing.",
         Severity::Fix,
     );
+    // Levelling works from ReplayGain tags, or from Venuta's own measurement.
     b.hits = flac
         .iter()
         .copied()
-        .filter(|t| !t.has("REPLAYGAIN_TRACK_GAIN"))
+        .filter(|t| {
+            !t.has("REPLAYGAIN_TRACK_GAIN") && t.quality.as_ref().and_then(|q| q.lufs).is_none()
+        })
         .collect();
     add(&mut issues, &mut flagged, b);
 
@@ -625,7 +628,68 @@ pub fn name_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::name_key;
+    use super::{name_key, run};
+    use crate::library::{Library, Quality, Track};
+    use std::collections::HashMap;
+
+    fn flac(id: i64, path: &str, lufs: Option<f64>, tagged: bool) -> Track {
+        let mut tags = HashMap::from([("TITLE".to_owned(), vec!["Song".to_owned()])]);
+        if tagged {
+            tags.insert("REPLAYGAIN_TRACK_GAIN".into(), vec!["-6.00 dB".into()]);
+        }
+        Track {
+            id,
+            path: path.into(),
+            dir: path.rsplit_once('/').map(|p| p.0).unwrap_or("").into(),
+            kind: "flac".into(),
+            size: 1,
+            duration_ms: 200_000,
+            sample_rate: 44_100,
+            bit_depth: 16,
+            audio_md5: Some(vec![id as u8; 16]),
+            vendor: None,
+            tags,
+            raw_keys: vec![],
+            pictures: vec![],
+            quality: lufs.map(|l| Quality {
+                verify_ok: Some(true),
+                decode_error: None,
+                effective_bits: None,
+                cutoff_hz: None,
+                hires_db: None,
+                lufs: Some(l),
+                peak: Some(0.9),
+                album_lufs: Some(l),
+                album_peak: Some(0.9),
+            }),
+        }
+    }
+
+    #[test]
+    fn measured_or_tagged_songs_have_volume_levelling() {
+        let lib = Library {
+            tracks: vec![
+                flac(1, "A/01.flac", Some(-9.0), false),
+                flac(2, "B/01.flac", None, true),
+                flac(3, "C/01.flac", None, false),
+            ],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+        };
+        let report = run(&lib);
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.id == "no_replaygain")
+            .expect("one song is neither");
+        assert_eq!(issue.tracks, 1);
+        assert_eq!(issue.albums, vec!["C".to_string()]);
+    }
 
     #[test]
     fn name_key_ignores_punctuation_and_spacing() {

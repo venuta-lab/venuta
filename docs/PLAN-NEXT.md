@@ -26,9 +26,14 @@ Also fixed on the way: saving in Settings wrote back the copy the screen loaded,
 undo a change made elsewhere; now only the changed fields are written.
 
 ## 2. Volume levelling for the whole library
-- [ ] Measure loudness (EBU R128) for every song as a background job with progress and Stop;
-      keep results so nothing is measured twice; new music is measured when it comes in.
-- [ ] Levelling uses the measurements; Health's "Volume levelling" reaches 100%.
+- [x] Measure loudness (EBU R128) for every song as a background job with progress and Stop;
+      keep results so nothing is measured twice; new music is measured when it comes in. (The
+      deep check already measured; Health now offers "Measure loudness", and new music is
+      measured after an import once the rest of the library is.)
+- [x] Levelling uses the measurements (tags first, then Venuta's own, so nothing is written to
+      the files); Health's "Volume levelling" reaches 100%. Checked: 23 songs measured in 19 s
+      in a debug build, the signal path says "Volume levelled (song, -10.9 dB)". His library
+      (D:Music) has no measurements yet: the first full run is his to start, in Health.
 
 ## 3. Devices, end to end
 - [ ] Playlists go to cards, written the way each player reads them.
