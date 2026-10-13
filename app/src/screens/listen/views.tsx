@@ -62,16 +62,16 @@ export const HomeView = memo(function HomeView(props: {
       .slice(0, 30)
   }, [lib])
   // Played before, but not in the last month: oldest first.
-  const [now] = useState(() => Date.now())
+  const [openedAt] = useState(() => Date.now())
   const rediscover = useMemo(() => {
     const month = 30 * 24 * 3600 * 1000
     return Object.entries(heard?.last_played ?? {})
-      .filter(([, at]) => now - at > month)
+      .filter(([, at]) => openedAt - at > month)
       .sort((a, b) => a[1] - b[1])
       .map(([d]) => lib.byDir.get(d))
       .filter((a): a is Album => !!a)
       .slice(0, 24)
-  }, [heard, lib, now])
+  }, [heard, lib, openedAt])
   const today = useMemo(() => featured(lib.albums, props.hasCover), [lib, props.hasCover])
   const playing = now.dir ? lib.byDir.get(now.dir) : undefined
   const hero = playing ?? today
