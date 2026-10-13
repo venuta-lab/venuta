@@ -89,6 +89,10 @@ pub struct AlbumPlan {
     pub title: String,
     pub album_artist: String,
     pub target_dir: String,
+    /// The id this album had when ids named its destination folder; answers saved under it
+    /// are still honoured.
+    #[serde(skip)]
+    pub legacy_id: Option<String>,
     pub action: AlbumAction,
     pub confidence: Confidence,
     pub notes: Vec<String>,
@@ -1082,12 +1086,32 @@ fn plan_album(
             } else {
                 dir.to_owned()
             };
+            // One album of several in a folder is known by what its files say (album and
+            // artist, as found), never by where your rules put it, so renaming folders can't
+            // undo an answer.
+            let identity = tps
+                .first()
+                .map(|tp| {
+                    let found = TagSet(tp.tags_before.clone());
+                    format!(
+                        "{}~{}",
+                        name_key(found.first("ALBUM").unwrap_or_default()),
+                        name_key(
+                            found
+                                .first("ALBUMARTIST")
+                                .or(found.first("ARTIST"))
+                                .unwrap_or_default()
+                        )
+                    )
+                })
+                .unwrap_or_default();
             AlbumPlan {
                 id: if split {
-                    format!("{dir}#{target_dir}")
+                    format!("{dir}#{identity}")
                 } else {
                     dir.to_owned()
                 },
+                legacy_id: split.then(|| format!("{dir}#{target_dir}")),
                 source_dir: dir.to_owned(),
                 cover,
                 waiting_on: vec![],
@@ -1728,9 +1752,25 @@ pub fn build_checked(
     root: &std::path::Path,
     rules: &Rules,
 ) -> crate::Result<(Library, Plan)> {
-    let answers = crate::settings::load_answers(root);
+    let mut answers = crate::settings::load_answers(root);
     let mut lib = Library::load(index)?;
     lib.in_library = crate::paths::home_of(root).is_some();
+    // Answers saved under ids that named a destination folder move to the new ids, once, so
+    // a later change of folder names keeps them.
+    let first = build_with(&lib, rules, &answers);
+    let mut upgraded = false;
+    for a in &first.albums {
+        if let Some(old) = &a.legacy_id
+            && let Some(v) = answers.get(&format!("dup:{old}")).cloned()
+            && !answers.contains_key(&format!("dup:{}", a.id))
+        {
+            answers.insert(format!("dup:{}", a.id), v);
+            upgraded = true;
+        }
+    }
+    if upgraded {
+        let _ = crate::settings::save_answers(root, &answers);
+    }
     let mut plan = build_with(&lib, rules, &answers);
     if !plan.pending_pairs.is_empty() {
         crate::compare::run(index, root, &plan.pending_pairs)?;

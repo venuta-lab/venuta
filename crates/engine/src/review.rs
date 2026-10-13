@@ -310,7 +310,17 @@ pub fn same_album(plan: &mut Plan, lib: &Library, answers: &Answers) -> Vec<Deci
         if idx.len() < 2 || sources.len() < 2 {
             continue;
         }
-        let id = format!("album:{key}");
+        // Known by the folders involved, not the folder they would share.
+        let legacy = format!("album:{key}");
+        let id = format!(
+            "album:{}",
+            sources.iter().copied().collect::<Vec<_>>().join("|")
+        );
+        let id = if answers.contains_key(&id) || !answers.contains_key(&legacy) {
+            id
+        } else {
+            legacy
+        };
         let copies: Vec<(usize, Copy)> = idx
             .iter()
             .map(|&i| (i, Copy::of(&plan.albums[i], &by_id)))
@@ -1120,7 +1130,12 @@ pub fn duplicate_songs(plan: &mut Plan, lib: &Library, answers: &Answers) -> Vec
             .collect();
         let kept = &plan.albums[kept_albums[0]];
         let id = format!("dup:{}", dropped.id);
-        let answer = answers.get(&id).cloned();
+        let answer = answers.get(&id).cloned().or_else(|| {
+            dropped
+                .legacy_id
+                .as_ref()
+                .and_then(|l| answers.get(&format!("dup:{l}")).cloned())
+        });
         let keep_both = answer.as_deref() == Some("keep_both");
         let whole = list.len() == dropped.tracks.len();
         let song_of = |a: &AlbumPlan, ti: usize| by_id.get(&a.tracks[ti].file_id).map(|t| song(t));
