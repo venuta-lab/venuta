@@ -270,6 +270,8 @@ export interface ApplyReport {
 }
 
 export interface Run {
+  /** build: a library built from a music folder; tidy: your library tidied in place. */
+  kind: 'build' | 'tidy'
   journal: string
   started_ms: number
   target: string
@@ -663,3 +665,61 @@ export const appleImport = (root: string) => invoke<ImportReport>('apple_import'
 export const setApple = (library: string | null, key: string | null) => invoke<void>('set_apple', { library, key })
 export const ratePlaylist = (root: string, name: string, stars: number) =>
   invoke<EditReport>('rate_playlist', { root, name, stars })
+
+// --- Your library, tidied in place ------------------------------------------------------------
+
+export interface TidyAlbum {
+  id: string
+  title: string
+  album_artist: string
+  from_dir: string
+  to_dir: string
+  moves: number
+  retags: number
+  fields: string[]
+  set_aside: boolean
+  /** Why it can't change (another file is already where it would go). */
+  blocked: string | null
+}
+
+export interface TidyPreview {
+  albums: TidyAlbum[]
+  moves: number
+  retags: number
+  blocked: number
+}
+
+export interface TidyReport {
+  albums: number
+  moved: number
+  retagged: number
+  errors: { album: string; file: string; message: string }[]
+  journal: string
+  cancelled: boolean
+}
+
+export interface LayoutTrial {
+  albums: number
+  examples: { from: string; to: string }[]
+}
+
+const emptyPreview: TidyPreview = { albums: [], moves: 0, retags: 0, blocked: 0 }
+
+export const tidyPreview = (root: string) =>
+  inApp() ? invoke<TidyPreview>('tidy_preview', { root }) : Promise.resolve(emptyPreview)
+export function tidyApply(root: string, albums: string[], onProgress: (done: number, total: number) => void) {
+  if (!inApp()) return Promise.reject(new Error('Your library is changed by the desktop app.'))
+  const channel = new Channel<{ done: number; total: number }>()
+  channel.onmessage = (m) => onProgress(m.done, m.total)
+  return invoke<TidyReport>('tidy_apply', { root, albums, onProgress: channel })
+}
+export const tidyUndo = (root: string, journal: string) => invoke<number>('tidy_undo', { root, journal })
+export const getLayout = () =>
+  inApp()
+    ? invoke<string>('get_layout')
+    : Promise.resolve('{category}/{subfolder}/{language}/{albumartist}/{album} ({year})/{disc}{track} - {title}')
+export const setLayout = (template: string) => (inApp() ? invoke<void>('set_layout', { template }) : Promise.resolve())
+export const tryLayout = (root: string, template: string) =>
+  inApp()
+    ? invoke<LayoutTrial>('try_layout', { root, template })
+    : Promise.resolve<LayoutTrial>({ albums: 0, examples: [] })

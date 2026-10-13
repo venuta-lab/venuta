@@ -6,10 +6,7 @@ import {
   libraryHome,
   type HomeInfo,
   engineVersion,
-  getAliases,
   getSettings,
-  saveAliases,
-  type Aliases,
   inApp,
   setSettings,
   type Settings,
@@ -18,11 +15,10 @@ import { ACCENTS, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
-type Page = 'look' | 'folders' | 'organising' | 'online' | 'players' | 'safety' | 'about'
+type Page = 'look' | 'folders' | 'online' | 'players' | 'safety' | 'about'
 const PAGES: { id: Page; label: string }[] = [
   { id: 'look', label: 'Look and feel' },
   { id: 'folders', label: 'Music folders' },
-  { id: 'organising', label: 'Artist names' },
   { id: 'online', label: 'Online sources' },
   { id: 'players', label: 'Players' },
   { id: 'safety', label: 'Safety and undo' },
@@ -75,7 +71,6 @@ export function SettingsScreen(props: {
             onChooseHome={props.onChooseHome}
           />
         )}
-        {page === 'organising' && <ArtistNames />}
         {page === 'online' && <Online />}
         {page === 'players' && <Players />}
         {page === 'safety' && <Safety />}
@@ -505,90 +500,3 @@ function About() {
   )
 }
 
-/** Your artist names: one spelling per person, the spellings that mean it, and names kept apart. */
-function ArtistNames() {
-  const [view, setView] = useState<Aliases | null>(null)
-  const [q, setQ] = useState('')
-  const [status, setStatus] = useState('')
-  useEffect(() => {
-    getAliases().then(setView).catch((e) => setStatus(String(e)))
-  }, [])
-  async function save(next: Aliases, message: string) {
-    setView(next)
-    await saveAliases(next)
-    setStatus(message)
-    window.setTimeout(() => setStatus(''), 2200)
-  }
-  if (!view) return <p className="text-ink/55">Reading your artist names…</p>
-  const ql = q.trim().toLowerCase()
-  const shown = view.artists
-    .map((a, i) => ({ a, i }))
-    .filter(({ a }) => !ql || [a.name, ...a.variants].some((n) => n.toLowerCase().includes(ql)))
-    .sort((x, y) => x.a.name.localeCompare(y.a.name))
-  return (
-    <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Artist names</h2>
-      <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
-        Each person gets one spelling everywhere. The spellings under it are recognised as the same person, ignoring capitals,
-        spaces and punctuation. Your answers in Organize add to this list.
-      </p>
-      <div className="mt-4 flex items-center gap-3">
-        <input
-          id="aliases-search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={`Search ${view.artists.length} names`}
-          className="min-w-0 flex-1 rounded-xl bg-ink/[0.06] px-3.5 py-2 text-[13px] outline-none focus:ring-1 focus:ring-[var(--accent)]"
-        />
-        {status && <span className="text-[12.5px] text-good">{status}</span>}
-      </div>
-      <div className="mt-3 grid gap-1">
-        {shown.map(({ a, i }) => (
-          <div key={a.name} className="flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 hover:bg-ink/[0.04]">
-            <span className="min-w-[180px] text-[13.5px] font-medium">{a.name}</span>
-            <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-              {a.variants.map((v) => (
-                <span key={v} className="inline-flex items-center gap-1 rounded-full bg-ink/[0.07] py-0.5 pl-2.5 pr-1 text-[12px] text-ink/75">
-                  {v}
-                  <button
-                    aria-label={`Stop treating ${v} as ${a.name}`}
-                    title="Stop treating this spelling as the same person"
-                    onClick={() => {
-                      const artists = view.artists.map((x, j) => (j === i ? { ...x, variants: x.variants.filter((y) => y !== v) } : x))
-                      void save({ ...view, artists }, `“${v}” is no longer treated as ${a.name}.`)
-                    }}
-                    className="grid h-4 w-4 place-items-center rounded-full text-ink/50 hover:bg-ink/15 hover:text-ink"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </span>
-          </div>
-        ))}
-        {shown.length === 0 && <p className="py-6 text-center text-[13px] text-ink/50">No names match “{q}”.</p>}
-      </div>
-      {view.distinct.length > 0 && (
-        <>
-          <h3 className="mt-7 text-[15px] font-medium">Kept apart</h3>
-          <p className="mt-1 text-[12.5px] text-ink/55">Names you said are different people. They are never suggested as one again.</p>
-          <div className="mt-2 grid gap-1">
-            {view.distinct.map(([x, y], i) => (
-              <div key={`${x}|${y}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-[13.5px] hover:bg-ink/[0.04]">
-                <span className="flex-1">
-                  {x} <span className="text-ink/45">and</span> {y}
-                </span>
-                <button
-                  onClick={() => void save({ ...view, distinct: view.distinct.filter((_, j) => j !== i) }, 'They can be suggested as one artist again.')}
-                  className="rounded-full px-3 py-1 text-[12.5px] text-ink/60 hover:bg-ink/10"
-                >
-                  Ask again
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}

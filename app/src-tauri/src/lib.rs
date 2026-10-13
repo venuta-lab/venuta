@@ -27,6 +27,8 @@ struct Jobs {
     plan: Mutex<Option<(String, Plan)>>,
     /// The last incoming plan, same reason.
     incoming_plan: Mutex<Option<(String, Plan)>>,
+    /// The last tidy preview's plan, so Apply does exactly what was shown.
+    tidy_plan: Mutex<Option<(String, Plan)>>,
     lookup: Mutex<Option<Arc<engine::enrich::EnrichProgress>>>,
     /// Running card syncs, by card root.
     syncs: Mutex<BTreeMap<String, Arc<engine::sync::SyncProgress>>>,
@@ -91,6 +93,8 @@ struct Review {
 
 #[derive(Serialize)]
 struct Run {
+    /// "build": a library built from a music folder; "tidy": a library tidied in place.
+    kind: &'static str,
     journal: String,
     started_ms: u64,
     target: String,
@@ -579,9 +583,13 @@ fn list_runs() -> Vec<Run> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if !name.ends_with("-apply.jsonl") {
+            let kind = if name.ends_with("-apply.jsonl") {
+                "build"
+            } else if name.ends_with("-tidy.jsonl") {
+                "tidy"
+            } else {
                 return None;
-            }
+            };
             let text = std::fs::read_to_string(e.path()).ok()?;
             let lines: Vec<serde_json::Value> = text
                 .lines()
@@ -617,11 +625,16 @@ fn list_runs() -> Vec<Run> {
             Some(Run {
                 journal: e.path().to_string_lossy().into_owned(),
                 started_ms: name.split('-').next()?.parse().ok()?,
-                target: first.get("target")?.as_str()?.to_owned(),
+                target: first
+                    .get("target")
+                    .or_else(|| first.get("root"))?
+                    .as_str()?
+                    .to_owned(),
                 files: lines
                     .iter()
-                    .filter(|v| op(v).as_deref() == Some("create"))
+                    .filter(|v| matches!(op(v).as_deref(), Some("create" | "move" | "retag")))
                     .count(),
+                kind,
                 failed,
                 finished,
             })
@@ -710,6 +723,223 @@ fn save_aliases(view: AliasesView) -> CmdResult<()> {
 #[tauri::command]
 async fn undo_run(journal: String) -> CmdResult<usize> {
     blocking(move || engine::apply::undo(Path::new(&journal))).await
+}
+
+// --- Your library, tidied in place -----------------------------------------------------------
+
+fn rules_dir() -> PathBuf {
+    PathBuf::from(settings_with_defaults().rules_dir.unwrap_or_default())
+}
+
+/// The plan for a library's Music folder with your rules, optionally with another folder
+/// arrangement tried instead of the saved one.
+fn library_plan(root: &Path, template: Option<&str>) -> CmdResult<Plan> {
+    let index = open_index(root)?;
+    let mut rules = Rules::load(&rules_dir())?;
+    if let Some(t) = template {
+        rules.layout.template = t.to_owned();
+    }
+    engine::plan::build_checked(&index, root, &rules)
+        .map(|(_, plan)| plan)
+        .map_err(|e| e.to_string())
+}
+
+/// What tidying the library would change now, with your saved rules.
+#[tauri::command]
+async fn tidy_preview(root: String, jobs: State<'_, Jobs>) -> CmdResult<engine::tidy::TidyPreview> {
+    let r = root.clone();
+    let (plan, preview) = blocking(move || {
+        let root = PathBuf::from(r);
+        let mut index = open_index(&root)?;
+        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
+        let plan = library_plan(&root, None)?;
+        let preview = engine::tidy::preview(&root, &plan);
+        Ok((plan, preview))
+    })
+    .await?;
+    *jobs.tidy_plan.lock().map_err(|e| e.to_string())? = Some((root, plan));
+    Ok(preview)
+}
+
+/// Tidy the chosen albums (all when empty) from the last preview; the library is read again
+/// afterwards and playlists follow the files.
+#[tauri::command]
+async fn tidy_apply(
+    root: String,
+    albums: Vec<String>,
+    on_progress: Channel<DeepProgress>,
+    jobs: State<'_, Jobs>,
+) -> CmdResult<engine::tidy::TidyReport> {
+    let plan = {
+        let guard = jobs.tidy_plan.lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some((r, p)) if *r == root => p.clone(),
+            _ => return Err("Look at the changes first, then apply them.".into()),
+        }
+    };
+    let progress = Arc::new(ApplyProgress::default());
+    {
+        let mut slot = jobs.apply.lock().map_err(|e| e.to_string())?;
+        if slot.is_some() {
+            return Err(
+                "Something is already being built or tidied; wait for it to finish.".into(),
+            );
+        }
+        *slot = Some(progress.clone());
+    }
+    let p = progress.clone();
+    let result = blocking(move || {
+        let root = PathBuf::from(root);
+        let report = engine::tidy::apply(&root, &plan, &albums, &p, &|done, total| {
+            let _ = on_progress.send(DeepProgress {
+                done,
+                total,
+                note: String::new(),
+            });
+        })?;
+        let mut index = open_index(&root)?;
+        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
+        if let Ok(lib) = Library::load(&index) {
+            engine::playlists::repair_all(&root, &lib);
+        }
+        Ok(report)
+    })
+    .await;
+    if let Ok(mut slot) = jobs.apply.lock() {
+        *slot = None;
+    }
+    if let Ok(mut slot) = jobs.tidy_plan.lock() {
+        *slot = None;
+    }
+    result
+}
+
+/// Put back everything a tidy run did; the library is read again afterwards.
+#[tauri::command]
+async fn tidy_undo(root: String, journal: String) -> CmdResult<usize> {
+    blocking(move || {
+        let n = engine::tidy::undo(Path::new(&journal))?;
+        let root = PathBuf::from(root);
+        let mut index = open_index(&root)?;
+        engine::scan(&mut index, &root).map_err(|e| e.to_string())?;
+        if let Ok(lib) = Library::load(&index) {
+            engine::playlists::repair_all(&root, &lib);
+        }
+        Ok(n)
+    })
+    .await
+}
+
+/// How your library's folders are named: the saved arrangement (a path pattern).
+#[tauri::command]
+fn get_layout() -> CmdResult<String> {
+    Ok(Rules::load(&rules_dir())?.layout.template)
+}
+
+fn check_template(t: &str) -> CmdResult<()> {
+    for need in ["{album}", "{title}", "{track}"] {
+        if !t.contains(need) {
+            return Err(format!("The arrangement needs {need}."));
+        }
+    }
+    if t.contains("..") || t.starts_with('/') || t.contains(':') || t.contains('\\') {
+        return Err("The arrangement can only name folders inside your library.".into());
+    }
+    Ok(())
+}
+
+/// Save a new arrangement. Only the pattern line of layout.toml changes; your comments stay.
+#[tauri::command]
+fn set_layout(template: String) -> CmdResult<()> {
+    check_template(&template)?;
+    let dir = rules_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join("layout.toml");
+    // A JSON string is also a valid TOML basic string (same quoting and escapes).
+    let line = format!(
+        "template = {}",
+        serde_json::to_string(&template).map_err(|e| e.to_string())?
+    );
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    let mut found = false;
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|l| {
+            if !found && l.trim_start().starts_with("template") && l.contains('=') {
+                found = true;
+                line.clone()
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect();
+    if !found {
+        out.insert(0, line);
+    }
+    let tmp = file.with_extension("toml.part");
+    std::fs::write(&tmp, out.join("\n") + "\n").map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &file).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct LayoutExample {
+    from: String,
+    to: String,
+}
+
+#[derive(Serialize)]
+struct LayoutTrial {
+    /// Albums whose folder would change.
+    albums: usize,
+    /// A few of them, from different shelves.
+    examples: Vec<LayoutExample>,
+}
+
+/// What an arrangement would do to the library, without saving or moving anything.
+#[tauri::command]
+async fn try_layout(root: String, template: String) -> CmdResult<LayoutTrial> {
+    check_template(&template)?;
+    blocking(move || {
+        let root = PathBuf::from(root);
+        let plan = library_plan(&root, Some(&template))?;
+        let changed: Vec<&engine::plan::AlbumPlan> = plan
+            .albums
+            .iter()
+            .filter(|a| a.tracks.iter().any(|t| t.source != t.target))
+            .collect();
+        // One example per shelf first, then more, up to four.
+        let mut seen = std::collections::HashSet::new();
+        let mut picks: Vec<&engine::plan::AlbumPlan> = Vec::new();
+        for a in changed.iter().filter(|a| a.tracks.len() > 2) {
+            let shelf = a.source_dir.split('/').next().unwrap_or("").to_owned();
+            if seen.insert(shelf) {
+                picks.push(a);
+            }
+        }
+        for a in &changed {
+            if picks.len() >= 4 {
+                break;
+            }
+            if !picks.iter().any(|p| p.id == a.id) {
+                picks.push(a);
+            }
+        }
+        picks.truncate(4);
+        Ok(LayoutTrial {
+            albums: changed.len(),
+            examples: picks
+                .iter()
+                .map(|a| {
+                    let t = &a.tracks[0];
+                    LayoutExample {
+                        from: t.source.clone(),
+                        to: t.target.clone(),
+                    }
+                })
+                .collect(),
+        })
+    })
+    .await
 }
 
 /// Look the library's albums up online (credits, years, covers) and find missing lyrics.
@@ -1401,6 +1631,12 @@ pub fn run() {
             choose_home,
             check_music_folder,
             set_open_folder,
+            tidy_preview,
+            tidy_apply,
+            tidy_undo,
+            get_layout,
+            set_layout,
+            try_layout,
             save_appearance,
             check_new_library,
             review,

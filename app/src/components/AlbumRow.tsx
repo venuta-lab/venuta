@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
-import { FIELD_NAMES, undoRun, type AlbumView, type ApplyReport, type Decision, type Run } from '../lib/engine'
+import { FIELD_NAMES, tidyUndo, undoRun, type AlbumView, type ApplyReport, type Decision, type Run } from '../lib/engine'
 import { setAccent, useCovers } from '../lib/covers'
 import { IconChevron } from './Icons'
 
@@ -173,13 +173,16 @@ export function RunRow(props: { run: Run; onUndone: () => void }) {
   const [open, setOpen] = useState(false)
   const when = new Date(props.run.started_ms).toLocaleString()
   const failed = props.run.failed ?? []
+  const tidy = props.run.kind === 'tidy'
   return (
     <div className="glass rounded-2xl px-5 py-3 text-[13.5px]">
     <div className="flex items-center gap-4">
       <div className="min-w-0 flex-1">
         <div>{when}</div>
         <div className="truncate text-[12px] text-ink/50">
-          {props.run.files.toLocaleString()} files created in {props.run.target}
+          {tidy
+            ? `${props.run.files.toLocaleString()} changes in ${props.run.target} (renamed or updated in place)`
+            : `${props.run.files.toLocaleString()} files created in ${props.run.target}`}
           {props.run.finished === false && ', stopped before the end'}
         </div>
         {failed.length > 0 && (
@@ -191,16 +194,19 @@ export function RunRow(props: { run: Run; onUndone: () => void }) {
       </div>
       {state === 'confirm' ? (
         <>
-          <span className="text-[12.5px] text-ink/70">Remove everything this build created?</span>
+          <span className="text-[12.5px] text-ink/70">
+            {tidy ? 'Put back everything this tidy changed?' : 'Remove everything this build created?'}
+          </span>
           <button
             onClick={async () => {
               setState('working')
-              await undoRun(props.run.journal)
+              if (tidy) await tidyUndo(props.run.target, props.run.journal)
+              else await undoRun(props.run.journal)
               props.onUndone()
             }}
             className="rounded-full bg-[color-mix(in_oklab,var(--color-problem)_30%,transparent)] px-3 py-1.5"
           >
-            Undo build
+            {tidy ? 'Undo tidy' : 'Undo build'}
           </button>
           <button onClick={() => setState('idle')} className="rounded-full px-3 py-1.5 text-ink/60 hover:bg-ink/10">
             Keep

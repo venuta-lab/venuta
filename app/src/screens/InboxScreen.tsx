@@ -20,6 +20,8 @@ import { AlbumRow, BuildResult } from '../components/AlbumRow'
 import { IconChevron } from '../components/Icons'
 import { DeepProgressBar } from './LibraryScreen'
 import { IncomingScreen } from './IncomingScreen'
+import { LibraryTidy } from './LibraryTidy'
+import { ArtistNames } from '../components/ArtistNames'
 import { track, useJob } from '../lib/jobs'
 
 const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
@@ -60,7 +62,7 @@ export function InboxScreen(props: {
 }) {
   // Inside your library there is nothing to bring in or build: only new music to add.
   const inLibrary = !!props.home && norm(props.root) === norm(props.home)
-  const [tab, setTab] = useState<'library' | 'new'>(inLibrary ? 'new' : 'library')
+  const [tab, setTab] = useState<'library' | 'new'>('library')
   const [data, setData] = useState<Review | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -129,7 +131,9 @@ export function InboxScreen(props: {
   useEffect(() => () => stopClips(), [])
 
   const summary = inLibrary
-    ? 'Add music you have bought or downloaded; it comes into your library tagged, with covers and lyrics.'
+    ? tab === 'library'
+      ? 'How your library is arranged, and the changes that bring it in line with your rules.'
+      : 'Add music you have bought or downloaded; it comes into your library tagged, with covers and lyrics.'
     : data
     ? [
         questions.length ? plural(questions.length, 'question for you', 'questions for you') : 'No questions for you',
@@ -156,19 +160,10 @@ export function InboxScreen(props: {
           </button>
         )}
       </header>
-      {inLibrary ? (
-        <p className="mb-5 text-[13px] text-ink/55">
-          Have a folder of music to bring in?{' '}
-          <button onClick={props.onChooseMusic} className="text-accent-ink underline-offset-2 hover:underline">
-            Choose it
-          </button>{' '}
-          and Venuta builds a clean copy of it here.
-        </p>
-      ) : (
       <div role="tablist" aria-label="Organize" className="mb-5 inline-flex rounded-full bg-ink/[0.07] p-1">
         {(
           [
-            ['library', `Bringing in ${folderName(props.root)}`],
+            ['library', inLibrary ? 'Your library' : `Bringing in ${folderName(props.root)}`],
             ['new', 'New music'],
           ] as const
         ).map(([id, label]) => (
@@ -184,11 +179,12 @@ export function InboxScreen(props: {
           </button>
         ))}
       </div>
-      )}
 
       {error && <p className="mb-4 text-[13px] text-problem">{error}</p>}
 
-      {tab === 'new' || inLibrary ? (
+      {inLibrary && tab === 'library' ? (
+        <LibraryTidy root={props.root} onChanged={props.onImported} />
+      ) : tab === 'new' || inLibrary ? (
         props.home ? (
           <IncomingScreen root={props.home} onImported={props.onImported} />
         ) : (
@@ -214,6 +210,7 @@ export function InboxScreen(props: {
             onChoose={(d, c) => void answer([{ id: d.id, choice: c }])}
           />
           <Changes root={props.root} data={data} onChanged={setData} />
+          <NamesSection onSaved={() => void review(props.root).then(take)} />
           <BuildBar root={props.root} data={data} onSwitch={props.onSwitchLibrary} />
         </>
       )}
@@ -769,6 +766,29 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
           {building ? 'Building…' : 'Build library'}
         </button>
       </div>
+    </section>
+  )
+}
+
+/** How artists are written, while bringing music in: the build uses these spellings. */
+function NamesSection(props: { onSaved: () => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <section aria-label="Artist names" className="glass mt-10 rounded-[22px] px-6 py-5">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
+        <span className="flex-1">
+          <span className="block text-[15px] font-medium">How artists are written</span>
+          <span className="mt-0.5 block text-[12.5px] text-ink/55">
+            One spelling per person everywhere; your answers above add to it. Click a name to change it.
+          </span>
+        </span>
+        <span className={`text-ink/50 transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
+      </button>
+      {open && (
+        <div className="mt-4">
+          <ArtistNames onSaved={props.onSaved} />
+        </div>
+      )}
     </section>
   )
 }
