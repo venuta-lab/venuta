@@ -1,0 +1,158 @@
+import { motion } from 'motion/react'
+import { memo, useEffect, useMemo, useRef } from 'react'
+import { quality, type CatalogTrack } from '../../lib/engine'
+import { setAccent, useCovers } from '../../lib/covers'
+import { clock, play } from '../../lib/player'
+import { IconPlay } from '../../components/Icons'
+import { coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
+import { Art, BackButton, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
+
+/** One album: its cover large, what it is, and its songs to play. */
+export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?: string; onBack: () => void }) {
+  const nav = useNav()
+  const cover = useCovers(320)(a.dir)
+  const accent = cover?.accent
+  useEffect(() => setAccent(accent), [accent])
+
+  const meta = [a.year, a.genre].filter(Boolean).join(', ')
+  return (
+    <div className="pb-16">
+      <BackButton onClick={onBack} />
+      <div className="relative">
+        {cover && (
+          <div aria-hidden className="pointer-events-none absolute -inset-x-10 -top-24 h-[420px] overflow-hidden opacity-40 [mask-image:linear-gradient(to_bottom,black,transparent)]">
+            <img src={cover.src} alt="" className="h-full w-full scale-125 object-cover blur-3xl" />
+          </div>
+        )}
+        <div className="relative flex flex-wrap items-end gap-8">
+          <motion.div
+            layoutId={coverId(origin, a.dir)}
+            transition={spring}
+            className="aspect-square w-[240px] shrink-0 overflow-hidden rounded-3xl bg-ink/[0.06] shadow-2xl shadow-black/40"
+          >
+            <Art cover={cover} album={a} />
+          </motion.div>
+          <motion.div
+            className="min-w-[260px] flex-1 pb-1"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ ...spring, delay: 0.05 }}
+          >
+            <h1 className="text-[34px] font-semibold leading-[1.1] tracking-[-0.03em]">{a.title}</h1>
+            <button
+              onClick={() => nav.openArtist(a.artist)}
+              className="mt-2 rounded-md text-left text-[16px] font-medium text-accent-ink hover:underline"
+            >
+              {a.artist}
+            </button>
+            {meta && <p className="mt-1 text-[13.5px] text-ink/60">{meta}</p>}
+            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
+              <span>
+                {plural(a.tracks.length, 'song')}, {minutes(a.duration_ms)}
+              </span>
+              <QualityBadge text={a.quality} />
+              {a.hiRes && <HiResPill />}
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-2.5">
+              <PlayButtons tracks={a.tracks} from={a.title} dir={a.dir} />
+              <button
+                onClick={() => nav.editDetails(a.dir)}
+                className="rounded-full px-4 py-2.5 text-[13.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink"
+              >
+                Edit details
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+      <TrackList album={a} />
+    </div>
+  )
+}
+
+const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
+  const { root } = useNav()
+  const now = useNowPlaying()
+  const list = useRef<HTMLDivElement>(null)
+  const discs = useMemo(() => {
+    const m = new Map<number, { track: CatalogTrack; index: number }[]>()
+    a.tracks.forEach((track, index) => {
+      const d = track.disc || 1
+      const g = m.get(d)
+      if (g) g.push({ track, index })
+      else m.set(d, [{ track, index }])
+    })
+    return [...m.entries()]
+  }, [a.tracks])
+
+  const playAt = (i: number) => void play(root, a.tracks, i, a.title)
+  const move = (i: number, by: number) => {
+    const to = Math.min(a.tracks.length - 1, Math.max(0, i + by))
+    list.current?.querySelector<HTMLElement>(`[data-index="${to}"]`)?.focus()
+  }
+
+  return (
+    <div ref={list} className="mt-9" role="list">
+      {discs.map(([disc, rows]) => (
+        <div key={disc} role="presentation">
+          {discs.length > 1 && <h3 className="mb-1 mt-5 px-3 text-[13px] font-semibold text-ink/65 first:mt-0">Disc {disc}</h3>}
+          {rows.map(({ track: t, index: i }) => {
+            const state = t.path === now.path ? (now.playing ? 'playing' : 'paused') : 'no'
+            const q = quality(t)
+            const isNow = state !== 'no'
+            return (
+              <div
+                key={t.path}
+                role="listitem"
+                tabIndex={0}
+                data-index={i}
+                aria-current={isNow || undefined}
+                onDoubleClick={() => playAt(i)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    playAt(i)
+                  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    move(i, e.key === 'ArrowDown' ? 1 : -1)
+                  }
+                }}
+                className={`group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] ${
+                  isNow ? 'text-accent-ink' : ''
+                }`}
+              >
+                <span className="relative grid h-8 place-items-center">
+                  {isNow ? (
+                    <span className="group-hover:hidden">
+                      <Equalizer playing={state === 'playing'} />
+                    </span>
+                  ) : (
+                    <span className="text-[13px] text-ink/50 group-hover:hidden">{t.track || i + 1}</span>
+                  )}
+                  <button
+                    tabIndex={-1}
+                    aria-label={`Play ${t.title}`}
+                    onClick={() => playAt(i)}
+                    className="absolute inset-0 hidden place-items-center rounded-full text-ink hover:text-accent-ink group-hover:grid"
+                  >
+                    <IconPlay width={15} height={15} />
+                  </button>
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[14px] font-medium">{t.title}</span>
+                  {t.artists.length > 0 && (
+                    <span className={`block truncate text-[12.5px] ${isNow ? 'opacity-80' : 'text-ink/55'}`}>{t.artists.join(', ')}</span>
+                  )}
+                </span>
+                <span>{q !== a.quality && <QualityBadge text={q} />}</span>
+                <span className={`text-right text-[12.5px] ${isNow ? '' : 'text-ink/55'}`}>{clock(t.duration_ms)}</span>
+                <TrackMenu track={t} label={t.title} />
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+})

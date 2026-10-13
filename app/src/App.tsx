@@ -36,10 +36,12 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { track } from './lib/jobs'
+import { connectPlayer } from './lib/player'
 import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Prefs, type Surface } from './lib/prefs'
 import { DeepProgressBar } from './screens/LibraryScreen'
 import { MissingFolder, NoLibrary, NoMusic } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
+import { ListenScreen } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { InboxScreen } from './screens/InboxScreen'
 import { CardsScreen } from './screens/CardsScreen'
@@ -97,6 +99,11 @@ export default function App() {
   // The guided set-up: shown until a library is chosen, and on request.
   const [setup, setSetup] = useState(false)
   const search = useRef<HTMLInputElement>(null)
+  // Music has its own: both screens are briefly mounted while one slides out, so one shared ref
+  // would be cleared by the screen leaving.
+  const listenSearch = useRef<HTMLInputElement>(null)
+  // An album to open on the Music home (from the palette), once it is showing.
+  const [listenAlbum, setListenAlbum] = useState<string | null>(null)
   const closeNotice = useCallback(() => setNotice(''), [])
   const closeError = useCallback(() => setError(''), [])
 
@@ -150,6 +157,9 @@ export default function App() {
       else setError(String(e))
     }
   }, [])
+
+  // The player is app-wide: hear its state from the start, whatever screen is open.
+  useEffect(() => connectPlayer(), [])
 
   // On start: where the library is, which folder was open, and the look saved with it.
   useEffect(() => {
@@ -279,8 +289,8 @@ export default function App() {
     setMissing('')
     setReport(null)
     setBackdrop([])
-    // Show the wall filling in rather than leaving you on the screen you chose it from.
-    go('music')
+    // Show the music filling in rather than leaving you on the screen you chose it from.
+    go('listen')
     if (samePath(path, root)) void refresh(path, true)
     else {
       readNext.current = true
@@ -369,14 +379,8 @@ export default function App() {
         label: a.title,
         detail: `${a.album_artist}${a.year ? `, ${a.year}` : ''}`,
         run: () => {
-          go('music')
-          window.setTimeout(() => {
-            if (search.current) {
-              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-              set?.call(search.current, a.title)
-              search.current.dispatchEvent(new Event('input', { bubbles: true }))
-            }
-          }, 120)
+          go('listen')
+          setListenAlbum(a.dir)
         },
       })
     }
@@ -385,8 +389,10 @@ export default function App() {
   }, [report, root, go, prefs, toggleTheme])
 
   function focusSearch() {
-    go('music')
-    window.setTimeout(() => search.current?.focus(), 80)
+    // Music and Metadata each have a search: the one showing, or Music from anywhere else.
+    if (active !== 'listen' && active !== 'music') go('listen')
+    const target = active === 'music' ? search : listenSearch
+    window.setTimeout(() => target.current?.focus(), 80)
   }
 
   // Global shortcuts.
@@ -500,6 +506,22 @@ export default function App() {
       )
     if (!root && active !== 'settings') return <NoLibrary onSetup={() => setSetup(true)} />
     switch (active) {
+      case 'listen':
+        if (report && report.summary.tracks === 0)
+          return (
+            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
+          )
+        return (
+          <ListenScreen
+            root={root}
+            report={report}
+            busy={busy}
+            searchRef={listenSearch}
+            openAlbum={listenAlbum}
+            onOpenedAlbum={() => setListenAlbum(null)}
+            onEditDetails={() => go('music')}
+          />
+        )
       case 'music':
         if (report && report.summary.tracks === 0)
           return (
@@ -542,7 +564,7 @@ export default function App() {
             onCount={setInboxCount}
             onSwitchLibrary={(path) => {
               openLibrary(path)
-              go('music')
+              go('listen')
               setNotice(`Now showing your new library in ${path}.`)
             }}
           />

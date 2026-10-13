@@ -120,3 +120,34 @@ export const IconSun = (p: P) => (
     <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
   </svg>
 )
+/** Play: a rounded triangle, filled so it reads at small sizes. */
+export const IconPlay = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M8 5.6v12.8c0 .8.9 1.3 1.6.9l10-6.4a1 1 0 0 0 0-1.8l-10-6.4c-.7-.4-1.6.1-1.6.9Z" fill="currentColor" />
+  </svg>
+)
+export const IconPause = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
+    <rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" />
+  </svg>
+)
+export const IconShuffle = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4 7h2.5c2 0 3.2 1 4.3 2.7l2.4 4.6c1 1.7 2.3 2.7 4.3 2.7H20" />
+    <path d="M4 17h2.5c1.4 0 2.4-.5 3.2-1.3M13.3 8.3C14.1 7.5 15.1 7 16.5 7H20" />
+    <path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5" />
+  </svg>
+)
+export const IconBack = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="m15 6-6 6 6 6" />
+  </svg>
+)
+export const IconMore = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+  </svg>
+)

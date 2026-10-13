@@ -159,3 +159,28 @@ export function clock(ms: number): string {
   const s = String(t % 60).padStart(2, '0')
   return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }
+
+export interface OutputDevice {
+  id: string
+  name: string
+  default: boolean
+}
+
+export interface OutputChoices {
+  devices: OutputDevice[]
+  /** The chosen device; null follows the Windows default. */
+  device: string | null
+  exclusive: boolean
+}
+
+export const outputChoices = () =>
+  inApp()
+    ? invoke<OutputChoices>('player_devices')
+    : Promise.resolve<OutputChoices>({ devices: [], device: null, exclusive: true })
+export const setOutput = (device: string | null, exclusive: boolean) => call('player_output', { device, exclusive })
+
+/** "FLAC 24/96" for the badge. */
+export function sourceLabel(s: Signal['source']): string {
+  const khz = s.rate % 1000 ? (s.rate / 1000).toFixed(1) : String(s.rate / 1000)
+  return s.lossless ? `${s.codec} ${s.bits}/${khz}` : `${s.codec} ${khz} kHz`
+}

@@ -252,3 +252,43 @@ kbd {
 :root[data-motion="reduced"] :is(.spin, .bar-sweep, .shimmer) {
   animation-duration: 3s;
 }
+
+/* The song playing now: three bars that bounce while it plays and rest when paused. */
+@keyframes eq-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.eq-bar {
+  transform-origin: bottom;
+  transform: scaleY(0.55);
+}
+.eq-bar:nth-child(2) {
+  transform: scaleY(0.9);
+}
+.eq-bar:nth-child(3) {
+  transform: scaleY(0.4);
+}
+.eq-on .eq-bar {
+  animation: eq-bounce 900ms ease-in-out infinite;
+}
+.eq-on .eq-bar:nth-child(2) {
+  animation-duration: 720ms;
+  animation-delay: -260ms;
+}
+.eq-on .eq-bar:nth-child(3) {
+  animation-duration: 1080ms;
+  animation-delay: -540ms;
+}
+:root[data-motion="reduced"] .eq-on .eq-bar {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .eq-on .eq-bar {
+    animation: none;
+  }
+}

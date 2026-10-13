@@ -166,7 +166,7 @@ export function MusicScreen(props: {
 }
 
 /** While the folder is read: what is happening, how far along, and the wall's shape to come. */
-function Reading({ busy }: { busy: string }) {
+export function Reading({ busy }: { busy: string }) {
   const job = useJob('scan')
   const now = useNow()
   const count = job ? counted(job) : ''
@@ -203,7 +203,7 @@ function Reading({ busy }: { busy: string }) {
  * A cover thumbnail. If it fails to load it tries once more, then falls back to the lettered
  * tile, so a hiccup never leaves a broken-image icon on the wall.
  */
-function CoverImage({ src, title }: { src: string; title: string }) {
+export function CoverImage({ src, title }: { src: string; title: string }) {
   const [attempt, setAttempt] = useState(0)
   if (attempt > 1) return <NoCover title={title} />
   return (
@@ -220,7 +220,7 @@ function CoverImage({ src, title }: { src: string; title: string }) {
 }
 
 /** A cover for albums without art: the first letters on a soft tint of the accent. */
-function NoCover({ title }: { title: string }) {
+export function NoCover({ title }: { title: string }) {
   const letters = title
     .split(/\s+/)
     .filter(Boolean)
