@@ -707,8 +707,83 @@ fn setup_card(
     name: String,
     include: Vec<String>,
     auto_sync: bool,
+    player: Option<engine::device::Player>,
 ) -> CmdResult<engine::sync::CardConfig> {
-    engine::sync::setup_card(Path::new(&card), &name, include, auto_sync)
+    engine::sync::setup_card(Path::new(&card), &name, include, auto_sync, player)
+}
+
+#[derive(Serialize)]
+struct PlayerInfo {
+    id: engine::device::Player,
+    label: &'static str,
+    /// What a card copy for this player changes, in words.
+    notes: Vec<String>,
+}
+
+/// Write the player test to a card (one of your songs in nine variants, and two playlists).
+#[tauri::command]
+async fn player_test_write(root: String, card: String) -> CmdResult<Vec<engine::device::TestItem>> {
+    blocking(move || {
+        let folder = engine::sync::read_card(Path::new(&card))
+            .map(|c| c.folder)
+            .unwrap_or_else(|| "Music".into());
+        engine::device::write_test_kit(Path::new(&root), Path::new(&card), &folder)
+    })
+    .await
+}
+
+#[tauri::command]
+fn player_test_remove(card: String) -> CmdResult<()> {
+    let folder = engine::sync::read_card(Path::new(&card))
+        .map(|c| c.folder)
+        .unwrap_or_else(|| "Music".into());
+    engine::device::remove_test_kit(Path::new(&card), &folder)
+}
+
+#[tauri::command]
+fn player_test_save(
+    card: String,
+    results: BTreeMap<String, bool>,
+) -> CmdResult<engine::sync::CardConfig> {
+    engine::sync::save_test_results(Path::new(&card), results)
+}
+
+/// The players a card can be written for.
+#[tauri::command]
+fn players() -> Vec<PlayerInfo> {
+    engine::device::Player::ALL
+        .iter()
+        .map(|&p| {
+            let r = p.recipe();
+            let mut notes = Vec::new();
+            if !r.transform {
+                notes.push("Files are copied exactly as they are in your library.".to_owned());
+            } else {
+                if r.join_artists {
+                    notes
+                        .push("Several singers written as one name list, separated by “;”.".into());
+                }
+                if r.date_from_original {
+                    notes.push("The year shown is the original release year.".into());
+                }
+                notes.push(format!(
+                    "Covers re-saved as standard JPEG, at most {} px.",
+                    r.cover_max_px
+                ));
+                if !r.playlists {
+                    notes.push(
+                        "No playlist files (this player can't read them; use its favourites)."
+                            .into(),
+                    );
+                }
+            }
+            PlayerInfo {
+                id: p,
+                label: p.label(),
+                notes,
+            }
+        })
+        .collect()
 }
 
 /// What a sync would do, without doing it.
@@ -1132,6 +1207,10 @@ pub fn run() {
             list_cards,
             library_folders,
             setup_card,
+            players,
+            player_test_write,
+            player_test_remove,
+            player_test_save,
             plan_card,
             sync_card,
             cancel_sync,

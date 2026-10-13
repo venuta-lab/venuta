@@ -327,7 +327,7 @@ fn main() -> Result<()> {
             name,
             include,
         } => {
-            let c = engine::sync::setup_card(&card, &name, include, false)
+            let c = engine::sync::setup_card(&card, &name, include, false, None)
                 .map_err(anyhow::Error::msg)?;
             println!("card {} ({}) ready", c.name, c.id);
         }

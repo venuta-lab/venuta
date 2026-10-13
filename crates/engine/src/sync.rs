@@ -37,6 +37,12 @@ pub struct CardConfig {
     pub auto_sync: bool,
     #[serde(default)]
     pub created_at: u64,
+    /// The player that reads this card; its copies are written the way that player reads.
+    #[serde(default)]
+    pub player: crate::device::Player,
+    /// Your answers to the player test (question id → what the player did).
+    #[serde(default)]
+    pub test_results: std::collections::BTreeMap<String, bool>,
 }
 
 fn default_folder() -> String {
@@ -58,6 +64,7 @@ pub fn setup_card(
     name: &str,
     include: Vec<String>,
     auto_sync: bool,
+    player: Option<crate::device::Player>,
 ) -> Result<CardConfig, String> {
     let existing = read_card(card_root);
     let now = std::time::SystemTime::now()
@@ -81,6 +88,13 @@ pub fn setup_card(
             .unwrap_or_else(default_folder),
         include,
         auto_sync,
+        player: player
+            .or(existing.as_ref().map(|c| c.player))
+            .unwrap_or_default(),
+        test_results: existing
+            .as_ref()
+            .map(|c| c.test_results.clone())
+            .unwrap_or_default(),
         created_at: existing.map(|c| c.created_at).unwrap_or(now),
     };
     let dir = card_root.join(CARD_DIR);
@@ -99,6 +113,7 @@ struct Wanted {
     mtime_ns: i64,
     audio_md5: Option<String>,
     is_flac: bool,
+    is_image: bool,
 }
 
 fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Wanted>> {
@@ -111,9 +126,11 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
          WHERE kind IN ('flac', 'other_audio', 'lyrics', 'image', 'playlist')",
     )?;
     let rows = stmt.query_map([], |r| {
+        let kind: String = r.get(1)?;
         Ok(Wanted {
             rel: r.get::<_, String>(0)?,
-            is_flac: r.get::<_, String>(1)? == "flac",
+            is_flac: kind == "flac",
+            is_image: kind == "image",
             size: r.get::<_, i64>(2)? as u64,
             mtime_ns: r.get(3)?,
             audio_md5: r.get::<_, Option<String>>(4)?.filter(|m| !m.is_empty()),
@@ -127,7 +144,11 @@ fn wanted_files(library_root: &Path, cfg: &CardConfig) -> crate::Result<Vec<Want
         if top.starts_with('_') {
             continue;
         }
-        // Playlists always travel; everything else follows the card's selection.
+        // Playlists always travel (unless the player reads none); everything else follows the
+        // card's selection.
+        if top == "playlists" && !cfg.player.recipe().playlists {
+            continue;
+        }
         if !include.is_empty() && !include.contains(&top) && top != "playlists" {
             continue;
         }
@@ -143,6 +164,8 @@ struct Held {
     source_size: u64,
     source_mtime_ns: i64,
     audio_md5: Option<String>,
+    /// The player recipe the copy was written with (none: an exact copy).
+    recipe: Option<String>,
 }
 
 fn open_manifest(card_root: &Path) -> Result<Connection, String> {
@@ -162,12 +185,18 @@ fn open_manifest(card_root: &Path) -> Result<Connection, String> {
          );",
     )
     .map_err(|e| e.to_string())?;
+    // Cards set up before player profiles: add the column, existing copies count as exact.
+    let has_recipe = conn.prepare("SELECT recipe FROM held LIMIT 0").is_ok();
+    if !has_recipe {
+        conn.execute_batch("ALTER TABLE held ADD COLUMN recipe TEXT;")
+            .map_err(|e| e.to_string())?;
+    }
     Ok(conn)
 }
 
 fn load_manifest(conn: &Connection) -> Result<HashMap<String, Held>, String> {
     let mut stmt = conn
-        .prepare("SELECT path, source_size, source_mtime_ns, audio_md5 FROM held")
+        .prepare("SELECT path, source_size, source_mtime_ns, audio_md5, recipe FROM held")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -177,6 +206,7 @@ fn load_manifest(conn: &Connection) -> Result<HashMap<String, Held>, String> {
                     source_size: r.get::<_, i64>(1)? as u64,
                     source_mtime_ns: r.get(2)?,
                     audio_md5: r.get(3)?,
+                    recipe: r.get(4)?,
                 },
             ))
         })
@@ -185,11 +215,11 @@ fn load_manifest(conn: &Connection) -> Result<HashMap<String, Held>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn record(conn: &Connection, w: &Wanted) -> Result<(), String> {
+fn record(conn: &Connection, w: &Wanted, recipe: Option<&str>) -> Result<(), String> {
     conn.execute(
-        "INSERT OR REPLACE INTO held (path, source_size, source_mtime_ns, audio_md5, synced_at)
-         VALUES (?1, ?2, ?3, ?4, strftime('%s','now'))",
-        params![w.rel, w.size as i64, w.mtime_ns, w.audio_md5],
+        "INSERT OR REPLACE INTO held (path, source_size, source_mtime_ns, audio_md5, synced_at, recipe)
+         VALUES (?1, ?2, ?3, ?4, strftime('%s','now'), ?5)",
+        params![w.rel, w.size as i64, w.mtime_ns, w.audio_md5, recipe],
     )
     .map(|_| ())
     .map_err(|e| e.to_string())
@@ -267,14 +297,23 @@ pub fn plan(library_root: &Path, card_root: &Path) -> Result<SyncPlan, String> {
         fits: true,
         ops: Vec::new(),
     };
+    let stamp = stamp_for(&cfg);
     for w in &wanted {
+        let applies = w.is_flac || w.is_image;
+        let same_recipe = |h: &Held| !applies || h.recipe.as_deref() == stamp.as_deref();
         match held.get(&w.rel) {
             Some(h)
                 if h.source_size == w.size
                     && h.source_mtime_ns == w.mtime_ns
+                    && same_recipe(h)
                     && music.join(&w.rel).exists() =>
             {
                 p.unchanged += 1
+            }
+            Some(h) if w.is_image && !same_recipe(h) && music.join(&w.rel).exists() => {
+                p.copy += 1;
+                p.bytes_to_copy += w.size;
+                ops.push(Op::Copy(w.clone()));
             }
             Some(h)
                 if w.is_flac
@@ -360,7 +399,8 @@ fn foreign_flacs(
             continue;
         };
         let rel = rel.to_string_lossy().replace('\\', "/");
-        if held.contains_key(&rel) {
+        // The player test is the app's own and never adopted into the library's layout.
+        if held.contains_key(&rel) || rel.starts_with(crate::device::TEST_FOLDER) {
             continue;
         }
         if let Ok(layout) = flac_layout::read_layout(e.path()) {
@@ -417,6 +457,15 @@ pub fn run(
     let music = card_root.join(&plan.card.folder);
     let conn = open_manifest(card_root)?;
     cleanup_parts(&music);
+    let recipe = plan.card.player.recipe();
+    let stamp = stamp_for(&plan.card);
+    let stamp_of = |w: &Wanted| {
+        if w.is_flac || w.is_image {
+            stamp.as_deref()
+        } else {
+            None
+        }
+    };
     let total = plan.ops.len();
     progress.total.store(total, Ordering::Relaxed);
     let mut r = SyncReport::default();
@@ -455,9 +504,9 @@ pub fn run(
                 }
                 remove_empty_parents(&src, &music);
                 // Same audio; bring the tags up to date if they differ.
-                let written = patch_or_copy(&library_root.join(&to.rel), &dst)?;
+                let written = patch_for(&library_root.join(&to.rel), &dst, &recipe)?;
                 r.bytes_written += written;
-                record(&conn, to)?;
+                record(&conn, to, stamp_of(to))?;
                 if *from_foreign {
                     r.adopted += 1
                 } else {
@@ -465,18 +514,17 @@ pub fn run(
                 }
                 Ok(())
             })(),
-            Op::Copy(w) => {
-                copy_file(&library_root.join(&w.rel), &music.join(&w.rel)).and_then(|n| {
+            Op::Copy(w) => copy_for(&library_root.join(&w.rel), &music.join(&w.rel), w, &recipe)
+                .and_then(|n| {
                     r.bytes_written += n;
                     r.copied += 1;
-                    record(&conn, w)
-                })
-            }
-            Op::Patch(w) => patch_or_copy(&library_root.join(&w.rel), &music.join(&w.rel))
+                    record(&conn, w, stamp_of(w))
+                }),
+            Op::Patch(w) => patch_for(&library_root.join(&w.rel), &music.join(&w.rel), &recipe)
                 .and_then(|n| {
                     r.bytes_written += n;
                     r.patched += 1;
-                    record(&conn, w)
+                    record(&conn, w, stamp_of(w))
                 }),
         };
         if let Err(e) = result {
@@ -493,6 +541,113 @@ pub fn run(
     }
     r.elapsed_ms = started.elapsed().as_millis();
     Ok(r)
+}
+
+/// The recipe stamp a card's copies are written with; None for exact copies.
+fn stamp_for(cfg: &CardConfig) -> Option<String> {
+    cfg.player.recipe().transform.then(|| cfg.player.stamp())
+}
+
+/// A new copy on the card, written for its player.
+fn copy_for(src: &Path, dst: &Path, w: &Wanted, r: &crate::device::Recipe) -> Result<u64, String> {
+    if r.transform && w.is_flac {
+        return write_card_flac(src, dst, r);
+    }
+    if w.is_image
+        && let Ok(bytes) = std::fs::read(src)
+        && let Some(small) = crate::device::card_image(&bytes, r)
+    {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        write_atomic(dst, &small)?;
+        return Ok(small.len() as u64);
+    }
+    copy_file(src, dst)
+}
+
+/// Bring a card copy's tags up to date for its player: in place when they fit before the
+/// audio, otherwise the file is written again. The audio itself is never rewritten in place.
+fn patch_for(src: &Path, dst: &Path, r: &crate::device::Recipe) -> Result<u64, String> {
+    let is_flac = src
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("flac"));
+    if !r.transform || !is_flac {
+        return patch_or_copy(src, dst);
+    }
+    let (meta, _) = crate::device::card_metadata(src, r)?;
+    let s = flac_layout::read_layout(src).map_err(|e| e.to_string())?;
+    if let Ok(d) = flac_layout::read_layout(dst)
+        && d.id3v2_len == 0
+        && d.streaminfo == s.streaminfo
+        && d.audio_len() == s.audio_len()
+    {
+        // The card metadata ends with an 8 KiB padding block; resize it to fill the space.
+        let core = &meta[..meta.len() - (4 + 8192)];
+        let room = d.audio_offset as i64 - core.len() as i64 - 4;
+        if (0..(1 << 24)).contains(&room) {
+            let mut out = core.to_vec();
+            let len = (room as u32).to_be_bytes();
+            out.extend([0x80 | BLOCK_PADDING, len[1], len[2], len[3]]);
+            out.resize(d.audio_offset as usize, 0);
+            {
+                let mut f = OpenOptions::new()
+                    .write(true)
+                    .open(dst)
+                    .map_err(|e| e.to_string())?;
+                f.write_all(&out).map_err(|e| e.to_string())?;
+                f.sync_all().map_err(|e| e.to_string())?;
+            }
+            let after = flac_layout::read_layout(dst).map_err(|e| e.to_string())?;
+            if after.audio_offset == d.audio_offset && after.streaminfo == d.streaminfo {
+                return Ok(out.len() as u64);
+            }
+        }
+    }
+    write_card_flac(src, dst, r)
+}
+
+/// Write a card copy: the player's metadata, then the library file's audio bytes unchanged.
+fn write_card_flac(src: &Path, dst: &Path, r: &crate::device::Recipe) -> Result<u64, String> {
+    let (meta, audio_offset) = crate::device::card_metadata(src, r)?;
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let part = part_path(dst);
+    let result = (|| -> Result<u64, String> {
+        let mut input = File::open(src).map_err(|e| format!("read: {e}"))?;
+        input
+            .seek(SeekFrom::Start(audio_offset))
+            .map_err(|e| e.to_string())?;
+        let mut output = File::create(&part).map_err(|e| format!("create: {e}"))?;
+        output.write_all(&meta).map_err(|e| format!("write: {e}"))?;
+        let mut buf = vec![0u8; 4 << 20];
+        let mut n = meta.len() as u64;
+        loop {
+            let k = input.read(&mut buf).map_err(|e| format!("read: {e}"))?;
+            if k == 0 {
+                break;
+            }
+            output
+                .write_all(&buf[..k])
+                .map_err(|e| format!("write: {e}"))?;
+            n += k as u64;
+        }
+        output.sync_all().map_err(|e| format!("flush: {e}"))?;
+        drop(output);
+        // Same audio as the library file, byte for byte.
+        let s = flac_layout::read_layout(src).map_err(|e| e.to_string())?;
+        let d = flac_layout::read_layout(&part).map_err(|e| e.to_string())?;
+        if s.streaminfo != d.streaminfo || s.audio_len() != d.audio_len() {
+            return Err("the card copy did not check out".into());
+        }
+        std::fs::rename(&part, dst).map_err(|e| format!("rename: {e}"))?;
+        Ok(n)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
 }
 
 /// Copy as `.part`, flush to the card, then rename. Returns bytes written.
@@ -669,6 +824,18 @@ pub fn cards() -> Vec<CardStatus> {
             })
         })
         .collect()
+}
+
+/// Keep your answers to the player test on the card, next to its settings.
+pub fn save_test_results(
+    card_root: &Path,
+    results: std::collections::BTreeMap<String, bool>,
+) -> Result<CardConfig, String> {
+    let mut cfg = read_card(card_root).ok_or("This card isn't set up yet.")?;
+    cfg.test_results = results;
+    let body = toml::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    write_atomic(&card_config_path(card_root), body.as_bytes())?;
+    Ok(cfg)
 }
 
 #[cfg(test)]

@@ -13,9 +13,24 @@ import {
   type CardStatus,
   type SyncPlan,
   type SyncReport,
+  players,
+  playerTestRemove,
+  playerTestSave,
+  playerTestWrite,
+  type PlayerId,
+  type PlayerInfo,
+  type TestItem,
 } from '../lib/engine'
 import { PillButton } from './LibraryScreen'
 import { IconCards } from '../components/Icons'
+
+const PLAYER_NAMES: Record<PlayerId, string> = {
+  standard: 'any player (exact copies)',
+  poweramp: 'Poweramp',
+  snowsky_disc: 'Snowsky Disc',
+  echo_mini: 'Echo Mini',
+  astell_kern: 'Astell&Kern',
+}
 
 const spring = { type: 'spring', stiffness: 320, damping: 30 } as const
 
@@ -127,6 +142,7 @@ export function CardsScreen({ root }: { root: string }) {
             onEject={() => eject(c.volume.root)}
             onDismiss={() => set(c.volume.root, undefined)}
             onSaved={refresh}
+            root={root}
           />
         ))}
       </div>
@@ -155,9 +171,11 @@ function CardTile(props: {
   onEject: () => void
   onDismiss: () => void
   onSaved: () => void
+  root: string
 }) {
   const { volume: v, card, last_sync, files } = props.status
   const [editing, setEditing] = useState(false)
+  const [testing, setTesting] = useState(false)
   const used = v.total_bytes - v.free_bytes
   const b = props.busy
   const incoming = b?.kind === 'plan' ? Math.max(0, b.plan.bytes_to_copy - b.plan.bytes_freed) : 0
@@ -176,6 +194,7 @@ function CardTile(props: {
             {last_sync ? `, last synced ${new Date(last_sync * 1000).toLocaleString()}` : ''}
             {card?.include.length ? `. Carries: ${card.include.join(', ')}` : '. Carries: everything'}
             {card?.auto_sync ? '. Syncs when inserted' : ''}
+            {card?.player && card.player !== 'standard' ? `. Written for ${PLAYER_NAMES[card.player]}` : ''}
           </div>
         </div>
         <button onClick={() => setEditing(!editing)} className="rounded-full px-3 py-1.5 text-[12.5px] text-ink/65 hover:bg-ink/10">
@@ -202,7 +221,15 @@ function CardTile(props: {
       <AnimatePresence initial={false}>
         {editing && card && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-            <CardSettings root={v.root} name={card.name} include={card.include} autoSync={card.auto_sync} folders={props.folders} onSaved={() => { setEditing(false); props.onSaved() }} />
+            <CardSettings root={v.root} name={card.name} include={card.include} autoSync={card.auto_sync} player={card.player ?? 'standard'} folders={props.folders} onSaved={() => { setEditing(false); props.onSaved() }} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence initial={false}>
+        {testing && card && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+            <PlayerTest root={props.root} card={v.root} saved={card.test_results ?? {}} onClose={() => setTesting(false)} onSaved={props.onSaved} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -214,6 +241,11 @@ function CardTile(props: {
               Preview sync
             </PillButton>
             <PillButton onClick={props.onEject}>Eject</PillButton>
+            {card && !testing && (
+              <button onClick={() => setTesting(true)} className="rounded-full px-3 py-1.5 text-[13px] text-ink/70 hover:bg-ink/10">
+                Test this player
+              </button>
+            )}
           </>
         )}
         {b?.kind === 'planning' && <span className="text-[13px] text-ink/65">Comparing the card with your library…</span>}
@@ -299,12 +331,19 @@ function CardSettings(props: {
   name: string
   include: string[]
   autoSync: boolean
+  player?: PlayerId
   folders: string[]
   onSaved: () => void
 }) {
   const [name, setName] = useState(props.name)
   const [include, setInclude] = useState<string[]>(props.include)
   const [auto, setAuto] = useState(props.autoSync)
+  const [player, setPlayer] = useState<PlayerId>(props.player ?? 'poweramp')
+  const [list, setList] = useState<PlayerInfo[]>([])
+  useEffect(() => {
+    players().then(setList).catch(() => setList([]))
+  }, [])
+  const chosen = list.find((p) => p.id === player)
   return (
     <div className="mt-4 grid gap-3 border-t border-ink/[0.06] pt-4">
       <label className="grid max-w-[360px] gap-1">
@@ -329,12 +368,37 @@ function CardSettings(props: {
           })}
         </div>
       </div>
+      <div>
+        <div className="text-[11.5px] text-ink/50">The player that reads this card</div>
+        <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Player">
+          {list.map((p) => (
+            <button
+              key={p.id}
+              role="radio"
+              aria-checked={player === p.id}
+              onClick={() => setPlayer(p.id)}
+              className="rounded-full px-3 py-1.5 text-[12.5px]"
+              style={{ background: player === p.id ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'color-mix(in oklab, var(--ink) 7%, transparent)' }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {chosen && (
+          <ul className="mt-2 grid gap-0.5 text-[12.5px] text-ink/60">
+            {chosen.notes.map((n) => (
+              <li key={n}>· {n}</li>
+            ))}
+            <li>· The sound itself is never re-encoded; your library keeps its full tags.</li>
+          </ul>
+        )}
+      </div>
       <label className="flex items-center gap-2 text-[13px] text-ink/80">
         <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-[var(--accent)]" />
         Sync automatically when this card is inserted
       </label>
       <div>
-        <PillButton onClick={async () => { await setupCard(props.root, name || 'Card', include, auto); props.onSaved() }} accent>
+        <PillButton onClick={async () => { await setupCard(props.root, name || 'Card', include, auto, player); props.onSaved() }} accent>
           Save
         </PillButton>
       </div>
@@ -370,5 +434,114 @@ function SetupTile(props: { status: CardStatus; folders: string[]; onDone: () =>
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+/** What the answers to the player test suggest, in words. */
+function findings(r: Record<string, boolean>): string[] {
+  const out: string[] = []
+  if (r.artists_semicolon === false && r.artists_entries === true)
+    out.push('It reads separate artist entries better than “;”. Choose “Exact copy” for this player.')
+  if (r.cover_1400 === false && r.cover_600 === true) out.push('Large covers fail: choose Snowsky Echo Mini, which keeps covers at 600 px.')
+  if (r.lyrics_file === false && r.lyrics_tag === true) out.push('It reads lyrics inside the file only; the app always writes both, so lyrics will show.')
+  if (r.lyrics_tag === false && r.lyrics_file === true) out.push('It reads lyrics files only; the app always writes both, so lyrics will show.')
+  if (r.lyrics_file === false && r.lyrics_bom === true) out.push('Its lyrics files need a byte-order mark. Tell me, and I will add that to its profile.')
+  if (r.hindi === false) out.push('Devanagari shows as boxes: this player lacks the font. Song titles in Hindi will not be readable on it.')
+  if (r.playlist_relative === false && r.playlist_top === false) out.push('It reads no playlist files: use its favourites, or choose Echo Mini (no playlists are written).')
+  if (r.playlist_relative === false && r.playlist_top === true) out.push('Playlists need paths from the top of the card. Tell me, and I will add that to its profile.')
+  if (r.year_original === false) out.push('It shows the date tag; the card copies put the original year there, so years will be right.')
+  if (!out.length && Object.keys(r).length) out.push('Everything you checked works with the current profile.')
+  return out
+}
+
+function PlayerTest(props: { root: string; card: string; saved: Record<string, boolean>; onClose: () => void; onSaved: () => void }) {
+  const [items, setItems] = useState<TestItem[] | null>(null)
+  const [answers, setAnswers] = useState<Record<string, boolean>>(props.saved)
+  const [status, setStatus] = useState('')
+  async function write() {
+    setStatus('Writing the test to the card…')
+    try {
+      setItems(await playerTestWrite(props.root, props.card))
+      setStatus('')
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : String(e))
+    }
+  }
+  return (
+    <div className="mt-4 rounded-2xl bg-ink/[0.04] p-4">
+      <div className="text-[14px] font-medium">Test this player</div>
+      <p className="mt-1 max-w-[62ch] text-[12.5px] leading-relaxed text-ink/60">
+        Writes an album called “Player test” to the card: one of your songs in nine versions, and two playlists. Put the card in
+        the player, let it rescan, then answer below. About 15 minutes. Nothing else on the card changes.
+      </p>
+      {!items && (
+        <div className="mt-3 flex gap-2">
+          <PillButton onClick={() => void write()} accent>
+            Write the test to the card
+          </PillButton>
+          <button onClick={props.onClose} className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10">
+            Close
+          </button>
+        </div>
+      )}
+      {items && (
+        <>
+          <div className="mt-3 grid gap-1.5">
+            {items.map((it) => (
+              <div key={it.id} className="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 hover:bg-ink/[0.04]">
+                <div className="min-w-[240px] flex-1">
+                  <div className="text-[13px]">{it.checks}</div>
+                  <div className="text-[11.5px] text-ink/45">{it.file}</div>
+                </div>
+                <div className="inline-flex rounded-full bg-ink/[0.07] p-0.5" role="radiogroup" aria-label={it.checks}>
+                  {([true, false] as const).map((v) => (
+                    <button
+                      key={String(v)}
+                      role="radio"
+                      aria-checked={answers[it.id] === v}
+                      onClick={() => setAnswers({ ...answers, [it.id]: v })}
+                      className="rounded-full px-3 py-1 text-[12px]"
+                      style={{ background: answers[it.id] === v ? 'color-mix(in oklab, var(--accent) 40%, transparent)' : 'transparent' }}
+                    >
+                      {v ? 'Yes' : 'No'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {findings(answers).length > 0 && (
+            <ul className="mt-3 grid gap-1 rounded-xl px-3 py-2.5 text-[12.5px] text-ink/80" style={{ background: 'color-mix(in oklab, var(--accent) 12%, transparent)' }}>
+              {findings(answers).map((f) => (
+                <li key={f}>· {f}</li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <PillButton
+              onClick={async () => {
+                await playerTestSave(props.card, answers)
+                setStatus('Answers saved on the card.')
+                props.onSaved()
+              }}
+              accent
+            >
+              Save the answers
+            </PillButton>
+            <button
+              onClick={async () => {
+                await playerTestRemove(props.card)
+                setItems(null)
+                setStatus('The test was removed from the card.')
+              }}
+              className="rounded-full px-3 py-1.5 text-[13px] text-ink/65 hover:bg-ink/10"
+            >
+              Remove the test from the card
+            </button>
+          </div>
+        </>
+      )}
+      {status && <p className="mt-2 text-[12.5px] text-ink/60">{status}</p>}
+    </div>
   )
 }

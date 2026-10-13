@@ -463,6 +463,8 @@ export interface CardConfig {
   include: string[]
   auto_sync: boolean
   created_at: number
+  player?: PlayerId
+  test_results?: Record<string, boolean>
 }
 
 export interface CardStatus {
@@ -501,8 +503,35 @@ export interface SyncReport {
 export const listCards = () => (inApp() ? invoke<CardStatus[]>('list_cards') : Promise.resolve([] as CardStatus[]))
 export const libraryFolders = (root: string) =>
   inApp() ? invoke<string[]>('library_folders', { root }) : Promise.resolve([] as string[])
-export const setupCard = (card: string, name: string, include: string[], autoSync: boolean) =>
-  invoke<CardConfig>('setup_card', { card, name, include, autoSync })
+export type PlayerId = 'standard' | 'poweramp' | 'snowsky_disc' | 'echo_mini' | 'astell_kern'
+
+export interface PlayerInfo {
+  id: PlayerId
+  label: string
+  notes: string[]
+}
+
+export const players = () =>
+  inApp()
+    ? invoke<PlayerInfo[]>('players')
+    : Promise.resolve<PlayerInfo[]>([
+        { id: 'poweramp', label: 'Poweramp (Android)', notes: ['Several singers written as one name list, separated by “;”.'] },
+        { id: 'echo_mini', label: 'Snowsky Echo Mini', notes: ['Covers re-saved as standard JPEG, at most 600 px.'] },
+      ])
+
+export interface TestItem {
+  id: string
+  file: string
+  checks: string
+}
+
+export const playerTestWrite = (root: string, card: string) => invoke<TestItem[]>('player_test_write', { root, card })
+export const playerTestRemove = (card: string) => invoke<void>('player_test_remove', { card })
+export const playerTestSave = (card: string, results: Record<string, boolean>) =>
+  invoke<CardConfig>('player_test_save', { card, results })
+
+export const setupCard = (card: string, name: string, include: string[], autoSync: boolean, player?: PlayerId) =>
+  invoke<CardConfig>('setup_card', { card, name, include, autoSync, player })
 export const planCard = (root: string, card: string) => invoke<SyncPlan>('plan_card', { root, card })
 export function syncCard(root: string, card: string, onProgress: (d: number, t: number, bytes: number) => void) {
   const channel = new Channel<{ done: number; total: number; bytes: number }>()
