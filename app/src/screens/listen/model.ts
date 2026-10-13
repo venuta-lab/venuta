@@ -196,11 +196,7 @@ export function minutes(ms: number): string {
 export const spring = { type: 'spring', stiffness: 380, damping: 34 } as const
 
 /** Scroll smoothly, unless motion is turned down. */
-export const smooth = (): ScrollBehavior =>
-  document.documentElement.dataset.motion === 'reduced' ||
-  (document.documentElement.dataset.motion !== 'full' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-    ? 'auto'
-    : 'smooth'
+export const smooth = (): ScrollBehavior => (document.documentElement.dataset.motion === 'reduced' ? 'auto' : 'smooth')
 
 /** The element that scrolls this one (the screen's own scroll area). */
 export function scrollerOf(el: HTMLElement | null): HTMLElement | null {

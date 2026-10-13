@@ -231,14 +231,9 @@ kbd {
   will-change: transform;
 }
 
+/* data-motion is "reduced" when Venuta, or Windows under "Match Windows", asks for stillness. */
 :root[data-motion="reduced"] .backdrop-drift {
   animation: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .backdrop-drift {
-    animation: none;
-  }
 }
 
 /* Progress that cannot be measured yet: a turning ring, a sweeping bar, shimmering tiles. */
@@ -319,11 +314,6 @@ kbd {
 }
 :root[data-motion="reduced"] .eq-on .eq-bar {
   animation: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .eq-on .eq-bar {
-    animation: none;
-  }
 }
 
 /* A short window: the rail's places tighten so all of them fit without crowding. */

@@ -84,15 +84,27 @@ export function resolvedTheme(p = current): 'dark' | 'light' {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
 
+/** Whether to hold things still: chosen in Venuta, or Windows' setting when it matches Windows. */
+export const reducedMotion = (p = current) =>
+  p.motion === 'reduced' || (p.motion === 'system' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+
+/** Windows has "Transparency effects" turned off. */
+export const transparencyOff = () => window.matchMedia('(prefers-reduced-transparency: reduce)').matches
+
+/** The surface on screen: see-through ones turn Solid when Windows turns transparency off. */
+export const surfaceShown = (p = current): Surface =>
+  transparencyOff() && (p.surface === 'glass' || p.surface === 'frosted') ? 'solid' : p.surface
+
 export function applyPrefs() {
   const p = current
   const el = document.documentElement
   const theme = resolvedTheme(p)
   el.dataset.style = p.style
   el.dataset.theme = theme
-  el.dataset.surface = p.surface
+  el.dataset.surface = surfaceShown(p)
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
-  el.dataset.motion = p.motion === 'reduced' ? 'reduced' : 'full'
+  // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
+  el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
   if (p.style !== 'venuta') {
     // The retro themes bring their own accent (Bounty's follows the album, in its blocks).
     el.style.removeProperty('--accent')
@@ -121,10 +133,20 @@ try {
   // No storage events: this window catches up when it next opens.
 }
 
-// Follow Windows when the theme is "Match Windows".
+// Follow Windows when the theme or motion is "Match Windows".
 try {
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (current.theme === 'system') {
+      applyPrefs()
+      listeners.forEach((l) => l(current))
+    }
+  })
+  window.matchMedia('(prefers-reduced-transparency: reduce)').addEventListener('change', () => {
+    applyPrefs()
+    listeners.forEach((l) => l(current))
+  })
+  window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+    if (current.motion === 'system') {
       applyPrefs()
       listeners.forEach((l) => l(current))
     }

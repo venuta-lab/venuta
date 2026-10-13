@@ -1,10 +1,10 @@
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
+import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, connectPlayer, current, miniPlayer, next, previous, seek, toggle, usePlayer } from '../../lib/player'
-import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious } from '../Icons'
+import { clock, connectPlayer, current, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
 import { lineAt, useLyrics } from './NowPlaying'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
@@ -17,18 +17,111 @@ import { usePrefs } from '../../lib/prefs'
     mini   a bar (cover, title and artist or the line being sung, controls, a seek line)
     card   tall (the cover fills it; title and controls over it; a few lines of lyrics)
   Without a cover it shows a tile in the accent; without lyrics there is no lyrics button.
+  It stays on top unless unpinned, settles against a screen edge when dropped near one, and
+  fades a little when left alone.
 */
 type Shape = 'micro' | 'mini' | 'card'
 const SIZES: Record<Shape, [number, number]> = { micro: [320, 64], mini: [380, 132], card: [300, 400] }
 const shapeOf = (w: number, h: number): Shape => (h < 96 ? 'micro' : h >= 220 && w < h * 1.4 ? 'card' : 'mini')
 
 const KEY = 'mini-player'
-const saved = (): { lyrics: boolean } => {
+type Saved = { lyrics: boolean; onTop: boolean }
+const saved = (): Saved => {
   try {
-    return { lyrics: false, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
+    return { lyrics: false, onTop: true, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
   } catch {
-    return { lyrics: false }
+    return { lyrics: false, onTop: true }
   }
+}
+
+/** Dropped within reach of a screen edge (clear of the taskbar), the window settles against it. */
+function useSnapToEdges() {
+  useEffect(() => {
+    if (!inApp()) return
+    const win = getCurrentWindow()
+    let timer = 0
+    let off: (() => void) | undefined
+    let live = true
+    const snap = async () => {
+      const [mon, pos, size] = await Promise.all([currentMonitor(), win.outerPosition(), win.outerSize()])
+      if (!mon) return
+      const k = mon.scaleFactor
+      const gap = Math.round(12 * k)
+      const reach = Math.round(32 * k)
+      const a = mon.workArea
+      const [left, top] = [a.position.x, a.position.y]
+      const [right, bottom] = [left + a.size.width, top + a.size.height]
+      let { x, y } = pos
+      if (Math.abs(x - left) < reach) x = left + gap
+      else if (Math.abs(right - (x + size.width)) < reach) x = right - size.width - gap
+      if (Math.abs(y - top) < reach) y = top + gap
+      else if (Math.abs(bottom - (y + size.height)) < reach) y = bottom - size.height - gap
+      if (x !== pos.x || y !== pos.y) await win.setPosition(new PhysicalPosition(x, y))
+    }
+    void win
+      .onMoved(() => {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(() => void snap().catch(() => {}), 450)
+      })
+      .then((u) => (live ? (off = u) : u()))
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+      off?.()
+    }
+  }, [])
+}
+
+/**
+ * Change shape without leaving the screen: a window against the right or bottom edge grows
+ * towards the middle, and the result is kept inside the work area.
+ */
+async function reshape(to: Shape) {
+  const win = getCurrentWindow()
+  const [mon, pos, size] = await Promise.all([currentMonitor(), win.outerPosition(), win.outerSize()])
+  await win.setSize(new LogicalSize(...SIZES[to]))
+  if (!mon) return
+  const after = await win.outerSize()
+  const a = mon.workArea
+  const reach = Math.round(32 * mon.scaleFactor)
+  const [left, top] = [a.position.x, a.position.y]
+  const [right, bottom] = [left + a.size.width, top + a.size.height]
+  let x = pos.x
+  let y = pos.y
+  if (right - (pos.x + size.width) < reach) x = pos.x + size.width - after.width
+  if (bottom - (pos.y + size.height) < reach) y = pos.y + size.height - after.height
+  x = Math.max(left, Math.min(x, right - after.width))
+  y = Math.max(top, Math.min(y, bottom - after.height))
+  if (x !== pos.x || y !== pos.y) await win.setPosition(new PhysicalPosition(x, y))
+}
+
+/** True a few seconds after the pointer leaves the window (or never came in). */
+function useIdle(ms = 3000) {
+  const [idle, setIdle] = useState(false)
+  const timer = useRef(0)
+  useEffect(() => {
+    const away = () => {
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setIdle(true), ms)
+    }
+    const back = () => {
+      window.clearTimeout(timer.current)
+      setIdle(false)
+    }
+    away()
+    document.addEventListener('mouseenter', back)
+    document.addEventListener('mousemove', back)
+    document.addEventListener('mouseleave', away)
+    window.addEventListener('blur', away)
+    return () => {
+      window.clearTimeout(timer.current)
+      document.removeEventListener('mouseenter', back)
+      document.removeEventListener('mousemove', back)
+      document.removeEventListener('mouseleave', away)
+      window.removeEventListener('blur', away)
+    }
+  }, [ms])
+  return idle
 }
 
 function useWindowSize() {
@@ -52,13 +145,22 @@ export function MiniPlayer() {
   const { w, h } = useWindowSize()
   const shape = shapeOf(w, h)
   const [lyricsOn, setLyricsOn] = useState(saved().lyrics)
+  const [onTop, setOnTop] = useState(saved().onTop)
+  const [queueOn, setQueueOn] = useState(false)
   useEffect(() => {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ lyrics: lyricsOn }))
+      localStorage.setItem(KEY, JSON.stringify({ lyrics: lyricsOn, onTop } satisfies Saved))
     } catch {
       /* a convenience only */
     }
-  }, [lyricsOn])
+  }, [lyricsOn, onTop])
+  useEffect(() => {
+    if (inApp()) void getCurrentWindow().setAlwaysOnTop(onTop).catch(() => {})
+  }, [onTop])
+  useSnapToEdges()
+  // Left alone, it steps back a little (never so far that it can't be read).
+  const idle = useIdle()
+  const pin = { on: onTop, toggle: () => setOnTop((o) => !o) }
 
   // This window has its own cover cache: fetch the playing album's.
   const cover = useCovers(320)
@@ -93,7 +195,7 @@ export function MiniPlayer() {
     if ((e.target as HTMLElement).closest('button, input, [data-no-drag]')) return
     void getCurrentWindow().startDragging()
   }
-  const resize = (to: Shape) => inApp() && void getCurrentWindow().setSize(new LogicalSize(...SIZES[to]))
+  const resize = (to: Shape) => inApp() && void reshape(to).catch(() => {})
   const nextShape: Shape = shape === 'micro' ? 'mini' : shape === 'mini' ? 'card' : 'micro'
 
   const artist = song ? song.artists.join(', ') || song.album_artist : ''
@@ -101,13 +203,17 @@ export function MiniPlayer() {
   const progress = duration ? Math.min(1, s.position_ms / duration) : 0
 
   return (
-    <div onMouseDown={drag} className="group/mini relative h-full w-full select-none overflow-hidden text-ink">
+    <div
+      onMouseDown={drag}
+      className="group/mini relative h-full w-full select-none overflow-hidden text-ink transition-opacity duration-500"
+      style={{ opacity: idle ? 0.85 : 1 }}
+    >
       {retro ? <div aria-hidden className="np absolute inset-0 !rounded-none" /> : <Light src={art?.src} card={shape === 'card'} />}
 
       {!song ? (
         <div className="relative grid h-full place-items-center px-4 text-center text-[13px] text-ink/60">
           Nothing playing. Choose music in Venuta.
-          <WindowButtons shape={shape} nextShape={nextShape} onShape={resize} lyrics={null} />
+          <WindowButtons shape={shape} nextShape={nextShape} onShape={resize} lyrics={null} pin={pin} />
         </div>
       ) : shape === 'micro' ? (
         <div className="relative flex h-full items-center gap-3 pl-2 pr-2">
@@ -117,7 +223,7 @@ export function MiniPlayer() {
             <div className="truncate text-[11.5px] leading-tight text-ink/60">{artist}</div>
           </div>
           <PlayButton playing={s.playing} size={36} />
-          <WindowButtons shape={shape} nextShape={nextShape} onShape={resize} lyrics={null} compact />
+          <WindowButtons shape={shape} nextShape={nextShape} onShape={resize} lyrics={null} pin={pin} compact />
           {retro ? <RetroTrack style={style} value={progress} /> : <Progress value={progress} />}
         </div>
       ) : shape === 'mini' ? (
@@ -147,6 +253,7 @@ export function MiniPlayer() {
             nextShape={nextShape}
             onShape={resize}
             lyrics={song.lyrics ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
+            pin={pin}
           />
           {retro ? <RetroTrack style={style} value={progress} /> : <Progress value={progress} duration={duration} />}
         </div>
@@ -154,7 +261,9 @@ export function MiniPlayer() {
         <div className="relative flex h-full flex-col">
           {/* The cover fills the top; words and controls sit on a fade at the bottom. */}
           <div className="relative min-h-0 flex-1">
-            {art ? (
+            {queueOn ? (
+              <UpNext s={s} />
+            ) : art ? (
               <img src={art.src} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
             ) : (
               <Art title={song.album} className="absolute inset-0 h-full w-full" big />
@@ -164,7 +273,7 @@ export function MiniPlayer() {
               style={{ background: 'linear-gradient(to bottom, transparent 35%, color-mix(in oklab, var(--solid) 92%, transparent) 100%)' }}
             />
             <AnimatePresence>
-              {showLyrics && lyrics?.lines.length ? (
+              {showLyrics && !queueOn && lyrics?.lines.length ? (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -205,10 +314,36 @@ export function MiniPlayer() {
             shape={shape}
             nextShape={nextShape}
             onShape={resize}
-            lyrics={song.lyrics ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
-            onArt
+            lyrics={song.lyrics && !queueOn ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
+            queue={{ on: queueOn, toggle: () => setQueueOn((o) => !o) }}
+            pin={pin}
+            onArt={!queueOn}
           />
         </div>
+      )}
+    </div>
+  )
+}
+
+/** The card's "Up next": the songs after this one; click one to play it. */
+function UpNext({ s }: { s: PlayerState }) {
+  const after = s.queue.slice(s.index + 1, s.index + 30).map((q, k) => ({ q, i: s.index + 1 + k }))
+  return (
+    <div data-no-drag className="thin-scroll absolute inset-0 overflow-y-auto bg-[color-mix(in_oklab,var(--solid)_92%,transparent)] px-2 pb-6 pt-11">
+      <div className="px-2 pb-1.5 text-[11.5px] font-medium text-ink/55">Up next</div>
+      {after.length === 0 ? (
+        <p className="px-2 py-6 text-center text-[12.5px] text-ink/50">Nothing after this song.</p>
+      ) : (
+        after.map(({ q, i }) => (
+          <button
+            key={`${q.path}#${i}`}
+            onClick={() => void jumpTo(i)}
+            className="block w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.11]"
+          >
+            <span className="block truncate text-[13px]">{q.title}</span>
+            <span className="block truncate text-[11.5px] text-ink/55">{q.artists.join(', ') || q.album_artist}</span>
+          </button>
+        ))
       )}
     </div>
   )
@@ -339,6 +474,8 @@ function WindowButtons(props: {
   nextShape: Shape
   onShape: (s: Shape) => void
   lyrics: { on: boolean; toggle: () => void } | null
+  queue?: { on: boolean; toggle: () => void }
+  pin: { on: boolean; toggle: () => void }
   compact?: boolean
   onArt?: boolean
 }) {
@@ -367,6 +504,31 @@ function WindowButtons(props: {
           className={`${btn} ${props.lyrics.on ? '!text-accent-ink' : ''}`}
         >
           <IconLyrics width={15} height={15} />
+        </button>
+      )}
+      {props.queue && (
+        <button
+          onClick={props.queue.toggle}
+          aria-pressed={props.queue.on}
+          aria-label="Up next"
+          title={props.queue.on ? 'Hide up next' : 'Up next'}
+          className={`${btn} ${props.queue.on ? '!text-accent-ink' : ''}`}
+        >
+          <IconQueue width={15} height={15} />
+        </button>
+      )}
+      {!props.compact && (
+        <button
+          onClick={props.pin.toggle}
+          aria-pressed={props.pin.on}
+          aria-label="Keep on top"
+          title={props.pin.on ? 'Kept on top of other windows (click to let them cover it)' : 'Keep on top of other windows'}
+          className={`${btn} ${props.pin.on ? '' : 'opacity-60'}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={props.pin.on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
+            <path d="M9 3.5h6l-1 5.5 3.5 3.5h-11L10 9z" />
+            <path d="M12 12.5v8" fill="none" />
+          </svg>
         </button>
       )}
       <button onClick={() => props.onShape(props.nextShape)} aria-label={`Size: ${names[props.nextShape]}`} title={`Size: ${names[props.nextShape]}`} className={btn}>

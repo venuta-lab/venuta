@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { usePrefs } from '../lib/prefs'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { reducedMotion, usePrefs } from '../lib/prefs'
 import { current, usePlayerValue } from '../lib/player'
 
 /*
@@ -17,8 +17,7 @@ const HEX =
 
 export function ThemeFx() {
   const p = usePrefs()
-  const reduced =
-    p.motion === 'reduced' || (p.motion === 'system' && typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const reduced = reducedMotion(p)
   switch (p.style) {
     case 'neo-tokyo':
       return (
@@ -60,6 +59,7 @@ export function ThemeFx() {
             className={reduced ? '' : 'fx-static'}
             style={{ backgroundImage: GRAIN, opacity: 0.035, mixBlendMode: 'screen' }}
           />
+          {!reduced && <RgbSplit />}
         </>
       )
     case 'bounty':
@@ -84,6 +84,7 @@ export function ThemeFx() {
             />
           </Under>
           <Over style={{ backgroundImage: GRAIN, opacity: 0.07, mixBlendMode: 'multiply' }} />
+          {!reduced && <BlockWipe />}
         </>
       )
     case 'skin99':
@@ -113,10 +114,9 @@ function Over(props: { style?: React.CSSProperties; className?: string }) {
 
 /** Neo-Tokyo: red light-trails sweep across when the song changes. */
 function LightTrails() {
-  const path = usePlayerValue((s) => current(s)?.path ?? '')
-  // Not for the song already playing when the theme appears; each new one replays (by key).
-  const [first] = useState(path)
-  if (!path || path === first) return null
+  // Each new song replays the trails (by key).
+  const path = useSongChange()
+  if (!path) return null
   return (
     <div key={path} aria-hidden className="pointer-events-none fixed inset-0 z-[80] overflow-hidden">
       {[22, 58, 81].map((top, i) => (
@@ -132,6 +132,46 @@ function LightTrails() {
           }}
         />
       ))}
+    </div>
+  )
+}
+
+/** The song playing, once it changes after the theme appeared (not for the one already on). */
+function useSongChange(): string {
+  const path = usePlayerValue((s) => current(s)?.path ?? '')
+  const [first] = useState(path)
+  return path && path !== first ? path : ''
+}
+
+/** Layer Zero: a 1px RGB split over the page for 120ms when the song changes. */
+function RgbSplit() {
+  const path = useSongChange()
+  const timer = useRef(0)
+  useEffect(() => {
+    if (!path) return
+    const main = document.querySelector('main')
+    main?.classList.add('fx-split')
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => main?.classList.remove('fx-split'), 120)
+    return () => {
+      window.clearTimeout(timer.current)
+      main?.classList.remove('fx-split')
+    }
+  }, [path])
+  return null
+}
+
+/** Bounty Session: the four block colours wipe across the player bar when the song changes. */
+function BlockWipe() {
+  const path = useSongChange()
+  if (!path) return null
+  return (
+    <div key={path} aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-[80] h-[124px] overflow-hidden" style={{ mixBlendMode: 'multiply' }}>
+      <div className="fx-wipe absolute inset-0 flex">
+        {['var(--block)', 'var(--accent-2)', 'var(--fix)', 'var(--block)'].map((c, i) => (
+          <span key={i} className="h-full flex-1" style={{ background: c, opacity: 0.75 }} />
+        ))}
+      </div>
     </div>
   )
 }

@@ -768,7 +768,7 @@ export default function App() {
                 initial="enter"
                 animate="center"
                 exit="exit"
-                className="thin-scroll absolute inset-0 overflow-y-auto overflow-x-hidden px-10"
+                className="place thin-scroll absolute inset-0 overflow-y-auto overflow-x-hidden px-10"
               >
                 <LayoutGroup id={`${active}-${visit}`}>{screen}</LayoutGroup>
               </motion.div>

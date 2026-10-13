@@ -41,3 +41,9 @@ Everything asked for on 2026-10-13, in working order. Ticked when built **and** 
 - [x] Continue the spacing / button-placement pass on every screen (all places checked at 960x620, 1280 and 1920 wide).
 - [x] Every window size: the player bar's right group spilled over the controls; the quality badge needs a better home; set a sensible minimum window size and check each place at it.
 - [x] Focus rings: a global radius on :focus-visible squared the round play button.
+
+## Pass 3 (2026-10-13, after playlists)
+- [x] Motion "Match Windows" really follows Windows: the attribute CSS reads was "full" unless Reduced was picked, so Windows' reduce-motion setting was ignored; the raw media queries that overrode an explicit "Full" are gone.
+- [x] Windows transparency effects off: Glass and Frosted show as Solid (Settings says why); back when they are on.
+- [x] Retro motion from the research: Neo-Tokyo pages arrive out of a blur, Thermoptic shimmers, Layer Zero cuts in with a static flash and splits RGB on a song change, Bounty cuts in and wipes its colour blocks across the player bar, Sync Ratio overlays switch on like a monitor. All still under reduced motion.
+- [x] Mini player: keep-on-top pin, settles against a screen edge when dropped near one, fades to 85% when left alone, "Up next" in the card; changing shape near the bottom or right edge grows towards the middle and stays on screen.

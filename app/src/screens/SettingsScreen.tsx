@@ -11,7 +11,7 @@ import {
   setSettings,
   type Settings,
 } from '../lib/engine'
-import { resolvedTheme, setPrefs, usePrefs, type Prefs } from '../lib/prefs'
+import { resolvedTheme, setPrefs, surfaceShown, usePrefs, type Prefs } from '../lib/prefs'
 import { ACCENTS, STYLES, styleInfo, tuneAccent, type StyleInfo } from '../lib/themes'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 
@@ -151,7 +151,11 @@ function LookAndFeel() {
         <>
           <Row
             title="Surface"
-            hint="Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only."
+            hint={
+              surfaceShown(p) !== p.surface
+                ? 'Windows has transparency effects turned off, so Venuta is Solid for now. Your choice comes back when they are on again (Windows Settings, Personalisation, Colours).'
+                : 'Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only.'
+            }
           >
             <Segmented
               id="surface"
