@@ -274,6 +274,10 @@ export interface Run {
   started_ms: number
   target: string
   files: number
+  /** Files that could not be built, and why. */
+  failed: { file: string; message: string }[]
+  /** false: stopped before the end; null: from before this was recorded. */
+  finished: boolean | null
 }
 
 // Outside the app, decisions live in memory so the screen can still be tried.

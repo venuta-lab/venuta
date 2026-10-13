@@ -95,6 +95,16 @@ struct Run {
     started_ms: u64,
     target: String,
     files: usize,
+    /// Files that could not be built, and why (recorded since builds keep their problems).
+    failed: Vec<RunFailure>,
+    /// The run reached its end; `None` for runs from before this was recorded.
+    finished: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct RunFailure {
+    file: String,
+    message: String,
 }
 
 fn settings_with_defaults() -> Settings {
@@ -571,12 +581,47 @@ fn list_runs() -> Vec<Run> {
                 return None;
             }
             let text = std::fs::read_to_string(e.path()).ok()?;
-            let first: serde_json::Value = serde_json::from_str(text.lines().next()?).ok()?;
+            let lines: Vec<serde_json::Value> = text
+                .lines()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect();
+            let op =
+                |v: &serde_json::Value| v.get("op").and_then(|o| o.as_str()).map(str::to_owned);
+            let first = lines.first()?;
+            let failed = lines
+                .iter()
+                .filter(|v| op(v).as_deref() == Some("failed"))
+                .map(|v| RunFailure {
+                    file: v
+                        .get("file")
+                        .and_then(|f| f.as_str())
+                        .unwrap_or_default()
+                        .to_owned(),
+                    message: v
+                        .get("message")
+                        .and_then(|f| f.as_str())
+                        .unwrap_or_default()
+                        .to_owned(),
+                })
+                .collect();
+            let finished = lines
+                .iter()
+                .find(|v| op(v).as_deref() == Some("finished"))
+                .map(|v| {
+                    !v.get("cancelled")
+                        .and_then(|c| c.as_bool())
+                        .unwrap_or(false)
+                });
             Some(Run {
                 journal: e.path().to_string_lossy().into_owned(),
                 started_ms: name.split('-').next()?.parse().ok()?,
                 target: first.get("target")?.as_str()?.to_owned(),
-                files: text.lines().count().saturating_sub(1),
+                files: lines
+                    .iter()
+                    .filter(|v| op(v).as_deref() == Some("create"))
+                    .count(),
+                failed,
+                finished,
             })
         })
         .filter(|r| r.files > 0)

@@ -434,7 +434,7 @@ pub fn write_test_kit(
             .is_some_and(|x| x.eq_ignore_ascii_case("flac"))
             && let Some(dir) = p.parent()
             && dir.join("cover.jpg").exists()
-            && let Ok(lrc) = std::fs::read_to_string(p.with_extension("lrc"))
+            && let Ok(lrc) = crate::text::read_text(&p.with_extension("lrc"))
             && lrc.contains("[00:")
         {
             let hindi = has_devanagari(&lrc);

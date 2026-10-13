@@ -60,6 +60,17 @@ enum JournalEntry {
     Create {
         path: String,
     },
+    /// A file that could not be built, and why; kept so the run's problems outlive the screen.
+    Failed {
+        file: String,
+        message: String,
+    },
+    /// The run reached its end (absent when it was stopped or the app closed mid-way).
+    Finished {
+        written: usize,
+        skipped: usize,
+        cancelled: bool,
+    },
 }
 
 /// Append-only record of what a run created, flushed line by line so a crash keeps it.
@@ -176,12 +187,25 @@ pub fn apply(
         });
     });
 
+    let errors = errors.into_inner().unwrap_or_default();
+    for e in &errors {
+        journal.record(&JournalEntry::Failed {
+            file: e.file.clone(),
+            message: e.message.clone(),
+        });
+    }
+    let (written, skipped) = (written.into_inner(), skipped.into_inner());
+    journal.record(&JournalEntry::Finished {
+        written,
+        skipped,
+        cancelled: progress.cancel.load(Ordering::Relaxed),
+    });
     Ok(ApplyReport {
         albums: albums.len(),
-        tracks_written: written.into_inner(),
-        tracks_skipped: skipped.into_inner(),
+        tracks_written: written,
+        tracks_skipped: skipped,
         quarantined_albums: quarantined.into_inner(),
-        errors: errors.into_inner().unwrap_or_default(),
+        errors,
         journal: journal.path.to_string_lossy().into(),
         cancelled: progress.cancel.load(Ordering::Relaxed),
         elapsed_ms: started.elapsed().as_millis(),
@@ -349,9 +373,10 @@ impl AlbumCtx<'_> {
         for (k, v) in &t.tags_after {
             vc.push(k.clone(), v.clone());
         }
-        if let Some(lrc) = &t.embed_lyrics_from {
-            let text = std::fs::read_to_string(self.source_root.join(lrc))
-                .map_err(|e| format!("read lyrics: {e}"))?;
+        // Lyrics that can't be read are left out; the song itself is never lost for them.
+        if let Some(lrc) = &t.embed_lyrics_from
+            && let Ok(text) = crate::text::read_text(&self.source_root.join(lrc))
+        {
             let _ = vc.remove("LYRICS").count();
             vc.push("LYRICS".into(), clean_lrc(&text));
         }
@@ -405,11 +430,10 @@ impl AlbumCtx<'_> {
             return Ok(());
         }
         let text = if let Some(rel) = &t.copy_lrc_from {
-            let raw = std::fs::read(self.source_root.join(rel))
-                .map_err(|e| format!("read lyrics: {e}"))?;
-            match String::from_utf8(raw) {
+            // Whatever its encoding, the copy is written as UTF-8, which every player reads.
+            match crate::text::read_text(&self.source_root.join(rel)) {
                 Ok(s) => clean_lrc(&s).into_bytes(),
-                Err(e) => e.into_bytes(), // not UTF-8: copied as it is
+                Err(_) => return Ok(()),
             }
         } else if t.write_lrc {
             match t
@@ -512,6 +536,7 @@ pub fn undo(journal_path: &Path) -> Result<usize, String> {
         match serde_json::from_str::<JournalEntry>(line) {
             Ok(JournalEntry::Begin { target, .. }) => target_root = Some(PathBuf::from(target)),
             Ok(JournalEntry::Create { path }) => created.push(PathBuf::from(path)),
+            Ok(JournalEntry::Failed { .. } | JournalEntry::Finished { .. }) => {}
             Err(_) => {} // a torn last line from a crash
         }
     }

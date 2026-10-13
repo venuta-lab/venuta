@@ -170,14 +170,24 @@ export function BuildResult(props: { report: ApplyReport; onDismiss: () => void 
 
 export function RunRow(props: { run: Run; onUndone: () => void }) {
   const [state, setState] = useState<'idle' | 'confirm' | 'working'>('idle')
+  const [open, setOpen] = useState(false)
   const when = new Date(props.run.started_ms).toLocaleString()
+  const failed = props.run.failed ?? []
   return (
-    <div className="glass flex items-center gap-4 rounded-2xl px-5 py-3 text-[13.5px]">
+    <div className="glass rounded-2xl px-5 py-3 text-[13.5px]">
+    <div className="flex items-center gap-4">
       <div className="min-w-0 flex-1">
         <div>{when}</div>
         <div className="truncate text-[12px] text-ink/50">
           {props.run.files.toLocaleString()} files created in {props.run.target}
+          {props.run.finished === false && ', stopped before the end'}
         </div>
+        {failed.length > 0 && (
+          <button onClick={() => setOpen((o) => !o)} className="mt-1 text-[12px] text-problem hover:underline">
+            {failed.length === 1 ? '1 file could not be built' : `${failed.length} files could not be built`}
+            {open ? '' : ', see why'}
+          </button>
+        )}
       </div>
       {state === 'confirm' ? (
         <>
@@ -204,6 +214,17 @@ export function RunRow(props: { run: Run; onUndone: () => void }) {
         >
           {state === 'working' ? 'Undoing…' : 'Undo…'}
         </button>
+      )}
+    </div>
+      {open && (
+        <ul className="mt-3 space-y-1.5 border-t border-edge pt-3 text-[12px]">
+          {failed.map((f) => (
+            <li key={f.file}>
+              <div className="truncate text-ink/80">{f.file}</div>
+              <div className="text-ink/50">{f.message}</div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )

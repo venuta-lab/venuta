@@ -30,6 +30,7 @@ pub mod scan;
 pub mod settings;
 pub mod spectrogram;
 pub mod sync;
+pub mod text;
 pub mod volumes;
 
 pub use error::{Error, Result};
