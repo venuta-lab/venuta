@@ -37,6 +37,9 @@ import {
 import { coverFor, loadCovers, setAccent } from './lib/covers'
 import { track } from './lib/jobs'
 import { connectPlayer } from './lib/player'
+import { NowPlayingBar } from './components/player/NowPlayingBar'
+import { QueueDrawer } from './components/player/QueueDrawer'
+import { NowPlaying } from './components/player/NowPlaying'
 import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Prefs, type Surface } from './lib/prefs'
 import { DeepProgressBar } from './screens/LibraryScreen'
 import { MissingFolder, NoLibrary, NoMusic } from './components/FolderStates'
@@ -104,6 +107,12 @@ export default function App() {
   const listenSearch = useRef<HTMLInputElement>(null)
   // An album to open on the Music home (from the palette), once it is showing.
   const [listenAlbum, setListenAlbum] = useState<string | null>(null)
+  // The player's big view (and which side panel) and the queue drawer.
+  const [nowOpen, setNowOpen] = useState(false)
+  const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal'>('lyrics')
+  const [queueOpen, setQueueOpen] = useState(false)
+  const closeQueue = useCallback(() => setQueueOpen(false), [])
+  const closeNow = useCallback(() => setNowOpen(false), [])
   const closeNotice = useCallback(() => setNotice(''), [])
   const closeError = useCallback(() => setError(''), [])
 
@@ -609,7 +618,8 @@ export default function App() {
               go(id as Place)
             }}
           />
-          <main className="relative min-w-0 flex-1 overflow-hidden">
+          <div className="relative flex min-w-0 flex-1 flex-col">
+          <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <AnimatePresence mode="popLayout" custom={direction} initial={false}>
               <motion.div
                 key={active}
@@ -630,7 +640,35 @@ export default function App() {
             </AnimatePresence>
             <Toast text={error ? '' : notice} onClose={closeNotice} />
             <Toast text={error} tone="error" onClose={closeError} />
+            <NowPlaying
+              open={nowOpen}
+              root={root}
+              panel={nowPanel}
+              onPanel={setNowPanel}
+              onClose={closeNow}
+              onAlbum={(dir) => {
+                setNowOpen(false)
+                setListenAlbum(dir)
+                go('listen')
+              }}
+            />
+            <QueueDrawer open={queueOpen} onClose={closeQueue} />
           </main>
+          <NowPlayingBar
+            expanded={nowOpen}
+            queueOpen={queueOpen}
+            onExpand={() => setNowOpen((o) => !o)}
+            onQueue={() => setQueueOpen((o) => !o)}
+            onLyrics={() => {
+              setNowPanel('lyrics')
+              setNowOpen((o) => !(o && nowPanel === 'lyrics'))
+            }}
+            onArtist={() => {
+              setNowOpen(false)
+              go('listen')
+            }}
+          />
+          </div>
         </div>
         <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />

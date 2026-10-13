@@ -151,3 +151,62 @@ export const IconMore = (p: P) => (
     <circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
   </svg>
 )
+export const IconPrevious = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <rect x="5" y="5.5" width="2.6" height="13" rx="1" fill="currentColor" stroke="none" />
+    <path d="M19 6.6v10.8c0 .8-.9 1.3-1.6.8L9.7 13a1.2 1.2 0 0 1 0-2l7.7-5.2c.7-.5 1.6 0 1.6.8Z" fill="currentColor" stroke="none" />
+  </svg>
+)
+export const IconNext = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <rect x="16.4" y="5.5" width="2.6" height="13" rx="1" fill="currentColor" stroke="none" />
+    <path d="M5 6.6v10.8c0 .8.9 1.3 1.6.8l7.7-5.2a1.2 1.2 0 0 0 0-2L6.6 5.8C5.9 5.3 5 5.8 5 6.6Z" fill="currentColor" stroke="none" />
+  </svg>
+)
+export const IconRepeat = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4.5 11V9.5A3.5 3.5 0 0 1 8 6h11.5M16.5 3l3 3-3 3" />
+    <path d="M19.5 13v1.5A3.5 3.5 0 0 1 16 18H4.5M7.5 21l-3-3 3-3" />
+  </svg>
+)
+export const IconRepeatOne = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4.5 11V9.5A3.5 3.5 0 0 1 8 6h11.5M16.5 3l3 3-3 3" />
+    <path d="M19.5 13v1.5A3.5 3.5 0 0 1 16 18H4.5M7.5 21l-3-3 3-3" />
+    <path d="M11.2 10.6 12.4 10v5" strokeWidth={1.5} />
+  </svg>
+)
+export const IconQueue = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4 6.5h11M4 11.5h11M4 16.5h6.5" />
+    <path d="M15.5 14.5v5.2l4-2.6-4-2.6Z" fill="currentColor" stroke="none" />
+  </svg>
+)
+export const IconLyrics = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-6.5L8 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z" />
+    <path d="M7.5 9.5h9M7.5 12.5h6" />
+  </svg>
+)
+export const IconVolume = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4 9.5v5h3.5l4.5 4V5.5l-4.5 4H4Z" fill="currentColor" strokeWidth={1.2} />
+    <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />
+  </svg>
+)
+export const IconMute = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M4 9.5v5h3.5l4.5 4V5.5l-4.5 4H4Z" fill="currentColor" strokeWidth={1.2} />
+    <path d="m16 9.5 5 5M21 9.5l-5 5" />
+  </svg>
+)
+export const IconExpand = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M14.5 4.5h5v5M9.5 19.5h-5v-5M19.5 4.5 13.5 10.5M4.5 19.5l6-6" />
+  </svg>
+)
+export const IconClose = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />
+  </svg>
+)

@@ -63,7 +63,6 @@ struct NowPlaying {
     position_ms: u64,
 }
 
-#[derive(Default)]
 pub struct Playback {
     player: Arc<Mutex<Option<Player<QueueItem>>>>,
     /// Updates for the media overlay thread, once it runs.
@@ -71,6 +70,18 @@ pub struct Playback {
     window: Arc<Mutex<Option<Channel<WindowStatus>>>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
     output: Mutex<(Option<String>, bool)>,
+}
+
+impl Default for Playback {
+    fn default() -> Self {
+        Self {
+            player: Arc::default(),
+            media: Arc::default(),
+            window: Arc::default(),
+            // Bit-perfect unless you choose otherwise.
+            output: Mutex::new((None, true)),
+        }
+    }
 }
 
 impl Playback {
@@ -356,4 +367,102 @@ pub fn player_output(
         id: device,
         exclusive,
     }))
+}
+
+/// A song's words: timed lines (from a synced .lrc or LYRICS tag), or plain text.
+#[derive(Serialize, Default)]
+pub struct Lyrics {
+    /// `[ms, line]`, in order. Empty when the lyrics have no times.
+    pub lines: Vec<(u64, String)>,
+    /// Lyrics without times, as written.
+    pub text: String,
+}
+
+/// `[01:02.34]words` (several stamps on one line allowed) → timed lines; headers like
+/// `[ar:…]` are skipped.
+fn parse_lrc(text: &str) -> Vec<(u64, String)> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let mut rest = raw.trim();
+        let mut stamps = Vec::new();
+        while let Some(body) = rest.strip_prefix('[') {
+            let Some(end) = body.find(']') else { break };
+            let tag = &body[..end];
+            let ms = tag.split_once(':').and_then(|(m, s)| {
+                let m: u64 = m.trim().parse().ok()?;
+                let s: f64 = s.trim().replace(',', ".").parse().ok()?;
+                Some(m * 60_000 + (s * 1000.0).round() as u64)
+            });
+            match ms {
+                Some(ms) => stamps.push(ms),
+                None if stamps.is_empty() => {
+                    // A header ([ar:…], [offset:…]).
+                    rest = "";
+                    break;
+                }
+                None => break,
+            }
+            rest = &body[end + 1..];
+        }
+        for ms in stamps {
+            out.push((ms, rest.trim().to_owned()));
+        }
+    }
+    out.sort_by_key(|(ms, _)| *ms);
+    out
+}
+
+/// The words of a song in the open folder.
+#[tauri::command]
+pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = PathBuf::from(&root).join(&path);
+        let lrc = file.with_extension("lrc");
+        let text = engine::text::read_text(&lrc).ok().or_else(|| {
+            let kind = engine::media::FileKind::from_path(&file);
+            engine::media::read_facts(&file, kind).ok().and_then(|f| {
+                let pick = |k: &str| {
+                    f.tags
+                        .iter()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(k))
+                        .map(|(_, v)| v.clone())
+                };
+                pick("LYRICS").or_else(|| pick("UNSYNCEDLYRICS"))
+            })
+        });
+        let Some(text) = text else {
+            return Ok(Lyrics::default());
+        };
+        let lines = parse_lrc(&text);
+        Ok(if lines.is_empty() {
+            Lyrics { lines, text }
+        } else {
+            Lyrics {
+                lines,
+                text: String::new(),
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_lrc;
+
+    #[test]
+    fn timed_lines_and_headers() {
+        let l =
+            parse_lrc("[ar:Someone]\n[00:01.25]First\n[00:10.00][01:00.50]Again\n\n[00:05.5]Mid");
+        assert_eq!(
+            l,
+            vec![
+                (1250, "First".into()),
+                (5500, "Mid".into()),
+                (10_000, "Again".into()),
+                (60_500, "Again".into())
+            ]
+        );
+    }
 }

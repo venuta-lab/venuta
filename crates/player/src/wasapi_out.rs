@@ -247,7 +247,12 @@ impl Device for WasapiDevice {
             match self.try_exclusive(src) {
                 Ok(f) => return Ok(f),
                 // In use by another app, or no matching format: share instead of failing.
-                Err(_) => return self.open_shared(src),
+                Err(e) => {
+                    if std::env::var_os("VENUTA_DEBUG_WASAPI").is_some() {
+                        eprintln!("wasapi: exclusive refused ({e}); sharing instead");
+                    }
+                    return self.open_shared(src);
+                }
             }
         }
         self.open_shared(src)
