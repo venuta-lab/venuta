@@ -18,8 +18,7 @@ pub enum Repeat {
 #[derive(Debug, Clone)]
 pub struct Queue<T> {
     items: Vec<T>,
-    /// The order before shuffling, to go back to it (positions into `items` at shuffle time
-    /// are not kept: `unshuffled` holds the items themselves, by identity index).
+    /// The order before shuffling (item identities), to go back to it.
     original: Option<Vec<usize>>,
     /// Identity of each item (stable across reorders), for unshuffling.
     ids: Vec<usize>,
