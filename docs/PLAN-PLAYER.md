@@ -162,3 +162,29 @@ YouTube Music window, Spotify remote control, playlist import/export, cards.
 | 7. Listening data | Done | Plays (half the song or 4 min), Jump back in, Most played, resume (paused, same song, position, volume) |
 | 8. Options | Partly | Output device and exclusive/shared in the badge. ReplayGain waits until loudness is measured for the library (only 18 songs have it) |
 | 9. Polish | Ongoing | Bit-perfect check in the app; light theme checked; waveform seek bar next |
+
+## Poweramp-inspired next steps (his ask, 2026-10-13)
+
+Settings stay setup-only, so the sound tools live in the player itself: Now Playing gets a
+**Sound** panel next to Lyrics, Up next and Signal.
+
+1. **Audio info**: the whole chain, Poweramp-style.
+   - **File:** codec, sample format, bitrate, size, length.
+   - **Decoder.**
+   - **Each processing step.**
+   - **Buffer:** how much is decoded ahead.
+   - **Output:** mode and format, device period, latency.
+   - **Device.**
+   - **Verdict:** bit-perfect or not, with the proof (the MD5 check).
+2. **Sound tools.** All off by default; any one of them on makes the badge say the sound is no
+   longer bit-perfect.
+   - A 10-band equalizer with presets (Flat, Bass boost, Vocal, Treble, Loudness…), plus
+     preamp, bass and treble.
+   - ReplayGain, track or album, with peak protection.
+   - Crossfade, 0–12 s.
+   - A volume limiter, so nothing clips after EQ.
+3. **Conveniences:**
+   - a sleep timer (in 15 / 30 / 60 minutes, or at the end of the song);
+   - stop after this song;
+   - star ratings from the bar and Now Playing (written as the RATING tag, journalled);
+   - smart shelves: Rediscover (loved but not played lately) and Top rated.
