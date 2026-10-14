@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { albumCovers, assetUrl, type CoverThumb } from './engine'
-import { chosenRoles, getPrefs, resolvedTheme, setAccentVars } from './prefs'
-import { accentRoles, artTone, colourDistance, nearestBlock, neutralRoles, styleInfo, type AccentRoles } from './themes'
+import { chosenRoles, getPrefs, resolvedTheme, setAccentVars, themeInfo } from './prefs'
+import { accentRoles, artTone, colourDistance, nearestBlock, neutralRoles, type AccentRoles } from './themes'
 
 export interface Cover {
   src: string
@@ -66,7 +66,7 @@ function apply() {
   // The cover's colour as a tint, for the themes that colour a page with it (every theme gets it).
   if (hex) root.setProperty('--art', artTone(hex))
   else root.removeProperty('--art')
-  const accent = styleInfo(p.style).accent
+  const accent = themeInfo(p).accent
   if (accent === 'blocks') {
     const block = nearestBlock(hex ?? '')
     root.setProperty('--block', block)

@@ -315,6 +315,8 @@
   --accent: #48f59a;
   --on-accent: #03110a;
   --accent-ink: #48f59a;
+  /* The HUD brackets: the theme's key colour, fixed at the window (previews keep it too). */
+  --hud: var(--accent);
   --accent-2: #6e8fa6;
   --ink: #d6e6e4;
   --problem: #ff5a4e;
@@ -783,7 +785,7 @@
 :root[data-style="neo-tokyo"] .bar {
   box-shadow:
     inset 0 0 0 1px var(--bar-edge),
-    inset 0 -2px 0 #da1d1f;
+    inset 0 -2px 0 var(--accent);
 }
 :root[data-style="neo-tokyo"] :is(.btn-primary, .btn) {
   text-transform: uppercase;
@@ -796,9 +798,9 @@
 /* ---- Thermoptic: HUD corner brackets on the active and focused. */
 :root[data-style="thermoptic"] :is(.rail-pill, .np) {
   background-image:
-    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a),
-    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a),
-    linear-gradient(#48f59a, #48f59a), linear-gradient(#48f59a, #48f59a);
+    linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud)),
+    linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud)),
+    linear-gradient(var(--hud), var(--hud)), linear-gradient(var(--hud), var(--hud));
   background-size:
     8px 1px, 1px 8px, 8px 1px, 1px 8px, 8px 1px, 1px 8px, 8px 1px, 1px 8px;
   background-position:

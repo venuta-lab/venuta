@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "id": "synthwave",
+  "name": "Synthwave",
+  "author": "Venuta",
+  "description": "A sunset that never ends: magenta, violet and a cyan horizon.",
+  "extends": "neo-tokyo",
+  "modes": [
+    "dark"
+  ],
+  "accent": {
+    "color": "#ff4fd8"
+  },
+  "tokens": {
+    "app-bg": "#0e0620",
+    "solid": "#0e0620",
+    "app-image": "linear-gradient(180deg, #1a0b3a 0%, #0e0620 45%, #12062a 100%), radial-gradient(80% 40% at 50% 100%, rgb(255 79 216 / 0.25), transparent 70%)",
+    "ink": "#f6e9ff",
+    "accent-2": "#35e8ff",
+    "glass": "rgb(140 80 255 / 0.08)",
+    "edge": "rgb(255 79 216 / 0.18)",
+    "edge-strong": "rgb(53 232 255 / 0.35)",
+    "highlight": "rgb(255 255 255 / 0.06)",
+    "popover": "rgb(26 12 52 / 0.94)",
+    "bar": "rgb(14 6 32 / 0.8)",
+    "rail-bg": "rgb(24 10 50 / 0.82)",
+    "rail-edge": "rgb(255 79 216 / 0.25)",
+    "pill-bg": "rgb(255 79 216 / 0.18)",
+    "pill-ink": "#ffd1f4",
+    "np-bg": "rgb(24 10 50 / 0.88)",
+    "np-edge": "rgb(53 232 255 / 0.3)",
+    "bar-edge": "rgb(255 79 216 / 0.3)",
+    "np-shadow": "6px 6px 0 rgb(0 0 0 / 0.6), inset 3px 0 0 #ff4fd8",
+    "pill-shadow": "0 0 14px rgb(255 79 216 / 0.45)",
+    "backdrop-opacity": "0.25",
+    "backdrop-filter": "hue-rotate(250deg) saturate(1.4) brightness(0.7)"
+  },
+  "fonts": {
+    "display": "builtin:Big Shoulders Display"
+  },
+  "effects": {
+    "scene": "none",
+    "scanlines": 0.35,
+    "grain": 0.2,
+    "hex": 0.25
+  },
+  "mark": {
+    "color": "accent",
+    "glow": 0.9
+  }
+}

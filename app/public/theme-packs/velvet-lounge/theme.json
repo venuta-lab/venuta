@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "id": "velvet-lounge",
+  "name": "Velvet Lounge",
+  "author": "Venuta",
+  "description": "A jazz club after midnight: oxblood velvet, brass and candlelight.",
+  "extends": "venuta",
+  "modes": [
+    "dark"
+  ],
+  "accent": {
+    "color": "#e7b85a"
+  },
+  "tokens": {
+    "app-bg": "#16080a",
+    "solid": "#16080a",
+    "app-image": "radial-gradient(70% 60% at 20% 0%, rgb(160 40 50 / 0.28), transparent 65%), radial-gradient(60% 50% at 100% 100%, rgb(231 184 90 / 0.08), transparent 70%)",
+    "ink": "#f4e6d4",
+    "accent-2": "#c2414f",
+    "glass": "rgb(120 30 40 / 0.16)",
+    "edge": "rgb(231 184 90 / 0.14)",
+    "edge-strong": "rgb(231 184 90 / 0.26)",
+    "highlight": "rgb(255 230 190 / 0.08)",
+    "popover": "rgb(40 14 18 / 0.92)",
+    "bar": "rgb(22 8 10 / 0.7)",
+    "rail-bg": "rgb(48 16 20 / 0.6)",
+    "rail-edge": "rgb(231 184 90 / 0.16)",
+    "pill-bg": "rgb(231 184 90 / 0.14)",
+    "pill-ink": "#f6d79a",
+    "np-bg": "rgb(44 14 18 / 0.76)",
+    "np-edge": "rgb(231 184 90 / 0.2)",
+    "backdrop-opacity": "0.4",
+    "backdrop-filter": "sepia(0.6) saturate(0.9) brightness(0.8)",
+    "title-weight": "800",
+    "title-tracking": "0"
+  },
+  "fonts": {
+    "display": "builtin:Shippori Mincho B1"
+  },
+  "effects": {
+    "grain": 0.45
+  },
+  "mark": {
+    "color": "accent",
+    "glow": 0.5
+  }
+}

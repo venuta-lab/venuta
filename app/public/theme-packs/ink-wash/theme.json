@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "id": "ink-wash",
+  "name": "Ink Wash",
+  "author": "Venuta",
+  "description": "Sumi ink on rice paper, and a vermilion seal.",
+  "extends": "bounty",
+  "modes": [
+    "light"
+  ],
+  "accent": {
+    "color": "#c8321f"
+  },
+  "tokens": {
+    "app-bg": "#f2ede1",
+    "solid": "#f2ede1",
+    "app-image": "radial-gradient(70% 50% at 0% 100%, rgb(30 30 30 / 0.06), transparent 70%)",
+    "ink": "#161514",
+    "accent-2": "#3a3a38",
+    "block": "#c8321f",
+    "glass": "rgb(255 253 246 / 0.6)",
+    "edge": "rgb(22 21 20 / 0.55)",
+    "popover": "#f8f4ea",
+    "pill-ink": "#ffffff"
+  },
+  "fonts": {
+    "display": "builtin:Shippori Mincho B1"
+  },
+  "effects": {
+    "halftone": 0.35,
+    "grain": 0.3,
+    "scene": "none"
+  },
+  "mark": {
+    "color": "ink",
+    "glow": 0
+  }
+}

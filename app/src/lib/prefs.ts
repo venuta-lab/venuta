@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
-import { accentByName, accentRoles, neutralRoles, styleInfo, type AccentRoles, type Intensity, type Style } from './themes'
+import { accentByName, accentRoles, neutralRoles, styleInfo, type AccentRoles, type Intensity, type Style, type StyleInfo } from './themes'
+import { draftBase, onPackChange, packInfoFor, packModes, showPack } from './packs'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -13,8 +14,11 @@ export type AccentMode = 'album' | 'fixed' | 'neutral'
 export type Motion = 'full' | 'reduced' | 'system'
 
 export interface Prefs {
-  /** The theme: Venuta (glass, follows the album) or one of the retro looks. */
+  /** The theme: Venuta (glass, follows the album) or one of the retro looks. With a theme of
+   *  yours, the built-in theme it extends. */
   style: Style
+  /** A theme of yours (its id in the library's .venuta/themes), or '' for the built-in one. */
+  pack: string
   theme: Theme
   surface: Surface
   accentMode: AccentMode
@@ -29,6 +33,7 @@ export interface Prefs {
 
 const DEFAULTS: Prefs = {
   style: 'venuta',
+  pack: '',
   theme: 'dark',
   surface: 'glass',
   accentMode: 'album',
@@ -55,6 +60,7 @@ function load(): Prefs {
 function upgrade(p: Prefs): Prefs {
   const style = styleInfo(p.style).id
   if (style !== p.style) p = { ...p, style }
+  if (typeof p.pack !== 'string') p = { ...p, pack: '' }
   if (p.accent.startsWith('#') || accentByName(p.accent).name === p.accent) return p
   return { ...p, accent: accentByName(p.accent).name }
 }
@@ -82,10 +88,24 @@ export function adoptPrefs(saved: Partial<Prefs> | null | undefined) {
   if (saved) setPrefs(upgrade({ ...DEFAULTS, ...saved }), { save: false })
 }
 
+/**
+ * What the theme on screen does: a theme of yours (once loaded), or the built-in one. Code asks
+ * this, never a theme's name.
+ */
+export const themeInfo = (p = current): StyleInfo => packInfoFor(p.pack) ?? styleInfo(p.style)
+
+/** What the theme on screen does, kept up to date in a component. */
+export function useThemeInfo(): StyleInfo {
+  return themeInfo(usePrefs())
+}
+
 /** The theme actually showing ("system" resolved). */
 export function resolvedTheme(p = current): 'dark' | 'light' {
+  // A theme of yours made for one mode shows in it.
+  const own = packModes(p.pack)
+  if (own?.length === 1) return own[0]
   // The retro looks are one palette each (Bounty Session has a day and a night).
-  if (!styleInfo(p.style).modes) return 'dark'
+  if (!themeInfo(p).modes) return 'dark'
   if (p.theme !== 'system') return p.theme
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
@@ -104,16 +124,20 @@ export const surfaceShown = (p = current): Surface =>
 export function applyPrefs() {
   const p = current
   const el = document.documentElement
+  // A theme of yours first: what it does decides the rest.
+  showPack(p.pack)
+  const info = themeInfo(p)
   const theme = resolvedTheme(p)
-  el.dataset.style = styleInfo(p.style).id
+  el.dataset.style = styleInfo(draftBase() ?? p.style).id
   el.dataset.theme = theme
-  el.dataset.surface = surfaceShown(p)
+  // A theme of yours brings its own surfaces; the choice of glass, frosted… is Lumen's.
+  el.dataset.surface = info.surfaces ? surfaceShown(p) : 'glass'
   // Neutral is a material in Lumen (clear glass), not a white colour: CSS asks this.
   el.dataset.accent = p.accentMode
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
   // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
   el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
-  const accent = styleInfo(p.style).accent
+  const accent = info.accent
   if (accent !== 'yours') {
     // The other themes bring their own accent (Bounty's follows the album, in its blocks;
     // Glasshouse's the cover, set by lib/covers.ts).
@@ -130,6 +154,12 @@ export function applyPrefs() {
       .catch(() => {})
   }
 }
+
+// A theme of yours loaded, changed on disk, or couldn't load: apply the look again.
+onPackChange(() => {
+  applyPrefs()
+  listeners.forEach((l) => l(current))
+})
 
 // Another window (the mini player, or the main one) changed the look: follow it here too.
 try {

@@ -8,8 +8,8 @@ import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, Ic
 import { lineAt, useLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
-import { usePrefs } from '../../lib/prefs'
-import { styleInfo, type SeekBar } from '../../lib/themes'
+import { useThemeInfo } from '../../lib/prefs'
+import type { SeekBar } from '../../lib/themes'
 
 /*
   The mini player: its own small window that stays on top. One window, three shapes, chosen by
@@ -141,7 +141,7 @@ export function MiniPlayer() {
   const song = current(s)
   const root = s.root ?? ''
   // A retro theme dresses the mini player in its own player bar, seek bar and type.
-  const info = styleInfo(usePrefs().style)
+  const info = useThemeInfo()
   const retro = info.miniPlayer === 'themed'
   const { w, h } = useWindowSize()
   const shape = shapeOf(w, h)

@@ -67,7 +67,12 @@ export function IncomingScreen({ root, onImported }: { root: string; onImported:
           setDragging(false)
           setMessage('Copying into Incoming…')
           try {
-            const paths = e.payload.paths
+            // A theme file is added as a theme (components/themes/ThemeImport), not as music.
+            const paths = e.payload.paths.filter((x) => !/\.venuta-theme$/i.test(x))
+            if (!paths.length) {
+              setMessage('')
+              return
+            }
             const n = await track({ id: 'add', label: 'Copying new music into Incoming' }, () => addToIncoming(root, paths))
             setMessage(`${n} files copied into Incoming. Your originals stay where they were.`)
             await load()

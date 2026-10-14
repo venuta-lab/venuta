@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "id": "amber-terminal",
+  "name": "Amber Terminal",
+  "author": "Venuta",
+  "description": "A 1983 amber monitor: one colour, phosphor glow, scanlines.",
+  "extends": "thermoptic",
+  "modes": [
+    "dark"
+  ],
+  "accent": {
+    "color": "#ffb000"
+  },
+  "tokens": {
+    "app-bg": "#0c0802",
+    "solid": "#0c0802",
+    "app-image": "radial-gradient(120% 90% at 50% 40%, rgb(255 160 0 / 0.07), transparent 70%)",
+    "ink": "#ffcf73",
+    "accent-2": "#ff7a00",
+    "good": "#ffd28a",
+    "note": "#e0a95a",
+    "fix": "#ff9a1f",
+    "problem": "#ff6a3d",
+    "glass": "rgb(255 176 0 / 0.04)",
+    "edge": "rgb(255 176 0 / 0.22)",
+    "edge-strong": "rgb(255 176 0 / 0.4)",
+    "highlight": "rgb(255 176 0 / 0.08)",
+    "popover": "rgb(20 13 4 / 0.96)",
+    "bar": "rgb(12 8 2 / 0.92)",
+    "bar-edge": "rgb(255 176 0 / 0.25)",
+    "rail-bg": "rgb(18 12 3 / 0.92)",
+    "rail-edge": "rgb(255 176 0 / 0.3)",
+    "pill-bg": "rgb(255 176 0 / 0.16)",
+    "pill-ink": "#ffd88f",
+    "np-bg": "rgb(18 12 3 / 0.94)",
+    "np-edge": "rgb(255 176 0 / 0.3)",
+    "pill-shadow": "inset 0 0 0 1px rgb(255 176 0 / 0.55), 0 0 18px rgb(255 176 0 / 0.12)",
+    "np-shadow": "0 0 0 1px rgb(255 176 0 / 0.06), 0 16px 40px -12px rgb(0 0 0 / 0.7)",
+    "backdrop-opacity": "0.12",
+    "backdrop-filter": "grayscale(1) sepia(1) saturate(3) hue-rotate(-10deg) brightness(0.6)",
+    "art-tint": "grayscale(1) sepia(1) saturate(2.5) hue-rotate(-12deg)"
+  },
+  "fonts": {
+    "ui": "builtin:IBM Plex Mono",
+    "display": "builtin:Share Tech Mono",
+    "readout": "builtin:Share Tech Mono"
+  },
+  "effects": {
+    "scene": "none",
+    "scanlines": 0.6,
+    "grain": 0.3
+  },
+  "mark": {
+    "color": "accent",
+    "glow": 0.8
+  }
+}

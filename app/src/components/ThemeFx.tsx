@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { reducedMotion, usePrefs } from '../lib/prefs'
-import { styleInfo } from '../lib/themes'
+import { reducedMotion, themeInfo, usePrefs } from '../lib/prefs'
 import { current, usePlayerValue } from '../lib/player'
+import { onScreen } from '../lib/packs'
 
 /*
   The retro themes' atmosphere, in two fixed layers that never take a click:
@@ -19,7 +19,18 @@ const HEX =
 export function ThemeFx() {
   const p = usePrefs()
   const reduced = reducedMotion(p)
-  switch (styleInfo(p.style).fx) {
+  const own = onScreen(p.pack)
+  return (
+    <>
+      {own && <PackLayers reduced={reduced} />}
+      <Scene fx={themeInfo(p).fx} reduced={reduced} />
+    </>
+  )
+}
+
+/** A built-in theme's scene (a theme of yours runs its base's, or the one it chose). */
+function Scene({ fx, reduced }: { fx: string; reduced: boolean }) {
+  switch (fx) {
     case 'neo-tokyo':
       return (
         <>
@@ -99,6 +110,57 @@ export function ThemeFx() {
     default:
       return null
   }
+}
+
+/**
+ * A theme of yours: its picture behind everything, and the effects it chose from the menu
+ * (lib/packFormat.ts Effects), each made of the same pieces the built-in scenes use.
+ */
+function PackLayers({ reduced }: { reduced: boolean }) {
+  const p = usePrefs()
+  const a = onScreen(p.pack)
+  if (!a) return null
+  const e = a.pack.effects
+  const bg = a.pack.background
+  return (
+    <>
+      {bg && a.background && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{
+              backgroundImage: `url("${a.background}")`,
+              filter: bg.blur ? `blur(${bg.blur}px)` : undefined,
+              transform: bg.blur ? 'scale(1.06)' : undefined,
+            }}
+          />
+          <div className="absolute inset-0" style={{ background: `color-mix(in oklab, var(--app-bg) ${Math.round(bg.dim * 100)}%, transparent)` }} />
+        </div>
+      )}
+      {(e.halftone > 0 || e.hex > 0 || e.wires || e.rain) && (
+        <Under>
+          {e.halftone > 0 && (
+            <div
+              className="absolute right-0 top-0 h-[42vh] w-[42vw]"
+              style={{
+                background: 'radial-gradient(var(--ink) 1px, transparent 1.3px) 0 0 / 7px 7px',
+                maskImage: 'radial-gradient(100% 100% at 100% 0%, #000, transparent 70%)',
+                opacity: e.halftone * 0.6,
+              }}
+            />
+          )}
+          {e.hex > 0 && <div className="absolute inset-0" style={{ backgroundImage: HEX, backgroundSize: '56px 97px', opacity: e.hex * 0.2 }} />}
+          {e.wires && <Wires />}
+          {e.rain && <DataRain still={reduced} />}
+        </Under>
+      )}
+      {e.grain > 0 && <Over style={{ backgroundImage: GRAIN, opacity: e.grain * 0.12, mixBlendMode: 'overlay' }} />}
+      {e.scanlines > 0 && <Over style={{ backgroundImage: SCANLINES, opacity: e.scanlines * 0.4 }} />}
+      {!reduced && e.trails && <LightTrails />}
+      {!reduced && e.split && <RgbSplit />}
+      {!reduced && e.wipe && <BlockWipe />}
+    </>
+  )
 }
 
 function Under(props: { children?: React.ReactNode; style?: React.CSSProperties }) {

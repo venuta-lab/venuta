@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { usePrefs } from '../../lib/prefs'
-import { styleInfo, type SeekBar as BarDesign } from '../../lib/themes'
+import { useThemeInfo } from '../../lib/prefs'
+import type { SeekBar as BarDesign } from '../../lib/themes'
 import { LcdSpectrum } from './Spectrum'
 import { openBigScreen } from '../../lib/lyricWindows'
 import {
@@ -208,15 +208,15 @@ export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
       <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 bg-ink/12" />
       <div
         className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2"
-        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #da1d1f 0, #da1d1f calc(100% - 40px), #ff6a4a)' }}
+        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--accent) 0, var(--accent) calc(100% - 40px), #ff6a4a)' }}
       />
-      <span className="absolute top-1/2 h-[6px] w-[14px] -translate-x-1/2 -translate-y-1/2 bg-[#ff4a3d] shadow-[0_0_12px_rgb(255_42_42/0.6)]" style={{ left: `${pct}%` }} />
+      <span className="absolute top-1/2 h-[6px] w-[14px] -translate-x-1/2 -translate-y-1/2 bg-[var(--accent-ink)] shadow-[0_0_12px_rgb(255_42_42/0.6)]" style={{ left: `${pct}%` }} />
     </>
   )
 }
 
 export function SeekBar(props: { position: number; duration: number; className?: string; wave?: number[] | null; waveHeight?: number }) {
-  const design = styleInfo(usePrefs().style).seekBar
+  const design = useThemeInfo().seekBar
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -589,7 +589,7 @@ export function NowPlayingBar(props: {
   const song = current(s)
   const cover = useCovers(320)
   useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
-  const style = usePrefs().style
+  const info = useThemeInfo()
   const art = song ? cover(song.dir) : undefined
   const duration = s.duration_ms || song?.duration_ms || 0
   const wave = useWaveform(song?.path)
@@ -688,7 +688,7 @@ export function NowPlayingBar(props: {
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            {styleInfo(style).lcd && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
+            {info.lcd && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
             {song.lyrics && (
               <Round label="Lyrics (L)" onClick={props.onLyrics}>
                 <IconLyrics />

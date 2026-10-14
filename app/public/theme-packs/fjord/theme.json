@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "id": "fjord",
+  "name": "Fjord",
+  "author": "Venuta",
+  "description": "Cold light on pale water: quiet blue-greys and one deep teal.",
+  "extends": "orchard",
+  "modes": [
+    "light"
+  ],
+  "accent": {
+    "color": "#0f6f78"
+  },
+  "tokens": {
+    "app-bg": "#eef2f4",
+    "solid": "#eef2f4",
+    "app-image": "linear-gradient(180deg, #f5f8f9 0, #e6edf0 100%)",
+    "ink": "#13222b",
+    "accent-2": "#6c8ea0",
+    "glass": "rgb(255 255 255 / 0.7)",
+    "edge": "rgb(19 34 43 / 0.1)",
+    "edge-strong": "rgb(19 34 43 / 0.18)",
+    "highlight": "rgb(255 255 255 / 0.9)",
+    "shadow": "0 6px 20px -8px rgb(19 50 60 / 0.25)",
+    "popover": "rgb(250 252 253 / 0.95)",
+    "bar": "rgb(238 242 244 / 0.86)",
+    "rail-bg": "rgb(228 235 239 / 0.92)",
+    "pill-bg": "rgb(15 111 120 / 0.12)",
+    "pill-ink": "#0b4f56",
+    "np-bg": "rgb(255 255 255 / 0.84)",
+    "np-edge": "rgb(19 34 43 / 0.08)",
+    "scrim": "rgb(19 34 43 / 0.3)"
+  },
+  "fonts": {
+    "ui": "builtin:Figtree Variable",
+    "display": "builtin:Figtree Variable"
+  },
+  "mark": {
+    "color": "accent",
+    "glow": 0
+  }
+}

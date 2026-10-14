@@ -26,6 +26,7 @@ import { MiniPlayer } from './components/player/MiniPlayer'
 import { BigScreen } from './components/lyrics/BigScreen'
 import { DesktopLyrics } from './components/lyrics/DesktopLyrics'
 import { applyPrefs } from './lib/prefs'
+import { watchPacks } from './lib/packs'
 
 // Before the first paint, so the chosen theme never flashes.
 applyPrefs()
@@ -34,6 +35,8 @@ applyPrefs()
 // own (opened at #mini, #stage, #overlay).
 const place = location.hash.slice(1)
 if (['mini', 'stage', 'overlay'].includes(place)) document.documentElement.dataset.window = place
+// Themes edited by hand reload as they're saved (the main window watches; the others follow it).
+if (!place) watchPacks()
 const Shown = place === 'mini' ? MiniPlayer : place === 'stage' ? BigScreen : place === 'overlay' ? DesktopLyrics : App
 
 createRoot(document.getElementById('root')!).render(

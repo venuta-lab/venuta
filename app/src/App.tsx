@@ -55,6 +55,8 @@ import { HealthScreen } from './screens/HealthScreen'
 import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
+import { StudioHost } from './components/themes/ThemeStudio'
+import { ThemeImportHost } from './components/themes/ThemeImport'
 import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
@@ -994,6 +996,8 @@ export default function App() {
         {root && (
           <AddToPlaylist root={root} onOpen={openPlaylist} />
         )}
+        <StudioHost />
+        <ThemeImportHost />
         <ConfirmHost />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />
       </div>
