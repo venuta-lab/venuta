@@ -46,6 +46,7 @@ import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
 import { NowPlaying } from './components/player/NowPlaying'
+import { useStable } from './lib/stable'
 import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs, type Prefs, type Surface } from './lib/prefs'
 import { DeepProgressBar } from './screens/libraryParts'
 import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/FolderStates'
@@ -490,6 +491,8 @@ export default function App() {
     }
   }
 
+  // Stable for the memoised page below; they always run their latest version.
+  const act = useStable({ chooseRoot, openLibrary, runLookup, runDeepCheck, afterImport })
   const toggleTheme = useCallback(() => setPrefs({ theme: resolvedTheme() === 'dark' ? 'light' : 'dark' }), [])
 
   // Everything the palette can do.
@@ -753,7 +756,7 @@ export default function App() {
     { id: 'settings', label: 'Settings', icon: IconSettings, keys: 'Ctrl+,' },
   ]
 
-  const screen = (() => {
+  const screen = useMemo(() => {
     if (setup && active !== 'settings')
       return (
         <SetupScreen
@@ -768,9 +771,9 @@ export default function App() {
             await chooseHome(path)
             setHome(path)
           }}
-          onChooseMusic={chooseRoot}
-          onStartEmpty={() => libMusic && openLibrary(libMusic)}
-          onLookup={runLookup}
+          onChooseMusic={act.chooseRoot}
+          onStartEmpty={() => libMusic && act.openLibrary(libMusic)}
+          onLookup={act.runLookup}
           onCancelLookup={() => void cancelLookup()}
           onDone={() => {
             setSetup(false)
@@ -789,8 +792,8 @@ export default function App() {
             setMissing('')
             void refresh(root, true)
           }}
-          onChoose={() => void chooseRoot()}
-          onLibrary={libMusic && !samePath(missing, libMusic) ? () => openLibrary(libMusic) : undefined}
+          onChoose={() => void act.chooseRoot()}
+          onLibrary={libMusic && !samePath(missing, libMusic) ? () => act.openLibrary(libMusic) : undefined}
         />
       )
     if (!root && active !== 'settings') return <NoLibrary onSetup={() => setSetup(true)} />
@@ -804,14 +807,14 @@ export default function App() {
             setError('')
             void refresh(root, true)
           }}
-          onChoose={() => void chooseRoot()}
+          onChoose={() => void act.chooseRoot()}
         />
       )
     switch (active) {
       case 'listen':
         if (report && report.summary.tracks === 0)
           return (
-            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
+            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
           )
         return (
           <ListenScreen
@@ -832,7 +835,7 @@ export default function App() {
       case 'music':
         if (report && report.summary.tracks === 0)
           return (
-            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void chooseRoot()} />
+            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
           )
         return <MusicScreen root={root} report={report} busy={busy} searchRef={search} />
       case 'health':
@@ -841,8 +844,8 @@ export default function App() {
             root={root}
             report={report}
             busy={busy}
-            onLookup={runLookup}
-            onCheck={runDeepCheck}
+            onLookup={act.runLookup}
+            onCheck={act.runDeepCheck}
             onRescan={() => void refresh(root, true)}
             onOrganize={() => go('inbox')}
             running={{ lookup: !!lookup, check: !!deep }}
@@ -865,11 +868,11 @@ export default function App() {
           <InboxScreen
             root={root}
             home={libMusic}
-            onChooseMusic={() => void chooseRoot()}
-            onImported={() => void afterImport()}
+            onChooseMusic={() => void act.chooseRoot()}
+            onImported={() => void act.afterImport()}
             onCount={setInboxCount}
             onSwitchLibrary={(path) => {
-              openLibrary(path)
+              act.openLibrary(path)
               go('listen')
               setNotice(`Now showing your new library in ${path}.`)
             }}
@@ -885,18 +888,21 @@ export default function App() {
             root={root}
             home={home}
             music={libMusic}
-            onChooseLibrary={chooseRoot}
-            onOpenLibrary={() => libMusic && openLibrary(libMusic)}
+            onChooseLibrary={act.chooseRoot}
+            onOpenLibrary={() => libMusic && act.openLibrary(libMusic)}
             onChooseHome={async (path) => {
               if (root) await checkMusicFolder(root, path)
               await chooseHome(path)
               setHome(path)
-              openLibrary(`${path.replace(/[\\/]+$/, '')}/Music`)
+              act.openLibrary(`${path.replace(/[\\/]+$/, '')}/Music`)
             }}
           />
         )
     }
-  })()
+    // The page is drawn again only when what it shows changes, not when the window around it does
+    // (a notice, the queue or the palette opening, a progress tick elsewhere).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup, active, ready, missing, root, home, libMusic, suggestion, report, busy, lookup, deep, readError, listenAlbum, listenArtist, again, act, go, refresh, openPlaylist, openPlaylists])
 
   return (
     <MotionConfig reducedMotion={motionSetting(prefs)}>

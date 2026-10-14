@@ -33,7 +33,7 @@ import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../co
 import { Equalizer, useContextMenu } from '../listen/parts'
 import { fromWhere, length, playlistFrom, plural, sourceDate } from './common'
 import { describeRule, SmartRules } from './SmartRules'
-import { PlaylistList, type Grab, type Line } from './PlaylistList'
+import { WindowedList, type Grab, type Line } from '../../components/WindowedList'
 
 type Row = PlaylistEntry & { key: string }
 let keySeq = 0
@@ -517,8 +517,11 @@ export function PlaylistPage(props: {
 
       {rows && rows.length > 0 && (
         <div className={missing > 0 && !smart ? 'mt-4' : 'mt-9'}>
-          <PlaylistList
+          <WindowedList
             lines={lines}
+            rowHeight={64}
+            headHeight={52}
+            label={name}
             movable={view === 'all' && !smart}
             onMove={(from, to) => {
               const next = latest.current.slice()
