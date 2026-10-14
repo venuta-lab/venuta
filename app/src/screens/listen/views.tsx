@@ -20,6 +20,7 @@ import {
 import { Detail, InBar } from '../../components/ui'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
+import { WindowedGrid } from '../../components/WindowedGrid'
 import { play } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 
@@ -226,10 +227,17 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
 
 export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Artist[] }) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-7 pb-16">
-      {artists.map((ar) => (
-        <ArtistCard key={ar.key} artist={ar} />
-      ))}
+    <div className="pb-16">
+      <WindowedGrid
+        items={artists}
+        keyOf={(ar) => ar.key}
+        min={150}
+        gapX={20}
+        gapY={28}
+        below={44}
+        label="Artists"
+        render={(ar) => <ArtistCard artist={ar} />}
+      />
     </div>
   )
 })
@@ -248,16 +256,11 @@ function ArtistCard({ artist: ar }: { artist: Artist }) {
   const nav = useNav()
   const c = useArtistCover(ar)
   return (
-    <motion.button
-      whileHover={{ y: -5 }}
-      transition={spring}
-      onClick={() => nav.openArtist(ar.name)}
-      className="group block w-full min-w-0 text-center"
-    >
+    <button onClick={() => nav.openArtist(ar.name)} className="lift group block w-full min-w-0 text-center">
       <Avatar name={ar.name} cover={c} />
       <div className="mt-3 truncate text-[14px] font-medium">{ar.name}</div>
       <div className="text-[12.5px] text-ink/55">{plural(ar.albums.length, 'album')}</div>
-    </motion.button>
+    </button>
   )
 }
 

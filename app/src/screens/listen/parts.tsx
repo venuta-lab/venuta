@@ -8,7 +8,8 @@ import { enqueue, playAll, toggle, type From } from '../../lib/player'
 import { useJob } from '../../lib/jobs'
 import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { CoverImage, NoCover } from '../MusicScreen'
-import { albumFrom, coverId, smooth, spring, useNav, useNowPlaying, type Album } from './model'
+import { WindowedGrid } from '../../components/WindowedGrid'
+import { albumFrom, coverId, smooth, spring, useNav, useNearView, useNowPlaying, type Album } from './model'
 
 export function QualityBadge({ text }: { text: string }) {
   if (!text) return null
@@ -96,13 +97,10 @@ export const AlbumCard = memo(function AlbumCard(props: {
   const { root, openAlbum } = nav
   const sub = props.subtitle === 'year' ? a.year : `${a.artist}${a.year ? `, ${a.year}` : ''}`
   const ctx = useContextMenu(() => albumActions(nav, a))
+  // The lift on hover and the press on Play are CSS (.card, .card-play in index.css), so a page
+  // of cards is plain elements; motion is kept for the cover's flight into the album page.
   return (
-    <motion.div
-      whileHover={{ y: -6 }}
-      transition={spring}
-      onContextMenu={ctx.onContextMenu}
-      className="card group relative"
-    >
+    <div onContextMenu={ctx.onContextMenu} className="card group relative">
       {ctx.menu}
       <button
         onClick={() => {
@@ -126,19 +124,17 @@ export const AlbumCard = memo(function AlbumCard(props: {
             <HiResPill onArt />
           </span>
         )}
-        <motion.button
-          whileTap={{ scale: 0.92 }}
-          transition={spring}
+        <button
           aria-label={props.now === 'playing' ? `Pause ${a.title}` : `Play ${a.title}`}
           onClick={() => (props.now !== 'no' ? void toggle() : void playAll(root, a.tracks, albumFrom(a)))}
-          className={`card-play accent-fill pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 focus-visible:translate-y-0 focus-visible:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 ${
+          className={`card-play accent-fill pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate,scale] duration-200 focus-visible:translate-y-0 focus-visible:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 active:scale-[0.92] ${
             props.now === 'no' ? 'translate-y-1.5 opacity-0' : 'opacity-100'
           }`}
         >
           {props.now === 'playing' ? <IconPause /> : <IconPlay />}
-        </motion.button>
+        </button>
       </div>
-    </motion.div>
+    </div>
   )
 })
 
@@ -152,12 +148,18 @@ function useCardState() {
 
 export function AlbumGrid({ albums, origin, subtitle }: { albums: Album[]; origin: string; subtitle?: 'artist' | 'year' }) {
   const { cover, state } = useCardState()
+  // A few rows at a time: thousands of albums open as fast as a dozen.
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-x-5 gap-y-7">
-      {albums.map((a) => (
-        <AlbumCard key={a.dir} album={a} cover={cover(a.dir)} origin={origin} now={state(a.dir)} subtitle={subtitle} />
-      ))}
-    </div>
+    <WindowedGrid
+      items={albums}
+      keyOf={(a) => a.dir}
+      min={168}
+      gapX={20}
+      gapY={28}
+      below={50}
+      label="Albums"
+      render={(a) => <AlbumCard album={a} cover={cover(a.dir)} origin={origin} now={state(a.dir)} subtitle={subtitle} />}
+    />
   )
 }
 
@@ -177,6 +179,9 @@ export function Shelf(props: {
 }) {
   const { cover, state } = useCardState()
   const row = useRef<HTMLDivElement>(null)
+  // Home holds a dozen shelves; each fills in just before it scrolls into view.
+  const box = useRef<HTMLElement>(null)
+  const near = useNearView(box)
   const [ends, setEnds] = useState({ start: true, end: false })
   const shown = [
     ...props.albums.map((a) => ({ key: a.dir, at: props.at?.(a.dir) ?? 0, album: a as Album | undefined, node: null as React.ReactNode })),
@@ -198,7 +203,7 @@ export function Shelf(props: {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [near])
 
   const by = (dir: 1 | -1) => {
     const el = row.current
@@ -220,7 +225,7 @@ export function Shelf(props: {
 
   if (!shown.length) return null
   return (
-    <section className={props.spaced === false ? '' : 'mt-10'}>
+    <section ref={box} className={props.spaced === false ? '' : 'mt-10'}>
       <div className="mb-3.5 flex items-baseline gap-3">
         <h2 className="title text-[19px]">{props.title}</h2>
         <span className="text-[12.5px] text-ink/50">{(props.albums.length + (props.more?.length ?? 0)).toLocaleString('en-IN')}</span>
@@ -230,6 +235,10 @@ export function Shelf(props: {
           </button>
         )}
       </div>
+      {!near ? (
+        // A card's height (cover, title, line) holds the place until the row is drawn.
+        <div className="h-[218px]" />
+      ) : (
       <div className="group/shelf relative">
         {!ends.start && arrow(-1)}
         <div
@@ -246,6 +255,7 @@ export function Shelf(props: {
         </div>
         {!ends.end && arrow(1)}
       </div>
+      )}
     </section>
   )
 }

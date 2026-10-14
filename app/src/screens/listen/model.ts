@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useLayoutEffect, useState, type RefObject } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
 import type { From } from '../../lib/player'
 import { matcher, ranked, searchKey } from '../../lib/textsearch'
@@ -81,7 +81,20 @@ const folderName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? 
 
 export const yearOf = (a: Pick<Album, 'year'>) => Number.parseInt(a.year, 10) || 0
 
+// Built once per reading of the library (the catalog keeps one array until it is read again), so
+// coming back to Music reuses it instead of re-keying every song for search.
+const built = new WeakMap<CatalogTrack[], Library>()
+
 export function indexTracks(tracks: CatalogTrack[]): Library {
+  let lib = built.get(tracks)
+  if (!lib) {
+    lib = buildIndex(tracks)
+    built.set(tracks, lib)
+  }
+  return lib
+}
+
+function buildIndex(tracks: CatalogTrack[]): Library {
   const groups = new Map<string, CatalogTrack[]>()
   for (const t of tracks) {
     const g = groups.get(t.dir)
@@ -246,3 +259,28 @@ export const useNowPlaying = () => useContext(NowContext)
 
 /** A cover flies between places that share its layout id; one place per origin. */
 export const coverId = (origin: string | undefined, dir: string) => (origin ? `listen-${origin}:${dir}` : undefined)
+
+/**
+ * True once `ref` comes within `margin` pixels of the view of what scrolls around it, and from
+ * then on. Something already in view is known before the first paint, so it never flashes empty;
+ * what is further down is drawn just before it scrolls in.
+ */
+export function useNearView(ref: RefObject<HTMLElement | null>, margin = 600): boolean {
+  const [near, setNear] = useState(false)
+  useLayoutEffect(() => {
+    if (near) return
+    const el = ref.current
+    const sc = scrollerOf(el)
+    if (!el || !sc) return setNear(true)
+    const r = el.getBoundingClientRect()
+    const v = sc.getBoundingClientRect()
+    if (r.top < v.bottom + margin && r.bottom > v.top - margin) return setNear(true)
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setNear(true), {
+      root: sc,
+      rootMargin: `${margin}px 0px`,
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [near, ref, margin])
+  return near
+}

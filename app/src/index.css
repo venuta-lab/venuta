@@ -286,6 +286,18 @@ kbd {
   animation: none;
 }
 
+/* Album and artist cards rise a little under the pointer. Plain CSS, not an animation library:
+   a page holds hundreds of cards, and each would otherwise carry its own animation state. */
+:is(.card, .lift) {
+  transition: translate 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:is(.card, .lift):hover {
+  translate: 0 -6px;
+}
+:root[data-motion="reduced"] :is(.card, .lift):hover {
+  translate: none;
+}
+
 /* Progress that cannot be measured yet: a turning ring, a sweeping bar, shimmering tiles. */
 @keyframes spin {
   to {

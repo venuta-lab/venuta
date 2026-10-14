@@ -9,6 +9,7 @@ import { Bar } from '../components/Activity'
 import { Chip, Page } from '../components/ui'
 import { counted, fraction, timeLeft, useJob, useNow } from '../lib/jobs'
 import { keyFor, matcher } from '../lib/textsearch'
+import { WindowedList, type Line } from '../components/WindowedList'
 
 const fmtNum = (n: number) => n.toLocaleString('en-IN')
 
@@ -25,6 +26,9 @@ const GAPS: { issue: string; label: string }[] = [
 ]
 const ROW = 'grid grid-cols-[48px_minmax(0,1.3fr)_56px_minmax(0,1.7fr)_16px] items-center gap-4 px-2'
 const NEEDS = 'needs'
+/** A row: the 48 px cover with 8 px above and below, and 2 px between rows. */
+const ROW_H = 64
+const ROW_STEP = 66
 
 /**
  * Metadata: every album as a row with what it is missing, to find the ones that need work and
@@ -77,6 +81,7 @@ export function MusicScreen({
       .filter((a) => has(keyFor(a, () => `${a.title} ${a.album_artist} ${a.year ?? ''}`)))
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [albums, query, filter, gaps])
+  const lines = useMemo(() => shown.map((a): Line<AlbumSummary> => ({ kind: 'row', key: a.dir, row: a })), [shown])
 
   const s = report?.summary
   return (
@@ -137,18 +142,24 @@ export function MusicScreen({
         <p className="py-20 text-center text-[14px] text-ink/55">{query ? `No albums match “${query}”.` : 'None: every album has this.'}</p>
       )}
       {shown.length > 0 && (
-        <div role="list" className="grid gap-0.5">
-          {shown.map((a) => {
+        // A screen of rows at a time: the whole library opens here as fast as a dozen albums.
+        <WindowedList
+          label="Albums"
+          lines={lines}
+          rowHeight={ROW_STEP}
+          movable={false}
+          onMove={() => {}}
+          render={(a, _i, style) => {
             const c = cover(a.dir)
             const missing = gaps.get(a.dir) ?? []
             return (
               <button
-                key={a.dir}
                 role="listitem"
+                style={{ ...style, height: ROW_H }}
                 onClick={() => {
                   setSelected(a)
                 }}
-                className={`group ${ROW} rounded-2xl py-2 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07] active:bg-ink/[0.1]`}
+                className={`group ${ROW} absolute inset-x-0 rounded-2xl text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.07] active:bg-ink/[0.1]`}
               >
                 <motion.div layoutId={`cover-${a.dir}`} className="h-12 w-12 overflow-hidden rounded-[10px] bg-ink/[0.06] shadow-md shadow-black/25">
                   {c ? (
@@ -182,8 +193,8 @@ export function MusicScreen({
                 </svg>
               </button>
             )
-          })}
-        </div>
+          }}
+        />
       )}
 
       {createPortal(
