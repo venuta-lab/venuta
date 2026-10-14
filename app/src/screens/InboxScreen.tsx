@@ -324,7 +324,7 @@ function QuestionDeck(props: {
                   onClick={() => props.onAnswer(d, c.id)}
                   title={c.hint}
                   className={`flex items-center gap-2 rounded-full px-4 py-2 text-[13.5px] disabled:opacity-50 ${
-                    rec ? 'bg-accent font-medium text-on-accent' : 'bg-ink/[0.08] hover:bg-ink/[0.14]'
+                    rec ? 'accent-fill font-medium text-on-accent' : 'bg-ink/[0.08] hover:bg-ink/[0.14]'
                   }`}
                 >
                   <kbd className={rec ? 'border-black/20 bg-black/10 text-on-accent' : ''}>{k + 1}</kbd>
@@ -462,7 +462,7 @@ function Handled(props: {
                       disabled={props.busy || on}
                       onClick={() => props.onChoose(d, c.id)}
                       title={c.hint}
-                      className={`rounded-full px-4 py-1.5 text-[13px] ${on ? 'bg-accent text-on-accent' : 'bg-ink/[0.08] hover:bg-ink/[0.14]'}`}
+                      className={`rounded-full px-4 py-1.5 text-[13px] ${on ? 'accent-fill text-on-accent' : 'bg-ink/[0.08] hover:bg-ink/[0.14]'}`}
                     >
                       {on ? '✓ ' : ''}
                       {c.label}

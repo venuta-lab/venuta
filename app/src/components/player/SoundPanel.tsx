@@ -121,7 +121,7 @@ export function SoundPanel() {
             <button
               key={name}
               onClick={() => change({ ...draft, eq: true, preset: name, bands })}
-              className={`shrink-0 rounded-full px-3 py-1 text-[12px] ${draft.eq && draft.preset === name ? 'bg-accent text-on-accent' : 'bg-ink/[0.07] text-ink/70 hover:bg-ink/[0.12]'}`}
+              className={`shrink-0 rounded-full px-3 py-1 text-[12px] ${draft.eq && draft.preset === name ? 'accent-fill text-on-accent' : 'bg-ink/[0.07] text-ink/70 hover:bg-ink/[0.12]'}`}
             >
               {name}
             </button>

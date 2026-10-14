@@ -78,7 +78,7 @@ export function PlaylistCard(props: {
             transition={spring}
             aria-label={isNow && playing ? `Pause ${p.name}` : `Play ${p.name}`}
             onClick={() => (isNow ? void toggle() : void playPlaylist(root, p, 'play', props.rule))}
-            className={`card-play pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full bg-accent text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
+            className={`card-play accent-fill pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
               isNow ? 'opacity-100' : 'translate-y-1.5 opacity-0'
             }`}
           >

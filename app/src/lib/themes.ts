@@ -145,7 +145,7 @@ export interface AccentRoles {
 /** The pages accents sit on (Lumen's glass is a little lighter or darker; these are the worst case). */
 const SURFACE = { dark: '#1d1e23', light: '#f3f3f5' }
 /** How colourful an accent may be, per intensity: at least, at most (OKLCH chroma). */
-const CHROMA: Record<Intensity, [number, number]> = { subtle: [0.03, 0.085], balanced: [0.06, 0.145], vivid: [0.09, 0.22] }
+const CHROMA: Record<Intensity, [number, number]> = { subtle: [0.05, 0.09], balanced: [0.095, 0.15], vivid: [0.12, 0.22] }
 
 function luminance(hex: string): number {
   const rgb = hexToRgb(hex)

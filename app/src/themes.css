@@ -625,6 +625,53 @@
 }
 
 /* ---------------------------------------------------------------------------------------- */
+/* What the accent is made of. Things you press in the accent (Play, the player's Play, a    */
+/* switch that is on, a chosen chip) are made of the same stuff as the surface around them:   */
+/* flat paint by default, lit glass on Glass, a Windows-style raised edge on Frosted.         */
+/* ---------------------------------------------------------------------------------------- */
+:root {
+  --accent-fill: var(--accent);
+  --accent-sheen: none;
+}
+/* Glass: a little lighter at the top as light comes through, a bright rim where it catches,
+   a fine edge, and a soft glow of its own colour on what is behind. */
+:root[data-style="venuta"],
+[data-preview="venuta"] {
+  --accent-fill: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 80%, #fff) 0%,
+    var(--accent) 52%,
+    color-mix(in oklab, var(--accent) 88%, #000) 100%
+  );
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.5),
+    inset 0 0 0 1px rgb(255 255 255 / 0.14),
+    inset 0 -1px 0 rgb(0 0 0 / 0.14),
+    0 8px 22px -8px color-mix(in oklab, var(--accent) 75%, transparent);
+}
+:root[data-style="venuta"][data-theme="light"] {
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.55),
+    inset 0 0 0 1px rgb(0 0 0 / 0.06),
+    inset 0 -1px 0 rgb(0 0 0 / 0.16),
+    0 8px 20px -8px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+/* Frosted, like Windows 11's accent buttons: solid colour, a raised edge (lighter at the
+   top, darker at the bottom), no glow. */
+:root[data-style="venuta"][data-surface="frosted"] {
+  --accent-fill: var(--accent);
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.2),
+    inset 0 -1px 0 rgb(0 0 0 / 0.22),
+    0 1px 2px rgb(0 0 0 / 0.28);
+}
+/* Solid and AMOLED are flat, so the accent is too. */
+:root[data-style="venuta"]:is([data-surface="solid"], [data-surface="amoled"]) {
+  --accent-fill: var(--accent);
+  --accent-sheen: none;
+}
+
+/* ---------------------------------------------------------------------------------------- */
 /* Pieces every theme styles through tokens.                                                 */
 /* ---------------------------------------------------------------------------------------- */
 

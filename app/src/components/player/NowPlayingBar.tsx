@@ -654,7 +654,7 @@ export function NowPlayingBar(props: {
                 onClick={() => void toggle()}
                 aria-label={s.playing ? 'Pause (Space)' : 'Play (Space)'}
                 title={s.playing ? 'Pause (Space)' : 'Play (Space)'}
-                className="np-play grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent shadow-lg"
+                className="np-play accent-fill grid h-10 w-10 place-items-center rounded-full text-on-accent"
               >
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.span

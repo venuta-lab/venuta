@@ -147,11 +147,28 @@ body {
   background: color-mix(in oklab, var(--ink) 13%, transparent);
 }
 .btn-primary {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow: var(--accent-sheen);
   color: var(--on-accent);
 }
 .btn-primary:hover {
   background: color-mix(in oklab, var(--accent) 86%, var(--ink));
+}
+/* Something you press, in the accent, made of the surface's material (themes.css). */
+.accent-fill {
+  background: var(--accent-fill);
+  box-shadow: var(--accent-sheen);
+}
+/* Elsewhere the player's Play keeps the lift it always had. */
+:root:not([data-style="venuta"]) .np-play.accent-fill {
+  box-shadow:
+    0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+/* On Glass and Frosted the material stays on hover; it only brightens a little. */
+:root[data-style="venuta"]:is([data-surface="glass"], [data-surface="frosted"]) :is(.btn-primary, .accent-fill):hover {
+  background: var(--accent-fill);
+  filter: brightness(1.07);
 }
 .btn-ghost {
   color: color-mix(in oklab, var(--ink) 70%, transparent);

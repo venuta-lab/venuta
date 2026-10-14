@@ -127,7 +127,7 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
                   onClick={() => void add(q.trim())}
                   className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
                 >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent text-[20px] leading-none text-on-accent">+</span>
+                  <span className="grid h-10 w-10 shrink-0 place-items-center accent-fill rounded-lg text-[20px] leading-none text-on-accent">+</span>
                   <span className="min-w-0">
                     <span className="block truncate text-[14px] font-medium">New playlist “{q.trim()}”</span>
                     <span className="block text-[12px] text-ink/55">Made with {req.paths.length === 1 ? 'this song' : `these ${req.paths.length} songs`}</span>

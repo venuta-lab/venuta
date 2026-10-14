@@ -60,7 +60,11 @@ export function SettingsScreen(props: {
                   layoutId="settings-pill"
                   transition={spring}
                   className="absolute inset-0 rounded-xl"
-                  style={{ background: 'color-mix(in oklab, var(--accent) 24%, color-mix(in oklab, var(--ink) 5%, transparent))' }}
+                  // Lifted like the rail's chosen place, tinted with the accent.
+                  style={{
+                    background: 'color-mix(in oklab, var(--accent) 24%, color-mix(in oklab, var(--ink) 5%, transparent))',
+                    boxShadow: 'var(--pill-shadow)',
+                  }}
                 />
               )}
               <span className="relative">{p.label}</span>

@@ -68,7 +68,7 @@ export function Switch(props: { on: boolean; onChange: (on: boolean) => void; la
       disabled={props.disabled}
       onClick={() => props.onChange(!props.on)}
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 disabled:opacity-40 ${
-        props.on ? 'bg-accent' : 'bg-ink/[0.16] shadow-[inset_0_0_0_1px_var(--edge)]'
+        props.on ? 'accent-fill' : 'bg-ink/[0.16] shadow-[inset_0_0_0_1px_var(--edge)]'
       }`}
     >
       <motion.span

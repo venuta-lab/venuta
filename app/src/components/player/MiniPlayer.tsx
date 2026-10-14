@@ -404,7 +404,7 @@ function PlayButton({ playing, size }: { playing: boolean; size: number }) {
       onClick={() => void toggle()}
       aria-label={playing ? 'Pause' : 'Play'}
       title={playing ? 'Pause (Space)' : 'Play (Space)'}
-      className="np-play grid shrink-0 place-items-center rounded-full bg-accent text-on-accent shadow-md"
+      className="np-play accent-fill grid shrink-0 place-items-center rounded-full text-on-accent"
       style={{ width: size, height: size }}
     >
       {playing ? <IconPause width={16} height={16} /> : <IconPlay width={16} height={16} />}
