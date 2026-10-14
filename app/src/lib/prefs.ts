@@ -53,6 +53,8 @@ function load(): Prefs {
 
 /** Older saves: a swatch that was renamed finds its nearest (a colour kept as #rrggbb is yours). */
 function upgrade(p: Prefs): Prefs {
+  const style = styleInfo(p.style).id
+  if (style !== p.style) p = { ...p, style }
   if (p.accent.startsWith('#') || accentByName(p.accent).name === p.accent) return p
   return { ...p, accent: accentByName(p.accent).name }
 }
@@ -103,7 +105,7 @@ export function applyPrefs() {
   const p = current
   const el = document.documentElement
   const theme = resolvedTheme(p)
-  el.dataset.style = p.style
+  el.dataset.style = styleInfo(p.style).id
   el.dataset.theme = theme
   el.dataset.surface = surfaceShown(p)
   // Neutral is a material in Lumen (clear glass), not a white colour: CSS asks this.
@@ -111,11 +113,12 @@ export function applyPrefs() {
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
   // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
   el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
-  if (p.style !== 'venuta') {
+  const accent = styleInfo(p.style).accent
+  if (accent !== 'yours') {
     // The other themes bring their own accent (Bounty's follows the album, in its blocks;
     // Glasshouse's the cover, set by lib/covers.ts).
     setAccentVars(null)
-    if (p.style !== 'bounty') el.style.removeProperty('--block')
+    if (accent !== 'blocks') el.style.removeProperty('--block')
   } else {
     // The colour you chose, or the fallback until an album's colour arrives.
     setAccentVars(chosenRoles(p))

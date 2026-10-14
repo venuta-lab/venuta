@@ -9,6 +9,7 @@ import { lineAt, useLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
 import { usePrefs } from '../../lib/prefs'
+import { styleInfo, type SeekBar } from '../../lib/themes'
 
 /*
   The mini player: its own small window that stays on top. One window, three shapes, chosen by
@@ -140,8 +141,8 @@ export function MiniPlayer() {
   const song = current(s)
   const root = s.root ?? ''
   // A retro theme dresses the mini player in its own player bar, seek bar and type.
-  const style = usePrefs().style
-  const retro = style !== 'venuta'
+  const info = styleInfo(usePrefs().style)
+  const retro = info.miniPlayer === 'themed'
   const { w, h } = useWindowSize()
   const shape = shapeOf(w, h)
   const [lyricsOn, setLyricsOn] = useState(saved().lyrics)
@@ -224,7 +225,7 @@ export function MiniPlayer() {
           </div>
           <PlayButton playing={s.playing} size={36} />
           <WindowButtons shape={shape} nextShape={nextShape} onShape={resize} lyrics={null} pin={pin} compact />
-          {retro ? <RetroTrack style={style} value={progress} /> : <Progress value={progress} />}
+          {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} />}
         </div>
       ) : shape === 'mini' ? (
         <div className="relative flex h-full items-center gap-3.5 p-3 pb-4">
@@ -247,7 +248,7 @@ export function MiniPlayer() {
             </div>
             <Controls playing={s.playing} />
           </div>
-          {style === 'skin99' && <LcdSpectrum className="h-full w-[92px] shrink-0" segments={12} />}
+          {info.lcd && <LcdSpectrum className="h-full w-[92px] shrink-0" segments={12} />}
           <WindowButtons
             shape={shape}
             nextShape={nextShape}
@@ -255,7 +256,7 @@ export function MiniPlayer() {
             lyrics={song.lyrics ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
             pin={pin}
           />
-          {retro ? <RetroTrack style={style} value={progress} /> : <Progress value={progress} duration={duration} />}
+          {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} duration={duration} />}
         </div>
       ) : (
         <div className="relative flex h-full flex-col">
@@ -301,7 +302,7 @@ export function MiniPlayer() {
             <div className="truncate text-[12.5px] text-ink/60">{artist}</div>
             {retro ? (
               <div className="relative mt-3 h-5">
-                <ThemedTrack style={style} pct={progress * 100} />
+                <ThemedTrack bar={info.seekBar} pct={progress * 100} />
               </div>
             ) : (
               <Seek value={progress} duration={duration} position={s.position_ms} />
@@ -350,10 +351,10 @@ function UpNext({ s }: { s: PlayerState }) {
 }
 
 /** A retro theme's own seek bar, along the bottom edge. */
-function RetroTrack({ style, value }: { style: string; value: number }) {
+function RetroTrack({ bar, value }: { bar: SeekBar; value: number }) {
   return (
     <div className="absolute inset-x-2 bottom-1 h-4">
-      <ThemedTrack style={style} pct={value * 100} />
+      <ThemedTrack bar={bar} pct={value * 100} />
     </div>
   )
 }

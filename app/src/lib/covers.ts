@@ -66,15 +66,16 @@ function apply() {
   // The cover's colour as a tint, for the themes that colour a page with it (every theme gets it).
   if (hex) root.setProperty('--art', artTone(hex))
   else root.removeProperty('--art')
-  if (p.style === 'bounty') {
+  const accent = styleInfo(p.style).accent
+  if (accent === 'blocks') {
     const block = nearestBlock(hex ?? '')
     root.setProperty('--block', block)
     root.setProperty('--accent', block)
     return
   }
-  if (!styleInfo(p.style).albumAccent) return
-  // Glasshouse always follows the cover (its own red when there is none); Lumen as you chose.
-  const lumen = p.style === 'venuta'
+  if (accent !== 'yours' && accent !== 'cover') return
+  // A cover theme always follows the cover (its own colour when there is none); Lumen as you chose.
+  const lumen = accent === 'yours'
   const light = resolvedTheme(p) === 'light'
   let next: AccentRoles | null
   if (lumen && p.accentMode === 'neutral') next = neutralRoles(light)

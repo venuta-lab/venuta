@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { reducedMotion, usePrefs } from '../lib/prefs'
+import { styleInfo } from '../lib/themes'
 import { current, usePlayerValue } from '../lib/player'
 
 /*
@@ -18,7 +19,7 @@ const HEX =
 export function ThemeFx() {
   const p = usePrefs()
   const reduced = reducedMotion(p)
-  switch (p.style) {
+  switch (styleInfo(p.style).fx) {
     case 'neo-tokyo':
       return (
         <>
@@ -168,7 +169,7 @@ function BlockWipe() {
   return (
     <div key={path} aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-[80] h-[124px] overflow-hidden" style={{ mixBlendMode: 'multiply' }}>
       <div className="fx-wipe absolute inset-0 flex">
-        {['var(--block)', 'var(--accent-2)', 'var(--fix)', 'var(--block)'].map((c, i) => (
+        {['var(--block, var(--accent))', 'var(--accent-2)', 'var(--fix)', 'var(--block, var(--accent))'].map((c, i) => (
           <span key={i} className="h-full flex-1" style={{ background: c, opacity: 0.75 }} />
         ))}
       </div>

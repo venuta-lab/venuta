@@ -16,6 +16,16 @@ export type Style =
   | 'bounty'
   | 'skin99'
 
+/** The seek bar's design: Lumen's waveform, or one of the themes' own tracks. */
+export type SeekBar = 'wave' | 'pulse' | 'slim' | 'red' | 'segments' | 'cursor' | 'hud' | 'stamp' | 'bevel' | 'trail'
+
+/** The scene ThemeFx draws behind and over the app, named after the theme it was made for. */
+export type Fx = 'none' | 'neo-tokyo' | 'thermoptic' | 'sync-ratio' | 'layer-zero' | 'bounty' | 'skin99'
+
+/**
+ * A theme and what it does. Code asks these, never a theme's name, so a theme made from another
+ * (a theme package) behaves like the one it extends, and an unknown one like Lumen.
+ */
 export interface StyleInfo {
   id: Style
   name: string
@@ -23,23 +33,74 @@ export interface StyleInfo {
   line: string
   /** Follows the light/dark switch (the others are one look). */
   modes: boolean
-  /** Takes its accent from the album; the retro themes keep their own palette. */
-  albumAccent: boolean
+  /**
+   * Where its accent comes from: the colour you choose (or the album's, or neutral glass), always
+   * the cover's, the nearest of its colour blocks to the cover's, or its own palette.
+   */
+  accent: 'yours' | 'cover' | 'blocks' | 'own'
+  seekBar: SeekBar
+  /** The mini player as glass with the cover's light, or in the theme's own player bar. */
+  miniPlayer: 'glass' | 'themed'
+  /** The surface choice (glass, frosted, solid, AMOLED) applies to it. */
+  surfaces: boolean
+  /** The album background can be switched on behind it. */
+  albumBackground: boolean
+  /** An LCD spectrum beside the player's controls. */
+  lcd: boolean
+  /** Its own words for the light/dark choice. */
+  modeNames?: { title: string; light: string; dark: string; hint: string }
+  fx: Fx
 }
 
+const THEMED = { miniPlayer: 'themed', surfaces: false, lcd: false } as const
+
 export const STYLES: StyleInfo[] = [
-  { id: 'venuta', name: 'Lumen', line: 'Light through glass, over your album art, in the colour of what you play.', modes: true, albumAccent: true },
+  {
+    id: 'venuta', name: 'Lumen', line: 'Light through glass, over your album art, in the colour of what you play.',
+    modes: true, accent: 'yours', seekBar: 'wave', miniPlayer: 'glass', surfaces: true, albumBackground: true, lcd: false, fx: 'none',
+  },
   // The players people know (research 08): their own names here, what they are after in the line.
-  { id: 'green-room', name: 'Green Room', line: 'Black panels, a green Play and big bold titles. After Spotify.', modes: false, albumAccent: false },
-  { id: 'orchard', name: 'Orchard', line: 'Quiet greys, a red-pink key and a floating player. After Apple Music.', modes: true, albumAccent: false },
-  { id: 'redline', name: 'Redline', line: 'Pitch black, white pills and a red line. After YouTube Music.', modes: false, albumAccent: false },
-  { id: 'glasshouse', name: 'Glasshouse', line: 'Dark glass, an inset stage tinted by each cover. After Cider.', modes: false, albumAccent: true },
-  { id: 'neo-tokyo', name: 'Neo-Tokyo', line: 'Red light-trails through a neon night city. After Akira (1988).', modes: false, albumAccent: false },
-  { id: 'thermoptic', name: 'Thermoptic', line: 'Rain-damp teal city and terminal-green data. After Ghost in the Shell.', modes: false, albumAccent: false },
-  { id: 'sync-ratio', name: 'Sync Ratio', line: 'Emergency orange, cockpit purple, serif title cards. After Evangelion.', modes: false, albumAccent: false },
-  { id: 'layer-zero', name: 'Layer Zero', line: 'Blue-grey stillness and shadows of red static. After Serial Experiments Lain.', modes: false, albumAccent: false },
-  { id: 'bounty', name: 'Bounty Session', line: 'Ink on paper and colour blocks, cut to a horn section. After Cowboy Bebop.', modes: true, albumAccent: false },
-  { id: 'skin99', name: "Skin '99", line: 'Brushed gunmetal, bevels and a green LCD. After the skinned players of 1999.', modes: false, albumAccent: false },
+  {
+    id: 'green-room', name: 'Green Room', line: 'Black panels, a green Play and big bold titles. After Spotify.',
+    modes: false, accent: 'own', seekBar: 'pulse', ...THEMED, albumBackground: false, fx: 'none',
+  },
+  {
+    id: 'orchard', name: 'Orchard', line: 'Quiet greys, a red-pink key and a floating player. After Apple Music.',
+    modes: true, accent: 'own', seekBar: 'slim', ...THEMED, albumBackground: false, fx: 'none',
+  },
+  {
+    id: 'redline', name: 'Redline', line: 'Pitch black, white pills and a red line. After YouTube Music.',
+    modes: false, accent: 'own', seekBar: 'red', ...THEMED, albumBackground: false, fx: 'none',
+  },
+  {
+    id: 'glasshouse', name: 'Glasshouse', line: 'Dark glass, an inset stage tinted by each cover. After Cider.',
+    modes: false, accent: 'cover', seekBar: 'slim', ...THEMED, albumBackground: false, fx: 'none',
+  },
+  {
+    id: 'neo-tokyo', name: 'Neo-Tokyo', line: 'Red light-trails through a neon night city. After Akira (1988).',
+    modes: false, accent: 'own', seekBar: 'trail', ...THEMED, albumBackground: true, fx: 'neo-tokyo',
+  },
+  {
+    id: 'thermoptic', name: 'Thermoptic', line: 'Rain-damp teal city and terminal-green data. After Ghost in the Shell.',
+    modes: false, accent: 'own', seekBar: 'hud', ...THEMED, albumBackground: true, fx: 'thermoptic',
+  },
+  {
+    id: 'sync-ratio', name: 'Sync Ratio', line: 'Emergency orange, cockpit purple, serif title cards. After Evangelion.',
+    modes: false, accent: 'own', seekBar: 'segments', ...THEMED, albumBackground: true, fx: 'sync-ratio',
+  },
+  {
+    id: 'layer-zero', name: 'Layer Zero', line: 'Blue-grey stillness and shadows of red static. After Serial Experiments Lain.',
+    modes: false, accent: 'own', seekBar: 'cursor', ...THEMED, albumBackground: true, fx: 'layer-zero',
+  },
+  {
+    id: 'bounty', name: 'Bounty Session', line: 'Ink on paper and colour blocks, cut to a horn section. After Cowboy Bebop.',
+    modes: true, accent: 'blocks', seekBar: 'stamp', ...THEMED, albumBackground: false, fx: 'bounty',
+    modeNames: { title: 'Session', light: 'Day', dark: 'Night', hint: 'Day is ink on paper; night is paper on ink.' },
+  },
+  {
+    id: 'skin99', name: "Skin '99", line: 'Brushed gunmetal, bevels and a green LCD. After the skinned players of 1999.',
+    modes: false, accent: 'own', seekBar: 'bevel', ...THEMED, lcd: true, albumBackground: false, fx: 'skin99',
+  },
 ]
 
 export const styleInfo = (id: string) => STYLES.find((s) => s.id === id) ?? STYLES[0]

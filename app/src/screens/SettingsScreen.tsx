@@ -326,16 +326,16 @@ function LookAndFeel() {
       <AppIconPicker />
 
       {info.modes && (
-        <Row title={p.style === 'bounty' ? 'Session' : 'Mode'} hint={p.style === 'bounty' ? 'Day is ink on paper; night is paper on ink.' : undefined}>
+        <Row title={info.modeNames?.title ?? 'Mode'} hint={info.modeNames?.hint}>
           <Segmented
             id="theme"
             value={p.theme}
             onChange={(theme) => set({ theme })}
             options={
-              p.style === 'bounty'
+              info.modeNames
                 ? [
-                    { value: 'light', label: 'Day' },
-                    { value: 'dark', label: 'Night' },
+                    { value: 'light', label: info.modeNames.light },
+                    { value: 'dark', label: info.modeNames.dark },
                     { value: 'system', label: 'Match Windows' },
                   ]
                 : [
@@ -347,7 +347,7 @@ function LookAndFeel() {
           />
         </Row>
       )}
-      {p.style === 'venuta' && (
+      {info.surfaces && (
         <>
           <Row
             title="Surface"
@@ -369,13 +369,13 @@ function LookAndFeel() {
               ]}
             />
           </Row>
-          <ColourRows />
         </>
       )}
-      {!['bounty', 'skin99', 'green-room', 'orchard', 'redline', 'glasshouse'].includes(p.style) && (
+      {info.accent === 'yours' && <ColourRows />}
+      {info.albumBackground && (
         <Row
           title="Album background"
-          hint={p.style === 'venuta' ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}
+          hint={info.surfaces ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}
         >
           <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
         </Row>
@@ -412,7 +412,7 @@ function ThemeCard(props: { style: StyleInfo; on: boolean; onPick: () => void })
         className="keep-round relative aspect-[16/10] overflow-hidden rounded-xl"
         style={{ backgroundColor: 'var(--app-bg)', backgroundImage: 'var(--app-image)' }}
       >
-        {s.id === 'venuta' && (
+        {s.accent === 'yours' && (
           <div
             aria-hidden
             className="absolute inset-0"

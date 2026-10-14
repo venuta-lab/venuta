@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { usePrefs } from '../../lib/prefs'
+import { styleInfo, type SeekBar as BarDesign } from '../../lib/themes'
 import { LcdSpectrum } from './Spectrum'
 import { openBigScreen } from '../../lib/lyricWindows'
 import {
@@ -122,9 +123,9 @@ function Wave(props: { wave: number[]; pct: number; height: number }) {
 }
 
 /** The retro themes' seek bars (research §3): each its own track and playhead. */
-export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
+export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
   // The players people know: a thin line that thickens or lights up under the pointer.
-  if (style === 'green-room')
+  if (bar === 'pulse')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-[#4d4d4d]" />
@@ -132,14 +133,14 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 shadow-[0_2px_4px_rgb(0_0_0/0.5)] group-hover:opacity-100" style={{ left: `${pct}%` }} />
       </>
     )
-  if (style === 'orchard' || style === 'glasshouse')
+  if (bar === 'slim')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-ink/20 transition-[height] group-hover:h-[6px]" />
         <div className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-ink/70 transition-[height] group-hover:h-[6px]" style={{ width: `${pct}%` }} />
       </>
     )
-  if (style === 'redline')
+  if (bar === 'red')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-white/20 transition-[height] group-hover:h-[5px]" />
@@ -147,7 +148,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         <span className="absolute top-1/2 h-[13px] w-[13px] -translate-x-1/2 -translate-y-1/2 scale-0 rounded-full bg-[#f03] transition-transform group-hover:scale-100" style={{ left: `${pct}%` }} />
       </>
     )
-  if (style === 'sync-ratio') {
+  if (bar === 'segments') {
     const lit = Math.round((pct / 100) * 24)
     return (
       <div className="absolute inset-x-0 top-1/2 flex h-[10px] -translate-y-1/2 gap-[2px]">
@@ -161,7 +162,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
       </div>
     )
   }
-  if (style === 'layer-zero')
+  if (bar === 'cursor')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-px bg-ink/25" />
@@ -171,7 +172,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         </span>
       </>
     )
-  if (style === 'thermoptic')
+  if (bar === 'hud')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 bg-ink/15" />
@@ -182,7 +183,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         <span className="absolute top-1/2 h-[12px] w-px -translate-y-1/2 bg-accent" style={{ left: `${pct}%` }} />
       </>
     )
-  if (style === 'bounty')
+  if (bar === 'stamp')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[6px] -translate-y-1/2 border-2 border-ink" />
@@ -190,7 +191,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border-2 border-ink bg-[var(--app-bg)]" style={{ left: `${pct}%` }} />
       </>
     )
-  if (style === 'skin99')
+  if (bar === 'bevel')
     return (
       <>
         <div className="absolute inset-x-0 top-1/2 h-[6px] -translate-y-1/2 bg-[#14161c] shadow-[inset_1px_1px_0_#0d0f14,inset_-1px_-1px_0_#5a6070]" />
@@ -201,7 +202,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
         />
       </>
     )
-  // Neo-Tokyo: a red bar whose fill trails a fading streak behind the playhead.
+  // 'trail' (Neo-Tokyo): a red bar whose fill trails a fading streak behind the playhead.
   return (
     <>
       <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 bg-ink/12" />
@@ -215,7 +216,7 @@ export function ThemedTrack({ style, pct }: { style: string; pct: number }) {
 }
 
 export function SeekBar(props: { position: number; duration: number; className?: string; wave?: number[] | null; waveHeight?: number }) {
-  const style = usePrefs().style
+  const design = styleInfo(usePrefs().style).seekBar
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -256,10 +257,10 @@ export function SeekBar(props: { position: number; duration: number; className?:
         }}
         onPointerLeave={() => setHover(null)}
         className="group relative flex-1 cursor-pointer touch-none"
-        style={{ height: style === 'venuta' && props.wave ? (props.waveHeight ?? 22) : 20 }}
+        style={{ height: design === 'wave' && props.wave ? (props.waveHeight ?? 22) : 20 }}
       >
-        {style !== 'venuta' ? (
-          <ThemedTrack style={style} pct={pct} />
+        {design !== 'wave' ? (
+          <ThemedTrack bar={design} pct={pct} />
         ) : props.wave ? (
           <Wave wave={props.wave} pct={pct} height={props.waveHeight ?? 22} />
         ) : (
@@ -271,7 +272,7 @@ export function SeekBar(props: { position: number; duration: number; className?:
           </div>
         )}
         <div
-          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${props.wave || style !== 'venuta' ? 'hidden' : ''} ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow transition-opacity ${props.wave || design !== 'wave' ? 'hidden' : ''} ${drag !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           style={{ left: `${pct}%` }}
         />
         {hover !== null && drag === null && props.duration > 0 && (
@@ -687,7 +688,7 @@ export function NowPlayingBar(props: {
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            {style === 'skin99' && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
+            {styleInfo(style).lcd && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
             {song.lyrics && (
               <Round label="Lyrics (L)" onClick={props.onLyrics}>
                 <IconLyrics />

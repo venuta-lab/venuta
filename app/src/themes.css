@@ -9,13 +9,6 @@
   Spec and sources: docs/research/06-themes-and-design.md.
 */
 
-/* Registered so the accent can glide from one cover's colour to the next. */
-@property --accent {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #8185eb;
-}
-
 /* ---------------------------------------------------------------------------------------- */
 /* Venuta, dark glass: the default (and the base every other theme overrides).              */
 /* ---------------------------------------------------------------------------------------- */
@@ -84,7 +77,6 @@
   --title-case: none;
   --label-case: none;
   color-scheme: dark;
-  transition: --accent 600ms ease;
 }
 
 :root[data-style="venuta"][data-surface="frosted"] {
