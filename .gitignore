@@ -25,3 +25,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 app/dev-data/
+
+# Never committed: secrets, logs, release leftovers
+.env*
+*.log
+latest.json
+*.key

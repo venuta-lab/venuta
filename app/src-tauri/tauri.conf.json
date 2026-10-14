@@ -60,7 +60,7 @@
     ],
     "shortDescription": "Builds and keeps a perfect lossless music library, and syncs it to SD cards.",
     "category": "Music",
-    "copyright": "MIT License",
+    "copyright": "© 2026 Venuta contributors. MIT License.",
     "windows": {
       "nsis": {
         "installMode": "currentUser"

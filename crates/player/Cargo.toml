@@ -4,6 +4,7 @@ description = "Venuta's audio engine: bit-perfect, gapless playback of your own 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 rust-version.workspace = true
 
 [dependencies]

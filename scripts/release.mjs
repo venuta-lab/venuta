@@ -58,7 +58,12 @@ writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n')
 
 // 4. Tag and release.
 run('git', ['add', 'app/src-tauri/tauri.conf.json', 'Cargo.toml', 'Cargo.lock', 'app/package.json'])
-run('git', ['commit', '-m', `chore(release): ${version}`])
+// Nothing to commit when the version was already set (the first release).
+try {
+  execFileSync('git', ['diff', '--cached', '--quiet'], { cwd: root })
+} catch {
+  run('git', ['commit', '-m', `chore(release): ${version}`])
+}
 run('git', ['tag', `v${version}`])
 run('git', ['push', 'origin', 'HEAD', `v${version}`])
 const notesFile = join(dir, 'notes.md')

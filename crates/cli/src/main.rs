@@ -4,7 +4,7 @@ use engine::{Index, paths};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "librarian", version = engine::VERSION, about = "Headless music library engine")]
+#[command(name = "venuta", version = engine::VERSION, about = "Venuta's library engine, from the command line")]
 struct Cli {
     /// Index database path (default: per-library file in the app data folder)
     #[arg(long, global = true)]

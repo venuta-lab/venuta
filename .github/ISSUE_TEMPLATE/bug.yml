@@ -1,0 +1,26 @@
+name: Something is wrong
+description: A bug, a crash, or something that behaves differently than it says.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to see it again
+      placeholder: "1. Open Organize\n2. ..."
+  - type: input
+    id: version
+    attributes:
+      label: Venuta version and Windows version
+      placeholder: "0.1.0 on Windows 11 24H2"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Leave out song lyrics, keys, and anything personal in file paths.
