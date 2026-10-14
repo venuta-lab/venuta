@@ -89,6 +89,8 @@ export const TOKENS: TokenSpec[] = [
   T('Player bar', 'backdrop', 'np-blur', 'Blur behind it'),
   T('Player bar', 'color', 'np-edge', 'Its outline'),
   T('Player bar', 'shadow', 'np-shadow', 'Its shadow'),
+  T('Player bar', 'color', 'trail-tip', "The seek bar's bright tip (themes built on Neo-Tokyo)"),
+  T('Player bar', 'color', 'trail-glow', 'Its glow'),
 
   T('Accent material', 'paint', 'accent-fill', 'What buttons in the key colour are made of'),
   T('Accent material', 'shadow', 'accent-sheen', 'Their light (an inset shadow)'),
@@ -736,7 +738,7 @@ export function derive(s: Simple): { tokens: Record<string, string>; fixedText: 
       tokens['on-accent'] = readableOn(hex(acc)) ?? '#ffffff'
       // As text, the accent moves toward the ink until it reads on the page.
       let ai = acc
-      for (let i = 0; i < 12 && contrast(ai, bg) < 3; i++) ai = mix(ai, ink, 0.12)
+      for (let i = 0; i < 16 && contrast(ai, bg) < 4.5; i++) ai = mix(ai, ink, 0.12)
       tokens['accent-ink'] = hex(ai)
       tokens['accent-2'] = hex(acc)
     }

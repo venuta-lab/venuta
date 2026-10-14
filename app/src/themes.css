@@ -259,6 +259,9 @@
   --accent: #da1d1f;
   --on-accent: #ffffff;
   --accent-ink: #ff4a3d;
+  /* The light-trail seek bar: its bright tip and its glow. */
+  --trail-tip: #ff6a4a;
+  --trail-glow: rgb(255 42 42 / 0.6);
   --accent-2: #35d0e8;
   --ink: #f2ebdd;
   --problem: #ff4a3d;

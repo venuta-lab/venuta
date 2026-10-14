@@ -1,4 +1,4 @@
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
@@ -11,10 +11,9 @@ import {
   setSettings,
   type Settings,
 } from '../lib/engine'
-import { resolvedTheme, setPrefs, surfaceShown, themeInfo, usePrefs, type Prefs } from '../lib/prefs'
-import { ACCENTS, STYLES, accentRoles, colourDistance } from '../lib/themes'
-import { ThemeCard } from '../components/themes/ThemeCard'
-import { YourThemes } from '../components/themes/YourThemes'
+import { reducedMotion, resolvedTheme, setPrefs, surfaceShown, themeInfo, usePrefs, type Prefs } from '../lib/prefs'
+import { ACCENTS, accentRoles, colourDistance } from '../lib/themes'
+import { Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
@@ -269,14 +268,9 @@ function AppIconPicker() {
     setError('')
     chooseAppIcon(next).catch((e) => setError(`Couldn't change the icon: ${String(e)}`))
   }
-  const name = APP_ICONS.find((i) => i.id === id)?.name ?? ''
   return (
-    <div className="border-b border-edge py-5">
-      <div className="flex items-baseline gap-3">
-        <div className="text-[14px] font-medium">App icon</div>
-        <div className="text-[12.5px] text-ink/55">{name}</div>
-      </div>
-      <div className="mt-0.5 max-w-[70ch] text-[12.5px] leading-relaxed text-ink/55">
+    <div>
+      <div className="max-w-[70ch] text-[12.5px] leading-relaxed text-ink/55">
         On the taskbar, the tray, the windows and the shortcuts that open Venuta. The program file itself keeps Dusk glass.
       </div>
       <div role="radiogroup" aria-label="App icon" className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(68px,1fr))] gap-2.5">
@@ -308,95 +302,165 @@ function AppIconPicker() {
   )
 }
 
+/**
+ * Look and feel: the theme first (in use, recent, and every theme a click away), then the rest
+ * as drawers that say what they're set to, so nothing needs opening to know it.
+ */
 function LookAndFeel() {
   const p = usePrefs()
   const set = (c: Partial<Prefs>) => setPrefs(c)
   const info = themeInfo(p)
   const light = resolvedTheme(p) === 'light'
+  const surfaceName = { glass: 'Glass', frosted: 'Frosted', solid: 'Solid', amoled: 'AMOLED' }[surfaceShown(p)]
+  const windowParts = [
+    info.surfaces ? surfaceName : '',
+    info.albumBackground ? (p.backdrop ? 'album background on' : 'album background off') : '',
+  ].filter(Boolean)
+  const windowSummary = windowParts.join(', ')
+  const motionSummary =
+    p.motion === 'system' ? `Match Windows (${reducedMotion(p) ? 'reduced' : 'full'} now)` : p.motion === 'full' ? 'Full' : 'Reduced'
   return (
     <div>
       <h2 className="title text-[22px]">Look and feel</h2>
       <p className="mt-1 text-[13px] text-ink/55">Changes apply as you choose them.</p>
 
-      <div role="radiogroup" aria-label="Theme" className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
-        {STYLES.map((s) => (
-          <ThemeCard key={s.id} name={s.name} preview={s.id} albumLight={s.accent === 'yours'} on={!p.pack && p.style === s.id} onPick={() => set({ style: s.id, pack: '' })} />
-        ))}
+      <div className="mt-5">
+        <Themes />
       </div>
-      <p className="mt-3 text-[12.5px] leading-relaxed text-ink/55">{info.line}</p>
 
-      <YourThemes />
-
-      <AppIconPicker />
-
-      {info.modes && (
-        <Row title={info.modeNames?.title ?? 'Mode'} hint={info.modeNames?.hint}>
-          <Segmented
-            id="theme"
-            value={p.theme}
-            onChange={(theme) => set({ theme })}
-            options={
-              info.modeNames
-                ? [
-                    { value: 'light', label: info.modeNames.light },
-                    { value: 'dark', label: info.modeNames.dark },
-                    { value: 'system', label: 'Match Windows' },
-                  ]
-                : [
-                    { value: 'light', label: 'Light' },
-                    { value: 'dark', label: 'Dark' },
-                    { value: 'system', label: 'Match Windows' },
-                  ]
-            }
-          />
-        </Row>
-      )}
-      {info.surfaces && (
-        <>
-          <Row
-            title="Surface"
-            hint={
-              surfaceShown(p) !== p.surface
-                ? 'Windows has transparency effects turned off, so Lumen is Solid for now. Your choice comes back when they are on again (Windows Settings, Personalisation, Colours).'
-                : 'Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only.'
-            }
-          >
+      <div className="mt-6">
+        {info.accent === 'yours' && (
+          <Drawer id="colour" title="Colour" summary={<ColourSummary />}>
+            <ColourRows />
+          </Drawer>
+        )}
+        {windowSummary && (
+          <Drawer id="window" title="Window" summary={windowSummary.charAt(0).toUpperCase() + windowSummary.slice(1)}>
+            {info.surfaces && (
+              <Row
+                title="Surface"
+                hint={
+                  surfaceShown(p) !== p.surface
+                    ? 'Windows has transparency effects turned off, so Lumen is Solid for now. Your choice comes back when they are on again (Windows Settings, Personalisation, Colours).'
+                    : 'Glass shows the album art through the window. Frosted is calm and near-opaque, like Windows itself. Solid is opaque and fastest. AMOLED is true black, for dark only.'
+                }
+              >
+                <Segmented
+                  id="surface"
+                  value={p.surface}
+                  onChange={(surface) => set({ surface })}
+                  options={[
+                    { value: 'glass', label: 'Glass' },
+                    { value: 'frosted', label: 'Frosted' },
+                    { value: 'solid', label: 'Solid' },
+                    { value: 'amoled', label: 'AMOLED', disabled: light },
+                  ]}
+                />
+              </Row>
+            )}
+            {info.albumBackground && (
+              <Row
+                title="Album background"
+                hint={info.surfaces ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}
+              >
+                <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
+              </Row>
+            )}
+          </Drawer>
+        )}
+        <Drawer id="motion" title="Motion" summary={motionSummary}>
+          <Row title="Motion" hint="Reduced keeps fades and drops springs, slides, the drifting background and the themes' moving effects.">
             <Segmented
-              id="surface"
-              value={p.surface}
-              onChange={(surface) => set({ surface })}
+              id="motion"
+              value={p.motion}
+              onChange={(motion) => set({ motion })}
               options={[
-                { value: 'glass', label: 'Glass' },
-                { value: 'frosted', label: 'Frosted' },
-                { value: 'solid', label: 'Solid' },
-                { value: 'amoled', label: 'AMOLED', disabled: light },
+                { value: 'full', label: 'Full' },
+                { value: 'reduced', label: 'Reduced' },
+                { value: 'system', label: 'Match Windows' },
               ]}
             />
           </Row>
-        </>
-      )}
-      {info.accent === 'yours' && <ColourRows />}
-      {info.albumBackground && (
-        <Row
-          title="Album background"
-          hint={info.surfaces ? 'The blurred artwork behind everything. Not shown with Solid or AMOLED.' : "The artwork behind everything, in this theme's colours."}
-        >
-          <Switch label="Album background" on={p.backdrop} onChange={(backdrop) => set({ backdrop })} />
-        </Row>
-      )}
-      <Row title="Motion" hint="Reduced keeps fades and drops springs, slides, the drifting background and the themes' moving effects.">
-        <Segmented
-          id="motion"
-          value={p.motion}
-          onChange={(motion) => set({ motion })}
-          options={[
-            { value: 'full', label: 'Full' },
-            { value: 'reduced', label: 'Reduced' },
-            { value: 'system', label: 'Match Windows' },
-          ]}
-        />
-      </Row>
+        </Drawer>
+        <Drawer id="icon" title="App icon" summary={<IconSummary />}>
+          <AppIconPicker />
+        </Drawer>
+      </div>
     </div>
+  )
+}
+
+/**
+ * A part of Look and feel as one line saying what it is set to, opened to change it. Whether it
+ * was left open is remembered.
+ */
+function Drawer(props: { id: string; title: string; summary: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useRemembered(`look-open:${props.id}`, false)
+  return (
+    <div className="border-t border-edge last:border-b">
+      <button aria-expanded={open} onClick={() => setOpen(!open)} className="group flex w-full items-center gap-4 py-3.5 text-left">
+        <span className="w-[120px] shrink-0 text-[14px] font-medium">{props.title}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-[12.5px] text-ink/60">{props.summary}</span>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className={`shrink-0 text-ink/45 transition-transform duration-200 group-hover:text-ink ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="pb-4">{props.children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** Where the accent comes from, and how colourful: one line and the colour itself. */
+function ColourSummary() {
+  const p = usePrefs()
+  const own = p.accent.startsWith('#')
+  const what = p.accentMode === 'album' ? 'From the music' : p.accentMode === 'fixed' ? `One colour: ${own ? 'your own' : p.accent}` : 'Neutral'
+  return (
+    <>
+      <span className="keep-round h-3.5 w-3.5 shrink-0 rounded-full bg-accent shadow-[inset_0_0_0_1px_rgb(0_0_0/0.15)]" />
+      <span className="truncate">
+        {what}
+        {p.accentMode !== 'neutral' && `, ${p.intensity}`}
+      </span>
+    </>
+  )
+}
+
+function IconSummary() {
+  const id = useAppIcon()
+  const name = APP_ICONS.find((i) => i.id === id)?.name ?? ''
+  return (
+    <>
+      <img src={iconSrc(id)} alt="" className="h-6 w-6 shrink-0 rounded-md shadow-sm shadow-black/30" draggable={false} />
+      <span className="truncate">
+        {name}
+        {id === DEFAULT_ICON && ' (the default)'}
+      </span>
+    </>
   )
 }
 

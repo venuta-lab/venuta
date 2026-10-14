@@ -6,11 +6,12 @@ every theme works on every screen and keeps working after updates.
 
 There are three ways to make one:
 
-1. **In the Theme Studio** (Settings, Look and feel, Your themes, **New theme**). Start from the
+1. **In the Theme Studio** (Settings, Look and feel, **New theme**). Start from the
    theme in use, the album playing, or a few colours. The whole app is the preview.
 2. **By hand**: a folder with a `theme.json`, in your library's `.venuta\themes`. Venuta
    reloads it each time you save the file.
-3. **With an AI assistant**: Settings, Look and feel, **Copy a prompt for an AI assistant**.
+3. **With an AI assistant**: Settings, Look and feel, Browse themes, **Copy a prompt for an AI
+   assistant**.
    Paste it into the assistant, describe your theme, save what it writes as `theme.json`, and
    import it with **Import…**.
 
@@ -173,6 +174,8 @@ Values are plain CSS: colours (`#rrggbb`, `rgb(r g b / a)`, `oklch(…)`), gradi
 | `np-blur` | blur, or none | Blur behind it |
 | `np-edge` | colour | Its outline |
 | `np-shadow` | shadow, or none | Its shadow |
+| `trail-tip` | colour | The seek bar's bright tip (themes built on Neo-Tokyo) |
+| `trail-glow` | colour | Its glow |
 
 ### Accent material
 
@@ -268,6 +271,6 @@ Limits: 25 MB a theme, 64 files, fonts up to 2 MB, pictures up to 12 MB. Themes 
 
 ## Checking a theme by hand
 
-Open Settings, Look and feel: a theme with problems shows a note under its card ("2 notes"),
+Open Settings, Look and feel, Browse themes: a theme with problems shows a note under its card ("2 notes"),
 with each problem and where it is (`tokens.glass`, `fonts.ui`). A theme that can't be used
 says why on its card.

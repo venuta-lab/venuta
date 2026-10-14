@@ -13,6 +13,10 @@
   a preview and anything wrong shown before it's added. Themes are folders in your library's
   `.venuta/themes`; edit one by hand and Venuta reloads it as you save. docs/THEMES.md lists
   every value, and Settings copies a prompt for making a theme with an AI assistant.
+- **Look and feel, rearranged**: the theme in use with its mode and actions, the themes you used
+  lately in one row, and every theme in a browser that opens when you want it (search, filters,
+  groups that show one row until opened). Colour, Window, Motion and App icon are one line each
+  saying what they are set to, opened to change them.
 - A theme that can't load never breaks Venuta: the theme it's built on shows, and Settings says
   why. Reduced motion no longer fades the accent between albums.
 - **A logo**: the Venuta mark, a V with a peacock feather and a flute's holes, on the program,

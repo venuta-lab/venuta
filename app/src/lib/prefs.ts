@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { inApp, saveAppearance } from './engine'
 import { accentByName, accentRoles, neutralRoles, styleInfo, type AccentRoles, type Intensity, type Style, type StyleInfo } from './themes'
 import { draftBase, onPackChange, packInfoFor, packModes, showPack } from './packs'
+import { noteTheme, themeKey } from './recentThemes'
 
 /*
   Look and feel, kept on this computer. Applied as attributes on <html> (see index.css), so
@@ -72,7 +73,14 @@ export const getPrefs = () => current
  * computer, so the very first frame on start already has it.
  */
 export function setPrefs(change: Partial<Prefs>, opts: { save?: boolean } = {}) {
+  const was = themeKey(current.style, current.pack)
   current = { ...current, ...change }
+  // A theme chosen: it and the one before it lead the recent row (Settings).
+  const now = themeKey(current.style, current.pack)
+  if (opts.save !== false && now !== was) {
+    noteTheme(was)
+    noteTheme(now)
+  }
   try {
     localStorage.setItem(KEY, JSON.stringify(current))
   } catch {

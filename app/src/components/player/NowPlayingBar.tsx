@@ -208,9 +208,9 @@ export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
       <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 bg-ink/12" />
       <div
         className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2"
-        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--accent) 0, var(--accent) calc(100% - 40px), #ff6a4a)' }}
+        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--accent) 0, var(--accent) calc(100% - 40px), var(--trail-tip, #ff6a4a))' }}
       />
-      <span className="absolute top-1/2 h-[6px] w-[14px] -translate-x-1/2 -translate-y-1/2 bg-[var(--accent-ink)] shadow-[0_0_12px_rgb(255_42_42/0.6)]" style={{ left: `${pct}%` }} />
+      <span className="absolute top-1/2 h-[6px] w-[14px] -translate-x-1/2 -translate-y-1/2 bg-[var(--accent-ink)]" style={{ left: `${pct}%`, boxShadow: '0 0 12px var(--trail-glow, rgb(255 42 42 / 0.6))' }} />
     </>
   )
 }
