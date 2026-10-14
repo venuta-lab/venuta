@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-14
 - **Status:** accepted (built; real players still to test)
-- Research: [10](../research/10-cards-that-carry-a-selection.md). Plan: [PLAN-YOUTUBE-AND-CARDS](../PLAN-YOUTUBE-AND-CARDS.md) part B.
+- Research: [10](../research/10-cards-that-carry-a-selection.md). Plan: [PLAN-YOUTUBE-AND-CARDS](../plans/PLAN-YOUTUBE-AND-CARDS.md) part B.
 
 ## Context
 He wants to share some of his music, a few playlists or albums, on a card, or put the whole
