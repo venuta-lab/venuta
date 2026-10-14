@@ -14,6 +14,8 @@ const COLS = 6
 const ROWS = 4
 const W = 72
 const H = 48
+/** How long the backdrop drifts after it changes, before it rests. */
+const DRIFT_MS = 24_000
 
 const load = (src: string) =>
   new Promise<HTMLImageElement | null>((resolve) => {
@@ -30,6 +32,14 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
   // The album background switch, for the themes that offer it (the others decide it themselves).
   const p = usePrefs()
   const shown = p.backdrop || !themeInfo(p).albumBackground
+  // The drift moves for a while after the picture changes, then rests (see index.css).
+  const picture = `${key}#${focus ?? ''}`
+  const [rested, setRested] = useState('')
+  const drift = rested !== picture
+  useEffect(() => {
+    const t = window.setTimeout(() => setRested(picture), DRIFT_MS)
+    return () => window.clearTimeout(t)
+  }, [picture])
 
   useEffect(() => {
     if (!covers.length || !canvas.current) return
@@ -56,6 +66,7 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
   return (
     <div
       aria-hidden
+      data-drift={drift ? 'on' : undefined}
       className="pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-500"
       style={{ opacity: shown ? 'var(--backdrop-opacity)' : 0, filter: 'var(--backdrop-filter)' }}
     >
@@ -65,6 +76,7 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
         height={H}
         className="backdrop-drift absolute inset-0 h-full w-full transition-opacity duration-[1400ms]"
         style={{ opacity: ready && !focus ? 1 : 0 }}
+        data-faded={ready && !focus ? undefined : ''}
       />
       <Focus src={focus ?? null} />
       <div
@@ -112,6 +124,7 @@ function Focus({ src }: { src: string | null }) {
           }}
           className="backdrop-drift absolute inset-0 h-full w-full transition-opacity duration-700"
           style={{ opacity: src && i === layers.length - 1 ? 0.85 : 0 }}
+          data-faded={src && i === layers.length - 1 ? undefined : ''}
         />
       ))}
     </>

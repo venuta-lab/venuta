@@ -290,3 +290,79 @@ fn crossfade_overlaps_the_songs_by_exactly_the_fade() {
     let mid = v[20_000 - fade / 2];
     assert!(mid > 10_000 && mid < 30_000, "{mid}");
 }
+
+/// Reports that arrive within `window`.
+fn drain(
+    rx: &std::sync::mpsc::Receiver<Status<PathBuf>>,
+    window: Duration,
+) -> Vec<Status<PathBuf>> {
+    let until = Instant::now() + window;
+    let mut out = Vec::new();
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(left) {
+            Ok(s) => out.push(s),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+#[test]
+fn a_paused_player_says_nothing_until_something_changes() {
+    let dir = tempdir();
+    let song = dir.join("a.wav");
+    wav(&song, 44_100, 16, 2, 44_100 * 3, pattern(1, 16));
+    let (tx, rx) = channel::<Status<PathBuf>>();
+    let player = Player::spawn(
+        OutputChoice::Memory(Arc::new(Mutex::new(Captured::default()))),
+        move |s| {
+            let _ = tx.send(s);
+        },
+    );
+    player.send(Cmd::Set {
+        items: vec![song],
+        index: 0,
+        start_ms: 0,
+        play: false,
+        from: String::new(),
+    });
+    // Loading is reported; then the player rests.
+    assert!(
+        !drain(&rx, Duration::from_millis(400)).is_empty(),
+        "loading is reported"
+    );
+    let quiet = drain(&rx, Duration::from_millis(1500));
+    assert!(
+        quiet.is_empty(),
+        "{} reports while nothing changed",
+        quiet.len()
+    );
+
+    // Anything asked of it is answered at once, even when nothing changes (a window that has
+    // just opened asks for the state this way).
+    player.send(Cmd::Refresh);
+    let answer = drain(&rx, Duration::from_millis(300));
+    assert_eq!(answer.len(), 1, "one report for one request");
+    assert!(answer[0].queue.is_some(), "with the queue");
+
+    // Playing is reported as it moves, and so is the end (memory plays faster than real time);
+    // then the player rests again.
+    player.send(Cmd::Play);
+    let playing = drain(&rx, Duration::from_millis(1000));
+    let seen: Vec<(bool, u64)> = playing.iter().map(|s| (s.playing, s.position_ms)).collect();
+    assert!(
+        seen.first().is_some_and(|s| s.0),
+        "playing is reported: {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|s| s.0 && s.1 > 0),
+        "the position moves: {seen:?}"
+    );
+    assert!(
+        seen.last().is_some_and(|s| !s.0),
+        "the end is reported: {seen:?}"
+    );
+    let after = drain(&rx, Duration::from_millis(1000));
+    assert!(after.is_empty(), "{} reports after the end", after.len());
+    drop(player);
+}

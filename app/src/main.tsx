@@ -27,6 +27,10 @@ import { BigScreen } from './components/lyrics/BigScreen'
 import { DesktopLyrics } from './components/lyrics/DesktopLyrics'
 import { applyPrefs } from './lib/prefs'
 import { watchPacks } from './lib/packs'
+import { watchAwake } from './lib/motion'
+
+// Nothing moves in a window that isn't on screen (lib/motion.ts).
+watchAwake()
 
 // Before the first paint, so the chosen theme never flashes.
 applyPrefs()

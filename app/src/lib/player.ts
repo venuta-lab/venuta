@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { editTags, inApp, type CatalogTrack, type Gain } from './engine'
 import { notify } from './notify'
+import { isAwake, onAwake } from './motion'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -121,11 +122,33 @@ let state: PlayerState = idle
 /** When the last report came (performance.now()), to tell the position between reports. */
 let reportedAt = 0
 const listeners = new Set<() => void>()
+const tell = () => listeners.forEach((l) => l())
+
+/** Everything in a report but where the song is (and the sound's levels and path, which move with it). */
+const settled = (s: PlayerState) =>
+  `${s.index}|${s.playing}|${s.duration_ms}|${s.shuffle}|${s.repeat}|${s.volume}|${s.from}|${s.error}|${s.stop_after_current}|${s.sleep_in_s}|${JSON.stringify(s.sound)}`
+
+// A window that isn't on screen (lib/motion.ts) isn't drawn: while it is away, a report that only
+// moves the position is kept (getPlayerState has it) but not told; a new song, play or pause, the
+// queue or any setting is told at once. Coming back, it catches up in one go.
+let held = false
 const set = (s: PlayerState) => {
+  const was = state
   state = s
   reportedAt = performance.now()
-  listeners.forEach((l) => l())
+  if (!isAwake() && s.queue === was.queue && settled(s) === settled(was)) {
+    held = true
+    return
+  }
+  held = false
+  tell()
 }
+onAwake(() => {
+  if (held && isAwake()) {
+    held = false
+    tell()
+  }
+})
 
 /** The player's state now, outside React. */
 export const getPlayerState = () => state

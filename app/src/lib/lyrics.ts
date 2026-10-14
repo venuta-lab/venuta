@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
 import { inApp } from './engine'
 import { usePlayerValue } from './player'
+import { useAwake } from './motion'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -127,8 +128,10 @@ export function useSmoothPosition(): number {
     at.current = { ms: reported, t: performance.now() }
     setNow(reported)
   }, [reported])
+  // Each frame only while playing and on screen (lib/motion.ts).
+  const awake = useAwake()
   useEffect(() => {
-    if (!playing) return
+    if (!playing || !awake) return
     let frame = 0
     const tick = () => {
       // Never more than a report ahead: a stall shows as a stall, not a runaway.
@@ -138,6 +141,6 @@ export function useSmoothPosition(): number {
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [playing])
+  }, [playing, awake])
   return now
 }

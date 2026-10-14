@@ -483,8 +483,20 @@ let watching = false
 export function watchPacks() {
   if (watching || !inApp()) return
   watching = true
+  // While Venuta is in front, every couple of seconds; behind another program, it rests until
+  // it comes back to the front (and looks at once then: that is when a theme edited elsewhere
+  // is wanted).
+  let timer = 0
+  window.addEventListener('focus', () => {
+    window.clearTimeout(timer)
+    void tick()
+  })
+  let busy = false
   const tick = async () => {
-    if (document.visibilityState === 'visible') {
+    if (busy) return
+    if (!document.hasFocus()) return
+    busy = true
+    try {
       const s = await invoke<number>('themes_stamp').catch(() => stamp)
       if (stamp !== -1 && s !== stamp) {
         await loadPacks()
@@ -498,8 +510,11 @@ export function watchPacks() {
         }
       }
       stamp = s
+    } finally {
+      busy = false
     }
-    window.setTimeout(tick, 2000)
+    window.clearTimeout(timer)
+    timer = window.setTimeout(tick, 2000)
   }
   void tick()
 }

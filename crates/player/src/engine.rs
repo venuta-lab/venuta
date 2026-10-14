@@ -95,7 +95,7 @@ pub enum Cmd<T> {
 }
 
 /// Where the sound is going and what happens on the way.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Signal {
     pub device: String,
     pub mode: Mode,
@@ -133,6 +133,45 @@ pub struct Status<T: Serialize> {
     pub sleep_in_s: Option<u64>,
     /// Band levels of what's playing, 0-255 (see `spectrum`), while asked for and playing.
     pub bands: Option<Vec<u8>>,
+}
+
+/// What the last report said, apart from the queue and the band levels (which only come with a
+/// change, or while playing): a report that would repeat it word for word is not sent.
+#[derive(PartialEq)]
+struct Said {
+    index: Option<usize>,
+    playing: bool,
+    position_ms: u64,
+    duration_ms: u64,
+    shuffle: bool,
+    repeat: Repeat,
+    volume: f32,
+    signal: Option<Signal>,
+    from: String,
+    error: String,
+    sound: Sound,
+    stop_after_current: bool,
+    sleep_in_s: Option<u64>,
+}
+
+impl Said {
+    fn of<T: Serialize>(s: &Status<T>) -> Self {
+        Self {
+            index: s.index,
+            playing: s.playing,
+            position_ms: s.position_ms,
+            duration_ms: s.duration_ms,
+            shuffle: s.shuffle,
+            repeat: s.repeat,
+            volume: s.volume,
+            signal: s.signal.clone(),
+            from: s.from.clone(),
+            error: s.error.clone(),
+            sound: s.sound.clone(),
+            stop_after_current: s.stop_after_current,
+            sleep_in_s: s.sleep_in_s,
+        }
+    }
 }
 
 pub struct Player<T> {
@@ -215,6 +254,8 @@ struct Engine<T: Item + Serialize> {
     segs: VecDeque<Segment>,
     on_status: Box<dyn FnMut(Status<T>) + Send>,
     last_status: Instant,
+    /// What the last report said (see `Said`).
+    said: Option<Said>,
     paused_at: Option<Instant>,
     sound: Sound,
     stop_after_current: bool,
@@ -246,6 +287,7 @@ impl<T: Item + Serialize> Engine<T> {
             segs: VecDeque::new(),
             on_status,
             last_status: Instant::now(),
+            said: None,
             paused_at: None,
             sound: Sound::default(),
             stop_after_current: false,
@@ -886,6 +928,14 @@ impl<T: Item + Serialize> Engine<T> {
                 crate::spectrum::levels(self.recent.make_contiguous(), rate)
             }),
         };
+        // The regular report, when it would only repeat the last one (paused, or nothing loaded),
+        // is not sent: every window would otherwise redraw several times a second for nothing.
+        // A command always gets its answer (`now`), and so does a new queue.
+        let said = Said::of(&status);
+        if !now && status.queue.is_none() && self.said.as_ref() == Some(&said) {
+            return;
+        }
+        self.said = Some(said);
         self.queue_changed = false;
         (self.on_status)(status);
     }

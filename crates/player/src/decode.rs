@@ -28,7 +28,7 @@ pub struct SourceFormat {
 }
 
 /// About the file itself (not its sound): for the audio info.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct FileInfo {
     pub size_bytes: u64,
     /// Average bitrate over the whole file, in kbit/s.

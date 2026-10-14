@@ -156,8 +156,13 @@ pub async fn desktop_lyrics(
     let w = b.build().map_err(|e| e.to_string())?;
     let _ = w.set_ignore_cursor_events(locked);
     crate::app_icon::apply(&app);
+    // Their buttons light up in every window (they go out in desktop::on_window_event).
+    let _ = app.emit(DESKTOP_LYRICS_EVENT, true);
     Ok(())
 }
+
+/// Told to every window when the desktop lyrics come (true) or go (false), however that happened.
+pub const DESKTOP_LYRICS_EVENT: &str = "venuta://desktop-lyrics";
 
 /// Locked, clicks go through the desktop lyrics to what is under them; unlocked, they can be
 /// dragged, sized and changed.

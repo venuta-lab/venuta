@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { useThemeInfo } from '../../lib/prefs'
 import type { SeekBar as BarDesign } from '../../lib/themes'
@@ -225,8 +225,22 @@ export function SeekBar(props: { position: number; duration: number; className?:
     if (!r || !props.duration) return 0
     return Math.min(1, Math.max(0, (x - r.left) / r.width)) * props.duration
   }
+  // The bar's width in device pixels: the playhead moves a pixel at a time, so it is drawn again
+  // only when it reaches the next one (a song's playhead crawls a few pixels a second; the
+  // player reports ten times a second).
+  const [px, setPx] = useState(0)
+  useLayoutEffect(() => {
+    const el = bar.current
+    if (!el) return
+    const read = () => setPx(Math.round(el.getBoundingClientRect().width * window.devicePixelRatio))
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const shown = drag ?? props.position
-  const pct = props.duration ? Math.min(100, (shown / props.duration) * 100) : 0
+  const exact = props.duration ? Math.min(100, (shown / props.duration) * 100) : 0
+  const pct = drag !== null || px < 2 ? exact : (Math.round((exact / 100) * px) / px) * 100
   return (
     <div className={`flex items-center gap-3 text-[11.5px] tabular-nums text-ink/55 ${props.className ?? ''}`}>
       <span className="readout w-10 text-right">{clock(shown)}</span>

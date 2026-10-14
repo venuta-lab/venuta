@@ -2,6 +2,7 @@
 // lyrics (the lines alone, floating over everything), each its own window.
 
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useEffect, useState } from 'react'
 import { inApp } from './engine'
 
@@ -59,9 +60,9 @@ export const closeDesktopLyrics = () => told(invoke<void>('desktop_lyrics', { op
 export const desktopLyricsOpen = () => (inApp() ? invoke<boolean>('desktop_lyrics_open') : Promise.resolve(false))
 
 /**
- * Whether the desktop lyrics are showing: asked when this mounts, after a toggle here, when
- * the window comes back to the front, and every couple of seconds (the tray, the shortcut and
- * the lyrics' own Close change it too).
+ * Whether the desktop lyrics are showing: asked when this mounts, after a toggle here and when
+ * the window comes back to the front, and told by the engine whenever they come or go (the
+ * tray, the shortcut and the lyrics' own Close change it too).
  */
 export function useDesktopLyricsShown(): boolean {
   const [shown, setShown] = useState(false)
@@ -69,12 +70,12 @@ export function useDesktopLyricsShown(): boolean {
     let live = true
     const ask = () => void desktopLyricsOpen().then((v) => live && setShown(v), () => {})
     ask()
-    const every = window.setInterval(ask, 2000)
+    const heard = inApp() ? listen<boolean>('venuta://desktop-lyrics', (e) => live && setShown(e.payload)) : null
     window.addEventListener(SHOWN, ask)
     window.addEventListener('focus', ask)
     return () => {
       live = false
-      window.clearInterval(every)
+      void heard?.then((off) => off())
       window.removeEventListener(SHOWN, ask)
       window.removeEventListener('focus', ask)
     }

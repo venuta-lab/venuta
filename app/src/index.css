@@ -275,10 +275,24 @@ kbd {
   }
 }
 
+/* The drift moves for a while after the backdrop changes (a new song, a new cover; Backdrop sets
+   data-drift), then rests where it is: a still background is what's on screen most of the time,
+   and each frame of drift re-blurs every glass panel over it. */
 .backdrop-drift {
   transform: scale(1.25);
   animation: backdrop-drift 90s ease-in-out infinite;
+  animation-play-state: paused;
   will-change: transform;
+}
+[data-drift="on"] .backdrop-drift:not([data-faded]) {
+  animation-play-state: running;
+}
+
+/* A window that isn't on screen (minimised, in the tray; lib/motion.ts) moves nothing at all. */
+:root[data-awake="no"] *,
+:root[data-awake="no"] *::before,
+:root[data-awake="no"] *::after {
+  animation-play-state: paused !important;
 }
 
 /* data-motion is "reduced" when Venuta, or Windows under "Match Windows", asks for stillness. */
