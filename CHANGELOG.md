@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.1.1 (2026-10-14)
 
 - **Themes anyone can make.** The Theme Studio (Settings, Look and feel, New theme) makes a
   theme from the theme in use, the album playing, or a few colours, with the whole app as the
