@@ -16,6 +16,7 @@ import { ACCENTS, STYLES, accentRoles, colourDistance, styleInfo, type StyleInfo
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
+import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { takeSettingsSection, type SettingsPage } from './settingsPage'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
@@ -257,6 +258,53 @@ function AccentPreview() {
   )
 }
 
+/** Which of Venuta's icons is on the taskbar, the tray, the windows and the shortcuts. */
+function AppIconPicker() {
+  const id = useAppIcon()
+  const [error, setError] = useState('')
+  const pick = (next: string) => {
+    setError('')
+    chooseAppIcon(next).catch((e) => setError(`Couldn't change the icon: ${String(e)}`))
+  }
+  const name = APP_ICONS.find((i) => i.id === id)?.name ?? ''
+  return (
+    <div className="border-b border-edge py-5">
+      <div className="flex items-baseline gap-3">
+        <div className="text-[14px] font-medium">App icon</div>
+        <div className="text-[12.5px] text-ink/55">{name}</div>
+      </div>
+      <div className="mt-0.5 max-w-[70ch] text-[12.5px] leading-relaxed text-ink/55">
+        On the taskbar, the tray, the windows and the shortcuts that open Venuta. The program file itself keeps Dusk glass.
+      </div>
+      <div role="radiogroup" aria-label="App icon" className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(68px,1fr))] gap-2.5">
+        {APP_ICONS.map((icon) => {
+          const on = icon.id === id
+          return (
+            <button
+              key={icon.id}
+              role="radio"
+              aria-checked={on}
+              aria-label={icon.name}
+              title={icon.id === DEFAULT_ICON ? `${icon.name} (the default)` : icon.name}
+              onClick={() => pick(icon.id)}
+              className="group relative aspect-square rounded-[18px] p-1 transition-transform duration-150 hover:-translate-y-0.5"
+              style={{ boxShadow: on ? '0 0 0 2.5px var(--accent)' : undefined }}
+            >
+              <img src={iconSrc(icon.id)} alt="" loading="lazy" className="h-full w-full rounded-[14px] object-cover shadow-md shadow-black/30" draggable={false} />
+              {icon.id === DEFAULT_ICON && (
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-[var(--glass)] px-1.5 text-[10px] font-medium text-ink/70 shadow-[inset_0_0_0_1px_var(--edge)]">
+                  Default
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+      {error && <p className="mt-2 text-[12.5px] text-problem">{error}</p>}
+    </div>
+  )
+}
+
 function LookAndFeel() {
   const p = usePrefs()
   const set = (c: Partial<Prefs>) => setPrefs(c)
@@ -273,6 +321,8 @@ function LookAndFeel() {
         ))}
       </div>
       <p className="mt-3 text-[12.5px] leading-relaxed text-ink/55">{info.line}</p>
+
+      <AppIconPicker />
 
       {info.modes && (
         <Row title={p.style === 'bounty' ? 'Session' : 'Mode'} hint={p.style === 'bounty' ? 'Day is ink on paper; night is paper on ink.' : undefined}>

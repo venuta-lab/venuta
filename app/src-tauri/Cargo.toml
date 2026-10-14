@@ -24,7 +24,7 @@ ureq.workspace = true
 blake3.workspace = true
 walkdir.workspace = true
 urlencoding.workspace = true
-tauri = { version = "2.12.3", features = ["protocol-asset", "tray-icon"] }
+tauri = { version = "2.12.3", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.8"
 souvlaki = "0.8"
 tauri-plugin-single-instance = "2"
@@ -33,6 +33,11 @@ tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 tauri-plugin-global-shortcut = "2"
+image = { workspace = true, features = ["ico"] }
+
+[target.'cfg(windows)'.dependencies]
+# The app icon you choose, on the shortcuts that open Venuta.
+windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile.workspace = true

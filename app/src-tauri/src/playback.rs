@@ -270,6 +270,7 @@ impl Playback {
 
     /// For the tray: play or pause, next, previous.
     pub fn toggle(&self) {
+        note_play("play or pause", "the tray");
         let _ = self.send(Cmd::Toggle);
     }
     pub fn next(&self) {
@@ -277,6 +278,29 @@ impl Playback {
     }
     pub fn previous(&self) {
         let _ = self.send(Cmd::Previous);
+    }
+}
+
+/// What asked to play, kept in `<data>/logs/playback.log` (newest last, trimmed as it grows), so a
+/// song that starts by itself can be traced to whatever started it.
+pub fn note_play(what: &str, from: &str) {
+    use std::io::Write;
+    let dir = engine::paths::app_data_dir().join("logs");
+    let path = dir.join("playback.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 256 * 1024) {
+        let _ = std::fs::rename(&path, dir.join("playback.old.log"));
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let _ = writeln!(f, "{at} {what} from {from}");
     }
 }
 
@@ -312,10 +336,21 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                 }
             };
             let _ = controls.attach(move |e| match e {
+                MediaControlEvent::Play | MediaControlEvent::Toggle
+                    if !live_events.load(std::sync::atomic::Ordering::Relaxed) =>
+                {
+                    note_play("ignored (nothing played yet)", "Windows media controls")
+                }
                 _ if !live_events.load(std::sync::atomic::Ordering::Relaxed) => {}
-                MediaControlEvent::Play => send(Cmd::Play),
+                MediaControlEvent::Play => {
+                    note_play("play", "Windows media controls");
+                    send(Cmd::Play)
+                }
                 MediaControlEvent::Pause => send(Cmd::Pause),
-                MediaControlEvent::Toggle => send(Cmd::Toggle),
+                MediaControlEvent::Toggle => {
+                    note_play("play or pause", "Windows media controls");
+                    send(Cmd::Toggle)
+                }
                 MediaControlEvent::Next => send(Cmd::Next),
                 MediaControlEvent::Previous => send(Cmd::Previous),
                 MediaControlEvent::Stop => send(Cmd::Pause),
@@ -561,7 +596,9 @@ pub fn player_play(
     index: usize,
     from: String,
     pb: State<'_, Playback>,
+    window: tauri::Window,
 ) -> Result<(), String> {
+    note_play("play a list", &format!("the {} window", window.label()));
     *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
     pb.send(Cmd::Set {
         items: resolve(&root, items),
@@ -588,7 +625,8 @@ pub fn player_follow(
 }
 
 #[tauri::command]
-pub fn player_toggle(pb: State<'_, Playback>) -> Result<(), String> {
+pub fn player_toggle(pb: State<'_, Playback>, window: tauri::Window) -> Result<(), String> {
+    note_play("play or pause", &format!("the {} window", window.label()));
     pb.send(Cmd::Toggle)
 }
 
@@ -627,7 +665,12 @@ pub fn player_enqueue(
     items: Vec<QueueItem>,
     next: bool,
     pb: State<'_, Playback>,
+    window: tauri::Window,
 ) -> Result<(), String> {
+    note_play(
+        "add to the queue",
+        &format!("the {} window", window.label()),
+    );
     if let Ok(mut r) = pb.root.lock()
         && r.is_empty()
     {
@@ -650,7 +693,12 @@ pub fn player_move(from: usize, to: usize, pb: State<'_, Playback>) -> Result<()
 }
 
 #[tauri::command]
-pub fn player_jump(index: usize, pb: State<'_, Playback>) -> Result<(), String> {
+pub fn player_jump(
+    index: usize,
+    pb: State<'_, Playback>,
+    window: tauri::Window,
+) -> Result<(), String> {
+    note_play("jump to a song", &format!("the {} window", window.label()));
     pb.send(Cmd::Jump(index))
 }
 
@@ -964,6 +1012,7 @@ pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String
                 b = b.position(x, y);
             }
             b.build().map_err(|e| e.to_string())?;
+            crate::app_icon::apply(&app);
         }
         if let Some(m) = main {
             let _ = m.minimize();

@@ -77,6 +77,7 @@ pub async fn lyrics_stage(
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
+    crate::app_icon::apply(&app);
     // Placed in the screen's own pixels (screens can scale differently), then made full.
     if let Some(m) = target {
         let p = m.position();
@@ -154,6 +155,7 @@ pub async fn desktop_lyrics(
     }
     let w = b.build().map_err(|e| e.to_string())?;
     let _ = w.set_ignore_cursor_events(locked);
+    crate::app_icon::apply(&app);
     Ok(())
 }
 

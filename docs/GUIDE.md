@@ -37,6 +37,10 @@ FLAC or AAC for players that need it; a gift card adds a tracklist and a list of
 **Activity** lists every build, edit, timing and answer, each with Undo. **Settings** holds the
 look, startup and the tray, folders, online sources and keys, safety, and updates.
 
+**The app icon** is yours to choose: Settings, Look and feel, App icon offers the Venuta mark (a V
+with a peacock feather and a flute's holes) in 33 materials. Your choice is on the taskbar, the
+tray, the windows and the shortcuts that open Venuta; the program file keeps Dusk glass.
+
 ## Lyrics
 
 - **In Now Playing**, synced lyrics follow the song; click a line to jump to it.

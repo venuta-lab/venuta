@@ -19,6 +19,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 mod accounts;
+mod app_icon;
 mod desktop;
 mod libcache;
 mod listening;
@@ -2368,6 +2369,8 @@ pub fn run() {
             if let Err(e) = desktop::tray(app.handle()) {
                 eprintln!("tray: {e}");
             }
+            // The icon chosen in Settings, on the window and the tray.
+            app_icon::apply(app.handle());
             // Ctrl+Shift+D shows or hides the desktop lyrics from anywhere. Another program
             // (or a second copy of Venuta) may have it already: then only the tray does.
             {
@@ -2453,6 +2456,8 @@ pub fn run() {
             list_edits,
             undo_edit,
             save_synced_lyrics,
+            app_icon::app_icon,
+            app_icon::set_app_icon,
             show_in_folder,
             get_aliases,
             save_aliases,

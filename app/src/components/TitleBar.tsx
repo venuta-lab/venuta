@@ -3,11 +3,13 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 import { inApp } from '../lib/engine'
 import { ActivityIndicator } from './Activity'
+import { iconSrc, useAppIcon } from '../lib/appIcons'
 import { IconSearch } from './Icons'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
 export function TitleBar(props: { onPalette: () => void }) {
   const win = inApp() ? getCurrentWindow() : null
+  const icon = useAppIcon()
   // A copy for testing, beside the one in use: never mistaken for it.
   const [test, setTest] = useState(false)
   useEffect(() => {
@@ -15,6 +17,7 @@ export function TitleBar(props: { onPalette: () => void }) {
   }, [])
   return (
     <div data-tauri-drag-region className="relative z-30 flex h-10 shrink-0 items-center pl-5">
+      <img data-tauri-drag-region src={iconSrc(icon)} alt="" className="mr-2 h-[18px] w-[18px] rounded-[5px]" draggable={false} />
       <span data-tauri-drag-region className="text-[13px] font-medium tracking-tight text-ink/70">
         Venuta
       </span>

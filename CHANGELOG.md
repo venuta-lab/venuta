@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+- **A logo**: the Venuta mark, a V with a peacock feather and a flute's holes, on the program,
+  the installer and the title bar.
+- **Choose the app icon** in Settings, Look and feel: 33 materials, on the taskbar, the tray, the
+  windows and the shortcuts that open Venuta.
+- Every request to play is noted in `.venuta/logs/playback.log` (what asked, and from where), to
+  find out what started a song nobody pressed play on.
+
 ## 0.1.0 (2026-10-14)
 
 The first tagged version.
