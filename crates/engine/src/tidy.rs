@@ -73,6 +73,10 @@ enum Entry {
         from: String,
         to: String,
     },
+    /// A file the run made (a .lrc written from the lyrics tag); undo removes it.
+    Create {
+        file: String,
+    },
     Failed {
         file: String,
         message: String,
@@ -149,8 +153,11 @@ pub fn preview(root: &Path, plan: &Plan) -> TidyPreview {
         // A different file already where a song would go (and not itself moving away).
         let blocked = a.tracks.iter().find_map(|t| {
             let dst = track_dest(root, a, t);
-            (moves(root, a, t) && dst.exists() && !sources.contains(&dst))
-                .then(|| format!("{} is already taken by another file.", relative(root, &dst)))
+            (moves(root, a, t)
+                && dst.exists()
+                && !sources.contains(&dst)
+                && !same_file(&root.join(&t.source), &dst))
+            .then(|| format!("{} is already taken by another file.", relative(root, &dst)))
         });
         let fields: Vec<String> = a
             .changes
@@ -194,9 +201,8 @@ struct Journal {
 }
 
 impl Journal {
-    fn create() -> Result<Self, String> {
-        let dir = journal_dir();
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fn create(dir: &Path) -> Result<Self, String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -224,15 +230,49 @@ impl Journal {
     }
 }
 
+/// Whether two paths are the same file on disk (Windows names ignore case: "a.flac" and
+/// "A.flac" are one file).
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+}
+
+/// Move a file, never over another one: a rename that would replace a file fails instead
+/// (`std::fs::rename` replaces silently). Changing only the case of a name is allowed.
 fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.symlink_metadata().is_ok() && !same_file(from, to) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} is already taken by another file", to.display()),
+        ));
+    }
     if let Some(p) = to.parent() {
         std::fs::create_dir_all(p)?;
     }
     std::fs::rename(from, to)
 }
 
+/// Where a song waits between leaving its name and taking its new one, so songs can trade
+/// places ("01 - A" and "02 - B" the wrong way round) without one landing on the other.
+fn waiting_name(src: &Path, n: usize) -> PathBuf {
+    let mut s = src.as_os_str().to_owned();
+    s.push(format!(".venuta-moving-{n}"));
+    PathBuf::from(s)
+}
+
 /// Tidy the chosen albums (all of them when `only` is empty).
 pub fn apply(
+    root: &Path,
+    plan: &Plan,
+    only: &[String],
+    progress: &ApplyProgress,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<TidyReport, String> {
+    apply_in(&journal_dir(), root, plan, only, progress, on_progress)
+}
+
+/// [`apply`], journaling in `journals`.
+pub fn apply_in(
+    journals: &Path,
     root: &Path,
     plan: &Plan,
     only: &[String],
@@ -257,7 +297,7 @@ pub fn apply(
     progress.done.store(0, Ordering::Relaxed);
     on_progress(0, total);
 
-    let journal = Journal::create()?;
+    let journal = Journal::create(journals)?;
     journal.record(&Entry::Begin {
         root: root.to_string_lossy().replace('\\', "/"),
         albums: albums.len(),
@@ -269,6 +309,30 @@ pub fn apply(
     };
     let mut left_dirs: BTreeMap<PathBuf, ()> = BTreeMap::new();
     let mut done = 0;
+    // A song's lyrics tag written out as a .lrc beside it (where it now is), when the plan
+    // says so and there isn't one: journaled, and written whole or not at all.
+    let written_lrc = |t: &crate::plan::TrackPlan, at: &Path| {
+        let Some((_, l)) = t
+            .tags_after
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("LYRICS"))
+        else {
+            return;
+        };
+        let to = at.with_extension("lrc");
+        if !t.write_lrc || to.exists() {
+            return;
+        }
+        journal.record(&Entry::Create {
+            file: relative(root, &to),
+        });
+        let mut part = to.as_os_str().to_owned();
+        part.push(".vpart");
+        let part = PathBuf::from(part);
+        if std::fs::write(&part, clean_lrc(l)).is_ok() && rename(&part, &to).is_err() {
+            let _ = std::fs::remove_file(&part);
+        }
+    };
     for a in albums {
         if progress.cancel.load(Ordering::Relaxed) {
             report.cancelled = true;
@@ -287,6 +351,7 @@ pub fn apply(
         };
         let mut handled: HashSet<PathBuf> = HashSet::new();
         let mut target_dirs: HashMap<PathBuf, usize> = HashMap::new();
+        let mut moving = Vec::new();
         for t in &a.tracks {
             let src = root.join(&t.source);
             let (dst, dst_rel) = destination(root, a, &t.target);
@@ -314,51 +379,70 @@ pub fn apply(
                     Err(e) => fail(&mut report, &t.source, e),
                 }
             }
-            // 2. The file itself, and its lyrics file beside it.
             if src != dst {
-                journal.record(&Entry::Move {
-                    from: t.source.clone(),
-                    to: dst_rel.clone(),
-                });
-                match rename(&src, &dst) {
-                    Ok(()) => {
-                        report.moved += 1;
-                        if let Some(p) = src.parent() {
-                            left_dirs.insert(p.to_path_buf(), ());
-                        }
-                        let lrc = src.with_extension("lrc");
-                        handled.insert(lrc.clone());
-                        if lrc.exists() && !dst.with_extension("lrc").exists() {
-                            let to = dst.with_extension("lrc");
-                            journal.record(&Entry::Move {
-                                from: relative(root, &lrc),
-                                to: relative(root, &to),
-                            });
-                            if let Err(e) = rename(&lrc, &to) {
-                                fail(&mut report, &relative(root, &lrc), e.to_string());
-                            }
-                        }
-                    }
-                    Err(e) => fail(&mut report, &t.source, format!("move: {e}")),
+                moving.push((t, src.clone(), dst, dst_rel));
+            } else {
+                written_lrc(t, &dst);
+                if let Some(p) = dst.parent() {
+                    *target_dirs.entry(p.to_path_buf()).or_default() += 1;
                 }
-            }
-            if t.write_lrc
-                && let Some((_, l)) = t
-                    .tags_after
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("LYRICS"))
-            {
-                let to = dst.with_extension("lrc");
-                if !to.exists() {
-                    let _ = std::fs::write(&to, clean_lrc(l));
-                }
-            }
-            if let Some(p) = dst.parent() {
-                *target_dirs.entry(p.to_path_buf()).or_default() += 1;
             }
             done += 1;
             progress.done.store(done, Ordering::Relaxed);
             on_progress(done, total);
+        }
+        // 2. The files themselves, in two steps: every moving song first steps aside to a
+        // waiting name beside itself, then goes to its place. Songs trading names never land
+        // on each other, and nothing is ever replaced (a taken place sends the song back).
+        let mut waiting = Vec::new();
+        for (i, (t, src, dst, dst_rel)) in moving.into_iter().enumerate() {
+            let wait = waiting_name(&src, i);
+            journal.record(&Entry::Move {
+                from: t.source.clone(),
+                to: relative(root, &wait),
+            });
+            match rename(&src, &wait) {
+                Ok(()) => waiting.push((t, src, wait, dst, dst_rel)),
+                Err(e) => fail(&mut report, &t.source, format!("move: {e}")),
+            }
+        }
+        for (t, src, wait, dst, dst_rel) in waiting {
+            journal.record(&Entry::Move {
+                from: relative(root, &wait),
+                to: dst_rel.clone(),
+            });
+            if let Err(e) = rename(&wait, &dst) {
+                fail(&mut report, &t.source, format!("move: {e}"));
+                journal.record(&Entry::Move {
+                    from: relative(root, &wait),
+                    to: t.source.clone(),
+                });
+                if let Err(back) = rename(&wait, &src) {
+                    fail(&mut report, &t.source, format!("putting it back: {back}"));
+                }
+                continue;
+            }
+            report.moved += 1;
+            if let Some(p) = src.parent() {
+                left_dirs.insert(p.to_path_buf(), ());
+            }
+            // Its lyrics file goes with it.
+            let lrc = src.with_extension("lrc");
+            handled.insert(lrc.clone());
+            let to = dst.with_extension("lrc");
+            if lrc.exists() && !to.exists() {
+                journal.record(&Entry::Move {
+                    from: relative(root, &lrc),
+                    to: relative(root, &to),
+                });
+                if let Err(e) = rename(&lrc, &to) {
+                    fail(&mut report, &relative(root, &lrc), e.to_string());
+                }
+            }
+            written_lrc(t, &dst);
+            if let Some(p) = dst.parent() {
+                *target_dirs.entry(p.to_path_buf()).or_default() += 1;
+            }
         }
         // 3. What else was in the album's folder (covers, booklets) goes where most songs went.
         let src_dir = root.join(&a.source_dir);
@@ -446,6 +530,11 @@ pub fn undo(journal: &Path) -> Result<usize, String> {
                     }
                 }
             }
+            Entry::Create { file } => {
+                if std::fs::remove_file(resolve(&root, file)).is_ok() {
+                    undone += 1;
+                }
+            }
             Entry::Retag { file, before } => {
                 let p = resolve(&root, file);
                 // A run cut short mid-write leaves its working copy; the original was untouched.
@@ -479,6 +568,126 @@ pub fn undo(journal: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::{AlbumAction, ArtPlan, Confidence, TrackPlan};
+
+    fn track(source: &str, target: &str) -> TrackPlan {
+        TrackPlan {
+            file_id: 0,
+            source: source.into(),
+            target: target.into(),
+            tags_before: vec![],
+            tags_after: vec![],
+            embed_lyrics_from: None,
+            write_lrc: false,
+            copy_lrc_from: None,
+        }
+    }
+
+    fn album(tracks: Vec<TrackPlan>) -> AlbumPlan {
+        AlbumPlan {
+            id: "A".into(),
+            source_dir: "A".into(),
+            cover: "A".into(),
+            waiting_on: vec![],
+            year_conflict: None,
+            year_auto: None,
+            title: "A".into(),
+            album_artist: "X".into(),
+            target_dir: "A".into(),
+            legacy_id: None,
+            action: AlbumAction::Migrate,
+            confidence: Confidence::High,
+            notes: vec![],
+            changes: vec![],
+            art: ArtPlan::Keep,
+            cover_from: None,
+            cover_url: None,
+            tracks,
+        }
+    }
+
+    #[test]
+    fn songs_trading_names_both_survive_and_undo_puts_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, journals) = (dir.path().join("Music"), dir.path().join("journal"));
+        std::fs::create_dir_all(root.join("A")).unwrap();
+        // Named the wrong way round: "01 - A" holds song B and "02 - B" holds song A.
+        std::fs::write(root.join("A/01 - A.flac"), b"song B").unwrap();
+        std::fs::write(root.join("A/02 - B.flac"), b"song A").unwrap();
+        let plan = Plan {
+            albums: vec![album(vec![
+                track("A/01 - A.flac", "A/02 - B.flac"),
+                track("A/02 - B.flac", "A/01 - A.flac"),
+            ])],
+            ..Default::default()
+        };
+        assert!(preview(&root, &plan).albums[0].blocked.is_none());
+        let r = apply_in(
+            &journals,
+            &root,
+            &plan,
+            &[],
+            &ApplyProgress::default(),
+            &|_, _| {},
+        )
+        .unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(
+            std::fs::read(root.join("A/02 - B.flac")).unwrap(),
+            b"song B"
+        );
+        assert_eq!(
+            std::fs::read(root.join("A/01 - A.flac")).unwrap(),
+            b"song A"
+        );
+        undo(Path::new(&r.journal)).unwrap();
+        assert_eq!(
+            std::fs::read(root.join("A/01 - A.flac")).unwrap(),
+            b"song B"
+        );
+        assert_eq!(
+            std::fs::read(root.join("A/02 - B.flac")).unwrap(),
+            b"song A"
+        );
+        assert_eq!(
+            std::fs::read_dir(root.join("A")).unwrap().count(),
+            2,
+            "no waiting names left"
+        );
+    }
+
+    #[test]
+    fn a_taken_place_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, journals) = (dir.path().join("Music"), dir.path().join("journal"));
+        std::fs::create_dir_all(root.join("A")).unwrap();
+        std::fs::write(root.join("A/x.flac"), b"mine").unwrap();
+        std::fs::write(root.join("A/y.flac"), b"someone else's").unwrap();
+        // Another file already holds the place the song would go.
+        let plan = Plan {
+            albums: vec![album(vec![track("A/x.flac", "A/y.flac")])],
+            ..Default::default()
+        };
+        let r = apply_in(
+            &journals,
+            &root,
+            &plan,
+            &[],
+            &ApplyProgress::default(),
+            &|_, _| {},
+        )
+        .unwrap();
+        assert_eq!(r.moved, 0);
+        assert_eq!(
+            std::fs::read(root.join("A/x.flac")).unwrap(),
+            b"mine",
+            "back where it was"
+        );
+        assert_eq!(
+            std::fs::read(root.join("A/y.flac")).unwrap(),
+            b"someone else's"
+        );
+    }
 
     #[test]
     fn journal_paths_round_trip_inside_and_beside_the_music() {

@@ -349,8 +349,16 @@ impl AlbumCtx<'_> {
                 .and_then(|f| f.sync_all())
                 .map_err(|e| format!("flush: {e}"))
         });
-        let result =
-            result.and_then(|()| std::fs::rename(&part, &dst).map_err(|e| format!("rename: {e}")));
+        // Never over another file (two albums planned onto one name, built side by side).
+        let result = result.and_then(|()| {
+            if dst.exists() {
+                return Err(format!(
+                    "{} is already taken by another file",
+                    dst.display()
+                ));
+            }
+            std::fs::rename(&part, &dst).map_err(|e| format!("rename: {e}"))
+        });
         if let Err(e) = result {
             let _ = std::fs::remove_file(&part);
             return Err(e);
@@ -542,23 +550,53 @@ pub fn baseline_jpeg(bytes: &[u8], max_px: u32) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Undo an apply run: delete every file it created (and folders left empty).
+/// Undo a build: what it made is set aside (never deleted, so anything changed since is kept),
+/// and folders it left empty go. Refused when the music it was built from is gone: then the
+/// build is the only copy, and undoing it would leave nothing.
 pub fn undo(journal_path: &Path) -> Result<usize, String> {
     let text = std::fs::read_to_string(journal_path).map_err(|e| e.to_string())?;
     let mut target_root: Option<PathBuf> = None;
+    let mut source_root: Option<PathBuf> = None;
     let mut created: Vec<PathBuf> = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         match serde_json::from_str::<JournalEntry>(line) {
-            Ok(JournalEntry::Begin { target, .. }) => target_root = Some(PathBuf::from(target)),
+            Ok(JournalEntry::Begin { target, source, .. }) => {
+                target_root = Some(PathBuf::from(target));
+                source_root = Some(PathBuf::from(source));
+            }
             Ok(JournalEntry::Create { path }) => created.push(PathBuf::from(path)),
             Ok(JournalEntry::Failed { .. } | JournalEntry::Finished { .. }) => {}
             Err(_) => {} // a torn last line from a crash
         }
     }
     let root = target_root.ok_or("journal has no start record")?;
+    if !source_root.as_deref().is_some_and(|s| s.is_dir()) {
+        return Err(format!(
+            "The music this was built from isn't at {} any more, so this build is now your only copy. It stays as it is.",
+            source_root.unwrap_or_default().display()
+        ));
+    }
+    let stamp = journal_path
+        .file_name()
+        .and_then(|f| f.to_string_lossy().split('-').next().map(str::to_owned))
+        .unwrap_or_default();
+    let aside = crate::paths::beside(&root, crate::paths::Helper::SetAside)
+        .join(format!("Undone build {stamp}"));
     let mut removed = 0;
     for p in created.iter().rev() {
-        if p.starts_with(&root) && p.exists() && std::fs::remove_file(p).is_ok() {
+        let Ok(rel) = p.strip_prefix(&root) else {
+            continue;
+        };
+        if !p.is_file() {
+            continue;
+        }
+        let to = aside.join(rel);
+        let moved = to
+            .parent()
+            .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+            && !to.exists()
+            && std::fs::rename(p, &to).is_ok();
+        if moved {
             removed += 1;
         }
     }

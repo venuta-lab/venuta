@@ -130,13 +130,20 @@ pub fn import(
                 }
             }
         }
-        // Leftovers in the album folder (cover.jpg, scans) move with it; then the folder goes.
+        // Leftovers in the album folder (cover.jpg, scans) move with it; then the folder goes,
+        // if that emptied it. Never a subfolder (a CD2 not imported yet) or a song: those
+        // stay to be brought in.
         let album_src = incoming.join(&album.id);
         if album.id.is_empty() {
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&album_src) {
             for e in entries.flatten() {
+                let leftover = e.file_type().is_ok_and(|t| t.is_file())
+                    && !crate::media::FileKind::from_path(&e.path()).is_audio();
+                if !leftover {
+                    continue;
+                }
                 let dst = done_dir.join(&album.id).join(e.file_name());
                 if let Some(parent) = dst.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -154,6 +161,20 @@ pub fn import(
         let _ = crate::scan(&mut idx, library_root);
     }
     Ok(report)
+}
+
+/// Copy to a working name, then rename: a copy cut short (the app closed, the drive pulled)
+/// leaves only the working file, never a broken song under the real name.
+fn copy_whole(from: &Path, to: &Path) -> Result<(), String> {
+    let mut part = to.as_os_str().to_owned();
+    part.push(".vpart");
+    let part = PathBuf::from(part);
+    let done = std::fs::copy(from, &part).and_then(|_| std::fs::rename(&part, to));
+    if let Err(e) = done {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 /// Copy dropped files or folders into the incoming folder (originals stay where they were).
@@ -177,13 +198,13 @@ pub fn add(library_root: &Path, sources: &[PathBuf]) -> Result<usize, String> {
                 if let Some(parent) = dst.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                std::fs::copy(entry.path(), &dst).map_err(|e| e.to_string())?;
+                copy_whole(entry.path(), &dst)?;
                 copied += 1;
             }
         } else {
             let dst = incoming.join(name);
             if !dst.exists() {
-                std::fs::copy(src, &dst).map_err(|e| e.to_string())?;
+                copy_whole(src, &dst)?;
                 copied += 1;
             }
         }

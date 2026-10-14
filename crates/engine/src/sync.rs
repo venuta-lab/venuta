@@ -3,7 +3,7 @@
 //! * The card says who it is: `/.venuta/card.toml` (never the drive letter).
 //! * The card remembers what it holds: `/.venuta/manifest.sqlite`, so any PC can
 //!   sync it and changes are found by content, not by FAT/exFAT's unreliable file times.
-//! * Order: clean up interrupted writes → delete → move → copy new (`.part`, flush, rename) →
+//! * Order: clean up interrupted writes → delete → move → copy new (`.vpart`, flush, rename) →
 //!   patch tags in place → sidecars. The manifest is updated after every file.
 //! * Tag-only changes rewrite just the metadata at the start of the file, inside the space
 //!   already there; the audio is never touched or re-copied.
@@ -155,7 +155,16 @@ pub fn card_config_path(card_root: &Path) -> PathBuf {
 
 pub fn read_card(card_root: &Path) -> Option<CardConfig> {
     let text = std::fs::read_to_string(card_config_path(card_root)).ok()?;
-    toml::from_str(&text).ok()
+    let cfg: CardConfig = toml::from_str(&text).ok()?;
+    // The card says where its music is and what it's called; a card is someone else's disk,
+    // so neither may point anywhere but inside it (the id also names a scratch folder here).
+    let id_ok = cfg.id.len() <= 64
+        && cfg
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let folder_ok = cfg.folder.is_empty() || crate::paths::is_inside_rel(&cfg.folder);
+    (id_ok && folder_ok).then_some(cfg)
 }
 
 /// What you choose for a card when setting it up or changing it. None: keep what it has.
@@ -398,7 +407,7 @@ fn converted(stamp: Option<&str>) -> bool {
 // --- Where things go on the card -----------------------------------------------------------
 
 /// The longest path a card file gets, counted from the card's top: FiiO's players stop at 256
-/// characters and exFAT names at 255; a few spare for the ".part" written first.
+/// characters and exFAT names at 255; a few spare for the ".vpart" written first.
 const MAX_CARD_PATH: usize = 248;
 
 /// A file or folder name every card file system and player accepts: no `\ / : * ? " < > |`
@@ -1435,7 +1444,19 @@ fn open_manifest(card_root: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn load_manifest(conn: &Connection) -> Result<HashMap<String, Held>, String> {
+/// A manifest path that stays on the card: inside its music folder, or (a gift's notes and
+/// playlists) one level up, at the card's top, when the music has a folder of its own.
+fn on_card(path: &str, in_folder: bool) -> bool {
+    let up = path
+        .strip_prefix("../")
+        .or_else(|| path.strip_prefix("..\\"));
+    match up {
+        Some(rest) => in_folder && crate::paths::is_inside_rel(rest),
+        None => crate::paths::is_inside_rel(path),
+    }
+}
+
+fn load_manifest(conn: &Connection, in_folder: bool) -> Result<HashMap<String, Held>, String> {
     let mut stmt = conn
         .prepare("SELECT path, source_size, source_mtime_ns, audio_md5, recipe FROM held")
         .map_err(|e| e.to_string())?;
@@ -1452,7 +1473,9 @@ fn load_manifest(conn: &Connection) -> Result<HashMap<String, Held>, String> {
             ))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<rusqlite::Result<_>>()
+    // A path that would leave the card is never trusted (so never deleted).
+    rows.filter(|r| r.as_ref().map_or(true, |(p, _)| on_card(p, in_folder)))
+        .collect::<rusqlite::Result<_>>()
         .map_err(|e| e.to_string())
 }
 
@@ -1531,7 +1554,7 @@ pub fn plan_in(
     let cfg = read_card(card_root).ok_or("This card isn't set up yet.")?;
     let wanted = wanted_files(index, library_root, &cfg).map_err(|e| e.to_string())?;
     let conn = open_manifest(card_root)?;
-    let held = load_manifest(&conn)?;
+    let held = load_manifest(&conn, !cfg.folder.is_empty())?;
     let music = card_root.join(&cfg.folder);
 
     let wanted_set: HashSet<&str> = wanted.iter().map(|w| w.rel.as_str()).collect();
@@ -1744,6 +1767,14 @@ pub fn run(
     let started = std::time::Instant::now();
     let music = card_root.join(&plan.card.folder);
     let conn = open_manifest(card_root)?;
+    // What Venuta put on the card: the only files it may ever replace.
+    let ours = load_manifest(&conn, !plan.card.folder.is_empty())?;
+    let foreign = |rel: &str| {
+        (music.join(rel).symlink_metadata().is_ok() && !ours.contains_key(rel)).then(|| {
+            "A file Venuta didn't put there is already in this place on the card; it was left as it is."
+                .to_owned()
+        })
+    };
     cleanup_parts(&music);
     let recipe = plan.card.player.recipe();
     let stamp = stamp_for(&plan.card);
@@ -1798,6 +1829,9 @@ pub fn run(
             } => (|| {
                 let src = music.join(from);
                 let dst = music.join(&to.rel);
+                if let Some(e) = foreign(&to.rel) {
+                    return Err(e);
+                }
                 if let Some(parent) = dst.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
@@ -1817,11 +1851,14 @@ pub fn run(
                 }
                 Ok(())
             })(),
-            Op::Copy(w) => match ahead.get(&w.rel) {
+            Op::Copy(w) => match (foreign(&w.rel), ahead.get(&w.rel)) {
+                (Some(e), _) => Err(e),
                 // Converted already: onto the card as it is.
-                Some(Ok(made)) => copy_file(made, &music.join(&w.rel)),
-                Some(Err(e)) => Err(e.clone()),
-                None => copy_for(&library_root.join(&w.src), &music.join(&w.rel), w, &recipe),
+                (None, Some(Ok(made))) => copy_file(made, &music.join(&w.rel)),
+                (None, Some(Err(e))) => Err(e.clone()),
+                (None, None) => {
+                    copy_for(&library_root.join(&w.src), &music.join(&w.rel), w, &recipe)
+                }
             }
             .and_then(|n| {
                 r.bytes_written += n;
@@ -2077,7 +2114,7 @@ fn flac_blocks(bytes: &[u8]) -> Result<(Blocks<'_>, usize), String> {
 }
 
 /// A converted card copy: 16-bit FLAC (the card's tags and cover over the new audio) or AAC.
-/// Written as `.part`, read back and checked, then renamed. Returns bytes written.
+/// Written as `.vpart`, read back and checked, then renamed. Returns bytes written.
 fn write_converted(
     src: &Path,
     dst: &Path,
@@ -2217,7 +2254,7 @@ fn write_atomic_checked(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Copy as `.part`, flush to the card, then rename. Returns bytes written.
+/// Copy as `.vpart`, flush to the card, then rename. Returns bytes written.
 fn copy_file(src: &Path, dst: &Path) -> Result<u64, String> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -2326,7 +2363,7 @@ fn patch_metadata(src: &Path, dst: &Path) -> Result<u64, String> {
 
 fn cleanup_parts(music: &Path) {
     for e in walkdir::WalkDir::new(music).into_iter().flatten() {
-        if e.file_type().is_file() && e.path().to_string_lossy().ends_with(".part") {
+        if e.file_type().is_file() && e.path().to_string_lossy().ends_with(".vpart") {
             let _ = std::fs::remove_file(e.path());
         }
     }
@@ -2344,7 +2381,7 @@ fn remove_empty_parents(path: &Path, stop: &Path) {
 
 fn part_path(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
-    s.push(".part");
+    s.push(".vpart");
     PathBuf::from(s)
 }
 
@@ -2616,6 +2653,18 @@ mod tests {
         let report = run(root, card, &plan, &SyncProgress::default(), &|_, _, _| {}).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         (plan, report)
+    }
+
+    #[test]
+    fn paths_on_a_card_never_leave_it() {
+        assert!(super::on_card("Film/A (2009)/01 - X.flac", true));
+        assert!(super::on_card("../README.txt", true));
+        assert!(
+            !super::on_card("../README.txt", false),
+            "no folder to step out of"
+        );
+        assert!(!super::on_card("../../Windows/x", true));
+        assert!(!super::on_card("C:/Users/x", true));
     }
 
     #[test]

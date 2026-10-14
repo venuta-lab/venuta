@@ -650,14 +650,14 @@ fn plan_album(
         }
 
         // Years.
-        let date_year = t.first("DATE").and_then(|d| d.get(..4)).map(str::to_owned);
+        let date_year = t.first("DATE").and_then(year_of).map(str::to_owned);
         let existing_orig = t
             .first("ORIGINALYEAR")
             .or(t.first("ORIGINALDATE"))
-            .and_then(|d| d.get(..4));
+            .and_then(year_of);
         let mb_first = mb
             .and_then(|r| r.first_release.as_deref())
-            .and_then(|d| d.get(..4));
+            .and_then(year_of);
         let original = match (existing_orig, &folder_year, &date_year) {
             (Some(o), _, _) => Some(o.to_owned()),
             (None, _, _) if year_answer.is_some() => {
@@ -1361,24 +1361,36 @@ pub(crate) fn keep_score(dir: &str) -> i32 {
     s
 }
 
-/// Two source tracks must never land on the same target: number the later ones.
+/// A date's year: its first four characters, when they are four digits ("1999-05-12" is
+/// 1999; "05/12/1999" has no year this way, rather than "05/1").
+fn year_of(date: &str) -> Option<&str> {
+    date.get(..4)
+        .filter(|y| y.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Two source tracks must never land on the same target: number the later ones, until the
+/// name is free (a numbered name can itself be taken).
 fn resolve_collisions(plan: &mut Plan) {
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for album in plan
         .albums
         .iter_mut()
         .filter(|a| matches!(a.action, AlbumAction::Migrate))
     {
         for t in &mut album.tracks {
-            let key = t.target.to_lowercase();
-            let n = seen.entry(key).or_insert(0);
-            *n += 1;
-            if *n > 1 {
+            if seen.insert(t.target.to_lowercase()) {
+                continue;
+            }
+            {
                 let (stem, ext) = t
                     .target
                     .rsplit_once('.')
                     .map(|(s, e)| (s.to_owned(), e.to_owned()))
                     .unwrap_or_else(|| (t.target.clone(), String::new()));
+                let mut n = 2;
+                while !seen.insert(format!("{stem} ({n}).{ext}").to_lowercase()) {
+                    n += 1;
+                }
                 t.target = format!("{stem} ({n}).{ext}");
                 album.notes.push(format!(
                     "Another album already uses “{stem}”; numbered to keep both."
@@ -1424,7 +1436,15 @@ fn render_path(rules: &Rules, f: &PathFields<'_>) -> String {
     ] {
         out = out.replace(key, &value);
     }
-    out = out.replace("{year}", f.year);
+    // Only a year that is a year: anything else ("05/1") would make folders of its own.
+    out = out.replace(
+        "{year}",
+        if f.year.len() == 4 && f.year.bytes().all(|b| b.is_ascii_digit()) {
+            f.year
+        } else {
+            ""
+        },
+    );
     // Empty segments collapse.
     let segments: Vec<String> = out
         .split('/')

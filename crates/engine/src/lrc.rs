@@ -54,6 +54,9 @@ pub struct LyricsEntry {
     pub before: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_bytes: Option<Vec<u8>>,
+    /// What this timing wrote, so undo can tell whether the file changed since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
 }
 
 /// The `.lrc` path (library-relative) for a song.
@@ -93,6 +96,9 @@ pub fn save_in(
     if lines.is_empty() {
         return Err("There are no timed lines to save.".into());
     }
+    if !crate::paths::is_inside_rel(song) {
+        return Err("That song isn't in the library.".into());
+    }
     let file = lrc_for(song);
     let path = root.join(&file);
     // Kept as it was, byte for byte (a BOM, another encoding, Windows line ends).
@@ -115,6 +121,7 @@ pub fn save_in(
         file: file.clone(),
         before,
         before_bytes,
+        after: Some(format(lines)),
     };
     let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
     std::fs::write(&journal, format!("{line}\n")).map_err(|e| e.to_string())?;
@@ -133,7 +140,22 @@ pub fn undo(journal: &Path) -> Result<usize, String> {
     let mut n = 0;
     for line in text.lines().rev().filter(|l| !l.trim().is_empty()) {
         let e: LyricsEntry = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        // Only ever a .lrc inside the library it names.
+        if !crate::paths::is_inside_rel(&e.file) || !e.file.to_ascii_lowercase().ends_with(".lrc") {
+            return Err(
+                "This change can't be undone here: it names a file outside the library.".into(),
+            );
+        }
         let path = Path::new(&e.root).join(&e.file);
+        // Timed again (or edited) since: undoing this would throw the newer words away.
+        if let Some(after) = &e.after
+            && std::fs::read(&path).ok().as_deref() != Some(after.as_bytes())
+        {
+            return Err(
+                "These lyrics changed after this timing was saved. Undo the newer change first."
+                    .into(),
+            );
+        }
         match (e.before_bytes, e.before) {
             (Some(old), _) => write_atomic(&path, &old)?,
             (None, Some(old)) => write_atomic(&path, old.as_bytes())?,
@@ -215,6 +237,14 @@ mod tests {
         std::fs::write(root.join("A/01 - One.lrc"), latin).unwrap();
         let j = save_in(&journals, &root, "A/01 - One.flac", &lines).unwrap();
         undo(&j).unwrap();
+        assert_eq!(std::fs::read(root.join("A/01 - One.lrc")).unwrap(), latin);
+        // Two timings: the older can't be undone first, as that would lose the newer one.
+        let first = save_in(&journals, &root, "A/01 - One.flac", &lines).unwrap();
+        let newer = vec![(2_000, "One".to_owned())];
+        let second = save_in(&journals, &root, "A/01 - One.flac", &newer).unwrap();
+        assert!(undo(&first).is_err());
+        undo(&second).unwrap();
+        undo(&first).unwrap();
         assert_eq!(std::fs::read(root.join("A/01 - One.lrc")).unwrap(), latin);
     }
 }

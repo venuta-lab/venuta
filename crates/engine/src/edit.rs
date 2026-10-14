@@ -39,11 +39,19 @@ pub fn edit_in_place(root: &Path, edits: &[TagEdit]) -> Result<EditReport, Strin
     let mut report = EditReport::default();
     let mut journal: Option<(PathBuf, File)> = None;
     for e in edits {
+        if !crate::paths::is_inside_rel(&e.file) {
+            report
+                .errors
+                .push((e.file.clone(), "not a file in this library".into()));
+            continue;
+        }
         let path = root.join(&e.file);
-        match apply_one(&path, &e.set) {
+        match planned(&path, &e.set) {
+            Err(msg) => report.errors.push((e.file.clone(), msg)),
             Ok(None) => report.unchanged += 1,
-            Ok(Some(before)) => {
-                report.changed += 1;
+            Ok(Some((before, after))) => {
+                // The journal first, on disk: a file never changes without the record that
+                // undoes it.
                 if journal.is_none() {
                     let dir = crate::apply::journal_dir();
                     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -65,12 +73,15 @@ pub fn edit_in_place(root: &Path, edits: &[TagEdit]) -> Result<EditReport, Strin
                         file: e.file.clone(),
                         before,
                     };
-                    let _ = serde_json::to_writer(&mut *f, &entry);
-                    let _ = f.write_all(b"\n");
-                    let _ = f.flush();
+                    serde_json::to_writer(&mut *f, &entry).map_err(|e| e.to_string())?;
+                    f.write_all(b"\n").map_err(|e| e.to_string())?;
+                    f.sync_data().map_err(|e| e.to_string())?;
+                }
+                match write_safely(&path, &after) {
+                    Ok(()) => report.changed += 1,
+                    Err(msg) => report.errors.push((e.file.clone(), msg)),
                 }
             }
-            Err(msg) => report.errors.push((e.file.clone(), msg)),
         }
     }
     report.journal = journal.map(|(p, _)| p.to_string_lossy().into_owned());
@@ -94,10 +105,10 @@ pub fn undo_edits(journal: &Path) -> Result<usize, String> {
 }
 
 /// Returns the previous tags when the file changed, `None` when it was already as requested.
-fn apply_one(
-    path: &Path,
-    set: &[(String, Vec<String>)],
-) -> Result<Option<Vec<(String, String)>>, String> {
+/// A file's tags now and after `set` (None: nothing would change).
+type Planned = Option<(Vec<(String, String)>, Vec<(String, String)>)>;
+
+fn planned(path: &Path, set: &[(String, Vec<String>)]) -> Result<Planned, String> {
     if !path
         .to_string_lossy()
         .to_ascii_lowercase()
@@ -122,8 +133,7 @@ fn apply_one(
     if tags.0 == before {
         return Ok(None);
     }
-    write_safely(path, &tags.0)?;
-    Ok(Some(before))
+    Ok(Some((before, tags.0)))
 }
 
 fn read_tags(path: &Path) -> Result<Vec<(String, String)>, String> {

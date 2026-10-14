@@ -66,7 +66,9 @@ impl Http {
                 status     INTEGER NOT NULL,
                 body       BLOB,
                 fetched_at INTEGER NOT NULL
-             );",
+             );
+             -- Older versions kept the user's keys in the address; those answers go.
+             DELETE FROM http WHERE url LIKE '%token=%' OR url LIKE '%client=%';",
         )
         .map_err(|e| e.to_string())?;
         let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -185,7 +187,7 @@ impl Http {
         let row: Option<(i64, Option<Vec<u8>>, i64)> = conn
             .query_row(
                 "SELECT status, body, fetched_at FROM http WHERE url = ?1",
-                params![url],
+                params![cache_key(url)],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
@@ -198,9 +200,26 @@ impl Http {
         if let Ok(conn) = self.cache.lock() {
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO http (url, status, body, fetched_at) VALUES (?1, ?2, ?3, ?4)",
-                params![url, status, body, now()],
+                params![cache_key(url), status, body, now()],
             );
         }
+    }
+}
+
+/// The address as the cache keeps it: without the user's keys (Discogs' `token`, AcoustID's
+/// `client`), so no secret is ever written to disk with the answers.
+fn cache_key(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_owned();
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|p| !matches!(p.split('=').next(), Some("token" | "client")))
+        .collect();
+    if kept.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}?{}", kept.join("&"))
     }
 }
 
@@ -214,4 +233,20 @@ fn now() -> i64 {
 /// Percent-encode a query value.
 pub fn enc(s: &str) -> String {
     urlencoding::encode(s).into_owned()
+}
+
+#[cfg(test)]
+mod key_tests {
+    #[test]
+    fn keys_never_reach_the_cache() {
+        assert_eq!(
+            super::cache_key("https://api.discogs.com/releases/1?token=SECRET"),
+            "https://api.discogs.com/releases/1"
+        );
+        assert_eq!(
+            super::cache_key("https://x/s?barcode=1&token=SECRET&per_page=5"),
+            "https://x/s?barcode=1&per_page=5"
+        );
+        assert_eq!(super::cache_key("https://x/y?a=1"), "https://x/y?a=1");
+    }
 }

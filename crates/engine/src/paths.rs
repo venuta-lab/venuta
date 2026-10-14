@@ -341,6 +341,17 @@ pub fn index_path_for(root: &Path) -> PathBuf {
 }
 
 /// Normalised string form of a library root, used to bind an index to its library.
+/// A relative path that stays inside the folder it's joined to: not empty, no root or drive,
+/// no `..`, no `.`, no `:` (a drive or a Windows alternate stream). For paths that come from
+/// outside the app's own hands: a card's files, a journal's entries, the window's arguments.
+pub fn is_inside_rel(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.contains(':')
+        && Path::new(rel)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 pub fn canonical_root_string(root: &Path) -> String {
     let p = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let s = p.to_string_lossy().replace('\\', "/");
@@ -473,5 +484,34 @@ mod tests {
         std::fs::write(b.join("settings.json"), b"{}").unwrap();
         carry_settings(&a, &b).unwrap();
         assert_eq!(std::fs::read(b.join("settings.json")).unwrap(), b"{}");
+    }
+}
+
+#[cfg(test)]
+mod inside_tests {
+    use super::is_inside_rel;
+
+    #[test]
+    fn only_plain_relative_paths_stay_inside() {
+        for ok in [
+            "a.flac",
+            "Film & Series/Hindi/A (2020)/01 - X.flac",
+            r"a\b.lrc",
+        ] {
+            assert!(is_inside_rel(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "..",
+            "../x",
+            "a/../../x",
+            "/abs",
+            r"\\server\share",
+            r"C:\Users",
+            "C:x",
+            "file.flac:stream",
+        ] {
+            assert!(!is_inside_rel(bad), "{bad}");
+        }
     }
 }
