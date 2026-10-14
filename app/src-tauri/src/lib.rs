@@ -2369,8 +2369,8 @@ pub fn run() {
             if let Err(e) = desktop::tray(app.handle()) {
                 eprintln!("tray: {e}");
             }
-            // The icon chosen in Settings, on the window and the tray.
-            app_icon::apply(app.handle());
+            // The icon chosen in Settings, on the window, the tray and the shortcuts.
+            app_icon::settle(app.handle());
             // Ctrl+Shift+D shows or hides the desktop lyrics from anywhere. Another program
             // (or a second copy of Venuta) may have it already: then only the tray does.
             {

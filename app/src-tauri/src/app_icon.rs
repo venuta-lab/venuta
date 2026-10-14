@@ -1,7 +1,8 @@
 //! The app's icon, chosen in Settings from the ones in `public/app-icons`: the windows, the
 //! tray and (on Windows) the Start menu, desktop and pinned taskbar shortcuts that open this
 //! Venuta. The program file keeps the default it was built with (Windows reads that from the
-//! file itself). The choice is this computer's, kept beside `library.json`.
+//! file itself). The choice and its Windows icon file live in the library's `.venuta` folder,
+//! like everything else Venuta keeps.
 
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, image::Image};
@@ -10,11 +11,7 @@ use tauri::{AppHandle, Manager, image::Image};
 pub const DEFAULT: &str = "dusk-glass";
 
 fn choice_file() -> PathBuf {
-    // A test copy keeps its own choice, so trying icons never changes the Venuta in use.
-    if crate::test_copy() {
-        return engine::paths::app_data_dir().join("app-icon");
-    }
-    engine::paths::user_dir().join("app-icon")
+    engine::paths::app_data_dir().join("app-icon")
 }
 
 /// An icon's name: lower-case letters, digits and dashes, as the files are named.
@@ -97,21 +94,42 @@ pub async fn set_app_icon(app: AppHandle, id: String) -> Result<(), String> {
         std::fs::write(choice_file(), &id).map_err(|e| e.to_string())?;
     }
     apply(&app);
-    // Shortcuts open the Venuta in use, so a test copy leaves them alone.
+    tauri::async_runtime::spawn_blocking(move || sync_shortcuts(&id, &bytes))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The shortcuts that open this Venuta show the icon `id` (its .ico written into the library's
+/// `.venuta/icons` when missing), or the program's own for the default. Shortcuts open the
+/// Venuta in use, so a test copy leaves them alone.
+fn sync_shortcuts(id: &str, png: &[u8]) -> Result<(), String> {
     #[cfg(windows)]
     if !crate::test_copy() {
         let ico = if id == DEFAULT {
             None
         } else {
-            Some(shortcuts::write_ico(&id, &bytes)?)
+            Some(shortcuts::write_ico(id, png)?)
         };
-        tauri::async_runtime::spawn_blocking(move || shortcuts::point_at(ico.as_deref()))
-            .await
-            .map_err(|e| e.to_string())??;
+        return shortcuts::point_at(ico.as_deref());
     }
-    #[cfg(not(windows))]
-    let _ = bytes;
+    let _ = (id, png);
     Ok(())
+}
+
+/// At start: the chosen icon on the windows and tray, and the shortcuts brought back in step
+/// (the library may have moved, taking the icon file with it). In the background.
+pub fn settle(app: &AppHandle) {
+    apply(app);
+    let id = chosen();
+    if id == DEFAULT {
+        return;
+    }
+    let Some(bytes) = png(app, &id) else { return };
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = sync_shortcuts(&id, &bytes) {
+            eprintln!("app icon shortcuts: {e}");
+        }
+    });
 }
 
 #[cfg(windows)]
@@ -126,7 +144,7 @@ mod shortcuts {
     };
     use windows::core::{HSTRING, Interface};
 
-    /// The icon as a Windows .ico (256 down to 16 px), kept beside `library.json`.
+    /// The icon as a Windows .ico (256 down to 16 px), in the library's `.venuta/icons`.
     pub fn write_ico(id: &str, png: &[u8]) -> Result<PathBuf, String> {
         use image::codecs::ico::{IcoEncoder, IcoFrame};
         let img = image::load_from_memory(png).map_err(|e| e.to_string())?;
@@ -139,7 +157,7 @@ mod shortcuts {
                     .map_err(|e| e.to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let dir = engine::paths::user_dir().join("icons");
+        let dir = engine::paths::app_data_dir().join("icons");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!("{id}.ico"));
         let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;

@@ -124,12 +124,19 @@ pub fn home() -> Option<PathBuf> {
     saved
 }
 
-/// Venuta's data folder: `<library>/.venuta`, or the per-user folder before a library exists.
+/// Venuta's data folder: `<library>/.venuta`. Before a library is chosen, a temporary folder
+/// (moved into the library when one is): the per-user folder only ever holds which library is
+/// yours.
 pub fn app_data_dir() -> PathBuf {
     match home() {
         Some(h) => h.join(DATA_DIR_NAME),
-        None => user_dir(),
+        None => before_library_dir(),
     }
+}
+
+/// Where data waits before there is a library (settings chosen during setup, say).
+fn before_library_dir() -> PathBuf {
+    std::env::temp_dir().join("Venuta before a library")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -189,9 +196,12 @@ pub fn set_home(p: &Path) -> Result<HomeKind, String> {
     let kind = make_home(p)?;
     let to = p.join(DATA_DIR_NAME);
     let previous = home().map(|h| h.join(DATA_DIR_NAME));
-    let legacy = user_dir();
-    if legacy.is_dir() {
-        move_data(&legacy, &to)?;
+    // Data from before a library was chosen: kept per user by older versions, in a temporary
+    // folder now. Either moves in.
+    for legacy in [user_dir(), before_library_dir()] {
+        if legacy.is_dir() {
+            move_data(&legacy, &to)?;
+        }
     }
     if let Some(prev) = previous.filter(|d| *d != to) {
         carry_settings(&prev, &to)?;
