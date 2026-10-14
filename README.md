@@ -8,7 +8,7 @@ players.
 
 ![Music: the album playing, then your playlists and shelves](docs/screenshots/music-home.jpg)
 
-No AI at runtime, no account, no paid service, and it never downloads music.
+No AI at runtime, no account, no paid service.
 
 ## What it does
 
