@@ -11,7 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const REPO = 'theSelfSa/venuta'
+const REPO = 'venuta-lab/venuta'
 const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const args = process.argv.slice(2)
 const version = args.find((a) => /^\d+\.\d+\.\d+$/.test(a))

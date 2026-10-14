@@ -12,7 +12,7 @@ change arrives as a pull request.
 2. Add the original as `upstream`, so you can stay current:
 
    ```bash
-   git remote add upstream https://github.com/venuta-app/venuta.git
+   git remote add upstream https://github.com/venuta-lab/venuta.git
    git fetch upstream
    ```
 
@@ -25,7 +25,7 @@ change arrives as a pull request.
 4. Commit in small steps with [Conventional Commits](https://www.conventionalcommits.org)
    (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Say what the user notices, not
    which function moved.
-5. Push to your fork and **open a pull request** against `venuta-app/venuta` `main`. Fill in the
+5. Push to your fork and **open a pull request** against `venuta-lab/venuta` `main`. Fill in the
    template. CI builds and tests it; the maintainer reviews, and merges with a squash.
 6. Before starting something large, open an issue (or a draft pull request) so we agree on the
    shape first.

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const USER_AGENT: &str = concat!(
     "Venuta/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/aakashkore/venuta)"
+    " (+https://github.com/venuta-lab/venuta)"
 );
 
 /// Minimum gap between requests to one host.

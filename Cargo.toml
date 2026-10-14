@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.90"
-repository = "https://github.com/aakashkore/venuta"
+repository = "https://github.com/venuta-lab/venuta"
 
 [workspace.dependencies]
 engine = { path = "crates/engine" }
