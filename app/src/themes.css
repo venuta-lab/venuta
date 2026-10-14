@@ -13,7 +13,7 @@
 @property --accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: #5aa8ff;
+  initial-value: #8185eb;
 }
 
 /* ---------------------------------------------------------------------------------------- */
@@ -21,7 +21,7 @@
 /* ---------------------------------------------------------------------------------------- */
 :root,
 [data-preview="venuta"] {
-  --accent: #5aa8ff;
+  --accent: #8185eb; /* Iris, as Lumen shows it on dark (lib/themes ACCENTS) */
   --on-accent: #0b0c10;
   --accent-ink: var(--accent);
   --accent-2: var(--accent);
@@ -611,12 +611,12 @@
 @property --accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: #5aa8ff;
+  initial-value: #8185eb;
 }
 @property --accent-ink {
   syntax: "<color>";
   inherits: true;
-  initial-value: #5aa8ff;
+  initial-value: #8185eb;
 }
 :root[data-motion="full"] {
   transition:

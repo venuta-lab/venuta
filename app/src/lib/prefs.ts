@@ -32,7 +32,7 @@ const DEFAULTS: Prefs = {
   theme: 'dark',
   surface: 'glass',
   accentMode: 'album',
-  accent: 'Azure',
+  accent: 'Iris',
   intensity: 'balanced',
   backdrop: true,
   motion: 'system',
