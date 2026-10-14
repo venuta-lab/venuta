@@ -36,25 +36,43 @@ const THEMES = [
 
 /** Each screen: how to get there from anywhere (a script run in the page). */
 const SCREENS = {
-  music: `goTo('Music'); tab('Home')`,
-  album: `openNowPlaying('Lyrics'); await __shots.sleep(900); __shots.click('Go to album', document.querySelector('[aria-label="Now Playing"]') ?? document)`,
-  playlists: `goTo('Music'); tab('Playlists')`,
-  nowplaying: `openNowPlaying('Sound')`,
-  health: `goTo('Health')`,
-  settings: `goTo('Settings'); section('Look and feel')`,
+  music: `await goTo('Music'); await tab('Home')`,
+  album: `await openNowPlaying('Lyrics'); await __shots.sleep(400); await __shots.click('Go to album', () => document.querySelector('[aria-label="Now Playing"]') ?? document)`,
+  playlists: `await goTo('Music'); await tab('Playlists')`,
+  nowplaying: `await openNowPlaying('Sound')`,
+  health: `await goTo('Health')`,
+  settings: `await goTo('Settings'); await tab('Look and feel')`,
 }
 
-// Helpers the screen scripts use, defined in the page once.
+// Helpers the screen scripts use, defined in the page once. Each waits for what it clicks to be
+// there (a screen mounts after the click that opens it), and a tab until it is the chosen one:
+// a click that lands too early would leave the screen on whatever tab it remembered.
 const HELPERS = `
   window.__shots = {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     closeAll() { for (let i = 0; i < 4; i++) document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) },
-    click(text, scope = document) { const b = [...scope.querySelectorAll('button,[role=tab]')].find((e) => e.textContent.trim() === text || e.getAttribute('aria-label') === text); b?.click(); return !!b },
+    find(text, scope = () => document) { return [...scope().querySelectorAll('button,[role=tab],[role=radio]')].find((e) => e.textContent.trim() === text || e.getAttribute('aria-label') === text) },
+    async click(text, scope) {
+      for (let i = 0; i < 40; i++) {
+        const b = __shots.find(text, scope)
+        if (b) { b.click(); return b }
+        await __shots.sleep(100)
+      }
+      throw new Error('Not found: ' + text)
+    },
   }
-  window.goTo = (place) => { __shots.closeAll(); __shots.click(place, document.querySelector('nav') ?? document) }
-  window.tab = (name) => __shots.click(name)
-  window.section = (name) => __shots.click(name)
-  window.openNowPlaying = (panel) => { __shots.closeAll(); document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true })); setTimeout(() => __shots.click(panel), 500) }
+  const chosen = (b) => b.getAttribute('aria-selected') === 'true' || b.getAttribute('aria-checked') === 'true'
+  window.goTo = async (place) => { __shots.closeAll(); await __shots.click(place, () => document.querySelector('nav') ?? document); await __shots.sleep(200) }
+  window.tab = async (name) => {
+    for (let i = 0; i < 10; i++) {
+      const b = await __shots.click(name)
+      await __shots.sleep(150)
+      if (!b.hasAttribute('aria-selected') && !b.hasAttribute('aria-checked')) return
+      if (chosen(__shots.find(name) ?? b)) return
+    }
+    throw new Error('Tab never chosen: ' + name)
+  }
+  window.openNowPlaying = async (panel) => { __shots.closeAll(); document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true })); await __shots.sleep(300); await tab(panel) }
 `
 
 async function connect() {
