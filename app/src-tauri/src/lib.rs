@@ -25,6 +25,7 @@ mod libcache;
 mod listening;
 mod lyric_windows;
 mod playback;
+mod theme_packs;
 mod updates;
 
 /// The running deep check, if any, so it can be cancelled.
@@ -2458,6 +2459,19 @@ pub fn run() {
             save_synced_lyrics,
             app_icon::app_icon,
             app_icon::set_app_icon,
+            theme_packs::themes_list,
+            theme_packs::theme_file,
+            theme_packs::theme_save,
+            theme_packs::theme_write_text,
+            theme_packs::theme_add_file,
+            theme_packs::theme_history,
+            theme_packs::theme_set_aside,
+            theme_packs::themes_stamp,
+            theme_packs::theme_export,
+            theme_packs::theme_inspect,
+            theme_packs::theme_install,
+            theme_packs::theme_duplicate,
+            theme_packs::theme_show,
             show_in_folder,
             get_aliases,
             save_aliases,
