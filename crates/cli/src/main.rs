@@ -336,8 +336,15 @@ fn main() -> Result<()> {
             name,
             include,
         } => {
-            let c = engine::sync::setup_card(&card, &name, include, false, None)
-                .map_err(anyhow::Error::msg)?;
+            let c = engine::sync::setup_card(
+                &card,
+                engine::sync::CardSettings {
+                    name,
+                    include,
+                    ..Default::default()
+                },
+            )
+            .map_err(anyhow::Error::msg)?;
             println!("card {} ({}) ready", c.name, c.id);
         }
         Command::CardSync { library, card } => {
@@ -406,7 +413,11 @@ fn main() -> Result<()> {
                         source: p.source.clone(),
                         source_id: p.source_id.clone(),
                         update: p.target.as_ref().map(|t| t.name.clone()),
-                        items: p.items.iter().map(engine::imports::PreviewItem::item).collect(),
+                        items: p
+                            .items
+                            .iter()
+                            .map(engine::imports::PreviewItem::item)
+                            .collect(),
                         replace: false,
                     })
                     .collect();

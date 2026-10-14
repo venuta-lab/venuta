@@ -10,6 +10,7 @@ pub mod apply;
 pub mod art;
 pub mod audit;
 pub mod compare;
+pub mod convert;
 pub mod device;
 pub mod edit;
 pub mod enrich;

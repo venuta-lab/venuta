@@ -1266,15 +1266,19 @@ fn library_folders(root: String) -> Vec<String> {
     v
 }
 
+/// Set a card up, or change what it carries and how (see `engine::sync::CardSettings`).
 #[tauri::command]
 fn setup_card(
     card: String,
-    name: String,
-    include: Vec<String>,
-    auto_sync: bool,
-    player: Option<engine::device::Player>,
+    settings: engine::sync::CardSettings,
 ) -> CmdResult<engine::sync::CardConfig> {
-    engine::sync::setup_card(Path::new(&card), &name, include, auto_sync, player)
+    engine::sync::setup_card(Path::new(&card), settings)
+}
+
+/// A card whose settings were copied from another card: give it its own identity.
+#[tauri::command]
+fn reidentify_card(card: String) -> CmdResult<engine::sync::CardConfig> {
+    engine::sync::reidentify(Path::new(&card))
 }
 
 #[derive(Serialize)]
@@ -2302,6 +2306,7 @@ pub fn run() {
             list_cards,
             library_folders,
             setup_card,
+            reidentify_card,
             players,
             want_add,
             want_remove,

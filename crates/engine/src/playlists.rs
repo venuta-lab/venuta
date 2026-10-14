@@ -24,7 +24,7 @@ const SMART_TAG: &str = "#VENUTA-SMART";
 /// The same lines as written before the app was named; still read.
 const OLD_MD5_TAG: &str = "#LIBRARIAN-MD5:";
 const OLD_SMART_TAG: &str = "#LIBRARIAN-SMART";
-const WANT_TAG: &str = "#VENUTA-WANT:";
+pub(crate) const WANT_TAG: &str = "#VENUTA-WANT:";
 const SOURCE_TAG: &str = "#VENUTA-SOURCE:";
 /// Which playlist at the source it is ("spotify:37i9…", "apple:Hindi"), to update it later.
 const SOURCE_ID_TAG: &str = "#VENUTA-SOURCE-ID:";
