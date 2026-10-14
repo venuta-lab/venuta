@@ -8,9 +8,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or pull request replaces the run in progress.
+# A pull request's newer push replaces its run in progress; every commit on main keeps its
+# own run, so its result is never thrown away.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
