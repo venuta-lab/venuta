@@ -32,6 +32,14 @@ body,
   background: transparent;
 }
 
+/* The big screen is dark whatever the theme; the desktop lyrics have no background at all. */
+:root[data-window="stage"] body {
+  background: #000;
+}
+:root[data-window="overlay"] body {
+  background: none;
+}
+
 body {
   margin: 0;
   color: var(--color-ink);

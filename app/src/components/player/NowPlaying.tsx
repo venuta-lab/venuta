@@ -1,10 +1,10 @@
-import { askAddToPlaylist } from '../AddToPlaylist'
 import { useEscape } from '../../lib/layers'
-import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { inApp } from '../../lib/engine'
+import { lineAt, useLyrics, type Lyrics } from '../../lib/lyrics'
+import { SyncMaker } from '../lyrics/SyncMaker'
+import { LyricsDock, SongActions } from './NowPlayingActions'
 import { clock, current, jumpTo, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
 import { SignalPath } from './NowPlayingBar'
@@ -15,64 +15,12 @@ import { PlayingFrom } from './PlayingFrom'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
-export interface Lyrics {
-  lines: [number, string][]
-  text: string
-}
-
-export function useLyrics(root: string, path: string | undefined) {
-  const [lyrics, setLyrics] = useState<{ path: string; value: Lyrics | null }>({ path: '', value: null })
-  useEffect(() => {
-    if (!path || !inApp()) return
-    let live = true
-    invoke<Lyrics>('song_lyrics', { root, path })
-      .then((value) => live && setLyrics({ path, value }))
-      .catch(() => live && setLyrics({ path, value: { lines: [], text: '' } }))
-    return () => {
-      live = false
-    }
-  }, [root, path])
-  return lyrics.path === path ? lyrics.value : null
-}
-
-/** The line being sung at `position` (a moment early, so it's read as it's sung); -1 before the first. */
-export function lineAt(lyrics: Lyrics | null, position: number): number {
-  if (!lyrics?.lines.length) return -1
-  let lo = 0
-  let hi = lyrics.lines.length - 1
-  let found = -1
-  const t = position + 250
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    if (lyrics.lines[mid][0] <= t) {
-      found = mid
-      lo = mid + 1
-    } else hi = mid - 1
-  }
-  return found
-}
-
 /** Synced lyrics follow the song: the line being sung is bright, a click jumps to a line. */
-function LyricsView(props: { lyrics: Lyrics | null; position: number }) {
+function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: () => void }) {
   const { lyrics, position } = props
   const box = useRef<HTMLDivElement>(null)
   const userScrolled = useRef(0)
-  const at = useMemo(() => {
-    if (!lyrics?.lines.length) return -1
-    let lo = 0
-    let hi = lyrics.lines.length - 1
-    let found = -1
-    // Lines light up a moment early, so they're read as they're sung.
-    const t = position + 250
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (lyrics.lines[mid][0] <= t) {
-        found = mid
-        lo = mid + 1
-      } else hi = mid - 1
-    }
-    return found
-  }, [lyrics, position])
+  const at = useMemo(() => lineAt(lyrics, position), [lyrics, position])
   useEffect(() => {
     if (at < 0 || Date.now() - userScrolled.current < 4000) return
     // Scroll only the lyrics (scrollIntoView would move every scrollable parent too).
@@ -84,9 +32,28 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number }) {
 
   if (!lyrics) return <p className="py-10 text-center text-[13px] text-ink/55">Finding the words…</p>
   if (!lyrics.lines.length && !lyrics.text)
-    return <p className="py-10 text-center text-[13px] text-ink/55">No lyrics for this song yet. Looking up details online finds synced lyrics for many songs.</p>
+    return (
+      <div className="grid justify-items-center gap-3 py-10 text-center">
+        <p className="max-w-[46ch] text-[13px] text-ink/55">
+          No lyrics for this song yet. Looking up details online finds synced lyrics for many songs, or paste the words and tap along to time them.
+        </p>
+        <button onClick={props.onTime} className="btn btn-sm">
+          Paste lyrics
+        </button>
+      </div>
+    )
   if (!lyrics.lines.length)
-    return <div className="whitespace-pre-wrap py-6 text-[16px] leading-relaxed text-ink/80">{lyrics.text}</div>
+    return (
+      <div className="thin-scroll h-full overflow-y-auto">
+        <div className="sticky top-0 z-10 flex items-center gap-3 rounded-2xl bg-ink/[0.06] px-4 py-2.5 text-[13px] backdrop-blur-md">
+          <span className="flex-1 text-ink/70">These words have no timing, so they can't follow the song.</span>
+          <button onClick={props.onTime} className="btn btn-sm btn-primary">
+            Time them
+          </button>
+        </div>
+        <div className="whitespace-pre-wrap py-6 text-[16px] leading-relaxed text-ink/80">{lyrics.text}</div>
+      </div>
+    )
   return (
     <div
       ref={box}
@@ -141,14 +108,39 @@ function UpNext() {
 type Panel = 'lyrics' | 'next' | 'signal' | 'sound'
 
 /** The song, large: cover, words, what's next and how it reaches you. */
-export function NowPlaying(props: { open: boolean; root: string; panel: Panel; onPanel: (p: Panel) => void; onClose: () => void; onAlbum: (dir: string) => void }) {
+export function NowPlaying(props: {
+  open: boolean
+  root: string
+  panel: Panel
+  onPanel: (p: Panel) => void
+  onClose: () => void
+  onAlbum: (dir: string) => void
+  onArtist: (name: string) => void
+}) {
   const s = usePlayer()
   const song = current(s)
   const cover = useCovers(320)
   const art = song ? cover(song.dir) : undefined
   const lyrics = useLyrics(props.root, props.open ? song?.path : undefined)
+  // Timing the lyrics of this song (closed when the song changes).
+  const [timing, setTiming] = useState<string | null>(null)
+  const timingNow = !!song && timing === song.path && props.panel === 'lyrics'
+  useEffect(() => {
+    const on = (e: Event) => setTiming((e as CustomEvent<{ path: string }>).detail.path)
+    window.addEventListener('venuta:time-lyrics', on)
+    return () => window.removeEventListener('venuta:time-lyrics', on)
+  }, [])
   const { open, onClose } = props
   useEscape(open, onClose)
+  // The timing button: the maker on the lyrics, or back to them.
+  const onTiming = () => {
+    if (!song) return
+    if (timingNow) setTiming(null)
+    else {
+      setTiming(song.path)
+      props.onPanel('lyrics')
+    }
+  }
   return (
     <AnimatePresence>
       {open && song && (
@@ -182,43 +174,47 @@ export function NowPlaying(props: { open: boolean; root: string; panel: Panel; o
               </motion.div>
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
                 <h2 className="title truncate text-[26px]">{song.title}</h2>
-                <p className="mt-1 truncate text-[15px] text-ink/65">{song.artists.join(', ') || song.album_artist}</p>
-                <PlayingFrom className="mt-1.5 block truncate text-[12.5px] text-ink/50" onOpen={props.onClose} />
-                <button onClick={() => props.onAlbum(song.dir)} className="mt-0.5 max-w-full truncate text-[13px] text-ink/50 hover:text-ink hover:underline">
-                  {song.album}
-                </button>
-                <div className="mt-3 flex items-center justify-center gap-3">
-                  <Stars path={song.path} stars={song.stars} size={18} />
-                  <button
-                    onClick={() => askAddToPlaylist([song.path], song.title)}
-                    aria-label={`Add ${song.title} to a playlist`}
-                    title="Add to playlist…"
-                    className="grid h-8 w-8 place-items-center rounded-full text-ink/60 transition-colors hover:bg-ink/10 hover:text-ink active:scale-90"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-                      <path d="M4 6h11M4 12h11M4 18h7M18 14v7M14.5 17.5h7" />
-                    </svg>
-                  </button>
-                </div>
+                <SongActions
+                  root={props.root}
+                  song={song}
+                  lyrics={lyrics}
+                  onAlbum={props.onAlbum}
+                  onArtist={props.onArtist}
+                  onTiming={onTiming}
+                  stars={<Stars path={song.path} stars={song.stars} size={18} />}
+                  from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} />}
+                />
               </div>
             </div>
 
             <div className="flex min-h-0 min-w-0 flex-col">
-              <Segmented
-                tabs
-                label="Now Playing"
-                className="self-start"
-                value={props.panel}
-                onChange={props.onPanel}
-                options={[
-                  { value: 'lyrics', label: 'Lyrics' },
-                  { value: 'next', label: 'Up next' },
-                  { value: 'sound', label: 'Sound' },
-                  { value: 'signal', label: 'Signal' },
-                ]}
-              />
-              <div className="fade-y mt-3 min-h-0 flex-1 overflow-hidden">
-                {props.panel === 'lyrics' && <LyricsView lyrics={lyrics} position={s.position_ms} />}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Segmented
+                  tabs
+                  label="Now Playing"
+                  value={props.panel}
+                  onChange={props.onPanel}
+                  options={[
+                    { value: 'lyrics', label: 'Lyrics' },
+                    { value: 'next', label: 'Up next' },
+                    { value: 'sound', label: 'Sound' },
+                    { value: 'signal', label: 'Signal' },
+                  ]}
+                />
+                <AnimatePresence>
+                  {props.panel === 'lyrics' && (
+                    <LyricsDock key="dock" root={props.root} song={song} lyrics={lyrics} timing={timingNow} onTiming={onTiming} />
+                  )}
+                </AnimatePresence>
+              </div>
+              {/* Under the bar above, so its popovers and names open over the words. */}
+              <div className={`${timingNow ? '' : 'fade-y '}relative z-0 mt-3 min-h-0 flex-1 overflow-hidden`}>
+                {props.panel === 'lyrics' &&
+                  (timingNow && lyrics ? (
+                    <SyncMaker key={song.path} root={props.root} path={song.path} lyrics={lyrics} onClose={() => setTiming(null)} />
+                  ) : (
+                    <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} />
+                  ))}
                 {props.panel === 'next' && (
                   <div className="thin-scroll h-full overflow-y-auto pt-3">
                     <UpNext />

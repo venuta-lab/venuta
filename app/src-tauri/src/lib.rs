@@ -22,6 +22,7 @@ mod accounts;
 mod desktop;
 mod libcache;
 mod listening;
+mod lyric_windows;
 mod playback;
 mod updates;
 
@@ -203,7 +204,9 @@ async fn library_health(root: String) -> CmdResult<HealthReport> {
     blocking(move || {
         let index = open_index(Path::new(&root))?;
         let lib = libcache::indexed(&index, Path::new(&root))?;
-        Ok(engine::audit::run(&lib))
+        // Which .lrc files hold words with no times: read here, so the audit stays pure.
+        let plain = engine::lrc::untimed_sidecars(Path::new(&root), &lib.lyrics_files);
+        Ok(engine::audit::run_with(&lib, &plain))
     })
     .await
 }
@@ -664,7 +667,7 @@ fn list_runs() -> Vec<Run> {
 /// One change to your files, for the Activity timeline.
 #[derive(Serialize)]
 struct Change {
-    /// "edit": tags or ratings changed in place.
+    /// "edit": tags or ratings changed in place; "lyrics": a song's timing saved as its .lrc.
     kind: &'static str,
     journal: String,
     started_ms: u128,
@@ -683,9 +686,13 @@ fn list_edits() -> Vec<Change> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if !name.ends_with("-edit.jsonl") {
+            let kind = if name.ends_with("-edit.jsonl") {
+                "edit"
+            } else if name.ends_with("-lyrics.jsonl") {
+                "lyrics"
+            } else {
                 return None;
-            }
+            };
             let text = std::fs::read_to_string(e.path()).ok()?;
             let files: Vec<String> = text
                 .lines()
@@ -693,7 +700,7 @@ fn list_edits() -> Vec<Change> {
                 .filter_map(|v| v.get("file")?.as_str().map(str::to_owned))
                 .collect();
             Some(Change {
-                kind: "edit",
+                kind,
                 journal: e.path().to_string_lossy().into_owned(),
                 started_ms: name.split('-').next()?.parse().ok()?,
                 files: files.len(),
@@ -708,7 +715,45 @@ fn list_edits() -> Vec<Change> {
 
 #[tauri::command]
 async fn undo_edit(journal: String) -> CmdResult<usize> {
-    blocking(move || engine::edit::undo_edits(Path::new(&journal))).await
+    blocking(move || {
+        let path = Path::new(&journal);
+        if !journal.ends_with("-lyrics.jsonl") {
+            return engine::edit::undo_edits(path);
+        }
+        // A timing: the old .lrc back (or none), and the library read again so Health knows.
+        let root = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| {
+                let line = t.lines().next()?.to_owned();
+                serde_json::from_str::<engine::lrc::LyricsEntry>(&line).ok()
+            })
+            .map(|e| PathBuf::from(e.root));
+        let n = engine::lrc::undo(path)?;
+        if let Some(root) = root {
+            let mut index = open_index(&root)?;
+            libcache::scan(&mut index, &root)?;
+        }
+        Ok(n)
+    })
+    .await
+}
+
+/// Save lyrics timed by tapping along as the song's .lrc (`lines`: ms and words), undoable in
+/// Activity (returns the journal, for Undo). The song's own file is never touched.
+#[tauri::command]
+async fn save_synced_lyrics(
+    root: String,
+    path: String,
+    lines: Vec<(u64, String)>,
+) -> CmdResult<String> {
+    blocking(move || {
+        let root = PathBuf::from(root);
+        let journal = engine::lrc::save(&root, &path, &lines)?;
+        let mut index = open_index(&root)?;
+        libcache::scan(&mut index, &root)?;
+        Ok(journal.to_string_lossy().into_owned())
+    })
+    .await
 }
 
 #[derive(Serialize, serde::Deserialize)]
@@ -1924,6 +1969,23 @@ fn search_web(app: AppHandle, words: String) -> CmdResult<()> {
         .map_err(|e| e.to_string())
 }
 
+/// Show a song in File Explorer, selected. Only a file inside the open folder.
+#[tauri::command]
+fn show_in_folder(app: AppHandle, root: String, path: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let rootp = PathBuf::from(&root);
+    let file = rootp.join(&path);
+    let (Ok(r), Ok(f)) = (rootp.canonicalize(), file.canonicalize()) else {
+        return Err("That song isn't in its folder any more.".into());
+    };
+    if !f.starts_with(&r) {
+        return Err("That file is outside the library.".into());
+    }
+    app.opener()
+        .reveal_item_in_dir(&file)
+        .map_err(|e| e.to_string())
+}
+
 /// Put back how a playlist was before an update (the copy kept in Set aside).
 #[tauri::command]
 fn playlist_restore(root: String, name: String, copy: String) -> CmdResult<()> {
@@ -2228,6 +2290,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+                    if event.state() == ShortcutState::Pressed
+                        && shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyD)
+                    {
+                        lyric_windows::ask_main(app, "toggle");
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![desktop::IN_TRAY_ARG]),
@@ -2242,6 +2316,15 @@ pub fn run() {
             }
             if let Err(e) = desktop::tray(app.handle()) {
                 eprintln!("tray: {e}");
+            }
+            // Ctrl+Shift+D shows or hides the desktop lyrics from anywhere. Another program
+            // (or a second copy of Venuta) may have it already: then only the tray does.
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let keys = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
+                if let Err(e) = app.global_shortcut().register(keys) {
+                    eprintln!("Ctrl+Shift+D: {e}");
+                }
             }
             // Started with Windows: stay in the tray. Otherwise show the window (it starts
             // hidden so it never flashes before this choice).
@@ -2296,6 +2379,11 @@ pub fn run() {
             playback::player_stop_after,
             playback::player_sleep,
             playback::mini_player,
+            lyric_windows::monitors,
+            lyric_windows::lyrics_stage,
+            lyric_windows::desktop_lyrics,
+            lyric_windows::desktop_lyrics_lock,
+            lyric_windows::desktop_lyrics_open,
             playback::player_spectrum,
             listening::listening_summary,
             tidy_preview,
@@ -2313,6 +2401,8 @@ pub fn run() {
             build_library,
             list_edits,
             undo_edit,
+            save_synced_lyrics,
+            show_in_folder,
             get_aliases,
             save_aliases,
             set_decisions,

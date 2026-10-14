@@ -218,3 +218,59 @@ export const IconMini = (p: P) => (
     <rect x="11.5" y="11.5" width="7" height="5.5" rx="1.2" fill="currentColor" stroke="none" />
   </svg>
 )
+// Lyrics, elsewhere: a screen for the room, the lines over the desktop, their style, their timing.
+export const IconBigScreen = (p: P) => (
+  <svg {...base} {...p}>
+    <rect x="2.5" y="4" width="19" height="13" rx="2.5" />
+    <path d="M8 21h8M12 17v4M6.5 10V8h2.5M17.5 11v2H15" />
+  </svg>
+)
+export const IconDesktopLyrics = (p: P) => (
+  <svg {...base} {...p}>
+    <rect x="2.5" y="3.5" width="19" height="15" rx="2.5" />
+    <rect x="5.5" y="12" width="13" height="3.5" rx="1.75" />
+    <path d="M9 21.5h6" />
+  </svg>
+)
+export const IconLyricStyle = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M3 19 8 5l5 14M4.8 14h6.4" />
+    <path d="M20.5 19v-4.2a3 3 0 0 0-5.2-2" />
+    <circle cx="17.5" cy="16.5" r="2.6" />
+  </svg>
+)
+export const IconTiming = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="13.5" r="7.5" />
+    <path d="M12 9.5v4l2.5 2M10 2.5h4M18.5 6l1.5-1.5" />
+  </svg>
+)
+export const IconAlbum = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <circle cx="12" cy="12" r="2.5" />
+  </svg>
+)
+export const IconArtist = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
+  </svg>
+)
+export const IconLock = (p: P) => (
+  <svg {...base} {...p}>
+    <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
+    <path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3" />
+  </svg>
+)
+export const IconWeb = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5Z" />
+  </svg>
+)
+export const IconPlaylistAdd = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M4 6h11M4 12h11M4 18h7M18 14v7M14.5 17.5h7" />
+  </svg>
+)

@@ -12,6 +12,8 @@ import {
   type HealthReport,
 } from '../lib/engine'
 import { useCovers } from '../lib/covers'
+import { ensureCatalog, trackAt } from '../lib/catalog'
+import { timeLyrics } from '../lib/lyrics'
 import { AlbumEditor } from './AlbumEditor'
 import { NoCover } from './MusicScreen'
 import { Page } from '../components/ui'
@@ -109,6 +111,8 @@ export function HealthScreen(props: {
   const overallNow = details.length ? Math.round(details.reduce((x, d) => x + d.now, 0) / details.length) : 0
   const overallAfter = details.length ? Math.round(details.reduce((x, d) => x + d.after, 0) / details.length) : 0
   const sound = SOUND.map((x) => ({ ...x, found: byId.get(x.issue) })).filter((x) => x.found)
+  const untimed = byId.get('lyrics_untimed')
+  const [songs, setSongs] = useState(false)
   const dupes = (byId.get('duplicate_audio')?.albums.length ?? 0) + (byId.get('duplicate_recording')?.albums.length ?? 0)
 
   const stack = (dirs: string[]) => (
@@ -251,6 +255,29 @@ export function HealthScreen(props: {
             )}
           </section>
         ))}
+        {/* Words without times: tapping along times them (not part of the percentage). */}
+        {untimed && (
+          <section className="glass flex flex-col rounded-[20px] p-4">
+            <div className="flex items-baseline gap-2">
+              <span className="flex-1 text-[13.5px] font-medium">Lyrics without timing</span>
+              <span className="text-[22px] font-semibold tabular-nums tracking-[-0.02em]">{fmt(untimed.tracks)}</span>
+            </div>
+            <div className="mt-1.5 text-[12px] text-ink/55">Words with no times can't follow the song. Tap along to time them.</div>
+            <div className="min-h-3 flex-1" />
+            <button
+              onClick={() => setSongs(true)}
+              className="group/see -mx-2 flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.06]"
+            >
+              {stack(untimed.albums)}
+              <span className="ml-auto flex items-center gap-1 text-[12.5px] font-medium text-ink/65 group-hover/see:text-ink">
+                See songs
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+                  <path d="m9 6 6 6-6 6" />
+                </svg>
+              </span>
+            </button>
+          </section>
+        )}
       </div>
 
       {/* Sound: problems a better copy fixes. */}
@@ -307,10 +334,73 @@ export function HealthScreen(props: {
       {createPortal(
         <AnimatePresence>
           {sheet && <AlbumsSheet root={props.root} sheet={sheet} albums={report?.albums ?? []} onClose={() => setSheet(null)} />}
+          {songs && untimed && <UntimedSheet root={props.root} paths={untimed.examples} total={untimed.tracks} onClose={() => setSongs(false)} />}
         </AnimatePresence>,
         document.body,
       )}
     </Page>
+  )
+}
+
+/** Songs whose words have no times, each a click from timing it. */
+function UntimedSheet(props: { root: string; paths: string[]; total: number; onClose: () => void }) {
+  const [, loaded] = useState(0)
+  useEffect(() => {
+    void ensureCatalog(props.root).then(() => loaded(1))
+  }, [props.root])
+  const { onClose } = props
+  useEscape(true, onClose)
+  return (
+    <>
+      <motion.div className="fixed inset-0 z-40 bg-black/35" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.aside
+        role="dialog"
+        aria-label="Lyrics without timing"
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={spring}
+        className="popover no-scrollbar fixed bottom-3 right-3 top-12 z-40 w-[min(560px,92vw)] overflow-y-auto rounded-[24px] p-6"
+      >
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Lyrics without timing</h2>
+            <p className="mt-1.5 max-w-[60ch] text-[13px] leading-relaxed text-ink/65">
+              Time a song: it plays, and you press Space as each line begins. The timing is saved beside the song, and Activity can undo it.
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-[18px] text-ink/60 hover:bg-ink/10">
+            ×
+          </button>
+        </div>
+        <ul className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-0.5">
+          {props.paths.map((p) => {
+            const t = trackAt(p)
+            return (
+              <li key={p} className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.05]">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium">{t?.title ?? p.split('/').pop()}</div>
+                  <div className="truncate text-[12px] text-ink/50">{t ? `${t.artists.join(', ') || t.album_artist}, ${t.album}` : p}</div>
+                </div>
+                <button
+                  disabled={!t}
+                  onClick={() => {
+                    onClose()
+                    timeLyrics(props.root, p)
+                  }}
+                  className="btn btn-sm"
+                >
+                  Time it
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+        {props.total > props.paths.length && (
+          <p className="mt-3 text-[12px] text-ink/50">And {fmt(props.total - props.paths.length)} more.</p>
+        )}
+      </motion.aside>
+    </>
   )
 }
 

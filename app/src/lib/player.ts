@@ -117,11 +117,21 @@ const idle: PlayerState = {
 }
 
 let state: PlayerState = idle
+/** When the last report came (performance.now()), to tell the position between reports. */
+let reportedAt = 0
 const listeners = new Set<() => void>()
 const set = (s: PlayerState) => {
   state = s
+  reportedAt = performance.now()
   listeners.forEach((l) => l())
 }
+
+/** The player's state now, outside React. */
+export const getPlayerState = () => state
+
+/** The song's position to the millisecond: the last report plus the time since (while playing). */
+export const positionNow = () =>
+  state.playing ? state.position_ms + Math.min(250, performance.now() - reportedAt) : state.position_ms
 
 let subscribed = false
 /** Start listening to the engine (once). */

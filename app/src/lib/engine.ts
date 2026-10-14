@@ -226,7 +226,8 @@ export const saveAppearance = (appearance: object) =>
   inApp() ? invoke<void>('save_appearance', { appearance }) : Promise.resolve()
 
 export interface EditChange {
-  kind: 'edit'
+  /** Tags or ratings changed in place, or a song's lyrics timed (its .lrc). */
+  kind: 'edit' | 'lyrics'
   journal: string
   started_ms: number
   files: number

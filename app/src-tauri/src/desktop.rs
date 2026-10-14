@@ -25,6 +25,14 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     let next = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
     let previous = MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?;
     let mini = MenuItem::with_id(app, "mini", "Mini player", true, None::<&str>)?;
+    let lyrics = MenuItem::with_id(app, "lyrics", "Desktop lyrics", true, Some("Ctrl+Shift+D"))?;
+    let move_lyrics = MenuItem::with_id(
+        app,
+        "lyrics-move",
+        "Move desktop lyrics",
+        true,
+        None::<&str>,
+    )?;
     let show = MenuItem::with_id(app, "show", "Show Venuta", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Venuta", true, None::<&str>)?;
     let line = || PredefinedMenuItem::separator(app);
@@ -38,6 +46,8 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
             &previous,
             &line()?,
             &mini,
+            &lyrics,
+            &move_lyrics,
             &show,
             &line()?,
             &quit,
@@ -64,6 +74,8 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                         let _ = crate::playback::mini_player(true, app).await;
                     });
                 }
+                "lyrics" => crate::lyric_windows::ask_main(app, "toggle"),
+                "lyrics-move" => crate::lyric_windows::ask_main(app, "unlock"),
                 "show" => show_main(app),
                 "quit" => app.exit(0),
                 _ => {}

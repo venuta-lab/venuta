@@ -41,6 +41,7 @@ import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from
 import { track } from './lib/jobs'
 import { dismissNotice, notify, useNotice } from './lib/notify'
 import * as player from './lib/player'
+import { ensureCatalog, trackAt } from './lib/catalog'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
@@ -56,6 +57,7 @@ import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
+import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
 const CardsScreen = lazy(() => import('./screens/CardsScreen').then((m) => ({ default: m.CardsScreen })))
@@ -146,6 +148,7 @@ export default function App() {
   const listenSearch = useRef<HTMLInputElement>(null)
   // An album to open on the Music home (from the palette), once it is showing.
   const [listenAlbum, setListenAlbum] = useState<string | null>(null)
+  const [listenArtist, setListenArtist] = useState<string | null>(null)
   // The player's big view (and which side panel) and the queue drawer.
   const [nowOpen, setNowOpen] = useState(false)
   const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal' | 'sound'>('lyrics')
@@ -338,6 +341,28 @@ export default function App() {
     }
   }, [])
 
+  // The desktop lyrics from the tray and Ctrl+Shift+D (anywhere): shown, hidden, or unlocked to
+  // be moved. This window knows where they were left.
+  useEffect(() => {
+    if (!inApp()) return
+    let off: (() => void) | undefined
+    let live = true
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) =>
+        listen<string>('desktop-lyrics', async (e) => {
+          if (e.payload === 'unlock') {
+            if (!(await desktopLyricsOpen())) await openDesktopLyrics()
+            await lockDesktopLyrics(false)
+          } else await toggleDesktopLyrics()
+        }),
+      )
+      .then((u) => (live ? (off = u) : u()))
+    return () => {
+      live = false
+      off?.()
+    }
+  }, [])
+
   // Playlists, in Music, from anywhere (the Music home's shelf, a notice's Open, the palette).
   const openPlaylists = useCallback(
     (place: PlaylistsPlace = { kind: 'home' }) => {
@@ -348,6 +373,22 @@ export default function App() {
     [go],
   )
   const openPlaylist = useCallback((name: string) => openPlaylists({ kind: 'playlist', name }), [openPlaylists])
+
+  // Time a song's lyrics (from Health): play it, and open its lyrics with the maker.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const { root, path } = (e as CustomEvent<{ root: string; path: string }>).detail
+      void ensureCatalog(root).then(() => {
+        const t = trackAt(path)
+        if (!t) return
+        player.play(root, [t], 0)
+        setNowPanel('lyrics')
+        setNowOpen(true)
+      })
+    }
+    window.addEventListener('venuta:time-lyrics', on)
+    return () => window.removeEventListener('venuta:time-lyrics', on)
+  }, [])
 
   // "Playing from …" (the queue, Now Playing): back to that playlist or album.
   useEffect(() => {
@@ -536,6 +577,32 @@ export default function App() {
         run: () => {
           setNowPanel('lyrics')
           setNowOpen(true)
+        },
+      },
+      {
+        id: 'lyrics-big',
+        group: 'Player',
+        label: 'Lyrics on the big screen',
+        keys: 'F11',
+        keywords: 'tv fullscreen second screen monitor karaoke',
+        run: () => void openBigScreen(),
+      },
+      {
+        id: 'lyrics-desktop',
+        group: 'Player',
+        label: 'Desktop lyrics',
+        keys: 'Ctrl+Shift+D',
+        keywords: 'overlay floating on top words',
+        run: () => void toggleDesktopLyrics(),
+      },
+      {
+        id: 'lyrics-desktop-move',
+        group: 'Player',
+        label: 'Move desktop lyrics',
+        keywords: 'unlock overlay position',
+        run: async () => {
+          if (!(await desktopLyricsOpen())) await openDesktopLyrics()
+          await lockDesktopLyrics(false)
         },
       },
       {
@@ -751,6 +818,8 @@ export default function App() {
             searchRef={listenSearch}
             openAlbum={listenAlbum}
             onOpenedAlbum={() => setListenAlbum(null)}
+            openArtist={listenArtist}
+            onOpenedArtist={() => setListenArtist(null)}
             onEditDetails={() => go('music')}
             onOpenPlaylist={openPlaylist}
             onPlaylists={openPlaylists}
@@ -895,6 +964,11 @@ export default function App() {
                 setListenAlbum(dir)
                 go('listen')
               }}
+              onArtist={(name) => {
+                setNowOpen(false)
+                setListenArtist(name)
+                go('listen')
+              }}
             />
             <QueueDrawer open={queueOpen} onClose={closeQueue} />
           </main>
@@ -907,8 +981,9 @@ export default function App() {
               setNowPanel('lyrics')
               setNowOpen((o) => !(o && nowPanel === 'lyrics'))
             }}
-            onArtist={() => {
+            onArtist={(name) => {
               setNowOpen(false)
+              setListenArtist(name)
               go('listen')
             }}
           />

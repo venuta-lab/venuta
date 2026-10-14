@@ -11,6 +11,7 @@ import {
 import { RunRow } from '../components/AlbumRow'
 import { Page } from '../components/ui'
 import { when } from '../lib/format'
+import { lyricsChanged } from '../lib/lyrics'
 
 /** What an answer was about, in words ("year:01_Hindi/…/2006_Gangster" → "Gangster: year"). */
 function describeAnswer(id: string, choice: string): { what: string; answer: string } {
@@ -143,16 +144,19 @@ function EditRow(props: { change: EditChange; onUndone: () => void }) {
     <div className="glass flex items-center gap-4 rounded-2xl px-5 py-3 text-[13.5px]">
       <div className="min-w-0 flex-1">
         <div className="font-medium">
-          {c.files.toLocaleString('en-IN')} {c.files === 1 ? 'file' : 'files'} edited
+          {c.kind === 'lyrics' ? 'Lyrics timed' : `${c.files.toLocaleString('en-IN')} ${c.files === 1 ? 'file' : 'files'} edited`}
           <span className="font-normal text-ink/50">, {when(c.started_ms)}</span>
         </div>
-        <div className="truncate text-[12px] text-ink/50">{c.examples.map((x) => x.split('/').pop()).join(', ')}</div>
+        <div className="truncate text-[12px] text-ink/50">
+          {c.examples.map((x) => (c.kind === 'lyrics' ? x.split('/').pop()?.replace(/\.lrc$/i, '') : x.split('/').pop())).join(', ')}
+        </div>
       </div>
       <button
         disabled={state === 'working'}
         onClick={async () => {
           setState('working')
           await undoEdit(c.journal)
+          if (c.kind === 'lyrics') lyricsChanged()
           props.onUndone()
         }}
         className="btn btn-sm"

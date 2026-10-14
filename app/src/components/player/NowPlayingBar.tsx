@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { usePrefs } from '../../lib/prefs'
 import { LcdSpectrum } from './Spectrum'
+import { openBigScreen } from '../../lib/lyricWindows'
 import {
   clock,
   miniPlayer,
@@ -562,6 +563,9 @@ function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => v
       } else if (e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault()
         void miniPlayer(true)
+      } else if (e.key === 'F11' && s.queue[s.index]?.lyrics) {
+        e.preventDefault()
+        void openBigScreen()
       }
     }
     window.addEventListener('keydown', onKey)

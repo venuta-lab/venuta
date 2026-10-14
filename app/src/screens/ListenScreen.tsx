@@ -53,6 +53,9 @@ interface Props {
   /** An album to show (from the palette); cleared with `onOpenedAlbum` once shown. */
   openAlbum: string | null
   onOpenedAlbum: () => void
+  /** An artist to show (from Now Playing); cleared with `onOpenedArtist` once shown. */
+  openArtist?: string | null
+  onOpenedArtist?: () => void
   onEditDetails: (dir: string) => void
   onOpenPlaylist: (name: string) => void
   onPlaylists: () => void
@@ -87,7 +90,7 @@ function NowPlaying({ children }: { children: ReactNode }) {
 }
 
 function Listen(props: Props) {
-  const { root, report, busy, searchRef, openAlbum, onOpenedAlbum } = props
+  const { root, report, busy, searchRef, openAlbum, onOpenedAlbum, openArtist = null, onOpenedArtist } = props
   const box = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState<Tab>(kept.tab)
   const [stack, setStack] = useState<Entry[]>([])
@@ -173,6 +176,20 @@ function Listen(props: Props) {
   useEffect(() => {
     if (openAlbum && shown === openAlbum) onOpenedAlbum()
   }, [openAlbum, shown, onOpenedAlbum])
+
+  // An artist asked for from elsewhere (Now Playing), the same way.
+  const [shownArtist, setShownArtist] = useState<string | null>(null)
+  if (openArtist !== shownArtist) {
+    if (!openArtist) setShownArtist(null)
+    else if (lib.byDir.size) {
+      setShownArtist(openArtist)
+      setQuery('')
+      setStack([{ page: { kind: 'artist', name: openArtist }, scroll: 0 }])
+    }
+  }
+  useEffect(() => {
+    if (openArtist && shownArtist === openArtist) onOpenedArtist?.()
+  }, [openArtist, shownArtist, onOpenedArtist])
 
   // Escape (when nothing is open over it) or the mouse's back button closes the page on top.
   useEscape(stack.length > 0, back)

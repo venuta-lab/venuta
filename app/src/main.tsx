@@ -23,13 +23,21 @@ import '@fontsource/silkscreen/400'
 import './index.css'
 import App from './App.tsx'
 import { MiniPlayer } from './components/player/MiniPlayer'
+import { BigScreen } from './components/lyrics/BigScreen'
+import { DesktopLyrics } from './components/lyrics/DesktopLyrics'
 import { applyPrefs } from './lib/prefs'
 
 // Before the first paint, so the chosen theme never flashes.
 applyPrefs()
 
-// The mini player is the same app in its own small window (opened at #mini).
-const mini = location.hash === '#mini'
-if (mini) document.documentElement.dataset.window = 'mini'
+// The mini player, the big screen and the desktop lyrics are the same app in windows of their
+// own (opened at #mini, #stage, #overlay).
+const place = location.hash.slice(1)
+if (['mini', 'stage', 'overlay'].includes(place)) document.documentElement.dataset.window = place
+const Shown = place === 'mini' ? MiniPlayer : place === 'stage' ? BigScreen : place === 'overlay' ? DesktopLyrics : App
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{mini ? <MiniPlayer /> : <App />}</StrictMode>)
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <Shown />
+  </StrictMode>,
+)

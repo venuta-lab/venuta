@@ -189,6 +189,11 @@ export function ShortcutSheet(props: { open: boolean; onClose: () => void }) {
     ['Enter', 'On a question: accept the recommendation'],
     ['Space', 'On a question: play the clips'],
     ['Ctrl+Enter', 'In Organize: accept every recommendation'],
+    ['Space', 'Play or pause'],
+    ['L', 'Lyrics'],
+    ['F11', 'Lyrics on the big screen'],
+    ['Ctrl+Shift+D', 'Desktop lyrics, from anywhere'],
+    ['Ctrl+M', 'Mini player'],
     ['Esc', 'Close the sheet, palette or dialog'],
     ['?', 'This list'],
   ]

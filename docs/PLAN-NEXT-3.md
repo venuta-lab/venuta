@@ -57,29 +57,44 @@ median of repeats; start is process start to album covers on screen, median of f
       1,910 songs with lyrics are in Devanagari. Reading them takes 0.2 s, folding 46,507 lines
       0.8 s in slices (no frame longer than 17 ms), then 8 ms a key.
 
-## 3. Lyrics on the big screen, and on the desktop
-- [ ] A full-window lyrics view (from Now Playing, or F11): the cover's colours, large synced
-      lines, the next line coming in, the song and progress small at the bottom. Made for a TV or
-      a second screen, readable from the sofa.
-- [ ] Lyrics in Latin script as a switch there, from the same rules as search (so a Hindi song
-      can be sung along to by anyone).
-- [ ] Choose which screen it opens on (a second monitor or the TV); Esc closes it.
-- [ ] **Desktop lyrics**: the lines alone, floating over the desktop and every window: no
-      window, no background, clicks pass through to what is under them. Drag to place (it
-      remembers), lock it, size it; one line or two; it fades when nothing plays. From the tray,
-      the mini player or Ctrl+Shift+D.
-- [ ] **Lyrics looks**: a few styles for both modes, each with its own type: e.g. a clean
-      sans with a soft shadow, a karaoke style that fills each word as it is sung, a glow in the
-      cover's colour, an outlined style readable over any wallpaper, a serif for slow songs, and
-      the theme's own (Neo-Tokyo, Skin '99…). Size, colour (the cover's, the accent, white) and
-      Devanagari or Latin script per style.
+## 3. Lyrics on the big screen, and on the desktop: done 2026-10-14
+- [x] **Big screen** (Now Playing's screen button, F11, the palette): its own full-screen
+      window (`#stage`): the cover blurred as light, the line being sung large with the one
+      before and the next coming in, the song and progress small at the bottom. The pointer and
+      two corner buttons (Style, Close) show only while the mouse moves; Esc closes, T switches
+      Roman letters, Space plays and pauses.
+- [x] Roman letters under each line in an Indian script, from search's own rules (a switch in
+      the style panel, and T).
+- [x] With more than one screen, the button asks which (each drawn in its own shape).
+- [x] **Desktop lyrics** (Now Playing, the tray, Ctrl+Shift+D from anywhere): a transparent,
+      always-on-top window with no frame; locked, clicks go through it (checked with
+      WindowFromPoint). Unlocked (the tray's "Move desktop lyrics", or the palette) it shows a
+      dashed edge and one dark-glass bar: Lock in place, the look, colour, size, one line or
+      two, close. It remembers where it was (back on screen if a monitor went), fades after 4 s
+      paused. Its button in Now Playing lights while it shows.
+- [x] **Looks**: Clean, Karaoke (fills word by word in reading order, however the line wraps),
+      Glow, Outline, Serif, Theme; size S to XL; the cover's colour, the accent or white. One
+      choice for both, shared live between windows. Chosen in a **style panel** that draws each
+      look as itself on a stage lit by the cover: in Now Playing (the app's glass), on the big
+      screen (dark glass), and as a one-row strip on the desktop lyrics.
+- [x] **Now Playing, redesigned around it**: the lyrics' tools sit beside the tabs in the tabs'
+      own pill (style, timing, big screen, desktop), named on hover with their keys. The song's
+      side is a way in: every artist and the album open their pages (the bar's artist names
+      now do too), with Add to playlist, Go to album and More (each artist, timing, Show in
+      folder, Search the web).
 
-## 4. Make synced lyrics
-- [ ] For a song with plain lyrics (or lyrics you paste), play it and tap a key at each line;
-      nudge any line by ear afterwards (play from it, ±0.1 s); save.
-- [ ] Saved as a timed .lrc beside the song (and in the song's tags), as a change you can undo
-      in Activity.
-- [ ] Health lists the songs that have plain lyrics but no timing, as the ones to make.
+## 4. Make synced lyrics: done 2026-10-14
+- [x] For a song with plain lyrics (or pasted ones: Now Playing offers it when there are
+      none): play it and press Space as each line begins; Backspace steps back (rewinding no
+      further than the line above), B marks a break in the singing; nudge any line ±0.1 s
+      (Shift ±0.5) by ear, R or a click plays from it. Timed songs can be fixed the same way.
+- [x] Saved as a timed .lrc beside the song (`crates/engine/src/lrc.rs`), as a change Activity
+      lists ("Lyrics timed") and undoes exactly: the .lrc that was there before comes back byte
+      for byte, or the new one goes. **Not in the song's tags**: that would rewrite the song
+      file for words every player already reads from the .lrc; say if you want tags too.
+- [x] Health: "Lyrics without timing" (words in the tags or in a .lrc beside the song, with no
+      times, and nothing timed found online): 230 songs in the test copy. See songs lists them,
+      each with Time it (plays it and opens the maker).
 
 ## 5. Plex: Venuta keeps the library, Plex shares it (later: research and brainstorm first)
 His Plex Media Server is installed on this PC, so Plex can serve the very library Venuta keeps

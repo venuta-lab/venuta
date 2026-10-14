@@ -119,6 +119,12 @@ impl<'a> Builder<'a> {
 }
 
 pub fn run(lib: &Library) -> HealthReport {
+    run_with(lib, &HashSet::new())
+}
+
+/// [`run`], knowing which `.lrc` files beside songs hold words with no times (reading them is
+/// the caller's: see [`crate::lrc::untimed_sidecars`]).
+pub fn run_with(lib: &Library, plain_sidecars: &HashSet<String>) -> HealthReport {
     let flac: Vec<&Track> = lib.tracks.iter().filter(|t| t.kind == "flac").collect();
     let albums = lib.albums();
     let mut issues: Vec<Issue> = Vec::new();
@@ -542,6 +548,41 @@ pub fn run(lib: &Library) -> HealthReport {
         .collect();
     add(&mut issues, &mut flagged, b);
 
+    let mut b = Builder::new(
+        "lyrics_untimed",
+        "Lyrics without timing",
+        "These songs have their words but not when each line is sung, so the lyrics can't follow along. Play one and tap along to time it.",
+        Severity::Note,
+    );
+    // The words shown (a .lrc beside the song first, else the tags) have no times, and nothing
+    // timed was found online.
+    b.hits = flac
+        .iter()
+        .copied()
+        .filter(|t| {
+            if lib.fetched_lyrics.contains_key(&t.id) {
+                return false;
+            }
+            let sidecar = format!(
+                "{}.lrc",
+                t.path.rsplit_once('.').map(|x| x.0).unwrap_or(&t.path)
+            );
+            if lib.lyrics_files.contains(&sidecar) {
+                return plain_sidecars.contains(&sidecar);
+            }
+            let words = ["LYRICS", "UNSYNCEDLYRICS"]
+                .iter()
+                .filter_map(|k| t.tags.get(*k))
+                .flatten()
+                .filter(|v| !v.trim().is_empty())
+                .collect::<Vec<_>>();
+            !words.is_empty() && !words.iter().any(|v| crate::lrc::is_timed(v))
+        })
+        .collect();
+    // The songs themselves, to time one from Health.
+    b.examples = b.hits.iter().take(300).map(|t| t.path.clone()).collect();
+    add(&mut issues, &mut flagged, b);
+
     // --- Files and folders -----------------------------------------------------------------
     let mut b = Builder::new(
         "long_paths",
@@ -690,6 +731,49 @@ mod tests {
             .expect("one song is neither");
         assert_eq!(issue.tracks, 1);
         assert_eq!(issue.albums, vec!["C".to_string()]);
+    }
+
+    #[test]
+    fn words_without_times_are_listed_until_timed() {
+        let with = |id, path: &str, words: &str| {
+            let mut t = flac(id, path, Some(-9.0), false);
+            t.tags.insert("LYRICS".into(), vec![words.into()]);
+            t
+        };
+        let lib = Library {
+            tracks: vec![
+                with(1, "A/01.flac", "Plain words\nno times"),
+                with(2, "B/01.flac", "[00:01.00]Timed"),
+                with(3, "C/01.flac", "Plain, but timed beside it"),
+                flac(4, "D/01.flac", Some(-9.0), false),
+            ],
+            lyrics_files: ["C/01.lrc".to_owned()].into(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+        };
+        let report = run(&lib);
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.id == "lyrics_untimed")
+            .expect("one song has words without times");
+        assert_eq!(issue.examples, vec!["A/01.flac".to_string()]);
+        // A .lrc beside it with no times counts too.
+        let report = super::run_with(&lib, &["C/01.lrc".to_owned()].into());
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.id == "lyrics_untimed")
+            .unwrap();
+        assert_eq!(
+            issue.examples,
+            vec!["A/01.flac".to_string(), "C/01.flac".to_string()]
+        );
     }
 
     #[test]
