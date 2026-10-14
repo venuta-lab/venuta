@@ -22,7 +22,10 @@ if (!version) {
 const notesAt = args.indexOf('--notes')
 const notes = notesAt >= 0 ? readFileSync(args[notesAt + 1], 'utf8').trim() : `Venuta ${version}`
 const publish = args.includes('--publish')
-const run = (cmd, a, opts = {}) => execFileSync(cmd, a, { stdio: 'inherit', cwd: root, shell: process.platform === 'win32', ...opts })
+// Only pnpm needs the Windows shell (it is a .cmd); git and gh get their arguments as they are, so a
+// title with a space stays one argument.
+const run = (cmd, a, opts = {}) =>
+  execFileSync(cmd, a, { stdio: 'inherit', cwd: root, shell: process.platform === 'win32' && cmd === 'pnpm', ...opts })
 
 // 1. Version everywhere.
 const conf = join(root, 'app/src-tauri/tauri.conf.json')
