@@ -1,12 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { askAddToPlaylist } from '../AddToPlaylist'
+import { askAddSongs } from '../AddToPlaylist'
 import { useEscape } from '../../lib/layers'
 import type { Lyrics } from '../../lib/lyrics'
 import { monitors, openBigScreen, toggleDesktopLyrics, useDesktopLyricsShown, type Monitor } from '../../lib/lyricWindows'
 import { notify } from '../../lib/notify'
-import type { QueueItem } from '../../lib/player'
+import { onlineSearch } from '../../lib/engine'
+import { onlineProblem } from '../../lib/online'
+import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
 import { useContextMenu } from '../../screens/listen/parts'
 import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
@@ -206,23 +208,42 @@ export function SongActions(props: {
   from: ReactNode
 }) {
   const { song } = props
+  const remote = isOnline(song)
   const artists = song.artists.length ? song.artists : song.album_artist ? [song.album_artist] : []
-  const more = useContextMenu(() => [
-    ['Go to album', () => props.onAlbum(song.dir)],
-    ...artists.slice(0, 3).map((a) => [`Go to ${a}`, () => props.onArtist(a)] as [string, () => void]),
-    ...(song.album_artist && !artists.includes(song.album_artist)
-      ? ([[`Go to ${song.album_artist}`, () => props.onArtist(song.album_artist)]] as [string, () => void][])
-      : []),
-    ['Add to playlist…', () => askAddToPlaylist([song.path], song.title)],
-    ...(props.lyrics && (props.lyrics.lines.length || props.lyrics.text)
-      ? ([[props.lyrics.lines.length ? 'Fix the lyrics timing' : 'Time the lyrics', props.onTiming]] as [string, () => void][])
-      : ([['Add lyrics', props.onTiming]] as [string, () => void][])),
-    [
-      'Show in folder',
-      () => void invoke('show_in_folder', { root: props.root, path: song.path }).catch((e) => notify(String(e))),
-    ],
-    ['Search the web', () => void invoke('search_web', { words: `${song.title} ${artists[0] ?? ''}` })],
-  ])
+  const moreBy = async (name: string) => {
+    try {
+      const found = await onlineSearch(name)
+      if (!found.tracks.length) return notify(`No online songs for ${name}.`)
+      void playItems(props.root, found.tracks.map(toRemoteItem), 0, { kind: 'search', ref: name, label: `Online: ${name}` })
+    } catch (e) {
+      notify(onlineProblem(e))
+    }
+  }
+  const more = useContextMenu(() => {
+    const rows: [string, () => void][] = [
+      ...artists.slice(0, 3).map((a) => [`Go to ${a}`, () => props.onArtist(a)] as [string, () => void]),
+      ...(song.album_artist && !artists.includes(song.album_artist)
+        ? ([[`Go to ${song.album_artist}`, () => props.onArtist(song.album_artist)]] as [string, () => void][])
+        : []),
+      ['Add to playlist…', () => askAddSongs([songItemOf(song)], song.title)],
+    ]
+    if (!remote) {
+      rows.unshift(['Go to album', () => props.onAlbum(song.dir)])
+      if (props.lyrics && (props.lyrics.lines.length || props.lyrics.text)) {
+        rows.push([props.lyrics.lines.length ? 'Fix the lyrics timing' : 'Time the lyrics', props.onTiming])
+      } else {
+        rows.push(['Add lyrics', props.onTiming])
+      }
+      rows.push([
+        'Show in folder',
+        () => void invoke('show_in_folder', { root: props.root, path: song.path }).catch((e) => notify(String(e))),
+      ])
+    } else if (artists[0]) {
+      rows.push([`More online by ${artists[0]}`, () => void moreBy(artists[0])])
+    }
+    rows.push(['Search the web', () => void invoke('search_web', { words: `${song.title} ${artists[0] ?? ''}` })])
+    return rows
+  })
   const link = 'rounded-md transition-colors hover:text-ink hover:underline decoration-ink/35 underline-offset-[5px]'
   return (
     <>
@@ -238,19 +259,27 @@ export function SongActions(props: {
             ))
           : 'Unknown artist'}
       </p>
-      <button onClick={() => props.onAlbum(song.dir)} className={`mt-1 max-w-full truncate text-[13px] text-ink/50 ${link}`} title="Go to the album">
-        {song.album}
-      </button>
+      {remote ? (
+        song.album ? (
+          <p className="mt-1 max-w-full truncate text-[13px] text-ink/50">{song.album}</p>
+        ) : null
+      ) : (
+        <button onClick={() => props.onAlbum(song.dir)} className={`mt-1 max-w-full truncate text-[13px] text-ink/50 ${link}`} title="Go to the album">
+          {song.album}
+        </button>
+      )}
       {props.from}
       <div className="mt-4 flex items-center justify-center gap-3">
-        {props.stars}
+        {!remote && props.stars}
         <div className="seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
-          <IconAction label="Add to playlist" onClick={() => askAddToPlaylist([song.path], song.title)}>
+          <IconAction label="Add to playlist" onClick={() => askAddSongs([songItemOf(song)], song.title)}>
             <IconPlaylistAdd width={18} height={18} />
           </IconAction>
-          <IconAction label="Go to album" onClick={() => props.onAlbum(song.dir)}>
-            <IconAlbum width={18} height={18} />
-          </IconAction>
+          {!remote && (
+            <IconAction label="Go to album" onClick={() => props.onAlbum(song.dir)}>
+              <IconAlbum width={18} height={18} />
+            </IconAction>
+          )}
           <IconAction label="More" onClick={more.onContextMenu}>
             <IconMore width={18} height={18} />
           </IconAction>

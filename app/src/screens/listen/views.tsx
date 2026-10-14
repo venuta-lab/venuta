@@ -22,6 +22,7 @@ import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, She
 import { SongList } from './SongList'
 import { play } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
+import { OnlineResults } from './OnlineResults'
 
 export const HI_RES = 'Hi-Res'
 
@@ -331,7 +332,13 @@ export function SearchResults(props: {
   lyrics: LyricResult[]
 }) {
   const nothing = !props.albums.length && !props.artists.length && !props.tracks.length && !props.lyrics.length
-  if (nothing) return <p className="py-20 text-center text-[14px] text-ink/55">Nothing matches “{props.query.trim()}”.</p>
+  // Library empty: the online section says so, in one line that agrees with its own state.
+  if (nothing)
+    return (
+      <div className="pb-16">
+        <OnlineResults query={props.query} spaced={false} libraryEmpty />
+      </div>
+    )
   return (
     <div className="pb-16">
       {props.artists.length > 0 && <ArtistRow artists={props.artists} />}
@@ -354,6 +361,7 @@ export function SearchResults(props: {
           <LyricResults hits={props.lyrics} query={props.query.trim()} />
         </section>
       )}
+      <OnlineResults query={props.query} spaced />
     </div>
   )
 }

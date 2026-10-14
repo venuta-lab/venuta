@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { loadCovers, useCovers } from '../../lib/covers'
 import { closeBigScreen } from '../../lib/lyricWindows'
 import { scaleOf, setLyricLook, useLyricLook } from '../../lib/lyricLook'
-import { clock, connectPlayer, toggle, usePlayerValue } from '../../lib/player'
+import { clock, connectPlayer, isOnline, toggle, usePlayerValue } from '../../lib/player'
+import { cleanArtUrl } from '../RemoteArt'
 import { LyricText } from './LyricText'
 import { LookPanel } from './LookPanel'
 import { IconClose, IconLyricStyle } from '../Icons'
@@ -22,10 +23,14 @@ export function BigScreen() {
   const look = useLyricLook()
   const colour = useLyricColour(look.colour, root, song?.dir)
   const duration = usePlayerValue((s) => s.duration_ms || s.queue[s.index]?.duration_ms || 0)
-  const cover = useCovers(640)(song?.dir ?? '')
+  const localDir = song && !isOnline(song) ? song.dir : ''
+  const local = useCovers(640)(localDir)
+  // An online song's picture comes from the catalog.
+  const remoteSrc = song && isOnline(song) ? cleanArtUrl(song.artwork_url) : undefined
+  const cover = remoteSrc ? { src: remoteSrc } : local
   useEffect(() => {
-    if (root && song?.dir) void loadCovers(root, [song.dir], 640)
-  }, [root, song?.dir])
+    if (root && localDir) void loadCovers(root, [localDir], 640)
+  }, [root, localDir])
   const [awake, setAwake] = useState(true)
   const [styling, setStyling] = useState(false)
   const idle = useRef(0)

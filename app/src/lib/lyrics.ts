@@ -3,8 +3,8 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { inApp } from './engine'
-import { usePlayerValue } from './player'
+import { inApp, onlineLyrics } from './engine'
+import { isOnline, usePlayerValue, type QueueItem } from './player'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -30,6 +30,39 @@ if (typeof window !== 'undefined')
     if (e.key !== CHANGED_KEY || !e.newValue) return
     heard(e.newValue.slice(e.newValue.indexOf('|') + 1))
   })
+
+/** Lyrics for an online queue row (LRCLIB by title/artist). Null while loading. */
+export function useOnlineLyrics(song: QueueItem | undefined, enabled: boolean): Lyrics | null {
+  const key =
+    enabled && song && isOnline(song) && song.online?.kind === 'online'
+      ? `online:${song.online.provider}:${song.online.track_id}`
+      : ''
+  const [lyrics, setLyrics] = useState<{ key: string; value: Lyrics | null }>({ key: '', value: null })
+  useEffect(() => {
+    if (!key || !song || !inApp()) {
+      setLyrics({ key: '', value: null })
+      return
+    }
+    const known = kept.get(key)
+    if (known) {
+      setLyrics({ key, value: known })
+      return
+    }
+    let live = true
+    setLyrics({ key, value: null })
+    onlineLyrics(song.title, song.artists.join(', '), song.album, song.duration_ms)
+      .then((value) => {
+        const v: Lyrics = { lines: value.lines, text: value.text }
+        kept.set(key, v)
+        if (live) setLyrics({ key, value: v })
+      })
+      .catch(() => live && setLyrics({ key, value: { lines: [], text: '' } }))
+    return () => {
+      live = false
+    }
+  }, [key, song?.title, song?.album, song?.duration_ms, song?.artists?.join(',')])
+  return lyrics.key === key ? lyrics.value : null
+}
 
 /** The words of a song (null while they're read). */
 export function useLyrics(root: string, path: string | undefined): Lyrics | null {

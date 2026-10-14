@@ -43,6 +43,7 @@ import { dismissNotice, notify, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { ensureCatalog, trackAt } from './lib/catalog'
 import { connectPlayer, resumePlayer } from './lib/player'
+import { cleanArtUrl } from './components/RemoteArt'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
 import { NowPlaying } from './components/player/NowPlaying'
@@ -96,8 +97,10 @@ const MAIN = 5
  */
 function NowBackdrop({ covers }: { covers: string[] }) {
   const dir = player.usePlayerValue((s) => player.current(s)?.dir ?? '')
+  // An online song has no album folder; its catalog picture lights the window instead.
+  const remote = player.usePlayerValue((s) => cleanArtUrl(player.remoteArtUrl(player.current(s))) ?? '')
   const cover = useCovers(320)
-  const art = dir ? cover(dir) : undefined
+  const art = dir ? cover(dir) : remote ? { src: remote, accent: undefined } : undefined
   // The accent follows what's playing (see lib/covers.ts).
   useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
   // And finds its right variant again when the look changes.
@@ -992,7 +995,7 @@ export default function App() {
           />
           </div>
         </div>
-        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} root={root || undefined} />
         {root && (
           <AddToPlaylist root={root} onOpen={openPlaylist} />
         )}

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlistAdd, playlists as loadPlaylists, type PlaylistSummary } from '../lib/engine'
+import { playlistAdd, playlists as loadPlaylists, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
 import { Mosaic } from './Mosaic'
@@ -10,15 +10,22 @@ import { keyFor, matcher } from '../lib/textsearch'
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
   picker for the whole app. Any code asks with askAddToPlaylist(); <AddToPlaylist> shows it.
 */
-type Request = { paths: string[]; label: string }
+type Request = { items: PlaylistItem[]; label: string }
 let request: Request | null = null
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
 
-/** Open the picker for these songs; `label` names them ("Tum Hi Ho", "Aashiqui 2"). */
-export function askAddToPlaylist(paths: string[], label: string) {
-  if (!paths.length) return
-  request = { paths, label }
+/** Open the picker for these library songs; `label` names them ("Tum Hi Ho", "Aashiqui 2"). */
+export const askAddToPlaylist = (paths: string[], label: string) =>
+  askAddSongs(
+    paths.filter(Boolean).map((path) => ({ path })),
+    label,
+  )
+
+/** Open the picker for any songs: library files, and online songs by their stable id. */
+export function askAddSongs(items: PlaylistItem[], label: string) {
+  if (!items.length) return
+  request = { items, label }
   emit()
 }
 
@@ -65,10 +72,10 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
     if (!req || busy) return
     setBusy(true)
     try {
-      const n = await playlistAdd(root, name, req.paths)
-      const what = req.paths.length === 1 ? req.label : `${req.paths.length} songs`
+      const n = await playlistAdd(root, name, req.items)
+      const what = req.items.length === 1 ? req.label : `${req.items.length} songs`
       notify(
-        n === 0 ? `${what} ${req.paths.length === 1 ? 'is' : 'are'} already in ${name}.` : `Added ${n === req.paths.length ? what : `${n} of ${req.paths.length} songs`} to ${name}.`,
+        n === 0 ? `${what} ${req.items.length === 1 ? 'is' : 'are'} already in ${name}.` : `Added ${n === req.items.length ? what : `${n} of ${req.items.length} songs`} to ${name}.`,
         { label: 'Open', run: () => onOpen(name) },
       )
       playlistsChanged()
@@ -103,7 +110,7 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
           >
             <div className="border-b border-edge px-4 pb-3 pt-4">
               <div className="truncate text-[12.5px] text-ink/55">
-                Add {req.paths.length === 1 ? `“${req.label}”` : `${req.paths.length} songs from ${req.label}`} to
+                Add {req.items.length === 1 ? `“${req.label}”` : `${req.items.length} songs from ${req.label}`} to
               </div>
               <input
                 ref={input}
@@ -130,7 +137,7 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
                   <span className="grid h-10 w-10 shrink-0 place-items-center accent-fill rounded-lg text-[20px] leading-none text-on-accent">+</span>
                   <span className="min-w-0">
                     <span className="block truncate text-[14px] font-medium">New playlist “{q.trim()}”</span>
-                    <span className="block text-[12px] text-ink/55">Made with {req.paths.length === 1 ? 'this song' : `these ${req.paths.length} songs`}</span>
+                    <span className="block text-[12px] text-ink/55">Made with {req.items.length === 1 ? 'this song' : `these ${req.items.length} songs`}</span>
                   </span>
                 </button>
               )}
@@ -147,8 +154,18 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
                   <Mosaic root={root} dirs={p.dirs} className="h-10 w-10 shrink-0 rounded-lg" />
                   <span className="min-w-0">
                     <span className="block truncate text-[14px]">{p.name}</span>
-                    <span className="block text-[12px] text-ink/50">
-                      {p.tracks - p.missing} {p.tracks - p.missing === 1 ? 'song' : 'songs'}
+                    <span className="block truncate text-[12px] text-ink/50">
+                      {(() => {
+                        const local = Math.max(0, p.tracks - p.missing - (p.online ?? 0))
+                        const online = p.online ?? 0
+                        const toGet = p.missing
+                        if (online || toGet) {
+                          return [local ? `${local} local` : '', online ? `${online} online` : '', toGet ? `${toGet} to get` : '']
+                            .filter(Boolean)
+                            .join(' · ')
+                        }
+                        return `${local} ${local === 1 ? 'song' : 'songs'}`
+                      })()}
                     </span>
                   </span>
                 </button>

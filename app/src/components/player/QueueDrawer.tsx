@@ -1,27 +1,38 @@
-import { askAddToPlaylist } from '../AddToPlaylist'
+import { askAddSongs } from '../AddToPlaylist'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion, Reorder } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, jumpTo, move, removeAt, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, isOnline, jumpTo, move, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { IconClose } from '../Icons'
+import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
 
 type Entry = { q: QueueItem; i: number; key: string }
 
-/** One song in the queue: click plays it (the one playing now pauses or resumes). */
-function RowBody(props: { item: QueueItem; index: number; current: boolean }) {
+/** One song in the queue: click plays it (the one playing now pauses or resumes). `badge`:
+ *  say where it plays from (the queue holds online songs). */
+function RowBody(props: { item: QueueItem; index: number; current: boolean; badge: boolean }) {
   const cover = useCovers(320)
-  const art = cover(props.item.dir)
+  const online = isOnline(props.item)
+  const local = !online ? cover(props.item.dir) : null
   return (
     <>
-      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
-        {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
+      <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
+        {online ? (
+          <RemoteArt url={props.item.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+        ) : local ? (
+          <img src={local.src} alt="" className="h-full w-full object-cover" draggable={false} />
+        ) : null}
       </div>
       <div className="min-w-0 flex-1">
-        <div className={`truncate text-[13px] ${props.current ? 'font-medium text-accent-ink' : ''}`}>{props.item.title}</div>
+        <div className={`flex min-w-0 items-center gap-1.5 text-[13px] ${props.current ? 'font-medium text-accent-ink' : ''}`}>
+          <span className="truncate">{props.item.title}</span>
+          {props.badge && <AvailabilityBadge availability={props.item.availability ?? (online ? 'online' : 'local')} />}
+        </div>
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
       <span className="text-[11.5px] tabular-nums text-ink/45">{clock(props.item.duration_ms)}</span>
@@ -65,9 +76,9 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   useEscape(open, onClose)
 
   // "Up next" in the order shown; it follows the player except while you drag.
-  const sig = `${s.index}|${s.queue.map((q) => q.path).join('\n')}`
+  const sig = `${s.index}|${s.queue.map(queueKey).join('\n')}`
   const after = useMemo<Entry[]>(
-    () => s.queue.slice(s.index + 1).map((q, k) => ({ q, i: s.index + 1 + k, key: `${q.path}#${s.index + 1 + k}` })),
+    () => s.queue.slice(s.index + 1).map((q, k) => ({ q, i: s.index + 1 + k, key: `${queueKey(q)}#${s.index + 1 + k}` })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sig],
   )
@@ -82,6 +93,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     window.setTimeout(() => (dragged.current = false), 0)
   }
 
+  // Where each song plays from is said only when the queue holds online songs.
+  const mixed = s.queue.some(isOnline)
   const upcoming = s.queue.length - s.index - 1
   const left = s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0)
   return (
@@ -105,7 +118,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
             </div>
             {s.queue.length > 0 && (
               <button
-                onClick={() => askAddToPlaylist(s.queue.map((q) => q.path), 'the queue')}
+                onClick={() => askAddSongs(s.queue.map(songItemOf), 'the queue')}
                 className="btn-ghost btn-sm mt-0.5 shrink-0"
                 title="Save every song in the queue as a playlist, or add them to one"
               >
@@ -124,14 +137,14 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
                 <ol className="grid gap-0.5">
                   {s.queue.slice(0, s.index + 1).map((q, i) => (
                     <li
-                      key={`${q.path}#${i}`}
+                      key={`${queueKey(q)}#${i}`}
                       data-current={i === s.index}
                       tabIndex={0}
                       onClick={(e) => play(e, i, i === s.index)}
                       onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && void (i === s.index ? toggle() : jumpTo(i))}
                       className={`${ROW} ${i === s.index ? 'bg-ink/[0.08]' : 'hover:bg-ink/[0.05] active:bg-ink/[0.09]'}`}
                     >
-                      <RowBody item={q} index={i} current={i === s.index} />
+                      <RowBody item={q} index={i} current={i === s.index} badge={mixed} />
                     </li>
                   ))}
                 </ol>
@@ -163,7 +176,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
                           title="Drag to move; Alt+↑/↓ with the keyboard"
                           className={`${ROW} relative hover:bg-ink/[0.05] active:cursor-grabbing active:bg-ink/[0.09]`}
                         >
-                          <RowBody item={e.q} index={e.i} current={false} />
+                          <RowBody item={e.q} index={e.i} current={false} badge={mixed} />
                         </Reorder.Item>
                       ))}
                     </Reorder.Group>

@@ -9,9 +9,11 @@ import {
   clock,
   miniPlayer,
   current,
+  isOnline,
   next,
   outputChoices,
   previous,
+  remoteArtUrl,
   seek,
   setOutput,
   setRepeat,
@@ -27,6 +29,8 @@ import {
   useWaveform,
   verifyCurrent,
 } from '../../lib/player'
+import { RemoteArt } from '../RemoteArt'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import {
   IconExpand,
   IconLyrics,
@@ -215,14 +219,22 @@ export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
   )
 }
 
-export function SeekBar(props: { position: number; duration: number; className?: string; wave?: number[] | null; waveHeight?: number }) {
+export function SeekBar(props: {
+  position: number
+  duration: number
+  className?: string
+  wave?: number[] | null
+  waveHeight?: number
+  /** Still opening (an online song): shown, but not draggable until it plays. */
+  disabled?: boolean
+}) {
   const design = useThemeInfo().seekBar
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
   const at = (x: number) => {
     const r = bar.current?.getBoundingClientRect()
-    if (!r || !props.duration) return 0
+    if (!r || !props.duration || props.disabled) return 0
     return Math.min(1, Math.max(0, (x - r.left) / r.width)) * props.duration
   }
   const shown = drag ?? props.position
@@ -237,17 +249,22 @@ export function SeekBar(props: { position: number; duration: number; className?:
         aria-valuemin={0}
         aria-valuemax={Math.round(props.duration / 1000)}
         aria-valuenow={Math.round(shown / 1000)}
-        aria-valuetext={`${clock(shown)} of ${clock(props.duration)}`}
+        aria-valuetext={props.disabled ? 'Opening…' : `${clock(shown)} of ${clock(props.duration)}`}
+        aria-disabled={props.disabled || undefined}
+        title={props.disabled ? 'Opening…' : undefined}
         tabIndex={0}
         onKeyDown={(e) => {
+          if (props.disabled) return
           if (e.key === 'ArrowRight') void seek(props.position + 5000)
           if (e.key === 'ArrowLeft') void seek(props.position - 5000)
         }}
         onPointerDown={(e) => {
+          if (props.disabled) return
           ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
           setDrag(at(e.clientX))
         }}
         onPointerMove={(e) => {
+          if (props.disabled) return
           setHover(at(e.clientX))
           if (drag !== null) setDrag(at(e.clientX))
         }}
@@ -256,7 +273,7 @@ export function SeekBar(props: { position: number; duration: number; className?:
           setDrag(null)
         }}
         onPointerLeave={() => setHover(null)}
-        className="group relative flex-1 cursor-pointer touch-none"
+        className={`group relative flex-1 touch-none ${props.disabled ? 'cursor-progress opacity-50' : 'cursor-pointer'}`}
         style={{ height: design === 'wave' && props.wave ? (props.waveHeight ?? 22) : 20 }}
       >
         {design !== 'wave' ? (
@@ -590,7 +607,8 @@ export function NowPlayingBar(props: {
   const cover = useCovers(320)
   useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
   const info = useThemeInfo()
-  const art = song ? cover(song.dir) : undefined
+  const localArt = song && !isOnline(song) ? cover(song.dir) : undefined
+  const onlineArt = remoteArtUrl(song)
   const duration = s.duration_ms || song?.duration_ms || 0
   const wave = useWaveform(song?.path)
   return (
@@ -617,8 +635,12 @@ export function NowPlayingBar(props: {
               className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-ink/[0.08] shadow-md"
             >
               {!props.expanded && (
-                <motion.div layoutId="now-playing-cover" className="h-full w-full" transition={spring}>
-                  {art ? <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} /> : null}
+                <motion.div layoutId="now-playing-cover" className="grid h-full w-full place-items-center" transition={spring}>
+                  {onlineArt ? (
+                    <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
+                  ) : localArt ? (
+                    <img src={localArt.src} alt="" className="h-full w-full object-cover" draggable={false} />
+                  ) : null}
                 </motion.div>
               )}
               <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">
@@ -628,19 +650,27 @@ export function NowPlayingBar(props: {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-[14px] font-medium">{song.title}</span>
-                <SignalBadge signal={s.signal} fallback={song.format} />
+                {isOnline(song) && <AvailabilityBadge availability={song.availability ?? 'online'} />}
+                <SignalBadge signal={s.signal} fallback={song.format || (isOnline(song) ? 'Online' : '')} />
               </div>
               <div className="truncate text-[12.5px] text-ink/60">
-                {song.artists.length
-                  ? song.artists.map((a, i) => (
-                      <span key={a}>
-                        {i > 0 && ', '}
-                        <button onClick={() => props.onArtist(a)} className="hover:text-ink hover:underline">
-                          {a}
-                        </button>
-                      </span>
-                    ))
-                  : song.album_artist}
+                {s.buffering ? (
+                  <span className="inline-flex items-center gap-1.5 text-ink/55">
+                    <span className="spin h-2.5 w-2.5 rounded-full border-2 border-ink/20 border-t-ink/55" aria-hidden />
+                    Opening…
+                  </span>
+                ) : song.artists.length ? (
+                  song.artists.map((a, i) => (
+                    <span key={a}>
+                      {i > 0 && ', '}
+                      <button onClick={() => props.onArtist(a)} className="hover:text-ink hover:underline">
+                        {a}
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  song.album_artist
+                )}
               </div>
             </div>
           </motion.div>
@@ -656,20 +686,26 @@ export function NowPlayingBar(props: {
               <motion.button
                 whileTap={{ scale: 0.92 }}
                 onClick={() => void toggle()}
-                aria-label={s.playing ? 'Pause (Space)' : 'Play (Space)'}
-                title={s.playing ? 'Pause (Space)' : 'Play (Space)'}
+                aria-label={s.buffering ? 'Opening…' : s.playing ? 'Pause (Space)' : 'Play (Space)'}
+                title={s.buffering ? 'Opening the stream…' : s.playing ? 'Pause (Space)' : 'Play (Space)'}
                 className="np-play accent-fill grid h-10 w-10 place-items-center rounded-full text-on-accent"
               >
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.span
-                    key={s.playing ? 'pause' : 'play'}
+                    key={s.buffering ? 'buf' : s.playing ? 'pause' : 'play'}
                     initial={{ scale: 0.6, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.6, opacity: 0 }}
                     transition={{ duration: 0.12 }}
                     className="grid place-items-center"
                   >
-                    {s.playing ? <IconPause /> : <IconPlay />}
+                    {s.buffering ? (
+                      <span className="spin h-4 w-4 rounded-full border-2 border-on-accent/30 border-t-on-accent" aria-hidden />
+                    ) : s.playing ? (
+                      <IconPause />
+                    ) : (
+                      <IconPlay />
+                    )}
                   </motion.span>
                 </AnimatePresence>
               </motion.button>
@@ -684,7 +720,7 @@ export function NowPlayingBar(props: {
                 {s.repeat === 'one' ? <IconRepeatOne /> : <IconRepeat />}
               </Round>
             </div>
-            <SeekBar position={s.position_ms} duration={duration} wave={wave} className="w-full max-w-[560px]" />
+            <SeekBar position={s.position_ms} duration={duration} wave={wave} disabled={s.buffering} className="w-full max-w-[560px]" />
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">

@@ -32,7 +32,22 @@ export function PlaylistCard(props: {
   const from = usePlayerValue((s) => s.from)
   const playing = usePlayerValue((s) => s.playing)
   const isNow = fromIs(from, 'playlist', p.name)
-  const songs = props.count ?? p.tracks - p.missing
+  // Local files only (not online-only, not still-to-get).
+  const local = props.count ?? Math.max(0, p.tracks - p.missing - (p.online ?? 0))
+  const online = p.online ?? 0
+  const toGet = p.missing
+  const playable = local + online
+  const line = p.smart
+    ? `Smart, ${plural(playable || (props.count ?? 0), 'song')}`
+    : toGet > 0 || online > 0
+      ? [
+          local ? `${local.toLocaleString('en-IN')} local` : '',
+          online ? `${online.toLocaleString('en-IN')} online` : '',
+          toGet ? `${toGet.toLocaleString('en-IN')} to get` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : plural(local, 'song')
   const ctx = useContextMenu(() => [
     ['Play', () => void playPlaylist(root, p, 'play', props.rule)],
     ['Shuffle', () => void playPlaylist(root, p, 'shuffle', props.rule)],
@@ -58,20 +73,25 @@ export function PlaylistCard(props: {
       <button onClick={props.onOpen} className="block w-full text-left">
         <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>
-        <div className="truncate text-[12.5px] text-ink/55">
-          {p.smart
-            ? `Smart, ${plural(songs, 'song')}`
-            : p.missing > 0
-              ? `${songs.toLocaleString('en-IN')} of ${plural(p.tracks, 'song')} here`
-              : plural(songs, 'song')}
+        <div className="truncate text-[12.5px] text-ink/55" title={line}>
+          {line}
         </div>
-        {p.missing > 0 && !p.smart && (
-          <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-ink/[0.1]" aria-hidden>
-            <div className="h-full rounded-full bg-ink/45" style={{ width: `${(songs / Math.max(1, p.tracks)) * 100}%` }} />
+        {(toGet > 0 || online > 0) && !p.smart && p.tracks > 0 && (
+          <div
+            className="mt-1.5 flex h-[3px] overflow-hidden rounded-full bg-ink/[0.1]"
+            aria-hidden
+            title={`${local} local, ${online} online, ${toGet} to get`}
+          >
+            {local > 0 && (
+              <div className="h-full bg-ink/55" style={{ width: `${(local / p.tracks) * 100}%` }} />
+            )}
+            {online > 0 && (
+              <div className="h-full bg-accent/70" style={{ width: `${(online / p.tracks) * 100}%` }} />
+            )}
           </div>
         )}
       </button>
-      {songs > 0 && (
+      {playable > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 aspect-square">
           <motion.button
             whileTap={{ scale: 0.92 }}
@@ -133,7 +153,7 @@ export function PlaylistsHome(props: {
         rule: r,
         p: file
           ? { ...file, smart: true, dirs: file.dirs.length ? file.dirs : dirs }
-          : ({ name: r.name, smart: true, tracks: data?.smart_counts[r.name] ?? 0, missing: 0, dirs, source: null, file: '', duration_ms: 0, modified: 0 } as PlaylistSummary),
+          : ({ name: r.name, smart: true, tracks: data?.smart_counts[r.name] ?? 0, missing: 0, online: 0, dirs, source: null, file: '', duration_ms: 0, modified: 0 } as PlaylistSummary),
       }
     })
   const ownCount = all.filter((p) => !p.smart && !smartNames.has(p.name)).length

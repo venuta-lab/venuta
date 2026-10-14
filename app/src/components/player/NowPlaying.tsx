@@ -2,13 +2,15 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { lineAt, useLyrics, type Lyrics } from '../../lib/lyrics'
+import { lineAt, useLyrics, useOnlineLyrics, type Lyrics } from '../../lib/lyrics'
 import { SyncMaker } from '../lyrics/SyncMaker'
 import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
-import { clock, current, jumpTo, play, seek, usePlayer } from '../../lib/player'
+import { clock, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
+import { RemoteArt } from '../RemoteArt'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
@@ -87,15 +89,24 @@ function UpNext() {
   return (
     <ol className="grid gap-1 py-2">
       {rest.map((q, k) => {
-        const art = cover(q.dir)
+        const online = isOnline(q)
+        const art = online ? null : cover(q.dir)
+        const remote = remoteArtUrl(q)
         return (
-          <li key={`${q.path}#${k}`}>
+          <li key={`${q.path || remote || q.title}#${k}`}>
             <button onClick={() => void jumpTo(s.index + 1 + k)} title="Play" className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]">
-              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
-                {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
+              <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
+                {remote ? (
+                  <RemoteArt url={remote} fallback="♪" imgClassName="h-full w-full object-cover" />
+                ) : art ? (
+                  <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
+                ) : null}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13.5px]">{q.title}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-[13.5px]">{q.title}</span>
+                  {online && <AvailabilityBadge availability={q.availability ?? 'online'} />}
+                </span>
                 <span className="block truncate text-[12px] text-ink/55">{q.artists.join(', ') || q.album_artist}</span>
               </span>
               <span className="text-[12px] tabular-nums text-ink/45">{clock(q.duration_ms)}</span>
@@ -122,8 +133,13 @@ export function NowPlaying(props: {
   const s = usePlayer()
   const song = current(s)
   const cover = useCovers(320)
-  const art = song ? cover(song.dir) : undefined
-  const lyrics = useLyrics(props.root, props.open ? song?.path : undefined)
+  const art = song && !isOnline(song) ? cover(song.dir) : undefined
+  const onlineArt = remoteArtUrl(song)
+  // Online: LRCLIB by title/artist (display only). Local: file-backed lyrics as always.
+  const remote = !!song && isOnline(song)
+  const fileLyrics = useLyrics(props.root, props.open && !remote ? song?.path : undefined)
+  const catalogLyrics = useOnlineLyrics(song, props.open && remote)
+  const lyrics = remote ? catalogLyrics : fileLyrics
   // The song whose lyrics are being timed. It stays its song if another one starts: the
   // maker keeps its taps and offers the way back.
   const [timing, setTiming] = useState<string | null>(null)
@@ -157,7 +173,7 @@ export function NowPlaying(props: {
   useEscape(open, () => void leaving(onClose))
   // The timing button: the maker on the lyrics, or back to them.
   const onTiming = () => {
-    if (!song) return
+    if (!song || remote) return
     if (timingNow) void leaving(stopTiming)
     else {
       setTiming(song.path)
@@ -196,12 +212,27 @@ export function NowPlaying(props: {
               <motion.div
                 layoutId="now-playing-cover"
                 transition={spring}
-                className="aspect-square w-full max-w-[min(400px,40vh)] overflow-hidden rounded-[28px] bg-ink/[0.08] shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)]"
+                className="grid aspect-square w-full max-w-[min(400px,40vh)] place-items-center overflow-hidden rounded-[28px] bg-ink/[0.08] text-[48px] text-ink/25 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)]"
               >
-                {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
+                {onlineArt ? (
+                  <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
+                ) : art ? (
+                  <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
+                ) : (
+                  '♪'
+                )}
               </motion.div>
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
-                <h2 className="title truncate text-[26px]">{song.title}</h2>
+                <h2 className="title flex items-center justify-center gap-2 truncate text-[26px]">
+                  <span className="truncate">{song.title}</span>
+                  {isOnline(song) && <AvailabilityBadge availability={song.availability ?? 'online'} />}
+                </h2>
+                {s.buffering && (
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-[12.5px] text-ink/55">
+                    <span className="spin h-2.5 w-2.5 rounded-full border-2 border-ink/20 border-t-ink/55" aria-hidden />
+                    Opening…
+                  </p>
+                )}
                 <SongActions
                   root={props.root}
                   song={song}
@@ -230,7 +261,7 @@ export function NowPlaying(props: {
                   ]}
                 />
                 <AnimatePresence>
-                  {props.panel === 'lyrics' && (
+                  {props.panel === 'lyrics' && !remote && (
                     <LyricsDock key="dock" root={props.root} song={song} lyrics={lyrics} timing={timingNow} onTiming={onTiming} />
                   )}
                 </AnimatePresence>
@@ -250,6 +281,16 @@ export function NowPlaying(props: {
                       onDirty={(d) => (unsaved.current = d)}
                       onClose={stopTiming}
                     />
+                  ) : remote ? (
+                    lyrics && (lyrics.lines.length > 0 || lyrics.text) ? (
+                      <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => {}} />
+                    ) : lyrics === null ? (
+                      <p className="py-10 text-center text-[13px] text-ink/55">Looking up lyrics…</p>
+                    ) : (
+                      <p className="py-10 text-center text-[13px] leading-relaxed text-ink/55">
+                        No lyrics found online for this song. Timing and paste are for songs in your library.
+                      </p>
+                    )
                   ) : (
                     <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} />
                   ))}

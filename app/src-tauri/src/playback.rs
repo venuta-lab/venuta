@@ -3,27 +3,59 @@
 //! The engine (`player` crate) runs on its own thread. Status arrives about ten times a second
 //! and goes straight to the window over a channel; the queue travels only when it changes.
 
+use media_access::{Availability, MediaAccess, PlayableId};
+use player::decode::Source;
 use player::engine::{Cmd, Item, OutputChoice, Player, Signal, Status};
 use player::queue::Repeat;
+use player::remote::RemoteItem;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tauri::ipc::Channel;
 
-/// A song in the queue, as the window sent it (library-relative path) plus where it is.
+/// A [`MediaAccess`] handle carried on a queue item so a remote track can resolve its stream at
+/// open time. Skipped in (de)serialization — a snapshot is id + metadata only — and kept out of
+/// `Debug` so the handle never prints.
+#[derive(Clone, Default)]
+pub struct MediaRef(Option<Arc<dyn MediaAccess>>);
+
+impl std::fmt::Debug for MediaRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "MediaRef(configured)"
+        } else {
+            "MediaRef(none)"
+        })
+    }
+}
+
+/// A song in the queue, as the window sent it, plus where it is.
+///
+/// Hybrid: a **local** item carries a library-relative `path` (resolved to `file`); a **remote**
+/// item carries `online` (a stable provider id) and metadata only — never a stream URL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueItem {
+    #[serde(default)]
     pub path: String,
+    #[serde(default)]
     pub dir: String,
     pub title: String,
+    #[serde(default)]
     pub artists: Vec<String>,
+    #[serde(default)]
     pub album: String,
+    #[serde(default)]
     pub album_artist: String,
+    #[serde(default)]
     pub duration_ms: u64,
+    #[serde(default)]
     pub format: String,
+    #[serde(default)]
     pub bit_depth: u16,
+    #[serde(default)]
     pub sample_rate: u32,
+    #[serde(default)]
     pub lyrics: bool,
     /// Your rating, 0–5.
     #[serde(default)]
@@ -31,20 +63,80 @@ pub struct QueueItem {
     /// ReplayGain from the tags.
     #[serde(default)]
     pub rg: player::dsp::Gain,
-    /// The file on disk (the open folder joined with `path`).
+    /// Stable remote-catalog identity (no stream URL). Present for remote items.
+    #[serde(default)]
+    pub online: Option<PlayableId>,
+    /// Cover art address for remote items (local items use their on-disk cover).
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    /// UI-facing availability, filled in at play time (`Local` | `Online`).
+    #[serde(default)]
+    pub availability: Option<Availability>,
+    /// The file on disk (the open folder joined with `path`); empty for remote items.
     #[serde(skip)]
     pub file: PathBuf,
+    /// Catalog handle for resolving a remote stream at open time (see [`MediaRef`]).
+    #[serde(skip)]
+    pub media: MediaRef,
+}
+
+impl QueueItem {
+    /// A remote-catalog item: a stable online id and no local path to play from.
+    fn is_remote(&self) -> bool {
+        self.path.is_empty() && matches!(&self.online, Some(PlayableId::Online { .. }))
+    }
+
+    /// The on-disk file, for local items only (remote items have none).
+    fn local_file(&self) -> Option<PathBuf> {
+        (!self.is_remote()).then(|| self.file.clone())
+    }
+
+    /// A stable key for the media overlay: the file path locally, the provider id for remote.
+    fn media_key(&self) -> String {
+        match &self.online {
+            Some(PlayableId::Online { provider, track_id }) if self.is_remote() => {
+                format!("online:{provider}:{track_id}")
+            }
+            _ => self.file.to_string_lossy().into_owned(),
+        }
+    }
 }
 
 impl Item for QueueItem {
-    fn path(&self) -> &Path {
-        &self.file
+    fn path(&self) -> Option<&Path> {
+        (!self.is_remote()).then_some(self.file.as_path())
+    }
+    fn open(&self) -> Result<Source, String> {
+        match &self.online {
+            Some(PlayableId::Online { provider, track_id }) if self.is_remote() => {
+                // Resolve the ephemeral stream now, right before opening — never stored.
+                let access = self
+                    .media
+                    .0
+                    .clone()
+                    .ok_or_else(|| "No catalog access for remote playback.".to_owned())?;
+                let album = (!self.album.is_empty()).then(|| self.album.clone());
+                RemoteItem::deferred_with_duration(
+                    access,
+                    provider.clone(),
+                    track_id.clone(),
+                    &self.title,
+                    album,
+                    Some(self.duration_ms).filter(|d| *d > 0),
+                )
+                .open()
+            }
+            _ => Source::open(&self.file),
+        }
     }
     fn gain(&self) -> player::dsp::Gain {
         self.rg
     }
     fn album(&self) -> Option<String> {
-        Some(self.dir.clone())
+        (!self.is_remote()).then(|| self.dir.clone())
+    }
+    fn reopen_when_stopped(&self) -> bool {
+        !self.is_remote()
     }
 }
 
@@ -56,6 +148,8 @@ pub struct WindowStatus {
     root: String,
     index: i64,
     playing: bool,
+    /// Current song still opening (remote body downloading).
+    buffering: bool,
     position_ms: u64,
     duration_ms: u64,
     shuffle: bool,
@@ -70,14 +164,15 @@ pub struct WindowStatus {
     bands: Option<Vec<u8>>,
 }
 
-/// What the Windows media overlay, media keys and the tray show. `file` is None when nothing
-/// is loaded (stopped).
+/// What the Windows media overlay, media keys and the tray show. A loaded song has a non-empty
+/// `title`; `file` is the local cover source (None for remote items, which use `artwork_url`).
 #[derive(Clone, Default)]
 pub struct NowPlaying {
     pub title: String,
     pub artist: String,
     pub album: String,
     pub file: Option<PathBuf>,
+    pub artwork_url: Option<String>,
     pub duration_ms: u64,
     pub playing: bool,
     pub position_ms: u64,
@@ -95,6 +190,8 @@ pub struct Playback {
     root: Arc<Mutex<String>>,
     /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
     output: Mutex<(Option<String>, bool)>,
+    /// Catalog + session-audio access for remote items (the app factory until a real provider).
+    catalog: Arc<dyn MediaAccess>,
 }
 
 impl Default for Playback {
@@ -107,6 +204,7 @@ impl Default for Playback {
             root: Arc::default(),
             // Bit-perfect unless you choose otherwise.
             output: Mutex::new((None, true)),
+            catalog: media_access::default_media_access(),
         }
     }
 }
@@ -127,6 +225,9 @@ impl Playback {
             let window = self.window.clone();
             let media = self.media.clone();
             let root = self.root.clone();
+            let catalog = self.catalog.clone();
+            // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
+            let mut warmed: Option<String> = None;
             // Plays and where you were are written to disk on a thread of their own: never on
             // the player's, where a slow disk or a busy database would starve the sound.
             let (keep, kept) = std::sync::mpsc::channel::<Keep>();
@@ -160,7 +261,10 @@ impl Playback {
                         let song = s.index.and_then(|i| queue.get(i));
                         let _ = keep.send(Keep::Heard {
                             folder: folder.clone(),
-                            song: song.map(|q| (q.path.clone(), q.dir.clone())),
+                            // Remote items are not counted as local plays (no library path).
+                            song: song
+                                .filter(|q| !q.is_remote())
+                                .map(|q| (q.path.clone(), q.dir.clone())),
                             playing: s.playing,
                             position_ms: s.position_ms,
                             duration_ms: s.duration_ms,
@@ -192,7 +296,7 @@ impl Playback {
                         }
                     }
                     let item = s.index.and_then(|i| queue.get(i));
-                    let key = item.map(|i| i.file.to_string_lossy().into_owned());
+                    let key = item.map(|i| i.media_key());
                     let tick = s.position_ms / 5000;
                     if (key.clone(), s.playing, tick) != last
                         && let Ok(mut m) = media.lock()
@@ -202,7 +306,9 @@ impl Playback {
                                 title: item.title.clone(),
                                 artist: item.artists.join(", "),
                                 album: item.album.clone(),
-                                file: Some(item.file.clone()),
+                                // Remote items have no on-disk cover; the overlay uses artwork_url.
+                                file: item.local_file(),
+                                artwork_url: item.artwork_url.clone(),
                                 duration_ms: s.duration_ms,
                                 playing: s.playing,
                                 position_ms: s.position_ms,
@@ -213,6 +319,33 @@ impl Playback {
                         m.retain(|tx| tx.send(now.clone()).is_ok());
                     }
                     last = (key, s.playing, tick);
+                    if !s.error.is_empty() {
+                        note_play(
+                            &format!("error playing={} buffering={} pos_ms={}", s.playing, s.buffering, s.position_ms),
+                            &s.error,
+                        );
+                    }
+                    // While this song plays, warm the next online id (in-memory resolve cache).
+                    if s.playing && !s.buffering {
+                        if let Some(next) = s.index.and_then(|i| queue.get(i + 1)) {
+                            if next.is_remote()
+                                && let Some(PlayableId::Online { track_id, .. }) = &next.online
+                            {
+                                if warmed.as_deref() != Some(track_id.as_str()) {
+                                    warmed = Some(track_id.clone());
+                                    let cat = catalog.clone();
+                                    let id = track_id.clone();
+                                    std::thread::Builder::new()
+                                        .name("venuta-warm-next".into())
+                                        .spawn(move || {
+                                            let cancel = media_access::CancellationToken::default();
+                                            let _ = cat.resolve_audio(&id, &cancel);
+                                        })
+                                        .ok();
+                                }
+                            }
+                        }
+                    }
                     if let Ok(mut w) = window.lock()
                         && !w.is_empty()
                     {
@@ -221,6 +354,7 @@ impl Playback {
                             root: folder,
                             index: s.index.map(|i| i as i64).unwrap_or(-1),
                             playing: s.playing,
+                            buffering: s.buffering,
                             position_ms: s.position_ms,
                             duration_ms: s.duration_ms,
                             shuffle: s.shuffle,
@@ -369,18 +503,31 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                     let _ = controls.set_playback(MediaPlayback::Stopped);
                     continue;
                 }
-                let Some(file) = now.file.clone() else {
+                // Nothing loaded (stopped at the end of the queue): no title to show.
+                if now.title.is_empty() {
                     let _ = controls.set_playback(MediaPlayback::Stopped);
                     cover = (None, None);
                     continue;
-                };
-                if cover.0.as_ref() != Some(&file) {
-                    // souvlaki strips "file://" and opens the rest as a Windows path, which must
-                    // use backslashes only (library roots are kept with "/").
-                    let url = engine::art::cover_file_for(&file)
-                        .map(|c| format!("file://{}", c.to_string_lossy().replace('/', "\\")));
-                    cover = (Some(file), url);
                 }
+                // Cover: a local song's on-disk art; a remote song shows title/artist and, if
+                // present, its artwork URL — no filesystem path is required.
+                let cover_url = match now.file.clone() {
+                    Some(file) => {
+                        if cover.0.as_ref() != Some(&file) {
+                            // souvlaki strips "file://" and opens the rest as a Windows path,
+                            // which must use backslashes only (library roots are kept with "/").
+                            let url = engine::art::cover_file_for(&file).map(|c| {
+                                format!("file://{}", c.to_string_lossy().replace('/', "\\"))
+                            });
+                            cover = (Some(file), url);
+                        }
+                        cover.1.clone()
+                    }
+                    None => {
+                        cover = (None, None);
+                        now.artwork_url.clone()
+                    }
+                };
                 let meta = |cover_url| MediaMetadata {
                     title: Some(&now.title),
                     artist: Some(&now.artist),
@@ -389,8 +536,7 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                     duration: Some(std::time::Duration::from_millis(now.duration_ms)),
                 };
                 // A cover Windows can't open must not cost the title: try again without it.
-                let url = cover.1.clone();
-                if controls.set_metadata(meta(url.as_deref())).is_err() {
+                if controls.set_metadata(meta(cover_url.as_deref())).is_err() {
                     cover.1 = None;
                     let _ = controls.set_metadata(meta(None));
                 }
@@ -407,15 +553,36 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
         .ok();
 }
 
-fn resolve(root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
-    let root = PathBuf::from(root);
-    items
-        .into_iter()
-        .map(|mut it| {
-            it.file = root.join(&it.path);
-            it
-        })
-        .collect()
+impl Playback {
+    /// Bind each item to what it needs to play: a local item to its file under `root`; a remote
+    /// item to the catalog handle that resolves its stream at open time. Also fills the
+    /// UI-facing availability (`Local` | `Online`, or `LocalPreferred` for a playlist's online
+    /// song playing from your file). No stream URL is ever stored here.
+    fn resolve(&self, root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
+        let root = PathBuf::from(root);
+        items
+            .into_iter()
+            .map(|mut it| {
+                if it.is_remote() {
+                    it.file = PathBuf::new();
+                    it.media = MediaRef(Some(self.catalog.clone()));
+                    it.availability = Some(Availability::Online);
+                } else {
+                    it.file = root.join(&it.path);
+                    if it.availability != Some(Availability::LocalPreferred) {
+                        it.availability = Some(Availability::Local);
+                    }
+                }
+                it
+            })
+            .collect()
+    }
+
+    /// The catalog remote songs play from, for searching it (the same one, so what you find
+    /// is what plays).
+    pub fn catalog(&self) -> Arc<dyn MediaAccess> {
+        self.catalog.clone()
+    }
 }
 
 /// The sound tools: equalizer, bass and treble, preamp, levelling, limiter. Kept with your
@@ -464,8 +631,9 @@ impl Playback {
         }
         let items = crate::fresh_gains(&root, items);
         *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
+        let items = pb.resolve(&root, items);
         pb.send(Cmd::Set {
-            items: resolve(&root, items),
+            items,
             index: index as usize,
             start_ms: place
                 .get("position_ms")
@@ -600,8 +768,9 @@ pub fn player_play(
 ) -> Result<(), String> {
     note_play("play a list", &format!("the {} window", window.label()));
     *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
+    let items = pb.resolve(&root, items);
     pb.send(Cmd::Set {
-        items: resolve(&root, items),
+        items,
         index,
         start_ms: 0,
         play: true,
@@ -618,10 +787,8 @@ pub fn player_follow(
     index: usize,
     pb: State<'_, Playback>,
 ) -> Result<(), String> {
-    pb.send(Cmd::Follow {
-        items: resolve(&root, items),
-        index,
-    })
+    let items = pb.resolve(&root, items);
+    pb.send(Cmd::Follow { items, index })
 }
 
 #[tauri::command]
@@ -676,10 +843,8 @@ pub fn player_enqueue(
     {
         *r = root.clone();
     }
-    pb.send(Cmd::Insert {
-        items: resolve(&root, items),
-        next,
-    })
+    let items = pb.resolve(&root, items);
+    pb.send(Cmd::Insert { items, next })
 }
 
 #[tauri::command]

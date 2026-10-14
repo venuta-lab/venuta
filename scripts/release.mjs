@@ -39,11 +39,27 @@ const p = JSON.parse(readFileSync(pkg, 'utf8'))
 p.version = version
 writeFileSync(pkg, JSON.stringify(p, null, 2) + '\n')
 
+// 1b. Same stream tool used in hybrid-dev / first-run: fetch into resources and ship in the installer.
+run('node', [join(root, 'scripts/fetch-stream-tool.mjs'), '--bundle-only'])
+const confForBuild = JSON.parse(readFileSync(conf, 'utf8'))
+confForBuild.bundle = confForBuild.bundle || {}
+confForBuild.bundle.resources = ['resources/yt-dlp.exe']
+writeFileSync(conf, JSON.stringify(confForBuild, null, 2) + '\n')
+
 // 2. The signed installer.
 const keyFile = process.env.VENUTA_SIGNING_KEY ?? join(homedir(), '.venuta-signing', 'venuta-updater.key')
 if (!existsSync(keyFile)) throw new Error(`No updater key at ${keyFile}`)
 const env = { ...process.env, TAURI_SIGNING_PRIVATE_KEY: readFileSync(keyFile, 'utf8'), TAURI_SIGNING_PRIVATE_KEY_PASSWORD: '' }
-run('pnpm', ['tauri', 'build', '--bundles', 'nsis'], { cwd: join(root, 'app'), env })
+try {
+  run('pnpm', ['tauri', 'build', '--bundles', 'nsis'], { cwd: join(root, 'app'), env })
+} finally {
+  // Keep the committed conf free of a required binary path (dev checkouts may not have resources/).
+  const confAfter = JSON.parse(readFileSync(conf, 'utf8'))
+  if (confAfter.bundle?.resources) {
+    delete confAfter.bundle.resources
+    writeFileSync(conf, JSON.stringify(confAfter, null, 2) + '\n')
+  }
+}
 const dir = join(root, 'target/release/bundle/nsis')
 const setup = `Venuta_${version}_x64-setup.exe`
 const signature = readFileSync(join(dir, `${setup}.sig`), 'utf8').trim()

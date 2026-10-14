@@ -1,0 +1,207 @@
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::path::PathBuf;
+
+/// Playlist comment prefix for stable remote-catalog entries (JSON follows the colon).
+/// Never store stream URLs in this tag.
+pub const ONLINE_PLAYLIST_TAG: &str = "#VENUTA-ONLINE:";
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+/// Stable identity for a queue/playlist entry. Stream URLs never appear here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PlayableId {
+    Local {
+        /// Library-relative path, same convention as today's queue items.
+        path: String,
+    },
+    /// A remote-catalog track identified only by stable provider + id.
+    Online { provider: String, track_id: String },
+}
+
+/// UI/availability tag derived at play time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Availability {
+    Local,
+    Online,
+    /// Local file exists and is preferred over a bound online id.
+    LocalPreferred,
+}
+
+/// Display + identity payload shared by local and online queue rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Playable {
+    pub id: PlayableId,
+    pub title: String,
+    #[serde(default)]
+    pub artists: Vec<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    /// Filled by the app when known; not required for persistence of online ids.
+    #[serde(default)]
+    pub availability: Option<Availability>,
+    /// Absolute file path when local and resolved against the open library root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTrack {
+    pub provider: String,
+    pub track_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub artists: Vec<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub album_id: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub isrc: Option<String>,
+}
+
+impl RemoteTrack {
+    pub fn playable_id(&self) -> PlayableId {
+        PlayableId::Online {
+            provider: self.provider.clone(),
+            track_id: self.track_id.clone(),
+        }
+    }
+
+    pub fn into_playable(self) -> Playable {
+        Playable {
+            id: self.playable_id(),
+            title: self.title,
+            artists: self.artists,
+            album: self.album,
+            duration_ms: self.duration_ms,
+            artwork_url: self.artwork_url,
+            availability: Some(Availability::Online),
+            local_file: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteAlbum {
+    pub provider: String,
+    pub album_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub artists: Vec<String>,
+    #[serde(default)]
+    pub track_count: Option<u32>,
+    #[serde(default)]
+    pub release_date: Option<String>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteArtist {
+    pub provider: String,
+    pub artist_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageRequest {
+    pub limit: usize,
+    pub cursor: Option<String>,
+}
+
+impl Default for PageRequest {
+    fn default() -> Self {
+        Self {
+            limit: 25,
+            cursor: None,
+        }
+    }
+}
+
+impl PageRequest {
+    pub fn new(limit: usize, cursor: Option<String>) -> Self {
+        Self {
+            limit: limit.clamp(1, 100),
+            cursor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
+/// HTTP header required only for the lifetime of resolved session audio.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MediaHeader {
+    pub name: String,
+    pub value: String,
+}
+
+impl fmt::Debug for MediaHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaHeader")
+            .field("name", &self.name)
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Direct HTTP audio for the current playback session only.
+///
+/// Not serializable on purpose: playlists and restored queues must store stable ids, not URLs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EphemeralAudio {
+    pub track_id: String,
+    pub provider: String,
+    pub url: String,
+    pub mime_type: Option<String>,
+    pub content_length: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub headers: Vec<MediaHeader>,
+}
+
+impl fmt::Debug for EphemeralAudio {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EphemeralAudio")
+            .field("track_id", &self.track_id)
+            .field("provider", &self.provider)
+            .field("url", &"[redacted]")
+            .field("mime_type", &self.mime_type)
+            .field("content_length", &self.content_length)
+            .field("duration_ms", &self.duration_ms)
+            .field("headers", &self.headers)
+            .finish()
+    }
+}
+
+/// Cooperative cancellation for catalog and resolve calls.
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}

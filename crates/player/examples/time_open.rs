@@ -13,7 +13,7 @@ fn main() {
     let mut out = Vec::new();
     let mut frames = 0;
     for _ in 0..200 {
-        if !s.next(&mut out).unwrap() {
+        if s.next(&mut out).unwrap() != player::decode::DecodeState::Samples {
             break;
         }
         frames += out.len() / usize::from(s.format.channels);

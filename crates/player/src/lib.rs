@@ -5,6 +5,7 @@ pub mod dsp;
 pub mod engine;
 pub mod output;
 pub mod queue;
+pub mod remote;
 pub mod spectrum;
 pub mod verify;
 #[cfg(windows)]

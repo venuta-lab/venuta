@@ -18,6 +18,9 @@ tauri-build = { version = "2.7.2", features = [] }
 engine.workspace = true
 rusqlite.workspace = true
 player = { path = "../../crates/player" }
+# Live catalog is compiled into the desktop app and on by default (release + dev).
+# Opt out with VENUTA_FAKE_CATALOG=1 for fixture-only runs.
+media-access = { path = "../../crates/media-access", features = ["live-provider"] }
 serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true

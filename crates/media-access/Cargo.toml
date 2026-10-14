@@ -1,0 +1,29 @@
+[package]
+name = "media-access"
+description = "Provider-neutral remote catalog and ephemeral audio access contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[features]
+default = []
+# Sealed live catalog provider. Desktop app enables this; Fake is opt-out for tests.
+live-provider = ["dep:innertube-rs", "dep:tokio", "dep:base64", "dep:ureq"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+innertube-rs = { version = "=0.9.0", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[example]]
+name = "live_smoke"
+required-features = ["live-provider"]
+

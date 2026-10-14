@@ -34,7 +34,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https://*.scdn.co https://*.spotifycdn.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:",
+"csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https://*.scdn.co https://*.spotifycdn.com https://*.googleusercontent.com https://*.ggpht.com https://i.ytimg.com https://*.ytimg.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:",
       "assetProtocol": {
         "enable": true,
         "scope": [
@@ -58,7 +58,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Builds and keeps a perfect lossless music library, and syncs it to SD cards.",
+    "shortDescription": "A lossless music library you own, plus free online catalog search and play in the same player.",
     "category": "Music",
     "copyright": "© 2026 Venuta contributors. MIT License.",
     "windows": {

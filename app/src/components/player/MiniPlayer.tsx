@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, connectPlayer, current, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { clock, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { cleanArtUrl } from '../RemoteArt'
 import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
 import { lineAt, useLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
@@ -165,11 +166,14 @@ export function MiniPlayer() {
 
   // This window has its own cover cache: fetch the playing album's.
   const cover = useCovers(320)
-  const dir = song?.dir ?? ''
+  const online = !!song && isOnline(song)
+  // An online song has no album folder: its picture comes from the catalog.
+  const dir = online ? '' : (song?.dir ?? '')
   useEffect(() => {
     if (root && dir) void loadCovers(root, [dir])
   }, [root, dir])
-  const art = dir ? cover(dir) : undefined
+  const remoteSrc = online ? cleanArtUrl(song?.artwork_url) : undefined
+  const art = online ? (remoteSrc ? { src: remoteSrc, accent: undefined } : undefined) : dir ? cover(dir) : undefined
   useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
 
   const showLyrics = lyricsOn && !!song?.lyrics && shape !== 'micro'
@@ -202,6 +206,8 @@ export function MiniPlayer() {
   const artist = song ? song.artists.join(', ') || song.album_artist : ''
   const duration = s.duration_ms || song?.duration_ms || 0
   const progress = duration ? Math.min(1, s.position_ms / duration) : 0
+  // While an online song is still opening there is nothing to seek in yet.
+  const seekable = s.buffering ? 0 : duration
 
   return (
     <div
@@ -256,7 +262,7 @@ export function MiniPlayer() {
             lyrics={song.lyrics ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
             pin={pin}
           />
-          {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} duration={duration} />}
+          {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} duration={seekable} />}
         </div>
       ) : (
         <div className="relative flex h-full flex-col">
@@ -305,7 +311,7 @@ export function MiniPlayer() {
                 <ThemedTrack bar={info.seekBar} pct={progress * 100} />
               </div>
             ) : (
-              <Seek value={progress} duration={duration} position={s.position_ms} />
+              <Seek value={progress} duration={duration} position={s.position_ms} canSeek={!s.buffering} />
             )}
             <div className="mt-1 flex justify-center">
               <Controls playing={s.playing} />
@@ -360,12 +366,14 @@ function RetroTrack({ bar, value }: { bar: SeekBar; value: number }) {
 }
 
 /** The window's own light: the cover, blurred, under a scrim (or the accent, without one). */
-function Light({ src, card }: { src?: string; card: boolean }) {
+function Light({ src: given, card }: { src?: string; card: boolean }) {
+  const [failed, setFailed] = useState<string | null>(null)
+  const src = failed === given ? undefined : given
   return (
     <div aria-hidden className="absolute inset-0">
       <div className="absolute inset-0 bg-[color-mix(in_oklab,var(--solid)_72%,transparent)]" />
       {src && !card && (
-        <img src={src} alt="" className="absolute inset-0 h-full w-full scale-150 object-cover opacity-60 blur-2xl saturate-150" />
+        <img src={src} alt="" onError={() => setFailed(src ?? null)} className="absolute inset-0 h-full w-full scale-150 object-cover opacity-60 blur-2xl saturate-150" />
       )}
       <div
         className="absolute inset-0"
@@ -380,11 +388,14 @@ function Light({ src, card }: { src?: string; card: boolean }) {
 }
 
 /** The cover, or a tile in the accent with a note when there is none. */
-function Art({ src, title, className = '', big = false }: { src?: string; title: string; className?: string; big?: boolean }) {
+function Art({ src: given, title, className = '', big = false }: { src?: string; title: string; className?: string; big?: boolean }) {
+  // An online picture that can't be loaded shows the tile, never a broken image.
+  const [failed, setFailed] = useState<string | null>(null)
+  const src = failed === given ? undefined : given
   return (
     <div className={`relative shrink-0 overflow-hidden bg-ink/[0.08] shadow-[0_8px_24px_-10px_rgb(0_0_0/0.6)] ${className}`}>
       {src ? (
-        <img src={src} alt="" draggable={false} className="h-full w-full object-cover" />
+        <img src={src} alt="" draggable={false} onError={() => setFailed(src ?? null)} className="h-full w-full object-cover" />
       ) : (
         <div
           title={title}
@@ -446,7 +457,7 @@ function Progress({ value, duration = 0 }: { value: number; duration?: number })
   )
 }
 
-function Seek({ value, duration, position }: { value: number; duration: number; position: number }) {
+function Seek({ value, duration, position, canSeek }: { value: number; duration: number; position: number; canSeek: boolean }) {
   const bar = useRef<HTMLDivElement>(null)
   return (
     <div className="mt-2 flex items-center gap-2 text-[10.5px] tabular-nums text-ink/55">
@@ -456,9 +467,10 @@ function Seek({ value, duration, position }: { value: number; duration: number; 
         data-no-drag
         onClick={(e) => {
           const r = bar.current?.getBoundingClientRect()
-          if (r && duration) void seek(((e.clientX - r.left) / r.width) * duration)
+          if (r && duration && canSeek) void seek(((e.clientX - r.left) / r.width) * duration)
         }}
-        className="group/seek relative h-4 flex-1 cursor-pointer"
+        title={canSeek ? undefined : 'Opening…'}
+        className={`group/seek relative h-4 flex-1 ${canSeek ? 'cursor-pointer' : 'cursor-progress opacity-60'}`}
       >
         <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-ink/15">
           <div className="h-full rounded-full bg-accent" style={{ width: `${value * 100}%` }} />

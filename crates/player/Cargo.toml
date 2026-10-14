@@ -7,12 +7,27 @@ license.workspace = true
 publish = false
 rust-version.workspace = true
 
+[features]
+default = []
+live-provider = ["media-access/live-provider"]
+
 [dependencies]
+media-access = { path = "../media-access", features = ["live-provider"] }
 symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "vorbis", "ogg"] }
 serde = { workspace = true }
+ureq.workspace = true
 rand = "0.9"
 md-5 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.19"
+
+[dev-dependencies]
+media-access = { path = "../media-access" }
+serde_json.workspace = true
+
+
+[[example]]
+name = "live_remote_decode"
+required-features = ["live-provider"]
 

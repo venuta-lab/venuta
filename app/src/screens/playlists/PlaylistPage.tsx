@@ -8,6 +8,7 @@ import {
   playlistDelete,
   playlistDuplicate,
   playlistExport,
+  playlistQueue,
   playlistRefind,
   playlistRename,
   playlistSaveItems,
@@ -16,22 +17,43 @@ import {
   searchWeb,
   smartSave,
   type CatalogTrack,
+  type OnlineEntry,
+  type OnlineTrack,
   type PlaylistEntry,
   type PlaylistItem,
   type PlaylistSummary,
   type SmartRule,
 } from '../../lib/engine'
-import { clock, enqueue, follow, fromIs, play, playAll, toggle, usePlayerValue, current } from '../../lib/player'
+import {
+  clock,
+  current,
+  enqueue,
+  enqueueItems,
+  followItems,
+  fromIs,
+  onlineEntryFrom,
+  onlineItem,
+  playAllItems,
+  playItems,
+  queueKey,
+  toggle,
+  usePlayerValue,
+  type QueueItem,
+} from '../../lib/player'
 import { notify } from '../../lib/notify'
 import { keyFor, matcher } from '../../lib/textsearch'
 import { useEscape } from '../../lib/layers'
 import { confirmAsk } from '../../components/Confirm'
-import { askAddToPlaylist } from '../../components/AddToPlaylist'
+import { askAddSongs, askAddToPlaylist } from '../../components/AddToPlaylist'
+import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { Mosaic } from '../../components/Mosaic'
+import { RemoteArt } from '../../components/RemoteArt'
 import { Detail, Segmented } from '../../components/ui'
 import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../components/Icons'
+import { useOnlineSearch } from '../listen/OnlineResults'
 import { Equalizer, useContextMenu } from '../listen/parts'
-import { fromWhere, length, playlistFrom, plural, sourceDate } from './common'
+import { entryAvailability, fromWhere, length, playlistFrom, plural, queueOf, sourceDate } from './common'
+import { OnlinePick } from './OnlinePick'
 import { describeRule, SmartRules } from './SmartRules'
 import { PlaylistList, type Grab, type Line } from './PlaylistList'
 
@@ -39,10 +61,23 @@ type Row = PlaylistEntry & { key: string }
 let keySeq = 0
 const withKeys = (entries: PlaylistEntry[]): Row[] => entries.map((e) => ({ ...e, key: `r${++keySeq}` }))
 const itemOf = (r: PlaylistEntry): PlaylistItem =>
-  r.missing ? { want: r.want ?? { title: r.title, artist: r.artist, album: r.album, duration_ms: r.duration_ms } } : { path: r.path }
+  r.online
+    ? { online: r.online }
+    : r.missing
+      ? { want: r.want ?? { title: r.title, artist: r.artist, album: r.album, duration_ms: r.duration_ms } }
+      : { path: r.path }
 
-/** Which songs the page shows: all of them, the ones here, or the ones to get. */
-type Show = 'all' | 'here' | 'get'
+/** An online song not in your library (it plays online). */
+const isRemote = (r: PlaylistEntry) => r.missing && !!r.online
+/** Still to get: not in your library, and not online either. */
+const toGet = (r: PlaylistEntry) => r.missing && !r.online
+/** The row as the queue tells songs apart (see `queueKey`). */
+const rowKey = (r: PlaylistEntry) => (isRemote(r) && r.online ? `online:${r.online.provider}:${r.online.track_id}` : r.path)
+/** A row as a line for another playlist: the online song by its id, else the file. */
+const songOf = (r: PlaylistEntry): PlaylistItem => (r.online ? { online: r.online } : { path: r.path })
+
+/** Which songs the page shows: all, local files, online-only, or still to get. */
+type Show = 'all' | 'here' | 'online' | 'get'
 // Remembered per playlist while the app runs.
 const shownFor = new Map<string, Show>()
 
@@ -89,6 +124,8 @@ export function PlaylistPage(props: {
   const [rules, setRules] = useState(false)
   const [adding, setAdding] = useState(false)
   const [finding, setFinding] = useState<Row | null>(null)
+  // Choosing online songs for songs to get: one (its menu) or every one (Fill missing online…).
+  const [picking, setPicking] = useState<{ rows: Row[]; mode: 'use' | 'play' } | null>(null)
   // Bumped by the menu's Rename: the title turns into a field.
   const [renameAsk, setRenameAsk] = useState(0)
   const latest = useRef<Row[]>([])
@@ -160,17 +197,32 @@ export function PlaylistPage(props: {
   )
 
   const have = useMemo(() => (rows ?? []).filter((r) => !r.missing), [rows])
-  const missing = (rows ?? []).length - have.length
+  const online = useMemo(() => (rows ?? []).filter(isRemote), [rows])
+  const missing = (rows ?? []).filter(toGet).length
+  // Where each song plays from is said only when the playlist holds online songs.
+  const mixed = (rows ?? []).some((r) => r.online)
   const [show, setShowState] = useState<Show>(() => shownFor.get(name) ?? 'all')
   const setShow = (s: Show) => {
     shownFor.set(name, s)
     setShowState(s)
   }
-  // Nothing left to get: back to every song.
-  const view: Show = missing ? show : 'all'
+  // If the chosen filter no longer has rows, fall back to every song.
+  const split = missing > 0 || online.length > 0
+  const view: Show = !split
+    ? 'all'
+    : show === 'get' && !missing
+      ? 'all'
+      : show === 'online' && !online.length
+        ? 'all'
+        : show === 'here' && !have.length
+          ? 'all'
+          : show
   const position = useMemo(() => new Map((rows ?? []).map((r, i) => [r.key, i])), [rows])
   const visible = useMemo(
-    () => (rows ?? []).filter((r) => (view === 'here' ? !r.missing : view === 'get' ? r.missing : true)),
+    () =>
+      (rows ?? []).filter((r) =>
+        view === 'here' ? !r.missing : view === 'online' ? isRemote(r) : view === 'get' ? toGet(r) : true,
+      ),
     [rows, view],
   )
   const groups = useMemo(() => (view === 'get' ? byAlbum(visible) : []), [view, visible])
@@ -199,9 +251,21 @@ export function PlaylistPage(props: {
         : visible.map((r) => ({ kind: 'row', key: r.key, row: r })),
     [view, groups, visible],
   )
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const songs = useMemo(() => tracksFor(have.map((r) => r.path)), [have, props.catalog])
-  const totalMs = have.reduce((s, r) => s + r.duration_ms, 0)
+  // What plays, as the engine picks it: your file first, else online; songs to get left out.
+  // `of`: the rows it was read for, so what comes next follows only a queue read for these rows.
+  const [queue, setQueue] = useState<{ of: Row[] | null; songs: QueueItem[] }>({ of: null, songs: [] })
+  useEffect(() => {
+    if (rows === null) return
+    let live = true
+    playlistQueue(root, name)
+      .then((found) => live && setQueue({ of: rows, songs: queueOf(found) }))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [root, name, rows, props.catalog])
+  const songs = queue.songs
+  const totalMs = [...have, ...online].reduce((s, r) => s + r.duration_ms, 0)
   const dirs = useMemo(() => {
     const out: string[] = []
     for (const r of have) {
@@ -213,21 +277,26 @@ export function PlaylistPage(props: {
   }, [have])
   const glow = useCovers(320)(dirs[0] ?? '')?.src
 
-  const nowPath = usePlayerValue((s) => current(s)?.path ?? '')
+  const nowKey = usePlayerValue((s) => {
+    const c = current(s)
+    return c ? queueKey(c) : ''
+  })
   const nowFrom = usePlayerValue((s) => s.from)
   const playing = usePlayerValue((s) => s.playing)
   const isNow = fromIs(nowFrom, 'playlist', name)
   const from = useMemo(() => playlistFrom(name), [name])
 
-  const playFrom = (row: Row) => {
-    if (row.path === nowPath && isNow) return void toggle()
-    const i = have.findIndex((r) => r.key === row.key)
-    void play(root, songs, Math.max(0, i), from)
+  const playFrom = async (row: Row) => {
+    if (rowKey(row) === nowKey && isNow) return void toggle()
+    // Read just now (before the queue came): ask for it.
+    const list = songs.length ? songs : queueOf(await playlistQueue(root, name))
+    const i = list.findIndex((q) => queueKey(q) === rowKey(row))
+    void playItems(root, list, Math.max(0, i), from)
   }
   // Changed while it plays (added, removed, moved, refilled by its rules): what comes next follows.
   useEffect(() => {
-    if (rows !== null) void follow(root, songs, from)
-  }, [root, songs, from, rows])
+    if (rows !== null && queue.of === rows) void followItems(root, queue.songs, from)
+  }, [root, queue, from, rows])
 
   async function rename(to: string) {
     const next = to.trim()
@@ -298,9 +367,9 @@ export function PlaylistPage(props: {
   }
 
   const more = useContextMenu(() => [
-    ['Play next', () => void enqueue(root, songs, true)],
-    ['Add to queue', () => void enqueue(root, songs, false)],
-    ['Add all to another playlist…', () => askAddToPlaylist(have.map((r) => r.path), name)],
+    ['Play next', () => void enqueueItems(root, songs, true)],
+    ['Add to queue', () => void enqueueItems(root, songs, false)],
+    ['Add all to another playlist…', () => askAddSongs([...have, ...online].map(songOf), name)],
     ...((smart
       ? [['Duplicate as an ordinary playlist', () => void playlistDuplicate(root, name).then((n) => (props.onChanged(), props.onOpen(n)))]]
       : [
@@ -310,6 +379,7 @@ export function PlaylistPage(props: {
             ? [[`Update from ${fromWhere(props.summary.source ?? '') || 'where it came from'}…`, () => props.onUpdate!(name)]]
             : []),
           ...(missing ? [['Look for missing songs again', () => void refind()]] : []),
+          ...(missing ? [['Fill missing online…', () => setPicking({ rows: (rows ?? []).filter(toGet), mode: 'use' })]] : []),
         ]) as [string, () => void][]),
     ...((have.length ? [['Give unrated songs four stars', () => void rateUnrated()]] : []) as [string, () => void][]),
     ['Export as a file…', () => void exportFile()],
@@ -323,7 +393,7 @@ export function PlaylistPage(props: {
     const before = latest.current
     const next = before.map((x) =>
       x.key === r.key
-        ? { ...x, path: m.path, title: m.title, artist: m.artist, album: m.album, duration_ms: m.duration_ms, missing: false, want: undefined, maybe: undefined }
+        ? { ...x, path: m.path, title: m.title, artist: m.artist, album: m.album, duration_ms: m.duration_ms, missing: false, want: undefined, maybe: undefined, online: undefined }
         : x,
     )
     void persist(next, `“${m.title}” is in its place now.`, before)
@@ -338,6 +408,32 @@ export function PlaylistPage(props: {
     void persist(before.map((x) => (x.key === r.key ? { ...x, want, maybe: undefined } : x)))
   }
 
+  /** Songs to get become the online songs you picked for them, in their places: one save,
+   *  one Undo (back to songs to get). Only ids are kept, never a stream address. */
+  const useOnlineHere = (chosen: [Row, OnlineEntry][]) => {
+    const pick = new Map(chosen.map(([r, o]) => [r.key, o]))
+    const before = latest.current
+    const next = before.map((x) => {
+      const o = pick.get(x.key)
+      return o
+        ? {
+            ...x,
+            path: '',
+            title: o.title,
+            artist: (o.artists ?? []).join(', '),
+            album: o.album ?? '',
+            duration_ms: o.duration_ms ?? 0,
+            missing: true,
+            want: undefined,
+            maybe: undefined,
+            online: o,
+          }
+        : x
+    })
+    const one = chosen.length === 1 ? chosen[0][1] : null
+    void persist(next, one ? `“${one.title}” plays online from ${name} now.` : `${plural(chosen.length, 'song')} play online from ${name} now.`, before)
+  }
+
   const rowFor = (r: Row, style: React.CSSProperties, grab: Grab | null, inGroup: boolean) => (
     <PlaylistRow
       key={r.key}
@@ -347,8 +443,9 @@ export function PlaylistPage(props: {
       style={style}
       grab={grab}
       inGroup={inGroup}
-      state={r.path && r.path === nowPath && isNow ? (playing ? 'playing' : 'paused') : 'no'}
-      onPlay={() => playFrom(r)}
+      state={rowKey(r) && rowKey(r) === nowKey && isNow ? (playing ? 'playing' : 'paused') : 'no'}
+      badge={mixed}
+      onPlay={() => void playFrom(r)}
       onRemove={() => {
         const before = latest.current
         void persist(
@@ -361,7 +458,8 @@ export function PlaylistPage(props: {
       onYes={() => takeMaybe(r)}
       onNo={() => refuseMaybe(r)}
       onAlbum={() => r.path && props.onAlbum(r.path.slice(0, r.path.lastIndexOf('/')))}
-      onAddTo={() => r.path && askAddToPlaylist([r.path], r.title)}
+      onAddTo={() => (r.online ? askAddSongs([songOf(r)], r.title) : r.path && askAddToPlaylist([r.path], r.title))}
+      onPickOnline={(mode) => setPicking({ rows: [r], mode })}
       root={root}
     />
   )
@@ -379,7 +477,7 @@ export function PlaylistPage(props: {
       glow={glow}
       tools={
         songs.length > 0 ? (
-          <button onClick={() => (isNow ? void toggle() : void playAll(root, songs, from))} className="btn-primary btn-sm">
+          <button onClick={() => (isNow ? void toggle() : void playAllItems(root, songs, from))} className="btn-primary btn-sm">
             {isNow && playing ? <IconPause width={15} height={15} /> : <IconPlay width={15} height={15} />}
             {isNow && playing ? 'Pause' : 'Play'}
           </button>
@@ -402,10 +500,16 @@ export function PlaylistPage(props: {
           <p className="mt-2 text-[13.5px] text-ink/60">
             {rows === null
               ? 'Reading…'
-              : missing > 0
-                ? `${plural(rows.length, 'song')}: ${have.length.toLocaleString('en-IN')} in your library, ${missing.toLocaleString('en-IN')} to get`
+              : missing > 0 || online.length > 0
+                ? `${plural(rows.length, 'song')}: ${[
+                    `${have.length.toLocaleString('en-IN')} in your library`,
+                    online.length ? `${online.length.toLocaleString('en-IN')} online` : '',
+                    missing ? `${missing.toLocaleString('en-IN')} to get` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}`
                 : plural(have.length, 'song')}
-            {have.length > 0 && `, ${length(totalMs)}${missing > 0 ? ' to play' : ''}`}
+            {have.length + online.length > 0 && `, ${length(totalMs)}${missing > 0 ? ' to play' : ''}`}
           </p>
           {rows !== null && missing > 0 && (
             <div
@@ -423,13 +527,13 @@ export function PlaylistPage(props: {
           <div className="mt-5 flex flex-wrap items-center gap-2.5">
             <button
               disabled={!songs.length}
-              onClick={() => (isNow ? void toggle() : void playAll(root, songs, from))}
+              onClick={() => (isNow ? void toggle() : void playAllItems(root, songs, from))}
               className="btn-primary btn-lg play-main"
             >
               {isNow && playing ? <IconPause /> : <IconPlay />}
               {isNow ? (playing ? 'Pause' : 'Resume') : 'Play'}
             </button>
-            <button disabled={songs.length < 2} onClick={() => void playAll(root, songs, from, 'shuffle')} className="btn btn-lg shuffle-main">
+            <button disabled={songs.length < 2} onClick={() => void playAllItems(root, songs, from, 'shuffle')} className="btn btn-lg shuffle-main">
               <IconShuffle />
               Shuffle
             </button>
@@ -468,12 +572,45 @@ export function PlaylistPage(props: {
           <SongFinder
             key="add"
             title="Add songs"
-            hint="Find songs in your library; each one you pick goes to the end."
+            hint="Find songs in your library or online; each one you pick goes to the end."
             catalog={props.catalog}
-            exclude={new Set(have.map((r) => r.path))}
-            onPick={(t) => {
+            excludeLocal={new Set(have.map((r) => r.path))}
+            excludeOnline={new Set(online.map((r) => (r.online ? `${r.online.provider}:${r.online.track_id}` : '')).filter(Boolean))}
+            onPickLocal={(t) => {
               const before = latest.current
-              void persist([...before, ...withKeys([{ path: t.path, title: t.title, artist: t.artists.join(', '), album: t.album, duration_ms: t.duration_ms, audio_md5: null, missing: false }])])
+              void persist([
+                ...before,
+                ...withKeys([
+                  {
+                    path: t.path,
+                    title: t.title,
+                    artist: t.artists.join(', '),
+                    album: t.album,
+                    duration_ms: t.duration_ms,
+                    audio_md5: null,
+                    missing: false,
+                  },
+                ]),
+              ])
+            }}
+            onPickOnline={(t) => {
+              const before = latest.current
+              const o = onlineEntryFrom(t)
+              void persist([
+                ...before,
+                ...withKeys([
+                  {
+                    path: '',
+                    title: o.title,
+                    artist: (o.artists ?? []).join(', '),
+                    album: o.album ?? '',
+                    duration_ms: o.duration_ms ?? 0,
+                    audio_md5: null,
+                    missing: true,
+                    online: o,
+                  },
+                ]),
+              ])
             }}
             onClose={() => setAdding(false)}
           />
@@ -493,7 +630,7 @@ export function PlaylistPage(props: {
         </div>
       )}
 
-      {rows && missing > 0 && !smart && (
+      {rows && (missing > 0 || online.length > 0) && !smart && (
         <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2">
           <Segmented
             tabs
@@ -503,8 +640,22 @@ export function PlaylistPage(props: {
             onChange={setShow}
             options={[
               { value: 'all', label: `All ${rows.length.toLocaleString('en-IN')}` },
-              { value: 'here', label: `In your library ${have.length.toLocaleString('en-IN')}`, disabled: !have.length },
-              { value: 'get', label: `To get ${missing.toLocaleString('en-IN')}` },
+              {
+                value: 'here',
+                label: `Local ${have.length.toLocaleString('en-IN')}`,
+                disabled: !have.length,
+              },
+              ...(online.length
+                ? [
+                    {
+                      value: 'online' as const,
+                      label: `Online ${online.length.toLocaleString('en-IN')}`,
+                    },
+                  ]
+                : []),
+              ...(missing
+                ? [{ value: 'get' as const, label: `To get ${missing.toLocaleString('en-IN')}` }]
+                : []),
             ]}
           />
           {view === 'get' && (
@@ -512,11 +663,23 @@ export function PlaylistPage(props: {
               From {plural(groups.length, 'album')}, the ones with most songs first. Venuta never downloads music.
             </span>
           )}
+          {view === 'online' && (
+            <span className="text-[12.5px] text-ink/50">Plays from the online catalog until you have the file.</span>
+          )}
+          {view === 'get' && missing > 0 && !smart && (
+            <button
+              onClick={() => setPicking({ rows: (rows ?? []).filter(toGet), mode: 'use' })}
+              className="btn-ghost btn-sm ml-auto"
+              title="Choose an online song for each song to get, one at a time"
+            >
+              Fill missing online…
+            </button>
+          )}
         </div>
       )}
 
       {rows && rows.length > 0 && (
-        <div className={missing > 0 && !smart ? 'mt-4' : 'mt-9'}>
+        <div className={(missing > 0 || online.length > 0) && !smart ? 'mt-4' : 'mt-9'}>
           <PlaylistList
             lines={lines}
             movable={view === 'all' && !smart}
@@ -532,6 +695,16 @@ export function PlaylistPage(props: {
       )}
 
       <AnimatePresence>
+        {picking && (
+          <OnlinePick
+            key="online-pick"
+            root={root}
+            rows={picking.rows}
+            mode={picking.mode}
+            onUse={useOnlineHere}
+            onClose={() => setPicking(null)}
+          />
+        )}
         {finding && (
           <FindDialog
             row={finding}
@@ -541,7 +714,7 @@ export function PlaylistPage(props: {
               const before = latest.current
               const next = before.map((x) =>
                 x.key === finding.key
-                  ? { ...x, path: t.path, title: t.title, artist: t.artists.join(', '), album: t.album, duration_ms: t.duration_ms, missing: false, want: undefined, maybe: undefined }
+                  ? { ...x, path: t.path, title: t.title, artist: t.artists.join(', '), album: t.album, duration_ms: t.duration_ms, missing: false, want: undefined, maybe: undefined, online: undefined }
                   : x,
               )
               setFinding(null)
@@ -611,6 +784,8 @@ function PlaylistRow(props: {
   /** Under its album's heading (To get): the album isn't repeated on the row. */
   inGroup: boolean
   state: 'no' | 'playing' | 'paused'
+  /** Say where it plays from (the playlist holds online songs). */
+  badge: boolean
   onPlay: () => void
   onRemove: () => void
   onFind: () => void
@@ -618,15 +793,32 @@ function PlaylistRow(props: {
   onNo: () => void
   onAlbum: () => void
   onAddTo: () => void
+  /** Pick an online song for this to-get row: to use in its place, or just to play. */
+  onPickOnline: (mode: 'use' | 'play') => void
 }) {
   const { row: r, state, grab } = props
   const cover = useCovers(320)(r.path ? r.path.slice(0, r.path.lastIndexOf('/')) : '')
   const isNow = state !== 'no'
+  // Still to get (not here, not online), or an online song that plays as it is.
+  const get = toGet(r)
+  const remote = isRemote(r)
+  const onlineArt = r.online?.artwork_url
   const removable = (props.smart ? [] : [['Remove from playlist', props.onRemove]]) as [string, () => void][]
   const ctx = useContextMenu(() =>
-    r.missing
+    remote && r.online
+      ? [
+          ['Play', props.onPlay],
+          ['Play next', () => void enqueueItems(props.root, [onlineItem(r.online!)], true)],
+          ['Add to queue', () => void enqueueItems(props.root, [onlineItem(r.online!)], false)],
+          ['Add to another playlist…', props.onAddTo],
+          ['Find it in your library…', props.onFind],
+          ...removable,
+        ]
+      : get
       ? [
           ...((r.maybe ? [[`Use “${r.maybe.title}” from your library`, props.onYes]] : []) as [string, () => void][]),
+          ['Play online…', () => props.onPickOnline('play')],
+          ['Use online in this playlist…', () => props.onPickOnline('use')],
           ['Find it in your library…', props.onFind],
           [`Copy “${wordsFor(r) || r.title}”`, () => void navigator.clipboard.writeText(wordsFor(r) || r.title).then(() => notify('Copied.'))],
           ['Search the web', () => void searchWeb(`${wordsFor(r)} ${r.album}`.trim())],
@@ -645,12 +837,12 @@ function PlaylistRow(props: {
     <div
       role="listitem"
       style={props.style}
-      aria-label={r.missing ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
+      aria-label={get ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
       onContextMenu={ctx.onContextMenu}
       onClick={(e) => {
         if (grab?.justDropped() || (e.target as HTMLElement).closest('button')) return
-        if (!r.missing) props.onPlay()
+        if (!get) props.onPlay()
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
@@ -660,13 +852,13 @@ function PlaylistRow(props: {
           return
         }
         if (e.key === 'Enter') {
-          if (r.missing) props.onFind()
+          if (get) props.onFind()
           else props.onPlay()
         }
         if (e.key === 'Delete' && !props.smart) props.onRemove()
       }}
       className={`row group absolute inset-x-0 grid grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 transition-colors ${
-        r.missing ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
+        get ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
       } ${isNow ? 'text-accent-ink' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
     >
       {ctx.menu}
@@ -697,7 +889,7 @@ function PlaylistRow(props: {
             </span>
             <span className="hidden text-ink group-hover:block">{state === 'playing' ? <IconPause width={15} height={15} /> : <IconPlay width={15} height={15} />}</span>
           </>
-        ) : r.missing ? (
+        ) : get ? (
           props.index + 1
         ) : (
           <>
@@ -708,7 +900,7 @@ function PlaylistRow(props: {
           </>
         )}
       </span>
-      {r.missing ? (
+      {get ? (
         // Not here: an empty sleeve, marked, so it reads at a glance without colour alone.
         <span className="relative grid h-11 w-11 place-items-center rounded-lg border border-dashed border-ink/25 text-ink/35" aria-hidden>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
@@ -719,17 +911,24 @@ function PlaylistRow(props: {
             +
           </span>
         </span>
+      ) : remote ? (
+        <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-lg bg-ink/[0.07] text-ink/30">
+          <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
+        </span>
       ) : (
         <span className="h-11 w-11 overflow-hidden rounded-lg bg-ink/[0.07]">
           {cover ? <img src={cover.src} alt="" className="h-full w-full object-cover" draggable={false} /> : <span className="grid h-full w-full place-items-center text-ink/30">♪</span>}
         </span>
       )}
       <span className="min-w-0">
-        <span className={`block truncate text-[14px] font-medium ${r.missing ? 'text-ink/85' : ''}`}>{r.title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={`truncate text-[14px] font-medium ${get ? 'text-ink/85' : ''}`}>{r.title}</span>
+          {props.badge && <AvailabilityBadge availability={entryAvailability(r)} />}
+        </span>
         <span className={`block truncate text-[12.5px] ${isNow ? 'opacity-80' : 'text-ink/55'}`}>{r.artist || '—'}</span>
       </span>
       <span className="min-w-0 text-[13px] text-ink/55">
-        {r.missing && r.maybe ? (
+        {get && r.maybe ? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate" title={`${r.maybe.title}, ${r.maybe.artist}, ${r.maybe.album} (${r.maybe.why})`}>
               <span className="text-ink/45">Maybe </span>
@@ -743,7 +942,7 @@ function PlaylistRow(props: {
               No
             </button>
           </span>
-        ) : r.missing ? (
+        ) : get ? (
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1">
               {r.album && !props.inGroup && <span className="block truncate text-ink/55">{r.album}</span>}
@@ -761,7 +960,7 @@ function PlaylistRow(props: {
         )}
       </span>
       <span className="text-right text-[12.5px] tabular-nums text-ink/55">{r.duration_ms ? clock(r.duration_ms) : ''}</span>
-      {props.smart || r.missing ? (
+      {props.smart || get ? (
         <button onClick={ctx.onContextMenu} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
           <IconMore />
         </button>
@@ -795,11 +994,41 @@ function useSongSearch(q: string, catalog: CatalogTrack[] | null, limit = 40): C
   }, [q, catalog, limit])
 }
 
-function SongFinder(props: { title: string; hint: string; catalog: CatalogTrack[] | null; exclude: Set<string>; onPick: (t: CatalogTrack) => void; onClose: () => void }) {
+type FinderSource = 'library' | 'online'
+
+/** Add songs from your library or the online catalog (same picker, two sources). */
+function SongFinder(props: {
+  title: string
+  hint: string
+  catalog: CatalogTrack[] | null
+  excludeLocal: Set<string>
+  excludeOnline: Set<string>
+  onPickLocal: (t: CatalogTrack) => void
+  onPickOnline: (t: OnlineTrack) => void
+  onClose: () => void
+}) {
   const [q, setQ] = useState('')
+  const [source, setSource] = useState<FinderSource>('library')
+  const [sel, setSel] = useState(0)
   const found = useSongSearch(q, props.catalog)
   const cover = useCovers(320)
+  const { results: online, error: onlineError, loading: onlineLoading, resultsFor } = useOnlineSearch(q)
+  const onlineTracks = online?.tracks ?? []
+  const onlineFresh = resultsFor === q.trim()
+  const listLen = source === 'library' ? found.length : onlineTracks.length
+  useEffect(() => setSel(0), [q, source, listLen])
   useEscape(true, props.onClose)
+  const pickSel = () => {
+    if (source === 'library') {
+      const t = found[sel]
+      if (t && !props.excludeLocal.has(t.path)) props.onPickLocal(t)
+    } else {
+      const t = onlineTracks[sel]
+      if (!t) return
+      const id = `${t.provider}:${t.track_id}`
+      if (!props.excludeOnline.has(id)) props.onPickOnline(t)
+    }
+  }
   return (
     <motion.section
       initial={{ opacity: 0, y: -6 }}
@@ -808,6 +1037,21 @@ function SongFinder(props: { title: string; hint: string; catalog: CatalogTrack[
       className="glass mt-8 rounded-[20px] p-4"
       aria-label={props.title}
     >
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <Segmented
+          size="sm"
+          label="Where to find songs"
+          value={source}
+          onChange={setSource}
+          options={[
+            { value: 'library', label: 'In your library' },
+            { value: 'online', label: 'Online' },
+          ]}
+        />
+        <span className="text-[12.5px] text-ink/50">
+          {source === 'library' ? 'Your files' : 'Plays online until you have the file'}
+        </span>
+      </div>
       <div className="flex items-center gap-3 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
         <IconSearch className="shrink-0 text-ink/45" />
         <input
@@ -818,38 +1062,114 @@ function SongFinder(props: { title: string; hint: string; catalog: CatalogTrack[
             if (e.key === 'Escape' && q) {
               e.preventDefault()
               setQ('')
+              return
+            }
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setSel((i) => Math.min(i + 1, Math.max(0, listLen - 1)))
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setSel((i) => Math.max(i - 1, 0))
+            } else if (e.key === 'Enter') {
+              e.preventDefault()
+              pickSel()
             }
           }}
-          placeholder="Find a song, an artist or an album"
+          placeholder={source === 'library' ? 'Find a song, an artist or an album' : 'Search online songs'}
           aria-label={props.title}
           className="min-w-0 flex-1 bg-transparent py-2.5 text-[14px] outline-none placeholder:text-ink/45"
         />
+        {source === 'online' && onlineLoading && (
+          <span className="spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-ink/20 border-t-ink/60" aria-label="Searching online" />
+        )}
       </div>
-      {!q && <p className="px-2 pt-3 text-[12.5px] text-ink/50">{props.catalog ? props.hint : 'Reading your library…'}</p>}
-      {q && !found.length && <p className="px-2 pt-3 text-[12.5px] text-ink/50">Nothing in your library matches “{q}”.</p>}
+      {!q && (
+        <p className="px-2 pt-3 text-[12.5px] text-ink/50">
+          {source === 'library' ? (props.catalog ? props.hint : 'Reading your library…') : 'Type a few words to search the online catalog.'}
+        </p>
+      )}
+      {source === 'library' && q && !found.length && (
+        <p className="px-2 pt-3 text-[12.5px] text-ink/50">
+          Nothing in your library matches “{q}”. Try the Online tab to add it without the file.
+        </p>
+      )}
+      {source === 'online' && q && onlineError && onlineFresh && !onlineLoading && (
+        <p className="px-2 pt-3 text-[12.5px] text-ink/55">{onlineError}</p>
+      )}
+      {source === 'online' && q && onlineFresh && !onlineLoading && !onlineError && !onlineTracks.length && (
+        <p className="px-2 pt-3 text-[12.5px] text-ink/50">Nothing online matches “{q}”.</p>
+      )}
       <div className="fade-y mt-2 grid max-h-[340px] gap-0.5 overflow-y-auto">
-        {found.map((t) => {
-          const inIt = props.exclude.has(t.path)
-          return (
-            <button
-              key={t.path}
-              disabled={inIt}
-              onClick={() => props.onPick(t)}
-              className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors enabled:hover:bg-ink/[0.06] enabled:active:bg-ink/[0.1] disabled:opacity-50"
-            >
-              <span className="h-9 w-9 shrink-0 overflow-hidden rounded-md bg-ink/[0.07]">
-                {cover(t.dir) && <img src={cover(t.dir)!.src} alt="" className="h-full w-full object-cover" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13.5px]">{t.title}</span>
-                <span className="block truncate text-[12px] text-ink/55">
-                  {t.artists.join(', ')} · {t.album}
+        {source === 'library' &&
+          found.map((t, i) => {
+            const inIt = props.excludeLocal.has(t.path)
+            return (
+              <button
+                key={t.path}
+                disabled={inIt}
+                onMouseMove={() => setSel(i)}
+                onClick={() => props.onPickLocal(t)}
+                className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors enabled:hover:bg-ink/[0.06] enabled:active:bg-ink/[0.1] disabled:opacity-50 ${
+                  i === sel ? 'bg-ink/[0.07]' : ''
+                }`}
+              >
+                <span className="h-9 w-9 shrink-0 overflow-hidden rounded-md bg-ink/[0.07]">
+                  {cover(t.dir) && <img src={cover(t.dir)!.src} alt="" className="h-full w-full object-cover" />}
                 </span>
-              </span>
-              <span className="shrink-0 text-[12px] text-ink/55">{inIt ? 'In the playlist' : '+ Add'}</span>
-            </button>
-          )
-        })}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px]">{t.title}</span>
+                  <span className="block truncate text-[12px] text-ink/55">
+                    {t.artists.join(', ')} · {t.album}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[12px] text-ink/55">{inIt ? 'In the playlist' : '+ Add'}</span>
+              </button>
+            )
+          })}
+        {source === 'online' && onlineLoading && !onlineTracks.length && (
+          <div className="grid gap-1.5 px-1 py-2" aria-busy="true">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="flex items-center gap-3 px-1">
+                <span className="shimmer h-9 w-9 rounded-md" />
+                <span className="min-w-0 flex-1 grid gap-1.5">
+                  <span className="shimmer h-3 w-2/3 rounded-full" />
+                  <span className="shimmer h-2.5 w-1/2 rounded-full" />
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {source === 'online' &&
+          onlineTracks.map((t, i) => {
+            const id = `${t.provider}:${t.track_id}`
+            const inIt = props.excludeOnline.has(id)
+            return (
+              <button
+                key={id}
+                disabled={inIt}
+                onMouseMove={() => setSel(i)}
+                onClick={() => props.onPickOnline(t)}
+                className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors enabled:hover:bg-ink/[0.06] enabled:active:bg-ink/[0.1] disabled:opacity-50 ${
+                  i === sel ? 'bg-ink/[0.07]' : ''
+                }`}
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-md bg-ink/[0.07] text-ink/30">
+                  <RemoteArt url={t.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-[13.5px]">{t.title}</span>
+                    <AvailabilityBadge availability="online" />
+                  </span>
+                  <span className="block truncate text-[12px] text-ink/55">
+                    {t.artists.join(', ') || '—'}
+                    {t.album ? ` · ${t.album}` : ''}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[12px] text-ink/55">{inIt ? 'In the playlist' : '+ Add'}</span>
+              </button>
+            )
+          })}
       </div>
     </motion.section>
   )

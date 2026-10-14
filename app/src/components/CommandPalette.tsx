@@ -1,6 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconSearch } from './Icons'
+import { AvailabilityBadge } from './AvailabilityBadge'
+import { onlineSearch, type OnlineTrack } from '../lib/engine'
+import { OFFLINE, onlineProblem, useNetworkOnline } from '../lib/online'
+import { playItems, toRemoteItem } from '../lib/player'
 import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
 
 export interface Command {
@@ -36,9 +40,21 @@ function score(c: Command, words: string[], has: (key: string) => number): numbe
   return s
 }
 
-export function CommandPalette(props: { open: boolean; onClose: () => void; commands: Command[] }) {
+export function CommandPalette(props: {
+  open: boolean
+  onClose: () => void
+  commands: Command[]
+  /** Library root: when set, typed words also search the online catalog. */
+  root?: string
+}) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
+  const [online, setOnline] = useState<{ q: string; tracks: OnlineTrack[]; error: string; loading: boolean }>({
+    q: '',
+    tracks: [],
+    error: '',
+    loading: false,
+  })
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
 
@@ -46,9 +62,33 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
     if (props.open) {
       setQ('')
       setSel(0)
+      setOnline({ q: '', tracks: [], error: '', loading: false })
       window.setTimeout(() => input.current?.focus(), 0)
     }
   }, [props.open])
+
+  // Online hits for the same words as the palette (debounced); none asked for while offline.
+  const connected = useNetworkOnline()
+  useEffect(() => {
+    if (!props.open || !props.root) return
+    const query = q.trim()
+    // Too short to ask, or offline (said once, under the results).
+    if (query.length < 2 || !connected) {
+      setOnline({ q: query, tracks: [], error: query.length < 2 ? '' : OFFLINE, loading: false })
+      return
+    }
+    setOnline((s) => ({ ...s, q: query, loading: true, error: '' }))
+    let live = true
+    const t = window.setTimeout(() => {
+      onlineSearch(query)
+        .then((r) => live && setOnline({ q: query, tracks: r.tracks.slice(0, 8), error: '', loading: false }))
+        .catch((e) => live && setOnline({ q: query, tracks: [], error: onlineProblem(e), loading: false }))
+    }, 320)
+    return () => {
+      live = false
+      window.clearTimeout(t)
+    }
+  }, [props.open, props.root, q, connected])
 
   const results = useMemo(() => {
     const words = searchKey(q).split(' ').filter(Boolean)
@@ -57,12 +97,40 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
       .map((c) => ({ c, s: score(c, words, has) }))
       .filter((x) => x.s > 0)
     // Without a query, show actions first and keep albums out of the way.
-    const shown = q.trim()
-      ? ranked.sort((a, b) => b.s - a.s).slice(0, 40)
+    const local = q.trim()
+      ? ranked.sort((a, b) => b.s - a.s).slice(0, 32)
       : ranked.filter((x) => x.c.group !== 'Albums')
+
+    const onlineCmds: { c: Command; s: number }[] =
+      props.root && online.q === q.trim() && online.tracks.length
+        ? online.tracks.map((t, i) => {
+            const artists = t.artists.join(', ')
+            return {
+              s: 50 - i,
+              c: {
+                id: `online:${t.provider}:${t.track_id}`,
+                group: 'Online',
+                label: t.title,
+                detail: [artists, t.album].filter(Boolean).join(' · '),
+                keywords: `online stream ${artists}`,
+                run: () => {
+                  if (!props.root) return
+                  void playItems(
+                    props.root,
+                    online.tracks.map(toRemoteItem),
+                    i,
+                    { kind: 'search', ref: q.trim(), label: `Online: ${q.trim()}` },
+                  )
+                },
+              } satisfies Command,
+            }
+          })
+        : []
+
+    const shown = [...local, ...onlineCmds]
     // Show a group heading above the first command of each group.
     return shown.map((x, i) => ({ c: x.c, head: i === 0 || shown[i - 1].c.group !== x.c.group ? x.c.group : '' }))
-  }, [props.commands, q])
+  }, [props.commands, props.root, q, online])
 
   useEffect(() => {
     list.current?.querySelector(`[data-i="${sel}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -122,19 +190,41 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
                   setSel(0)
                 }}
                 onKeyDown={onKey}
-                placeholder="Type a command, an album or an artist"
+                placeholder={props.root ? 'Type a command, album, artist — or an online song' : 'Type a command, an album or an artist'}
                 className="min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink/40"
                 role="combobox"
                 aria-expanded="true"
                 aria-controls="palette-list"
               />
+              {online.loading && q.trim().length >= 2 && (
+                <span className="spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-ink/20 border-t-ink/60" aria-label="Searching online" />
+              )}
               <kbd>Esc</kbd>
             </div>
             <div ref={list} id="palette-list" role="listbox" className="no-scrollbar fade-y max-h-[56vh] overflow-y-auto p-2">
               {results.length === 0 && (
-                <p className="px-4 py-8 text-center text-[13.5px] text-ink/50">Nothing matches “{q}”.</p>
+                <p className="px-4 py-8 text-center text-[13.5px] text-ink/50">
+                  {online.loading && q.trim().length >= 2
+                    ? 'Searching online…'
+                    : online.error && online.q === q.trim()
+                      ? `Nothing in your library matches “${q}”. Online: ${online.error}`
+                      : `Nothing matches “${q}”.`}
+                </p>
+              )}
+              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Online') && (
+                <div className="px-3 pb-1 pt-3 text-[11.5px] font-medium text-ink/45">Online</div>
+              )}
+              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Online') && (
+                <div className="grid gap-1.5 px-3 py-2" aria-busy="true">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <span className="shimmer h-3 w-2/3 rounded-full" />
+                    </div>
+                  ))}
+                </div>
               )}
               {results.map(({ c, head }, i) => {
+                const onlineHit = c.group === 'Online'
                 return (
                   <div key={c.id}>
                     {head && <div className="px-3 pb-1 pt-3 text-[11.5px] font-medium text-ink/45">{head}</div>}
@@ -149,7 +239,10 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
                       }`}
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[14px]">{c.label}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate text-[14px]">{c.label}</span>
+                          {onlineHit && <AvailabilityBadge availability="online" />}
+                        </span>
                         {c.detail && <span className="block truncate text-[12px] text-ink/50">{c.detail}</span>}
                       </span>
                       {c.keys && <kbd>{c.keys}</kbd>}
@@ -157,6 +250,11 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
                   </div>
                 )
               })}
+              {results.length > 0 && !online.loading && online.error && online.q === q.trim() && (
+                <p role="status" className="px-3 pb-1 pt-3 text-[12px] text-ink/45">
+                  Online: {online.error}
+                </p>
+              )}
             </div>
             <div className="flex gap-4 border-t border-edge px-5 py-2.5 text-[11.5px] text-ink/45">
               <span>

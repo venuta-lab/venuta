@@ -1,13 +1,14 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { type HealthReport } from '../lib/engine'
+import { type HealthReport, type OnlineAlbum } from '../lib/engine'
 import { useCatalog } from '../lib/catalog'
 import { current, usePlayer } from '../lib/player'
 import { IconSearch } from '../components/Icons'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
+import { OnlineAlbumPage } from './listen/OnlineAlbumPage'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
 import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
@@ -41,7 +42,10 @@ const onTabAsked = (l: () => void) => {
   }
 }
 
-type Page = { kind: 'album'; dir: string; origin?: string } | { kind: 'artist'; name: string }
+type Page =
+  | { kind: 'album'; dir: string; origin?: string }
+  | { kind: 'artist'; name: string }
+  | { kind: 'online-album'; album: OnlineAlbum }
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
 type Entry = { page: Page; scroll: number }
 
@@ -134,7 +138,11 @@ function Listen(props: Props) {
       const same =
         last &&
         last.kind === page.kind &&
-        (page.kind === 'album' ? last.kind === 'album' && last.dir === page.dir : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
+        (page.kind === 'album'
+          ? last.kind === 'album' && last.dir === page.dir
+          : page.kind === 'online-album'
+            ? last.kind === 'online-album' && last.album.album_id === page.album.album_id
+            : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
       return same ? s : [...s, { page, scroll }]
     })
   }, [])
@@ -159,6 +167,7 @@ function Listen(props: Props) {
       root,
       openAlbum: (dir, origin) => push({ kind: 'album', dir, origin }),
       openArtist: (name) => push({ kind: 'artist', name }),
+      openOnlineAlbum: (album) => push({ kind: 'online-album', album }),
       editDetails: (dir) => edit.current(dir),
     }),
     [root, push],
@@ -261,7 +270,8 @@ function Listen(props: Props) {
   const body = (() => {
     if (!report) return <Reading busy={busy} />
     if (!tracks) return <Loading />
-    if (!lib.tracks.length)
+    if (top?.page.kind === 'online-album') return <OnlineAlbumPage key={top.page.album.album_id} album={top.page.album} onBack={back} />
+    if (!lib.tracks.length && !typed.trim())
       return (
         <p className="py-20 text-center text-[14px] text-ink/55">
           No songs to play here yet. Bring music in from Organize and it shows up here.
