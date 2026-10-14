@@ -144,11 +144,11 @@ const PAGE = 'mx-auto w-full max-w-[1440px]'
 
 /**
  * The frame of a place. Its title and line, then a bar that pins to the top as you scroll
- * (tabs, search, filters), turning into a blurred strip with the title in small, so you
- * always know where you are and what you can do. Content scrolls beneath it.
+ * (tabs, search, filters), turning into a floating glass panel with the title in small, so
+ * you always know where you are and what you can do. Content scrolls beneath it.
  *
- * Lives directly in the page scroll area (which pads 40px each side), so the bar can reach
- * edge to edge.
+ * Lives directly in the page scroll area (which pads 40px each side); `.pin` (index.css)
+ * places the bar for the theme.
  */
 export function Page(props: {
   title: string
@@ -177,7 +177,7 @@ export function Page(props: {
       </header>
       <div ref={mark} aria-hidden className="h-px" />
       {hasBar ? (
-        <div className={`sticky top-0 z-20 -mx-10 px-10 transition-[background-color,box-shadow] duration-200 ${stuck ? 'bar' : ''}`}>
+        <div className={`pin sticky top-0 z-20 ${stuck ? 'bar' : ''}`}>
           <div className={`${PAGE} py-2.5`}>
             <div className="flex min-h-[40px] flex-wrap items-center gap-3">
               <motion.span
@@ -197,12 +197,12 @@ export function Page(props: {
         </div>
       ) : (
         // No tools to pin: just the title, in small, once the big one has scrolled away.
-        <div className="pointer-events-none sticky top-0 z-20 -mx-10 h-0">
+        <div className="pointer-events-none sticky top-0 z-20 h-0">
           <motion.div
             initial={false}
             animate={{ opacity: stuck ? 1 : 0, y: stuck ? 0 : -8 }}
             transition={{ duration: 0.18 }}
-            className={`px-10 ${stuck ? 'bar pointer-events-auto' : ''}`}
+            className={`pin ${stuck ? 'bar pointer-events-auto' : ''}`}
           >
             <div className={`${PAGE} flex h-[52px] items-center text-[15px] font-semibold tracking-[-0.01em]`}>{props.title}</div>
           </motion.div>
@@ -248,7 +248,7 @@ export function Detail(props: {
           <img src={props.glow} alt="" className="hero-glow-img h-full w-full scale-125 object-cover" style={{ filter: "blur(64px) saturate(1.5) var(--art-tint)" }} />
         </div>
       )}
-      <div className={`sticky top-0 z-20 -mx-10 px-10 transition-[background-color,box-shadow] duration-200 ${stuck ? 'bar' : ''}`}>
+      <div className={`pin sticky top-0 z-20 ${stuck ? 'bar' : ''}`}>
         <div className={`${PAGE} flex h-[52px] items-center gap-3`}>
           <button onClick={props.onBack} className="btn-ghost btn-sm -ml-3 gap-1.5" title="Back (Esc)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

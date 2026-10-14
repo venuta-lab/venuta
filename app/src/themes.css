@@ -668,6 +668,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- A pinned bar runs edge to edge where the page is a stage (Green Room, Glasshouse: the
+   stage's corners round it) or sits against a flat sidebar (Orchard), as those apps do. */
+:root:is([data-style="green-room"], [data-style="glasshouse"], [data-style="orchard"]) .pin {
+  margin-inline: -40px;
+  padding-inline: 40px;
+  border-radius: 0;
+}
+:root:is([data-style="green-room"], [data-style="glasshouse"], [data-style="orchard"]) .bar {
+  border-radius: 0;
+  box-shadow:
+    0 1px 0 var(--bar-edge),
+    0 14px 30px -20px rgb(0 0 0 / 0.4);
+}
+
 /* ---- Sharp themes: corners become hard (a cap on every rounded thing, except true dots). */
 :root:is([data-style="neo-tokyo"], [data-style="sync-ratio"], [data-style="layer-zero"], [data-style="bounty"], [data-style="skin99"])
   :is([class*="rounded"], .btn, .btn-primary, .btn-ghost, .glass, .popover):not(.keep-round) {
@@ -685,7 +699,9 @@
   clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
 }
 :root[data-style="neo-tokyo"] .bar {
-  box-shadow: inset 0 -2px 0 #da1d1f;
+  box-shadow:
+    inset 0 0 0 1px var(--bar-edge),
+    inset 0 -2px 0 #da1d1f;
 }
 :root[data-style="neo-tokyo"] :is(.btn-primary, .btn) {
   text-transform: uppercase;
@@ -731,7 +747,9 @@
   font-size: 13.5px;
 }
 :root[data-style="sync-ratio"] .bar {
-  box-shadow: inset 0 -1px 0 #f66e25;
+  box-shadow:
+    inset 0 0 0 1px var(--bar-edge),
+    inset 0 -1px 0 #f66e25;
 }
 
 /* ---- Layer Zero: page titles in Major Mono; a red static pixel line under the player. */

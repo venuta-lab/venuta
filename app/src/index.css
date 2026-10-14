@@ -49,7 +49,8 @@ body {
   Three layers, so panes read clearly when they stack:
     .glass    a panel on the page. Only the (already blurred) backdrop is behind it, so it is
               a tint and needs no blur of its own: cheap enough to use anywhere.
-    .bar      a bar pinned over scrolling content: blurs what slides beneath it.
+    .bar      a bar pinned over scrolling content: blurs what slides beneath it, and floats
+              like the player (the same corners, edge and lift).
     .popover  menus, the palette, drawers and dialogs, over everything: blurred and nearly
               opaque, so text over busy artwork stays readable.
   Only the unprefixed backdrop-filter is written: the minifier folds a -webkit- twin into a
@@ -63,12 +64,29 @@ body {
     var(--shadow);
 }
 
+/*
+  Where a pinned bar sits. It floats like the rail and the player: 12px clear of the rail on
+  the left and of the window on the right, where the player's edges are. The page area pads
+  40px each side, and its scrollbar (10px, there whenever a bar is pinned) takes the right
+  side's first 10; the padding puts the bar's contents back on the page's own edges. Themes
+  whose page is a stage or sits against a flat sidebar run it edge to edge (themes.css).
+*/
+.pin {
+  margin-inline: -28px -38px;
+  padding-inline: 28px 38px;
+  border-radius: var(--r-np);
+  transition:
+    background-color 200ms ease,
+    box-shadow 200ms ease;
+}
 .bar {
   background: var(--bar);
   backdrop-filter: var(--bar-blur);
+  border-radius: var(--r-np);
   box-shadow:
-    0 1px 0 var(--bar-edge),
-    0 14px 30px -20px rgb(0 0 0 / 0.4);
+    inset 0 0 0 1px var(--bar-edge),
+    inset 0 1px 0 var(--highlight),
+    0 12px 28px -14px rgb(0 0 0 / 0.5);
 }
 
 .popover {
