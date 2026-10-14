@@ -8,19 +8,19 @@ import {
   libraryFolders,
   listCards,
   planCard,
-  setupCard,
+  reidentifyCard,
   syncCard,
+  type CardConfig,
   type CardStatus,
   type SyncPlan,
   type SyncReport,
-  players,
   playerTestRemove,
   playerTestSave,
   playerTestWrite,
   type PlayerId,
-  type PlayerInfo,
   type TestItem,
 } from '../lib/engine'
+import { CardEditor } from './cards/CardEditor'
 import { PillButton } from './libraryParts'
 import { IconCards } from '../components/Icons'
 import { Page } from '../components/ui'
@@ -110,7 +110,7 @@ export function CardsScreen({ root }: { root: string }) {
   return (
     <Page
       title="Devices"
-      line="Each SD card carries your library, written for the player that reads it. Only changes are written, and files this app didn’t put on a card are never touched."
+      line="A card carries your whole library or a selection of it, laid out as your library is, for your player, a car, or someone else. Only changes are written, and files Venuta didn’t put on a card are never touched."
     >
       {message && (
         <p className="mt-4 cursor-pointer text-[13.5px] text-ink/80" onClick={() => setMessage('')}>
@@ -152,7 +152,7 @@ export function CardsScreen({ root }: { root: string }) {
           <h2 className="mb-3 text-[15px] font-medium text-ink/80">Not set up yet</h2>
           <div className="grid gap-3">
             {blank.map((c) => (
-              <SetupTile key={c.volume.root} status={c} folders={folders} onDone={refresh} />
+              <SetupTile key={c.volume.root} root={root} status={c} folders={folders} onDone={refresh} />
             ))}
           </div>
         </section>
@@ -190,11 +190,11 @@ function CardTile(props: {
             </span>
           </div>
           <div className="mt-1 text-[12.5px] text-ink/55">
-            {files ? `${files.toLocaleString()} files from your library` : 'Not synced yet'}
+            {card && describeCard(card)}
+            <br />
+            {files ? `${files.toLocaleString()} files on it from your library` : 'Not synced yet'}
             {last_sync ? `, last synced ${new Date(last_sync * 1000).toLocaleString()}` : ''}
-            {card?.include.length ? `. Carries: ${card.include.join(', ')}` : '. Carries: everything'}
-            {card?.auto_sync ? '. Syncs when inserted' : ''}
-            {card?.player && card.player !== 'standard' ? `. Written for ${PLAYER_NAMES[card.player]}` : ''}
+            {card?.auto_sync ? '. Syncs when inserted.' : '.'}
           </div>
         </div>
         <button onClick={() => setEditing(!editing)} className="btn-ghost btn-sm">
@@ -221,7 +221,17 @@ function CardTile(props: {
       <AnimatePresence initial={false}>
         {editing && card && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-            <CardSettings root={v.root} name={card.name} include={card.include} autoSync={card.auto_sync} player={card.player ?? 'standard'} folders={props.folders} onSaved={() => { setEditing(false); props.onSaved() }} />
+            <CardEditor
+              root={props.root}
+              card={v.root}
+              initial={card}
+              defaultName={card.name}
+              folders={props.folders}
+              onSaved={() => {
+                setEditing(false)
+                props.onSaved()
+              }}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -251,8 +261,29 @@ function CardTile(props: {
         {b?.kind === 'planning' && <span className="text-[13px] text-ink/65">Comparing the card with your library…</span>}
         {b?.kind === 'plan' && (
           <>
+            {b.plan.warnings.length > 0 && (
+              <ul className="mb-1 grid w-full gap-1 rounded-xl px-3 py-2.5 text-[12.5px] text-ink/85" style={{ background: 'color-mix(in oklab, var(--fix) 16%, transparent)' }}>
+                {b.plan.warnings.map((w) => (
+                  <li key={w} className="flex flex-wrap items-center gap-3">
+                    {w}
+                    {w.includes('copied from another card') && (
+                      <button
+                        className="btn btn-sm"
+                        onClick={async () => {
+                          await reidentifyCard(v.root)
+                          props.onSaved()
+                          props.onPreview()
+                        }}
+                      >
+                        Make it a card of its own
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
             <span className="mr-2 text-[13.5px] text-ink/85">
-              {describePlan(b.plan)}
+              {b.plan.songs.toLocaleString('en-IN')} {b.plan.songs === 1 ? 'song' : 'songs'} once synced. {describePlan(b.plan)}
             </span>
             {b.plan.fits ? (
               <PillButton onClick={props.onSync} accent>
@@ -260,7 +291,7 @@ function CardTile(props: {
               </PillButton>
             ) : (
               <span className="text-[13px] text-problem">
-                Not enough space. Choose fewer folders in Settings.
+                {gb(b.plan.bytes_to_copy + b.plan.reserve_bytes - b.plan.free_bytes - b.plan.bytes_freed)} too much for the card. Choose less in Settings, or turn on smaller files.
               </span>
             )}
             <button onClick={props.onDismiss} className="btn-ghost">
@@ -272,7 +303,9 @@ function CardTile(props: {
           <div className="flex w-full items-center gap-4">
             <div className="flex-1">
               <div className="text-[13px] text-ink/80">
-                {b.total ? `Syncing: ${b.done.toLocaleString()} of ${b.total.toLocaleString()} changes, ${gb(b.bytes)} written` : 'Starting…'}
+                {b.total
+                  ? `${b.bytes ? 'Writing to the card' : 'Converting'}: ${b.done.toLocaleString()} of ${b.total.toLocaleString()} steps${b.bytes ? `, ${gb(b.bytes)} written` : ''}`
+                  : 'Starting…'}
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
                 <motion.div className="h-full rounded-full" style={{ background: 'var(--accent)' }} animate={{ width: `${b.total ? (b.done / b.total) * 100 : 0}%` }} />
@@ -303,6 +336,20 @@ function CardTile(props: {
   )
 }
 
+/** What a card is and carries, in a line. */
+function describeCard(c: CardConfig) {
+  const p = c.pick
+  const n = (k: number, one: string, many: string) => (k ? `${k} ${k === 1 ? one : many}` : '')
+  const carries = p
+    ? [n(p.playlists.length, 'playlist', 'playlists'), n(p.albums.length, 'album', 'albums'), n(p.artists.length, 'artist', 'artists')].filter(Boolean).join(', ')
+    : c.include.length
+      ? c.include.join(', ')
+      : 'everything'
+  const what = c.kind === 'gift' ? 'A gift' : c.kind === 'car' ? 'For a car or USB stick' : c.player && c.player !== 'standard' ? `For ${PLAYER_NAMES[c.player]}` : 'For any player'
+  const smaller = c.convert?.aac ? ', as AAC' : c.convert?.hires ? ', hi-res as 16-bit' : ''
+  return `${what}, carrying ${carries}${smaller}.`
+}
+
 function describePlan(p: SyncPlan) {
   const parts = [
     p.copy && `copy ${p.copy.toLocaleString()} files (${gb(p.bytes_to_copy)})`,
@@ -326,87 +373,7 @@ function describeReport(r: SyncReport) {
   }`
 }
 
-function CardSettings(props: {
-  root: string
-  name: string
-  include: string[]
-  autoSync: boolean
-  player?: PlayerId
-  folders: string[]
-  onSaved: () => void
-}) {
-  const [name, setName] = useState(props.name)
-  const [include, setInclude] = useState<string[]>(props.include)
-  const [auto, setAuto] = useState(props.autoSync)
-  const [player, setPlayer] = useState<PlayerId>(props.player ?? 'poweramp')
-  const [list, setList] = useState<PlayerInfo[]>([])
-  useEffect(() => {
-    players().then(setList).catch(() => setList([]))
-  }, [])
-  const chosen = list.find((p) => p.id === player)
-  return (
-    <div className="mt-4 grid gap-3 border-t border-ink/[0.06] pt-4">
-      <label className="grid max-w-[360px] gap-1">
-        <span className="text-[11.5px] text-ink/50">Card name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} className="rounded-lg bg-ink/[0.06] px-3 py-1.5 text-[13.5px] outline-none focus:ring-1 focus:ring-[var(--accent)]" />
-      </label>
-      <div>
-        <div className="text-[11.5px] text-ink/50">What this card carries (none ticked means everything)</div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {props.folders.map((f) => {
-            const on = include.includes(f)
-            return (
-              <button
-                key={f}
-                onClick={() => setInclude(on ? include.filter((x) => x !== f) : [...include, f])}
-                className="rounded-full px-3 py-1.5 text-[12.5px]"
-                style={{ background: on ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'color-mix(in oklab, var(--ink) 7%, transparent)' }}
-              >
-                {f}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-      <div>
-        <div className="text-[11.5px] text-ink/50">The player that reads this card</div>
-        <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Player">
-          {list.map((p) => (
-            <button
-              key={p.id}
-              role="radio"
-              aria-checked={player === p.id}
-              onClick={() => setPlayer(p.id)}
-              className="rounded-full px-3 py-1.5 text-[12.5px]"
-              style={{ background: player === p.id ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'color-mix(in oklab, var(--ink) 7%, transparent)' }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {chosen && (
-          <ul className="mt-2 grid gap-0.5 text-[12.5px] text-ink/60">
-            {chosen.notes.map((n) => (
-              <li key={n}>· {n}</li>
-            ))}
-            <li>· The sound itself is never re-encoded; your library keeps its full tags.</li>
-          </ul>
-        )}
-      </div>
-      <label className="flex items-center gap-2 text-[13px] text-ink/80">
-        <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-[var(--accent)]" />
-        Sync automatically when this card is inserted
-      </label>
-      <div>
-        <PillButton onClick={async () => { await setupCard(props.root, name || 'Card', include, auto, player); props.onSaved() }} accent>
-          Save
-        </PillButton>
-      </div>
-    </div>
-  )
-}
-
-function SetupTile(props: { status: CardStatus; folders: string[]; onDone: () => void }) {
+function SetupTile(props: { root: string; status: CardStatus; folders: string[]; onDone: () => void }) {
   const v = props.status.volume
   const [open, setOpen] = useState(false)
   return (
@@ -429,7 +396,7 @@ function SetupTile(props: { status: CardStatus; folders: string[]; onDone: () =>
       <AnimatePresence>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="overflow-hidden">
-            <CardSettings root={v.root} name={v.label || 'My card'} include={[]} autoSync={false} folders={props.folders} onSaved={props.onDone} />
+            <CardEditor root={props.root} card={v.root} initial={null} defaultName={v.label || 'My card'} folders={props.folders} onSaved={props.onDone} />
           </motion.div>
         )}
       </AnimatePresence>

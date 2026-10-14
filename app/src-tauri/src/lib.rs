@@ -1275,6 +1275,32 @@ fn setup_card(
     engine::sync::setup_card(Path::new(&card), settings)
 }
 
+/// What a card's selection can be made of: playlists, albums and artists, with their sizes.
+#[tauri::command]
+async fn card_choices(root: String) -> CmdResult<engine::sync::Choices> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let index = open_index(&rootp)?;
+        engine::sync::choices(&index, &rootp).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// What a card would carry with these settings (songs, size, room), before saving anything.
+#[tauri::command]
+async fn card_estimate(
+    root: String,
+    card: String,
+    settings: engine::sync::CardSettings,
+) -> CmdResult<engine::sync::Estimate> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let index = open_index(&rootp)?;
+        engine::sync::estimate(&index, &rootp, Path::new(&card), &settings)
+    })
+    .await
+}
+
 /// A card whose settings were copied from another card: give it its own identity.
 #[tauri::command]
 fn reidentify_card(card: String) -> CmdResult<engine::sync::CardConfig> {
@@ -2307,6 +2333,8 @@ pub fn run() {
             library_folders,
             setup_card,
             reidentify_card,
+            card_choices,
+            card_estimate,
             players,
             want_add,
             want_remove,

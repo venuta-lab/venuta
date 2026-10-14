@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { listeningSummary, playlistShelf, type ListeningSummary, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from '../playlists/PlaylistsHome'
-import { useCovers } from '../../lib/covers'
+import { loadCovers, useCovers } from '../../lib/covers'
 import {
   appearsOn,
   artistFor,
@@ -363,6 +363,11 @@ function LyricResults(props: { hits: LyricResult[]; query: string }) {
   const { root } = useNav()
   const cover = useCovers(320)
   const tracks = props.hits.map((h) => h.track)
+  // The albums' covers, asked for once per set of albums.
+  const dirs = JSON.stringify([...new Set(tracks.map((t) => t.dir))])
+  useEffect(() => {
+    void loadCovers(root, JSON.parse(dirs) as string[])
+  }, [root, dirs])
   return (
     <div className="grid gap-1">
       {props.hits.map((h, i) => {

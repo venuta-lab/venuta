@@ -536,6 +536,29 @@ export interface Volume {
   free_bytes: number
 }
 
+/** What a card carries when it isn't everything: every song any of these holds, each once. */
+export interface CardPick {
+  playlists: string[]
+  /** Album folders, library-relative. */
+  albums: string[]
+  artists: string[]
+}
+
+export type CardKind = 'player' | 'gift' | 'car'
+
+export interface Convert {
+  /** Hi-res FLAC as 16-bit FLAC (still lossless). */
+  hires: boolean
+  /** Lossless songs as AAC (.m4a), for phones and cars. */
+  aac: boolean
+}
+
+export interface Extras {
+  readme: boolean
+  missing: boolean
+  gaps: boolean
+}
+
 export interface CardConfig {
   id: string
   name: string
@@ -545,6 +568,46 @@ export interface CardConfig {
   created_at: number
   player?: PlayerId
   test_results?: Record<string, boolean>
+  pick?: CardPick
+  kind: CardKind
+  convert: Convert
+  extras: Extras
+  serial?: number
+}
+
+/** What you choose for a card; `pick` null or empty means everything. */
+export interface CardSettings {
+  name: string
+  include: string[]
+  pick: CardPick | null
+  auto_sync: boolean
+  player?: PlayerId
+  kind: CardKind
+  convert: Convert
+  extras: Extras
+}
+
+/** Something a card can carry, with how much of the library it is. */
+export interface Choice {
+  id: string
+  name: string
+  detail: string
+  songs: number
+  bytes: number
+}
+
+export interface Choices {
+  playlists: Choice[]
+  albums: Choice[]
+  artists: Choice[]
+}
+
+export interface Estimate {
+  songs: number
+  bytes: number
+  room: number
+  reserve: number
+  fits: boolean
 }
 
 export interface CardStatus {
@@ -565,7 +628,11 @@ export interface SyncPlan {
   bytes_to_copy: number
   bytes_freed: number
   free_bytes: number
+  total_bytes: number
+  reserve_bytes: number
   fits: boolean
+  songs: number
+  warnings: string[]
 }
 
 export interface SyncReport {
@@ -614,8 +681,11 @@ export const playerTestSave = (card: string, results: Record<string, boolean>) =
 export const wantAdd = (album: string, artist: string, why: string) =>
   invoke<number>('want_add', { album, artist, why })
 
-export const setupCard = (card: string, name: string, include: string[], autoSync: boolean, player?: PlayerId) =>
-  invoke<CardConfig>('setup_card', { card, name, include, autoSync, player })
+export const setupCard = (card: string, settings: CardSettings) => invoke<CardConfig>('setup_card', { card, settings })
+export const reidentifyCard = (card: string) => invoke<CardConfig>('reidentify_card', { card })
+export const cardChoices = (root: string) => invoke<Choices>('card_choices', { root })
+export const cardEstimate = (root: string, card: string, settings: CardSettings) =>
+  invoke<Estimate>('card_estimate', { root, card, settings })
 export const planCard = (root: string, card: string) => invoke<SyncPlan>('plan_card', { root, card })
 export function syncCard(root: string, card: string, onProgress: (d: number, t: number, bytes: number) => void) {
   const channel = new Channel<{ done: number; total: number; bytes: number }>()

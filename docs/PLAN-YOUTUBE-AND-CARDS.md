@@ -72,7 +72,7 @@ albums, artists or smart playlists. Every song goes where your library's rules p
 album and year, track number), even when only some songs of an album are chosen, so the card is a
 small, organised library someone can grow from, and it says what is missing.
 
-### B1. A card is a saved selection
+### B1. A card is a saved selection (built 2026-10-14)
 - When you set up or edit a card: **Everything**, or **A selection** of playlists, albums, artists
   and smart playlists (search and tick; each shows its size and how much is already on the card).
   The card carries everything any of them holds, each song once.
@@ -84,7 +84,7 @@ small, organised library someone can grow from, and it says what is missing.
   is removed after the preview; an album folder goes only if Venuta made it and it's empty.
 - Recognised on insert: "Update the card Car: 12 songs to add, 3 to remove, 2 changed, 1.4 GB more".
 
-### B2. What's missing, for people and for Venuta
+### B2. What's missing, for people and for Venuta (built)
 - Playlists on the card keep their missing songs as comment lines (players skip them, Venuta reads
   them), never as paths that point nowhere (Poweramp could match a different file).
 - A partial album folder gets `Tracklist.txt`: every track, there or not. Folder names never change
@@ -94,7 +94,7 @@ small, organised library someone can grow from, and it says what is missing.
 - Opened in Venuta on someone else's computer, a gift card is a library that already knows its
   To get list.
 
-### B3. Safe on every card
+### B3. Safe on every card (built, except the card journal: see decision 0007)
 - Path and name safety: at most 255 characters for the whole path (FiiO's limit), no `\ / : * ? " < > |`,
   no trailing dots or spaces, one Unicode form; FAT32's 4 GB file limit.
 - Player limits: Echo Mini only takes cards up to 256 GB (FAT32/exFAT), so the 1.5 TB card is
@@ -102,20 +102,20 @@ small, organised library someone can grow from, and it says what is missing.
 - What M4 left open: the card's volume id is checked against its own record; every copied song is
   read back and compared (audio MD5); a card journal so a sync can be undone from Activity.
 
-### B4. Smaller files when a card needs them (a choice, per card)
+### B4. Smaller files when a card needs them (built: converted on this computer several at a time, not kept in `.venuta/converted`)
 - **Hi-res as 16-bit/44.1 kHz FLAC**: still lossless for every player, about a third of the size.
 - **AAC for phones and cars**, by Windows' own encoder (nothing to download); Opus only for players
   that read it (not the Echo Mini).
 - Converted once and kept in `.venuta/converted`, so a re-sync never converts again; the same path
   with a new extension, so playlists stay right; your library's files are never changed.
 
-### B5. Kinds of card
+### B5. Kinds of card (built)
 - **My player** (as today, per player profile).
 - **A gift**: no hidden app clutter visible to a player, README and missing lists, a short neutral
   note that the music is shared for personal listening.
 - **Car or USB stick**: FAT32, AAC or MP3, folders only, the car limits.
 
-### B6. Proved on the real players
+### B6. Proved on the real players (waits for his cards)
 The player test kit on his cards: does the Astell&Kern read M3U8 (or need `.pls`)? The Snowsky
 Disc? Results set each profile; until then those players get folders only, with playlists as an
 extra.

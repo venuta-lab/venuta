@@ -225,9 +225,16 @@ impl Dither {
     }
 
     pub fn sample16(&mut self, x: f32) -> i32 {
+        let v = x * 32768.0;
         let tpdf = self.next() - self.next();
-        let v = (x * 32767.0 + tpdf).round();
-        v.clamp(-32768.0, 32767.0) as i32
+        // Already an exact 16-bit value (16-bit audio stored as 24-bit): kept exactly, with no
+        // noise added. Only real detail below 16 bits is dithered.
+        let out = if v.fract() == 0.0 {
+            v
+        } else {
+            (v + tpdf).round()
+        };
+        out.clamp(-32768.0, 32767.0) as i32
     }
 }
 
@@ -277,7 +284,7 @@ impl flacenc::source::Source for FlacSource {
 }
 
 /// A 16-bit FLAC stream (bytes, starting "fLaC") of a library FLAC, at `rate`.
-pub(crate) fn flac16(src: &Path, rate: u32) -> Result<Vec<u8>, String> {
+pub fn flac16(src: &Path, rate: u32) -> Result<Vec<u8>, String> {
     use flacenc::component::BitRepr;
     use flacenc::error::Verify;
     let mut source = FlacSource {
@@ -320,7 +327,7 @@ pub(crate) fn fix_min_block(stream: &mut [u8]) {
 /// encoder (Media Foundation): nothing to download. 44.1 and 48 kHz only, so other rates are
 /// resampled to the nearer one.
 #[cfg(windows)]
-pub(crate) fn aac(src: &Path, dst: &Path, kbps: u32) -> Result<(), String> {
+pub fn aac(src: &Path, dst: &Path, kbps: u32) -> Result<(), String> {
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
     use windows::core::HSTRING;
@@ -439,7 +446,7 @@ pub(crate) fn aac(src: &Path, dst: &Path, kbps: u32) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn aac(_src: &Path, _dst: &Path, _kbps: u32) -> Result<(), String> {
+pub fn aac(_src: &Path, _dst: &Path, _kbps: u32) -> Result<(), String> {
     Err("Converting to AAC uses Windows' own encoder; it isn't available here.".into())
 }
 
@@ -508,5 +515,15 @@ mod tests {
             assert!((-32768..=32767).contains(&d.sample16(1.5)));
         }
         assert_eq!(d.sample16(-2.0), -32768);
+    }
+
+    #[test]
+    fn sixteen_bit_audio_in_a_24_bit_file_comes_out_exactly() {
+        let mut d = Dither::new();
+        for s in [-32768i32, -1, 0, 1, 12345, 32767] {
+            // A 24-bit sample whose last 8 bits are zero, as the decoder gives it.
+            let x = (s * 256) as f32 / 8_388_608.0;
+            assert_eq!(d.sample16(x), s);
+        }
     }
 }

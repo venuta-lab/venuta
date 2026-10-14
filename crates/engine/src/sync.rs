@@ -164,9 +164,9 @@ pub struct CardSettings {
     pub name: String,
     #[serde(default)]
     pub include: Vec<String>,
-    /// Some(None): everything again; Some(Some(p)): this selection; None: unchanged.
+    /// The selection (None or empty: everything, or the `include` folders).
     #[serde(default)]
-    pub pick: Option<Option<Pick>>,
+    pub pick: Option<Pick>,
     #[serde(default)]
     pub auto_sync: bool,
     #[serde(default)]
@@ -243,10 +243,7 @@ pub fn setup_card(card_root: &Path, s: CardSettings) -> Result<CardConfig, Strin
             .as_ref()
             .map(|c| c.test_results.clone())
             .unwrap_or_default(),
-        pick: match pick {
-            Some(p) => p.filter(|p| !p.is_empty()),
-            None => existing.as_ref().and_then(|c| c.pick.clone()),
-        },
+        pick: pick.filter(|p| !p.is_empty()),
         kind,
         convert: convert
             .or(existing.as_ref().map(|c| c.convert))
@@ -384,9 +381,9 @@ impl Wanted {
     fn card_bytes(&self) -> u64 {
         match self.convert {
             Some(Target::Aac) => self.duration_ms * AAC_KBPS / 8 + 64_000,
-            // Stereo 16-bit PCM, which FLAC brings to about 60%.
+            // Stereo 16-bit PCM, which FLAC brings to about 60%; never more than the original.
             Some(Target::Cd16 { rate }) => {
-                self.duration_ms * rate as u64 * 4 / 1000 * 6 / 10 + 64_000
+                (self.duration_ms * rate as u64 * 4 / 1000 * 6 / 10 + 64_000).min(self.size)
             }
             None => self.size,
         }
@@ -681,8 +678,35 @@ fn year_of(t: &Track) -> String {
         .unwrap_or_default()
 }
 
-/// Today, as people write it ("13 October 2026"), in UTC.
+/// Today, as people write it ("13 October 2026"): the computer's own date.
 fn today() -> String {
+    #[cfg(windows)]
+    {
+        const MONTHS: [&str; 12] = [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ];
+        let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+        if (1..=12).contains(&t.wMonth) {
+            return format!(
+                "{} {} {}",
+                t.wDay,
+                MONTHS[usize::from(t.wMonth) - 1],
+                t.wYear
+            );
+        }
+    }
+    // Elsewhere, the date in UTC.
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() / 86_400)
@@ -936,13 +960,23 @@ fn playlist_style(cfg: &CardConfig) -> Option<PlaylistStyle> {
 // --- Everything a card gets ------------------------------------------------------------------
 
 /// The FLAC a card's conversion settings turn this song into, if any.
-fn target_for(cfg: &CardConfig, is_flac: bool, rate: u32, bits: u32) -> Option<Target> {
+///
+/// `real_bits` is what the deep check measured: 16-bit audio stored as 24-bit gains nothing
+/// from converting, so it goes as it is.
+fn target_for(
+    cfg: &CardConfig,
+    is_flac: bool,
+    rate: u32,
+    bits: u32,
+    real_bits: Option<u8>,
+) -> Option<Target> {
     if !is_flac {
         return None;
     }
     if cfg.convert.aac {
         return Some(Target::Aac);
     }
+    let bits = real_bits.map_or(bits, u32::from).min(bits);
     (cfg.convert.hires && (bits > 16 || rate > 48_000)).then_some(Target::Cd16 {
         rate: if rate.is_multiple_of(44_100) {
             44_100
@@ -1029,12 +1063,18 @@ fn wanted_files(
         })
         .collect();
 
+    let real_bits: HashMap<String, u8> = lib
+        .tracks
+        .iter()
+        .filter_map(|t| Some((t.path.to_lowercase(), t.quality.as_ref()?.effective_bits?)))
+        .collect();
     let targets: HashMap<&str, Option<Target>> = songs
         .iter()
         .map(|r| {
+            let real = real_bits.get(&r.rel.to_lowercase()).copied();
             (
                 r.rel.as_str(),
-                target_for(cfg, r.kind == "flac", r.rate, r.bits),
+                target_for(cfg, r.kind == "flac", r.rate, r.bits, real),
             )
         })
         .collect();
@@ -1168,6 +1208,194 @@ fn wanted_files(
         }
     }
     Ok(out)
+}
+
+// --- Choosing what a card carries ---------------------------------------------------------
+
+/// Something a card can carry, with how much of the library it is.
+#[derive(Debug, Clone, Serialize)]
+pub struct Choice {
+    /// What the selection keeps: a playlist's name, an album's folder, an artist's name.
+    pub id: String,
+    pub name: String,
+    /// The album's artist and year; "Smart playlist"; empty for artists.
+    pub detail: String,
+    pub songs: usize,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Choices {
+    pub playlists: Vec<Choice>,
+    pub albums: Vec<Choice>,
+    pub artists: Vec<Choice>,
+}
+
+/// Everything a card's selection can be made of, each with its songs and size.
+pub fn choices(index: &crate::Index, library_root: &Path) -> crate::Result<Choices> {
+    let lib = Library::load(index)?;
+    let size: HashMap<String, u64> = lib
+        .tracks
+        .iter()
+        .map(|t| (t.path.to_lowercase(), t.size))
+        .collect();
+    let mut playlists = Vec::new();
+    for p in crate::playlists::list(library_root, &lib) {
+        let picked = picked_songs(
+            &lib,
+            library_root,
+            &Pick {
+                playlists: vec![p.name.clone()],
+                ..Default::default()
+            },
+        );
+        playlists.push(Choice {
+            id: p.name.clone(),
+            detail: if p.smart {
+                "Smart playlist".into()
+            } else {
+                String::new()
+            },
+            name: p.name,
+            songs: picked.len(),
+            bytes: picked.iter().filter_map(|s| size.get(s)).sum(),
+        });
+    }
+    let mut albums: Vec<Choice> = lib
+        .albums()
+        .into_iter()
+        .map(|(dir, tracks)| {
+            let t = tracks[0];
+            let artist = t.first("ALBUMARTIST").or(t.first("ARTIST")).unwrap_or("");
+            let year = year_of(t);
+            Choice {
+                id: dir.to_owned(),
+                name: t
+                    .first("ALBUM")
+                    .unwrap_or_else(|| dir.rsplit('/').next().unwrap_or(dir))
+                    .to_owned(),
+                detail: match (artist.is_empty(), year.is_empty()) {
+                    (false, false) => format!("{artist}, {year}"),
+                    (false, true) => artist.to_owned(),
+                    (true, _) => year,
+                },
+                songs: tracks.len(),
+                bytes: tracks.iter().map(|t| t.size).sum(),
+            }
+        })
+        .collect();
+    albums.sort_by_key(|a| a.name.to_lowercase());
+    // Everyone with a song: album artists and the singers on each song, as one list.
+    let mut by: HashMap<String, Choice> = HashMap::new();
+    for t in &lib.tracks {
+        let mut names: Vec<String> = t
+            .first("ALBUMARTIST")
+            .or(t.first("ARTIST"))
+            .map(|a| vec![a.to_owned()])
+            .unwrap_or_default();
+        if let Some(v) = t.tags.get("ARTIST") {
+            names.extend(v.iter().flat_map(|a| crate::plan::split_names(a)));
+        }
+        let mut seen = HashSet::new();
+        for n in names {
+            let key = artist_key(&n);
+            if key.is_empty() || !seen.insert(key.clone()) {
+                continue;
+            }
+            let c = by.entry(key).or_insert_with(|| Choice {
+                id: n.trim().to_owned(),
+                name: n.trim().to_owned(),
+                detail: String::new(),
+                songs: 0,
+                bytes: 0,
+            });
+            c.songs += 1;
+            c.bytes += t.size;
+        }
+    }
+    let mut artists: Vec<Choice> = by.into_values().collect();
+    artists.sort_by_key(|a| a.name.to_lowercase());
+    Ok(Choices {
+        playlists,
+        albums,
+        artists,
+    })
+}
+
+/// What a card would carry with these settings, before anything is saved or written.
+#[derive(Debug, Clone, Serialize)]
+pub struct Estimate {
+    pub songs: usize,
+    /// What it all takes on the card (converted songs: estimated).
+    pub bytes: u64,
+    /// Room for it: free space plus what Venuta's own files there take now, less the reserve.
+    pub room: u64,
+    pub reserve: u64,
+    pub fits: bool,
+}
+
+pub fn estimate(
+    index: &crate::Index,
+    library_root: &Path,
+    card_root: &Path,
+    s: &CardSettings,
+) -> Result<Estimate, String> {
+    let mut cfg = read_card(card_root).unwrap_or_else(|| CardConfig {
+        id: String::new(),
+        name: String::new(),
+        folder: default_folder(),
+        include: Vec::new(),
+        auto_sync: false,
+        created_at: 0,
+        player: crate::device::Player::default(),
+        test_results: Default::default(),
+        pick: None,
+        kind: CardKind::default(),
+        convert: Convert::default(),
+        extras: Extras::default(),
+        serial: None,
+    });
+    cfg.include = s.include.clone();
+    cfg.pick = s.pick.clone().filter(|p| !p.is_empty());
+    if let Some(k) = s.kind {
+        cfg.kind = k;
+    }
+    if let Some(c) = s.convert {
+        cfg.convert = c;
+    }
+    if let Some(p) = s.player {
+        cfg.player = p;
+    }
+    let wanted = wanted_files(index, library_root, &cfg).map_err(|e| e.to_string())?;
+    let songs = wanted
+        .iter()
+        .filter(|w| w.text.is_none() && !w.is_image && !w.rel.ends_with(".lrc"))
+        .count();
+    let bytes = wanted.iter().map(Wanted::card_bytes).sum();
+    let (total, free) = crate::volumes::space(card_root).unwrap_or((0, u64::MAX / 4));
+    let ours: u64 = open_manifest(card_root)
+        .ok()
+        .filter(|_| read_card(card_root).is_some())
+        .and_then(|c| {
+            c.query_row("SELECT COALESCE(SUM(source_size), 0) FROM held", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .ok()
+        })
+        .unwrap_or(0) as u64;
+    let reserve = if total == 0 {
+        0
+    } else {
+        (1_000_000_000 + total / 50).min(8_000_000_000)
+    };
+    let room = (free + ours).saturating_sub(reserve);
+    Ok(Estimate {
+        songs,
+        bytes,
+        room,
+        reserve,
+        fits: bytes <= room,
+    })
 }
 
 // --- The manifest on the card -----------------------------------------------------------------
@@ -1520,9 +1748,30 @@ pub fn run(
     let recipe = plan.card.player.recipe();
     let stamp = stamp_for(&plan.card);
     let stamp_of = |w: &Wanted| w.stamp(stamp.as_deref());
-    let total = plan.ops.len();
+    let converting = plan
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Copy(w) if w.convert.is_some()))
+        .count();
+    let total = plan.ops.len() + converting;
     progress.total.store(total, Ordering::Relaxed);
     let mut r = SyncReport::default();
+    let scratch = std::env::temp_dir()
+        .join("venuta-cards")
+        .join(if plan.card.id.is_empty() {
+            "card"
+        } else {
+            &plan.card.id
+        });
+    let _ = std::fs::remove_dir_all(&scratch);
+    let ahead = convert_ahead(
+        library_root,
+        &plan.ops,
+        &recipe,
+        &scratch,
+        progress,
+        &|| on_progress(progress.done.load(Ordering::Relaxed), total, 0),
+    );
 
     for (i, op) in plan.ops.iter().enumerate() {
         if progress.cancel.load(Ordering::Relaxed) {
@@ -1568,12 +1817,17 @@ pub fn run(
                 }
                 Ok(())
             })(),
-            Op::Copy(w) => copy_for(&library_root.join(&w.src), &music.join(&w.rel), w, &recipe)
-                .and_then(|n| {
-                    r.bytes_written += n;
-                    r.copied += 1;
-                    record(&conn, w, stamp_of(w).as_deref())
-                }),
+            Op::Copy(w) => match ahead.get(&w.rel) {
+                // Converted already: onto the card as it is.
+                Some(Ok(made)) => copy_file(made, &music.join(&w.rel)),
+                Some(Err(e)) => Err(e.clone()),
+                None => copy_for(&library_root.join(&w.src), &music.join(&w.rel), w, &recipe),
+            }
+            .and_then(|n| {
+                r.bytes_written += n;
+                r.copied += 1;
+                record(&conn, w, stamp_of(w).as_deref())
+            }),
             Op::Patch(w) => patch_for(&library_root.join(&w.src), &music.join(&w.rel), &recipe)
                 .and_then(|n| {
                     r.bytes_written += n;
@@ -1589,10 +1843,11 @@ pub fn run(
             };
             r.errors.push((what, e));
         }
-        progress.done.store(i + 1, Ordering::Relaxed);
+        progress.done.store(converting + i + 1, Ordering::Relaxed);
         progress.bytes.store(r.bytes_written, Ordering::Relaxed);
-        on_progress(i + 1, total, r.bytes_written);
+        on_progress(converting + i + 1, total, r.bytes_written);
     }
+    let _ = std::fs::remove_dir_all(&scratch);
     if plan.card.kind == CardKind::Gift {
         hide(&card_root.join(CARD_DIR));
     }
@@ -1833,7 +2088,26 @@ fn write_converted(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let part = part_path(dst);
-    let result = (|| -> Result<u64, String> {
+    let result = convert_file(src, &part, t, r).and_then(|()| {
+        let n = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        std::fs::rename(&part, dst).map_err(|e| format!("rename: {e}"))?;
+        Ok(n)
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
+}
+
+/// A library song converted for a card, complete (tags, cover) and checked, at `part`.
+fn convert_file(
+    src: &Path,
+    part: &Path,
+    t: Target,
+    r: &crate::device::Recipe,
+) -> Result<(), String> {
+    let part = part.to_path_buf();
+    let result = (|| -> Result<(), String> {
         match t {
             Target::Cd16 { rate } => {
                 let encoded = crate::convert::flac16(src, rate)?;
@@ -1884,14 +2158,50 @@ fn write_converted(
                 }
             }
         }
-        let n = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-        std::fs::rename(&part, dst).map_err(|e| format!("rename: {e}"))?;
-        Ok(n)
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&part);
     }
     result
+}
+
+/// Songs a sync converts, made first on this computer, several at once (one per processor
+/// core), in a temporary folder: converting is the slow part, and the card is then written in
+/// one sequential stream, which is what cards are fastest at. By card path.
+fn convert_ahead(
+    library_root: &Path,
+    ops: &[Op],
+    r: &crate::device::Recipe,
+    dir: &Path,
+    progress: &SyncProgress,
+    tick: &(dyn Fn() + Sync),
+) -> HashMap<String, Result<PathBuf, String>> {
+    use rayon::prelude::*;
+    let jobs: Vec<(usize, &Wanted, Target)> = ops
+        .iter()
+        .enumerate()
+        .filter_map(|(i, op)| match op {
+            Op::Copy(w) => w.convert.map(|t| (i, w, t)),
+            _ => None,
+        })
+        .collect();
+    if jobs.is_empty() {
+        return HashMap::new();
+    }
+    let _ = std::fs::create_dir_all(dir);
+    jobs.par_iter()
+        .map(|(i, w, t)| {
+            if progress.cancel.load(Ordering::Relaxed) {
+                return (w.rel.clone(), Err("stopped".to_owned()));
+            }
+            let out = dir.join(format!("{i}.{}", t.ext()));
+            let done = convert_file(&library_root.join(&w.src), &out, *t, r).map(|()| out);
+            progress.done.fetch_add(1, Ordering::Relaxed);
+            tick();
+            (w.rel.clone(), done)
+        })
+        .collect()
 }
 
 /// Write bytes to `path`, flushed, and check what landed is what was sent.
@@ -2316,10 +2626,10 @@ mod tests {
             card.path(),
             CardSettings {
                 name: "Music for Riya".into(),
-                pick: Some(Some(Pick {
+                pick: Some(Pick {
                     playlists: vec!["Road".into()],
                     ..Default::default()
-                })),
+                }),
                 kind: Some(CardKind::Gift),
                 ..Default::default()
             },
@@ -2369,10 +2679,10 @@ mod tests {
             card.path(),
             CardSettings {
                 name: "Music for Riya".into(),
-                pick: Some(Some(Pick {
+                pick: Some(Pick {
                     albums: vec!["Pop/Other (2010)".into()],
                     ..Default::default()
-                })),
+                }),
                 ..Default::default()
             },
         )
@@ -2400,10 +2710,10 @@ mod tests {
             card.path(),
             CardSettings {
                 name: "Small".into(),
-                pick: Some(Some(Pick {
+                pick: Some(Pick {
                     albums: vec!["Pop/Other (2010)".into()],
                     ..Default::default()
-                })),
+                }),
                 convert: Some(Convert {
                     hires: true,
                     aac: false,
@@ -2443,10 +2753,10 @@ mod tests {
             card.path(),
             CardSettings {
                 name: "Car".into(),
-                pick: Some(Some(Pick {
+                pick: Some(Pick {
                     albums: vec!["Film/Aladin (2009)".into()],
                     ..Default::default()
-                })),
+                }),
                 kind: Some(CardKind::Car),
                 convert: Some(Convert {
                     hires: false,

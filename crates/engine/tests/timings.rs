@@ -75,3 +75,34 @@ fn apple_library() {
         eprintln!("  {} playlists, {} songs", lists.len(), apple.tracks.len());
     }
 }
+
+/// Converting one hi-res song for a card: VENUTA_SONG=path to a 24/96 FLAC. Only reads it.
+#[test]
+#[ignore]
+fn card_conversion() {
+    let Some(song) = std::env::var_os("VENUTA_SONG") else {
+        eprintln!("set VENUTA_SONG");
+        return;
+    };
+    let song = PathBuf::from(song);
+    let size = std::fs::metadata(&song).unwrap().len();
+    let flac = step("16-bit FLAC at 48 kHz", || {
+        engine::convert::flac16(&song, 48_000).unwrap()
+    });
+    eprintln!(
+        "  {:.1} MB -> {:.1} MB",
+        size as f64 / 1e6,
+        flac.len() as f64 / 1e6
+    );
+    let dir = std::env::temp_dir().join("venuta-timing");
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("song.m4a");
+    step("AAC 192k", || {
+        engine::convert::aac(&song, &out, 192).unwrap()
+    });
+    eprintln!(
+        "  {:.1} MB",
+        std::fs::metadata(&out).unwrap().len() as f64 / 1e6
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
