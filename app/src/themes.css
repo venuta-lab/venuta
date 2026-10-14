@@ -632,6 +632,7 @@
 :root {
   --accent-fill: var(--accent);
   --accent-sheen: none;
+  --accent-blur: none;
 }
 /* Glass: a little lighter at the top as light comes through, a bright rim where it catches,
    a fine edge, and a soft glow of its own colour on what is behind. */
@@ -668,6 +669,48 @@
 /* Solid and AMOLED are flat, so the accent is too. */
 :root[data-style="venuta"]:is([data-surface="solid"], [data-surface="amoled"]) {
   --accent-fill: var(--accent);
+  --accent-sheen: none;
+}
+
+/* Neutral: no colour. On glass that is clear glass, not white paint: a brighter, blurred
+   tint than the panels around it, with the same rim, and type in the page's ink. Thin lines
+   (progress, seek) stay plain ink. */
+:root[data-style="venuta"][data-accent="neutral"] {
+  --accent-fill: linear-gradient(180deg, rgb(255 255 255 / 0.3) 0%, rgb(255 255 255 / 0.16) 100%);
+  --accent-blur: blur(14px) saturate(1.8);
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.45),
+    inset 0 0 0 1px rgb(255 255 255 / 0.16),
+    inset 0 -1px 0 rgb(0 0 0 / 0.12),
+    0 8px 22px -10px rgb(0 0 0 / 0.5);
+}
+:root[data-style="venuta"][data-theme="light"][data-accent="neutral"] {
+  --accent-fill: linear-gradient(180deg, rgb(255 255 255 / 0.92) 0%, rgb(255 255 255 / 0.7) 100%);
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    inset 0 0 0 1px rgb(0 0 0 / 0.08),
+    0 6px 18px -8px rgb(0 0 0 / 0.25);
+}
+/* Frosted: Windows 11's neutral button, a light tint and its raised edge. */
+:root[data-style="venuta"][data-surface="frosted"][data-accent="neutral"] {
+  --accent-fill: rgb(255 255 255 / 0.17);
+  --accent-blur: none;
+  --accent-sheen:
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    inset 0 -1px 0 rgb(0 0 0 / 0.24),
+    0 1px 2px rgb(0 0 0 / 0.28);
+}
+:root[data-style="venuta"][data-theme="light"][data-surface="frosted"][data-accent="neutral"] {
+  --accent-fill: #ffffff;
+  --accent-sheen:
+    inset 0 0 0 1px rgb(0 0 0 / 0.08),
+    inset 0 -1px 0 rgb(0 0 0 / 0.14),
+    0 1px 2px rgb(0 0 0 / 0.1);
+}
+/* Solid and AMOLED: a flat tint, nothing to see through. */
+:root[data-style="venuta"]:is([data-surface="solid"], [data-surface="amoled"])[data-accent="neutral"] {
+  --accent-fill: color-mix(in oklab, var(--ink) 16%, var(--solid));
+  --accent-blur: none;
   --accent-sheen: none;
 }
 

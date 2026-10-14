@@ -149,6 +149,7 @@ body {
 .btn-primary {
   background: var(--accent-fill);
   box-shadow: var(--accent-sheen);
+  backdrop-filter: var(--accent-blur);
   color: var(--on-accent);
 }
 .btn-primary:hover {
@@ -158,6 +159,11 @@ body {
 .accent-fill {
   background: var(--accent-fill);
   box-shadow: var(--accent-sheen);
+  backdrop-filter: var(--accent-blur);
+}
+/* Neutral in Lumen is glass, so what is on it is in the page's ink, not dark-on-white. */
+:root[data-style="venuta"][data-accent="neutral"] :is(.btn-primary, .accent-fill) {
+  color: var(--ink);
 }
 /* Elsewhere the player's Play keeps the lift it always had. */
 :root:not([data-style="venuta"]) .np-play.accent-fill {
@@ -166,7 +172,8 @@ body {
     0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 /* On Glass and Frosted the material stays on hover; it only brightens a little. */
-:root[data-style="venuta"]:is([data-surface="glass"], [data-surface="frosted"]) :is(.btn-primary, .accent-fill):hover {
+:root[data-style="venuta"]:is([data-surface="glass"], [data-surface="frosted"]) :is(.btn-primary, .accent-fill):hover,
+:root[data-style="venuta"][data-accent="neutral"] :is(.btn-primary, .accent-fill):hover {
   background: var(--accent-fill);
   filter: brightness(1.07);
 }

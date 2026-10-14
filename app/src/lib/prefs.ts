@@ -106,6 +106,8 @@ export function applyPrefs() {
   el.dataset.style = p.style
   el.dataset.theme = theme
   el.dataset.surface = surfaceShown(p)
+  // Neutral is a material in Lumen (clear glass), not a white colour: CSS asks this.
+  el.dataset.accent = p.accentMode
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
   // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
   el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
