@@ -26,6 +26,9 @@ No AI at runtime, no account, no paid service.
 - **Writes SD cards**: the whole library or a selection, in your library's layout, converted
   for the player when it needs it, changing only what changed.
 - **Searches across scripts**: "kesariya" finds केसरिया, in names and in lyrics.
+- **Looks how you like**: eleven built-in themes, seven more as theme files, and a Theme Studio
+  to make your own from a few colours or the album playing, then share it as one file. Making
+  themes by hand or with an AI assistant: [docs/THEMES.md](docs/THEMES.md).
 
 | | |
 |---|---|

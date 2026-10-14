@@ -58,6 +58,7 @@ jobs:
       - run: pnpm --dir app lint
       - run: pnpm --dir app typecheck
       - run: pnpm --dir app test
+      - run: node scripts/theme-docs.mjs --check
       - run: pnpm --dir app build
       # The player plays to memory in its tests, so no sound device is needed.
       - run: cargo clippy -p player -p app --all-targets -- -D warnings

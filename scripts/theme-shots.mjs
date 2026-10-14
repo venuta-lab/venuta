@@ -3,6 +3,7 @@
 //
 //   node scripts/theme-shots.mjs take <folder>          capture every theme and screen
 //   node scripts/theme-shots.mjs compare <before> <after>  count differing pixels per shot
+//   node scripts/theme-shots.mjs take <folder> --packs  your themes instead (the library's .venuta/themes)
 //
 // Needs a debug test copy running with its inspector on port 9333 (or VENUTA_CDP_PORT) and a
 // song in its queue (the screens show it). Run it as CONTRIBUTING.md says, adding
@@ -47,7 +48,7 @@ const SCREENS = {
 // Helpers the screen scripts use, defined in the page once. Each waits for what it clicks to be
 // there (a screen mounts after the click that opens it), and a tab until it is the chosen one:
 // a click that lands too early would leave the screen on whatever tab it remembered.
-const HELPERS = `
+const HELPERS = `{
   window.__shots = {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     closeAll() { for (let i = 0; i < 4; i++) document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) },
@@ -73,7 +74,7 @@ const HELPERS = `
     throw new Error('Tab never chosen: ' + name)
   }
   window.openNowPlaying = async (panel) => { __shots.closeAll(); document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true })); await __shots.sleep(300); await tab(panel) }
-`
+}`
 
 async function connect() {
   const list = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()
@@ -112,12 +113,16 @@ async function take(dir) {
     await I('player_volume', { volume: 0 })
     if (document.querySelector('button[aria-label^="Pause ("]')) await I('player_toggle')
     const p = window.__venutaPrefs.get()
-    return { style: p.style, theme: p.theme, motion: p.motion }
+    return { style: p.style, theme: p.theme, pack: p.pack ?? '', motion: p.motion }
   })()`)
   let n = 0
   const unstable = []
-  for (const [style, theme] of THEMES) {
-    await run(`(async () => { window.__venutaPrefs.try({ style: '${style}', theme: '${theme}', motion: 'reduced' }); await __shots.sleep(700) })()`)
+  // Your themes: each on the theme it extends, in the first mode it has.
+  const packs = process.argv.includes('--packs')
+    ? await run(`(async () => (await window.__TAURI_INTERNALS__.invoke('themes_list')).flatMap((p) => { try { const j = JSON.parse(p.json); return [[j.extends ?? 'venuta', (j.modes ?? ['dark'])[0], p.id]] } catch { return [] } }))()`)
+    : null
+  for (const [style, theme, pack = ''] of packs ?? THEMES) {
+    await run(`(async () => { window.__venutaPrefs.try({ style: '${style}', theme: '${theme}', pack: '${pack}', motion: 'reduced' }); await __shots.sleep(${pack ? 1500 : 700}) })()`)
     for (const [name, go] of Object.entries(SCREENS)) {
       await run(`(async () => { ${go}; await __shots.sleep(1300);
         const b = [...document.querySelectorAll('span,div')].find((e) => e.textContent === 'Test copy' && e.children.length === 0); if (b) b.style.visibility = 'hidden' })()`)
@@ -130,8 +135,9 @@ async function take(dir) {
         last = shot
         if (!settled) await new Promise((r) => setTimeout(r, 500))
       }
-      writeFileSync(join(dir, `${style}-${theme}-${name}.png`), Buffer.from(last, 'base64'))
-      if (!settled) unstable.push(`${style}-${theme}-${name}`)
+      const file = pack ? `${pack}-${name}` : `${style}-${theme}-${name}`
+      writeFileSync(join(dir, `${file}.png`), Buffer.from(last, 'base64'))
+      if (!settled) unstable.push(file)
       n++
       process.stdout.write(`\r${n} shots`)
     }
