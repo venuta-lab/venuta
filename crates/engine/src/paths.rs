@@ -345,9 +345,12 @@ pub fn index_path_for(root: &Path) -> PathBuf {
 /// no `..`, no `.`, no `:` (a drive or a Windows alternate stream). For paths that come from
 /// outside the app's own hands: a card's files, a journal's entries, the window's arguments.
 pub fn is_inside_rel(rel: &str) -> bool {
+    // Either slash separates, on every system: these paths often come from Windows (a card,
+    // a journal), where "\\server\share" and "..\x" mean what they mean anywhere else.
+    let rel = rel.replace('\\', "/");
     !rel.is_empty()
         && !rel.contains(':')
-        && Path::new(rel)
+        && Path::new(&rel)
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
@@ -505,6 +508,8 @@ mod inside_tests {
             "..",
             "../x",
             "a/../../x",
+            r"..\x",
+            r"a\..\..\x",
             "/abs",
             r"\\server\share",
             r"C:\Users",
