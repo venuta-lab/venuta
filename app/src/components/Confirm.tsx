@@ -55,8 +55,9 @@ export function ConfirmHost() {
   )
   useEscape(!!p, () => answer('no'))
   const yes = useRef<HTMLButtonElement>(null)
+  const no = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    if (p) window.setTimeout(() => yes.current?.focus(), 30)
+    if (p) window.setTimeout(() => (p.danger ? no : yes).current?.focus(), 30)
   }, [p])
   return (
     <AnimatePresence>
@@ -82,7 +83,7 @@ export function ConfirmHost() {
             <h2 className="text-[17px] font-semibold leading-snug">{p.title}</h2>
             {p.text && <p className="mt-2 text-[13.5px] leading-relaxed text-ink/65">{p.text}</p>}
             <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => answer('no')} className="btn-ghost">
+              <button ref={no} onClick={() => answer('no')} className="btn-ghost">
                 Cancel
               </button>
               {p.other && (

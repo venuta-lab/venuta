@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { editTags, inApp, type CatalogTrack, type Gain } from './engine'
+import { notify } from './notify'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -270,7 +271,6 @@ export const removeAt = (i: number) => call('player_remove', { index: i })
 export const move = (from: number, to: number) => call('player_move', { from, to })
 export const jumpTo = (i: number) => call('player_jump', { index: i })
 
-export const getPlayer = () => state
 // For checking playback from the inspector (development only).
 if (import.meta.env.DEV) (window as unknown as { __venutaPlayer: () => PlayerState }).__venutaPlayer = () => state
 
@@ -409,6 +409,14 @@ export const setSleep = (minutes: number | null) => call('player_sleep', { minut
 /** Your rating for a song (0–5), written into the file as RATING (journalled, undoable). */
 export async function rate(path: string, stars: number) {
   const value = stars > 0 ? [String(Math.min(5, stars) * 20)] : []
-  set({ ...state, queue: state.queue.map((q) => (q.path === path ? { ...q, stars } : q)) })
-  await editTags(queueRoot, [{ file: path, set: [['RATING', value]] }])
+  const was = state.queue.find((q) => q.path === path)?.stars ?? 0
+  const show = (n: number) => set({ ...state, queue: state.queue.map((q) => (q.path === path ? { ...q, stars: n } : q)) })
+  show(stars)
+  try {
+    const r = await editTags(state.root || queueRoot, [{ file: path, set: [['RATING', value]] }])
+    if (r.errors.length) throw new Error(r.errors[0][1])
+  } catch (e) {
+    show(was)
+    notify(`Couldn't save the rating: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }

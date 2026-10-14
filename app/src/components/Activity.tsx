@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { counted, fraction, timeLeft, useJobs, useNow, type Job } from '../lib/jobs'
+import { useEscape } from '../lib/layers'
 
 /** A small ring: filled by progress, or a turning arc while the amount of work is unknown. */
 export function Ring({ value, size = 14 }: { value: number | null; size?: number }) {
@@ -79,14 +80,10 @@ export function ActivityIndicator() {
   useEffect(() => {
     if (!open) return
     const close = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
     window.addEventListener('pointerdown', close)
-    window.addEventListener('keydown', esc)
-    return () => {
-      window.removeEventListener('pointerdown', close)
-      window.removeEventListener('keydown', esc)
-    }
+    return () => window.removeEventListener('pointerdown', close)
   }, [open])
+  useEscape(open, () => setOpen(false))
 
   return (
     <div ref={box} className="relative mr-2 flex items-center">

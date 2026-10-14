@@ -73,8 +73,6 @@ export async function track<T>(
   }
 }
 
-export const isRunning = (id: string) => jobs.some((j) => j.id === id)
-
 function subscribe(l: () => void) {
   listeners.add(l)
   return () => {

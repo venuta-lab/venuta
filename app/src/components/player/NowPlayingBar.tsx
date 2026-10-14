@@ -47,8 +47,6 @@ const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 const typing = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
 
-/** Drag or click to move through the song; hover shows where you'd land. */
-/** The song's shape: bars, dim ahead and accent-coloured behind where you are. */
 /**
  * The song's loudness as one smooth shape, mirrored about the middle (Poweramp's waveform
  * seek bar): what has played in the accent, what's to come dimmed, and a glowing playhead.
@@ -533,7 +531,8 @@ function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => v
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (typing(e.target) || e.altKey || e.metaKey) return
+      // A key something else already took (Organize's Space plays its clips).
+      if (e.defaultPrevented || typing(e.target) || e.altKey || e.metaKey) return
       const { s, open } = ref.current
       if (s.index < 0) return
       if (e.key === ' ' && !e.ctrlKey) {

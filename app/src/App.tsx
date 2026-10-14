@@ -108,12 +108,12 @@ export default function App() {
   const prefs = usePrefs()
   // The folder showing: your library, or music being brought in. `home` is your library,
   // where everything Venuta builds and knows is kept.
-  const [root, setRoot] = useState(inApp() ? '' : 'D:/Collection')
-  const [home, setHome] = useState<string | null>(inApp() ? null : 'D:/Music Library')
+  const [root, setRoot] = useState(inApp() ? '' : 'C:/Music Library/Music')
+  const [home, setHome] = useState<string | null>(inApp() ? null : 'C:/Music Library')
   // Your albums live in the library's Music folder; playlists, new music and set-aside copies
   // sit beside it.
   const libMusic = home ? `${home.replace(/[\\/]+$/, '')}/Music` : null
-  const [suggestion, setSuggestion] = useState('D:/Music Library')
+  const [suggestion, setSuggestion] = useState('C:/Music Library')
   const [ready, setReady] = useState(!inApp())
   const [missing, setMissing] = useState('')
   const [report, setReport] = useState<HealthReport | null>(null)
@@ -250,7 +250,8 @@ export default function App() {
   useEffect(() => {
     if (!inApp() || !root) return
     const t = window.setInterval(async () => {
-      const cards = await listCards().catch(() => [])
+      const cards = await listCards().catch(() => null)
+      if (!cards) return
       const now = new Set(cards.filter((c) => c.card).map((c) => c.volume.root))
       const before = present.current
       present.current = now
@@ -554,7 +555,7 @@ export default function App() {
         group: 'Player',
         label: 'Shuffle on or off',
         keywords: 'random order',
-        run: () => void player.setShuffle(!player.getPlayer().shuffle),
+        run: () => void player.setShuffle(!player.getPlayerState().shuffle),
       },
       { id: 'play-now', group: 'Player', label: 'Open Now Playing', keywords: 'big cover full', run: () => setNowOpen(true) },
       {

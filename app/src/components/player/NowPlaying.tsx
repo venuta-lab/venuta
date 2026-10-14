@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { lineAt, useLyrics, type Lyrics } from '../../lib/lyrics'
 import { SyncMaker } from '../lyrics/SyncMaker'
+import { confirmAsk } from '../Confirm'
+import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
-import { clock, current, jumpTo, seek, usePlayer } from '../../lib/player'
+import { clock, current, jumpTo, play, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
 import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
@@ -122,25 +124,51 @@ export function NowPlaying(props: {
   const cover = useCovers(320)
   const art = song ? cover(song.dir) : undefined
   const lyrics = useLyrics(props.root, props.open ? song?.path : undefined)
-  // Timing the lyrics of this song (closed when the song changes).
+  // The song whose lyrics are being timed. It stays its song if another one starts: the
+  // maker keeps its taps and offers the way back.
   const [timing, setTiming] = useState<string | null>(null)
-  const timingNow = !!song && timing === song.path && props.panel === 'lyrics'
+  const timingNow = !!timing && props.panel === 'lyrics'
+  const makerLyrics = useLyrics(props.root, timing ?? undefined)
+  const unsaved = useRef(false)
   useEffect(() => {
     const on = (e: Event) => setTiming((e as CustomEvent<{ path: string }>).detail.path)
     window.addEventListener('venuta:time-lyrics', on)
     return () => window.removeEventListener('venuta:time-lyrics', on)
   }, [])
+  const stopTiming = () => {
+    unsaved.current = false
+    setTiming(null)
+  }
+  /** Leaving the maker with taps not saved asks first; then `go`. */
+  const leaving = async (go: () => void) => {
+    if (timing && unsaved.current) {
+      const ok = await confirmAsk({
+        title: 'Leave without saving the timing?',
+        text: 'The lines you tapped will be lost.',
+        confirm: 'Leave',
+        danger: true,
+      })
+      if (!ok) return
+      stopTiming()
+    }
+    go()
+  }
   const { open, onClose } = props
-  useEscape(open, onClose)
+  useEscape(open, () => void leaving(onClose))
   // The timing button: the maker on the lyrics, or back to them.
   const onTiming = () => {
     if (!song) return
-    if (timingNow) setTiming(null)
+    if (timingNow) void leaving(stopTiming)
     else {
       setTiming(song.path)
       props.onPanel('lyrics')
     }
   }
+  const backTo = (path: string) =>
+    void ensureCatalog(props.root).then(() => {
+      const t = trackAt(path)
+      if (t) play(props.root, [t], 0)
+    })
   return (
     <AnimatePresence>
       {open && song && (
@@ -157,7 +185,7 @@ export function NowPlaying(props: {
 
           <button
             aria-label="Close Now Playing (Esc)"
-            onClick={onClose}
+            onClick={() => void leaving(onClose)}
             className="absolute right-6 top-5 z-10 grid h-9 w-9 place-items-center rounded-full bg-ink/[0.08] text-ink/70 hover:bg-ink/[0.15] hover:text-ink"
           >
             <IconClose />
@@ -178,8 +206,8 @@ export function NowPlaying(props: {
                   root={props.root}
                   song={song}
                   lyrics={lyrics}
-                  onAlbum={props.onAlbum}
-                  onArtist={props.onArtist}
+                  onAlbum={(dir) => void leaving(() => props.onAlbum(dir))}
+                  onArtist={(name) => void leaving(() => props.onArtist(name))}
                   onTiming={onTiming}
                   stars={<Stars path={song.path} stars={song.stars} size={18} />}
                   from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} />}
@@ -193,7 +221,7 @@ export function NowPlaying(props: {
                   tabs
                   label="Now Playing"
                   value={props.panel}
-                  onChange={props.onPanel}
+                  onChange={(p) => (p === 'lyrics' ? props.onPanel(p) : void leaving(() => props.onPanel(p)))}
                   options={[
                     { value: 'lyrics', label: 'Lyrics' },
                     { value: 'next', label: 'Up next' },
@@ -210,8 +238,18 @@ export function NowPlaying(props: {
               {/* Under the bar above, so its popovers and names open over the words. */}
               <div className={`${timingNow ? '' : 'fade-y '}relative z-0 mt-3 min-h-0 flex-1 overflow-hidden`}>
                 {props.panel === 'lyrics' &&
-                  (timingNow && lyrics ? (
-                    <SyncMaker key={song.path} root={props.root} path={song.path} lyrics={lyrics} onClose={() => setTiming(null)} />
+                  (timingNow && timing && makerLyrics ? (
+                    <SyncMaker
+                      key={timing}
+                      root={props.root}
+                      path={timing}
+                      lyrics={makerLyrics}
+                      current={song.path === timing}
+                      title={trackAt(timing)?.title ?? timing.split('/').pop() ?? ''}
+                      onBack={() => backTo(timing)}
+                      onDirty={(d) => (unsaved.current = d)}
+                      onClose={stopTiming}
+                    />
                   ) : (
                     <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} />
                   ))}

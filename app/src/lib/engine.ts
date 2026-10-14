@@ -58,8 +58,8 @@ export interface CoverThumb {
 export const inApp = () => '__TAURI_INTERNALS__' in window
 
 // Outside the app (plain browser during UI development) the engine isn't reachable; read a
-// local snapshot from app/public/_dev instead. That folder is git-ignored: it holds the
-// developer's own library data and cover art.
+// local snapshot from app/dev-data (served at /_dev by vite.config.ts) instead. That folder is
+// git-ignored: it holds the developer's own library data and cover art.
 const dev = <T,>(file: string) => fetch(`/_dev/${file}`).then((r) => r.json() as Promise<T>)
 
 export const engineVersion = () =>
@@ -215,7 +215,7 @@ export type HomeKind = 'new' | 'existing'
 export const libraryHome = () =>
   inApp()
     ? invoke<HomeInfo>('library_home')
-    : Promise.resolve<HomeInfo>({ library: 'D:/Music Library', data_dir: 'D:/Music Library/.venuta', suggestion: 'D:/Music Library' })
+    : Promise.resolve<HomeInfo>({ library: 'C:/Music Library', data_dir: 'C:/Music Library/.venuta', suggestion: 'C:/Music Library' })
 export const checkHome = (path: string) => invoke<HomeKind>('check_home', { path })
 export const chooseHome = (path: string) => invoke<HomeKind>('choose_home', { path })
 /** Refuses a music folder inside your library, or around it (`library`: the one about to be chosen). */
@@ -253,7 +253,7 @@ export const saveAliases = (view: Aliases) => (inApp() ? invoke<void>('save_alia
 export const getSettings = () =>
   inApp()
     ? invoke<Settings>('get_settings')
-    : Promise.resolve<Settings>({ rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music Library' })
+    : Promise.resolve<Settings>({ rules_dir: 'C:/Music Library/.venuta/rules', new_library: 'C:/Music Library' })
 
 export interface Review {
   plan: { albums: AlbumView[]; decisions: PlanDecision[] }
@@ -297,7 +297,7 @@ export const review = (root: string): Promise<Review> =>
         plan,
         decisions: { ...devDecisions },
         answers: { ...devAnswers },
-        settings: { rules_dir: 'D:/Music-meta/rules', new_library: 'D:/Music Library' },
+        settings: { rules_dir: 'C:/Music Library/.venuta/rules', new_library: 'C:/Music Library' },
       }))
 
 const devAnswers: Record<string, string> = {}
@@ -306,12 +306,6 @@ const devAnswers: Record<string, string> = {}
 export const answerDecisions = (root: string, items: AnswerItem[]): Promise<Review> => {
   if (inApp()) return invoke<Review>('answer_decisions', { root, items })
   for (const i of items) devAnswers[i.id] = i.choice
-  return review(root)
-}
-
-export const clearAnswer = (root: string, id: string): Promise<Review> => {
-  if (inApp()) return invoke<Review>('clear_answer', { root, id })
-  delete devAnswers[id]
   return review(root)
 }
 
@@ -699,8 +693,6 @@ export const ejectCard = (card: string) => invoke<void>('eject_card', { card })
 export const gb = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
 
-export const checkNewLibrary = (root: string, target: string) => invoke<void>('check_new_library', { root, target })
-
 // --- Playlists, Apple import, want-list -------------------------------------------------
 
 export interface PlaylistSummary {
@@ -890,8 +882,6 @@ export const playlists = (root: string) =>
     ? invoke<PlaylistsView>('playlists', { root })
     : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], smart_counts: {}, smart_dirs: {}, folder: '', wanted: [], apple_ready: false })
 export const playlistTracks = (root: string, name: string) => invoke<PlaylistEntry[]>('playlist_tracks', { root, name })
-export const playlistSave = (root: string, name: string, paths: string[]) =>
-  invoke<void>('playlist_save', { root, name, paths })
 export const playlistDelete = (root: string, name: string) => invoke<void>('playlist_delete', { root, name })
 export const playlistRename = (root: string, from: string, to: string) =>
   invoke<void>('playlist_rename', { root, from, to })
@@ -917,7 +907,6 @@ export const playlistShelf = (root: string) =>
   inApp() ? invoke<PlaylistSummary[]>('playlist_shelf', { root }) : Promise.resolve<PlaylistSummary[]>([])
 export const wantRemove = (album: string, artist: string) => invoke<void>('want_remove', { album, artist })
 export const wantedExport = (root: string, to: string) => invoke<number>('wanted_export', { root, to })
-export const setApple = (library: string | null, key: string | null) => invoke<void>('set_apple', { library, key })
 export const ratePlaylist = (root: string, name: string, stars: number) =>
   invoke<EditReport>('rate_playlist', { root, name, stars })
 

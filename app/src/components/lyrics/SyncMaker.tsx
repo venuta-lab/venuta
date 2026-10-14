@@ -5,7 +5,7 @@ import { undoEdit } from '../../lib/engine'
 import { useEscape } from '../../lib/layers'
 import { lyricsChanged, type Lyrics } from '../../lib/lyrics'
 import { notify } from '../../lib/notify'
-import { getPlayerState, positionNow, seek, toggle, usePlayerValue } from '../../lib/player'
+import { getPlayerState, positionNow, seek, setStopAfter, toggle, usePlayerValue } from '../../lib/player'
 
 /** A line and when it begins (null: not tapped yet). A break is a line with no words. */
 interface Row {
@@ -41,7 +41,20 @@ const rowsFrom = (lyrics: Lyrics | null): Row[] =>
  * Timing lyrics by tapping along: play the song, press Space as each line begins. Saved as a
  * .lrc beside the song (the song's own file is never touched), undoable in Activity.
  */
-export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | null; onClose: () => void }) {
+export function SyncMaker(props: {
+  root: string
+  path: string
+  lyrics: Lyrics | null
+  /** Its song is the one playing (another may have been started meanwhile). */
+  current: boolean
+  /** The song's title, for "Back to …". */
+  title: string
+  /** Play its song again. */
+  onBack: () => void
+  /** Whether there are taps not saved yet (so leaving can ask first). */
+  onDirty?: (dirty: boolean) => void
+  onClose: () => void
+}) {
   const fixing = !!props.lyrics?.lines.length
   const [rows, setRows] = useState<Row[]>(() => rowsFrom(props.lyrics))
   const [pasted, setPasted] = useState('')
@@ -69,19 +82,30 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
     return found
   }, [rows, position])
 
-  const latest = useRef({ rows, cursor, sel, singing })
+  const latest = useRef({ rows, cursor, sel, singing, current: props.current })
   useEffect(() => {
-    latest.current = { rows, cursor, sel, singing }
+    latest.current = { rows, cursor, sel, singing, current: props.current }
   })
 
+  // While timing, the song stops at its end instead of going on to the next one (which would
+  // take the taps somewhere else); as it was, afterwards.
+  useEffect(() => {
+    const before = getPlayerState().stop_after_current
+    void setStopAfter(true)
+    return () => void setStopAfter(before)
+  }, [])
+
+  const { onDirty } = props
   function edit(next: Row[]) {
     changed.current = true
+    onDirty?.(true)
     setLeaving(false)
     setRows(next)
   }
 
   function tap() {
-    const { rows, cursor } = latest.current
+    const { rows, cursor, current } = latest.current
+    if (!current) return
     if (!getPlayerState().playing) {
       void toggle()
       return
@@ -98,7 +122,8 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
 
   /** A break: the words leave the screen here (a long instrumental), until the next line. */
   function addBreak() {
-    const { rows, cursor } = latest.current
+    const { rows, cursor, current } = latest.current
+    if (!current) return
     if (!getPlayerState().playing || cursor === 0) return
     const floor = rows[cursor - 1]?.ms ?? 0
     const next = rows.slice()
@@ -109,7 +134,8 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
   }
 
   function stepBack() {
-    const { rows, cursor } = latest.current
+    const { rows, cursor, current } = latest.current
+    if (!current) return
     if (cursor === 0) return
     const back = cursor - 1
     const was = rows[back].ms ?? 0
@@ -139,7 +165,7 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
   function playFrom(i: number) {
     const ms = latest.current.rows[i]?.ms
     setSel(i)
-    if (ms != null) void seek(Math.max(0, ms - LEAD_IN_MS))
+    if (ms != null && latest.current.current) void seek(Math.max(0, ms - LEAD_IN_MS))
   }
 
   // The keys, ahead of the player's own (Space would otherwise pause).
@@ -147,12 +173,21 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
     const onKey = (e: KeyboardEvent) => {
       const t = e.target
       if (t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
-      if (e.ctrlKey || e.altKey || e.metaKey || !latest.current.rows.length) return
-      const { rows, sel } = latest.current
+      if (!latest.current.rows.length) return
+      const { rows, sel, current } = latest.current
       const take = () => {
         e.preventDefault()
         e.stopImmediatePropagation()
       }
+      // Keys that would close Now Playing or change the song (and lose the taps) do nothing.
+      if ((!e.ctrlKey && (e.key === 'l' || e.key === 'L')) || (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) {
+        take()
+        return
+      }
+      // Another song playing: the keys are the player's again until this one is back.
+      if (!current || e.ctrlKey || e.altKey || e.metaKey) return
+      // Enter on a focused button presses it (Save timing, Leave without saving).
+      if (e.key === 'Enter' && t instanceof HTMLButtonElement) return
       if (e.key === ' ' || e.key === 'Enter') {
         take()
         if (!e.repeat) tap()
@@ -195,11 +230,15 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
       notify('Lyrics timed. They follow the song now.', {
         label: 'Undo',
         run: () =>
-          void undoEdit(journal).then(() => {
-            lyricsChanged(props.root, props.path)
-            notify('Timing undone.')
-          }),
+          void undoEdit(journal).then(
+            () => {
+              lyricsChanged(props.root, props.path)
+              notify('Timing undone.')
+            },
+            (e) => notify(`Couldn't undo the timing: ${String(e)}`),
+          ),
       })
+      onDirty?.(false)
       onClose()
     } catch (e) {
       setError(`Couldn't save the timing: ${String(e)}`)
@@ -282,6 +321,14 @@ export function SyncMaker(props: { root: string; path: string; lyrics: Lyrics | 
         <span className="text-[12px] tabular-nums text-ink/55">{left ? `${tapped} of ${rows.length}` : 'All timed'}</span>
       </div>
       {error && <p className="mt-2 text-[12.5px] text-problem">{error}</p>}
+      {!props.current && (
+        <div className="mt-3 flex items-center gap-3 rounded-2xl bg-ink/[0.07] px-4 py-2.5 text-[13px]">
+          <span className="min-w-0 flex-1 text-ink/70">Another song is playing. Your taps here are kept.</span>
+          <button onClick={props.onBack} className="btn btn-sm btn-primary max-w-[50%] truncate">
+            Back to {props.title}
+          </button>
+        </div>
+      )}
 
       <ol
         ref={box}

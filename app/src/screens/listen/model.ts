@@ -81,7 +81,7 @@ const folderName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? 
 
 export const yearOf = (a: Pick<Album, 'year'>) => Number.parseInt(a.year, 10) || 0
 
-export function buildLibrary(tracks: CatalogTrack[]): Library {
+export function indexTracks(tracks: CatalogTrack[]): Library {
   const groups = new Map<string, CatalogTrack[]>()
   for (const t of tracks) {
     const g = groups.get(t.dir)

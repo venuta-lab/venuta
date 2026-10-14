@@ -26,6 +26,9 @@ function install() {
   })
 }
 
+/** Whether anything is open over the screen (its keys then belong to that, not the screen). */
+export const layersOpen = () => stack.length > 0
+
 /** While `open`, Escape (when this is the topmost layer) calls `onClose`. */
 export function useEscape(open: boolean, onClose: () => void) {
   const latest = useRef(onClose)

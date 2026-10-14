@@ -37,6 +37,9 @@ async function keyed(songs: { path: string; lines: string[] }[]): Promise<Line[]
   return out
 }
 
+// Words timed or pasted: read them again on the next search.
+if (typeof window !== 'undefined') window.addEventListener('venuta:lyrics-changed', () => (kept = null))
+
 function linesOf(root: string): Promise<Line[]> {
   if (kept && kept.root === root && Date.now() - kept.at < FRESH_MS) return kept.lines
   const lines = allLyrics(root).then(keyed)

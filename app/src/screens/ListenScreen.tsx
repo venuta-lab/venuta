@@ -10,7 +10,7 @@ import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
-import { buildLibrary, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
+import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
 
@@ -109,7 +109,7 @@ function Listen(props: Props) {
   // with Playlists and the add-to-playlist picker).
   const tracks = useCatalog(root, report)
 
-  const lib = useMemo(() => buildLibrary(tracks ?? []), [tracks])
+  const lib = useMemo(() => indexTracks(tracks ?? []), [tracks])
   const withCover = useMemo(() => new Set((report?.albums ?? []).filter((a) => a.cover_track).map((a) => a.dir)), [report])
   const hasCover = useCallback((dir: string) => withCover.has(dir), [withCover])
 

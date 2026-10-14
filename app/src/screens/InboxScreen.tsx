@@ -1,3 +1,4 @@
+import { layersOpen } from '../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -85,9 +86,14 @@ export function InboxScreen(props: {
 
   useEffect(() => {
     if (!props.root || inLibrary) return
+    // A slow answer for a folder no longer showing is dropped.
+    let live = true
     review(props.root)
-      .then(take)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .then((r) => live && take(r))
+      .catch((e) => live && setError(e instanceof Error ? e.message : String(e)))
+    return () => {
+      live = false
+    }
   }, [props.root, take, inLibrary])
 
   const answer = useCallback(
@@ -119,6 +125,7 @@ export function InboxScreen(props: {
   // Ctrl+Enter: accept every recommendation, then approve everything handled.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (layersOpen()) return
       if (e.ctrlKey && e.key === 'Enter') {
         e.preventDefault()
         if (questions.length) void acceptAll()
@@ -232,7 +239,7 @@ function QuestionDeck(props: {
   useEffect(() => {
     const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.altKey || e.metaKey || typing(e.target) || props.busy) return
+      if (e.ctrlKey || e.altKey || e.metaKey || typing(e.target) || props.busy || layersOpen()) return
       if (/^[1-9]$/.test(e.key)) {
         const c = d.choices[Number(e.key) - 1]
         if (c) {
@@ -254,8 +261,9 @@ function QuestionDeck(props: {
         setI((x) => Math.max(x - 1, 0))
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Ahead of the player's keys, so Space plays the clips and not the song as well.
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [d, n, props, playSides])
 
   return (

@@ -59,6 +59,3 @@ export function tracksFor(paths: string[]): CatalogTrack[] {
 
 /** One song by its library path, if known. */
 export const trackAt = (path: string) => cached?.byPath.get(path)
-
-/** The catalog as last read (for code outside React). */
-export const catalogNow = () => cached?.tracks ?? []

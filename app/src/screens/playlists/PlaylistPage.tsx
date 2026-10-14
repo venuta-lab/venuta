@@ -104,7 +104,9 @@ export function PlaylistPage(props: {
         entries = await playlistTracks(root, name)
       } catch (e) {
         // A smart playlist whose file isn't written yet: writing it is what opening it means.
-        if (!props.rule) throw e
+        // Any other failure (a locked file, a bad line) is shown, never written over.
+        const missing = /os error [23]\b|cannot find|not found/i.test(String(e))
+        if (!props.rule || !missing) throw e
         await smartSave(root, props.rule)
         entries = await playlistTracks(root, name)
       }
@@ -257,7 +259,12 @@ export function PlaylistPage(props: {
       danger: true,
     })
     if (!ok) return
-    await playlistDelete(root, name)
+    try {
+      await playlistDelete(root, name)
+    } catch (e) {
+      notify(`Couldn't delete ${name}: ${String(e)}`)
+      return
+    }
     notify(`Deleted ${name}. Its file is in Set aside.`)
     props.onGone()
   }

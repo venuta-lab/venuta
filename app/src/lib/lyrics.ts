@@ -23,6 +23,7 @@ function heard(key: string) {
   if (key === '*') kept.clear()
   else kept.delete(key)
   changeListeners.forEach((l) => l(key))
+  window.dispatchEvent(new Event('venuta:lyrics-changed'))
 }
 if (typeof window !== 'undefined')
   window.addEventListener('storage', (e) => {

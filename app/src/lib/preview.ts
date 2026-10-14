@@ -50,7 +50,13 @@ export function playClips(libraryRoot: string, paths: string[]) {
 export function stopClips() {
   window.clearTimeout(timer)
   queue = []
-  audio?.pause()
+  if (audio) {
+    audio.onloadedmetadata = null
+    audio.onended = null
+    audio.onerror = null
+    audio.pause()
+    audio.removeAttribute('src')
+  }
   playing = null
   notify()
 }

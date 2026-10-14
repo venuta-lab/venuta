@@ -19,31 +19,10 @@ export const IconHealth = (p: P) => (
     <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />
   </svg>
 )
-export const IconBrowse = (p: P) => (
-  <svg {...base} {...p}>
-    <rect x="3.5" y="3.5" width="7" height="7" rx="2" />
-    <rect x="13.5" y="3.5" width="7" height="7" rx="2" />
-    <rect x="3.5" y="13.5" width="7" height="7" rx="2" />
-    <rect x="13.5" y="13.5" width="7" height="7" rx="2" />
-  </svg>
-)
-export const IconReview = (p: P) => (
-  <svg {...base} {...p}>
-    <path d="M4 6h10M4 12h7M4 18h10" />
-    <path d="m15 15 2.5 2.5L21 13" />
-  </svg>
-)
 export const IconIncoming = (p: P) => (
   <svg {...base} {...p}>
     <path d="M12 3v11m0 0-4-4m4 4 4-4" />
     <path d="M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" />
-  </svg>
-)
-export const IconPlaylists = (p: P) => (
-  <svg {...base} {...p}>
-    <path d="M4 6h12M4 11h12M4 16h7" />
-    <circle cx="17.5" cy="17.5" r="2.5" />
-    <path d="M20 17.5V9.5l-2.5 1" />
   </svg>
 )
 export const IconCards = (p: P) => (
@@ -55,23 +34,6 @@ export const IconCards = (p: P) => (
 export const IconChevron = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
     <path d="m9 6 6 6-6 6" />
-  </svg>
-)
-export const IconRefresh = (p: P) => (
-  <svg {...base} width={18} height={18} {...p}>
-    <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4.5h-4.5" />
-  </svg>
-)
-export const IconFolder = (p: P) => (
-  <svg {...base} width={18} height={18} {...p}>
-    <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
-  </svg>
-)
-export const IconMusic = (p: P) => (
-  <svg {...base} {...p}>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="4" />
-    <circle cx="12" cy="12" r="4.2" />
-    <circle cx="12" cy="12" r="0.8" fill="currentColor" />
   </svg>
 )
 /** A note: listening. */
@@ -114,12 +76,6 @@ export const IconSearch = (p: P) => (
     <path d="m16 16 4 4" />
   </svg>
 )
-export const IconSun = (p: P) => (
-  <svg {...base} width={18} height={18} {...p}>
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
-  </svg>
-)
 /** Play: a rounded triangle, filled so it reads at small sizes. */
 export const IconPlay = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
@@ -138,11 +94,6 @@ export const IconShuffle = (p: P) => (
     <path d="M4 7h2.5c2 0 3.2 1 4.3 2.7l2.4 4.6c1 1.7 2.3 2.7 4.3 2.7H20" />
     <path d="M4 17h2.5c1.4 0 2.4-.5 3.2-1.3M13.3 8.3C14.1 7.5 15.1 7 16.5 7H20" />
     <path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5" />
-  </svg>
-)
-export const IconBack = (p: P) => (
-  <svg {...base} width={18} height={18} {...p}>
-    <path d="m15 6-6 6 6 6" />
   </svg>
 )
 export const IconMore = (p: P) => (
@@ -251,22 +202,10 @@ export const IconAlbum = (p: P) => (
     <circle cx="12" cy="12" r="2.5" />
   </svg>
 )
-export const IconArtist = (p: P) => (
-  <svg {...base} {...p}>
-    <circle cx="12" cy="8" r="4" />
-    <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
-  </svg>
-)
 export const IconLock = (p: P) => (
   <svg {...base} {...p}>
     <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
     <path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3" />
-  </svg>
-)
-export const IconWeb = (p: P) => (
-  <svg {...base} {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5Z" />
   </svg>
 )
 export const IconPlaylistAdd = (p: P) => (
