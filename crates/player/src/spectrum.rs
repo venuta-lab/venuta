@@ -8,7 +8,8 @@
 
 /// Centre frequencies, log-spaced from bass to air.
 pub const BANDS: [f32; 16] = [
-    40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0,
+    40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 8000.0,
+    10000.0, 12500.0, 16000.0,
 ];
 /// How much recent sound each update looks at.
 pub const WINDOW: usize = 2048;
@@ -42,7 +43,11 @@ pub fn levels(samples: &[f32], rate: u32) -> Vec<u8> {
             }
             let power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
             let amp = power.max(0.0).sqrt() / gain;
-            let db = if amp > 0.0 { 20.0 * amp.log10() } else { FLOOR_DB };
+            let db = if amp > 0.0 {
+                20.0 * amp.log10()
+            } else {
+                FLOOR_DB
+            };
             (((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0) * 255.0).round() as u8
         })
         .collect()

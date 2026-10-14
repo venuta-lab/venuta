@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   engine:
     name: engine + cli (${{ matrix.os }})
@@ -12,7 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # The library engine is portable (phones come later); macOS minutes cost ten times as
+        # much on a private repo, so it joins when there is a Mac build to check.
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,6 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
         with:
@@ -39,5 +51,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm --dir app install --frozen-lockfile
+      - run: pnpm --dir app lint
+      - run: pnpm --dir app typecheck
+      - run: pnpm --dir app test
       - run: pnpm --dir app build
-      - run: cargo build -p app
+      # The player plays to memory in its tests, so no sound device is needed.
+      - run: cargo clippy -p player -p app --all-targets -- -D warnings
+      - run: cargo test -p player -p app

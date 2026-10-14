@@ -52,8 +52,16 @@ pub fn waveform(path: &Path, buckets: usize) -> Result<Vec<u8>, String> {
             let lo = b * n / buckets;
             let hi = ((b + 1) * n / buckets).max(lo + 1).min(n);
             let part = slices.get(lo..hi).unwrap_or(&[]);
-            let ms = if part.is_empty() { 0.0 } else { part.iter().sum::<f64>() / part.len() as f64 };
-            let db = if ms > 0.0 { 10.0 * ms.log10() } else { FLOOR_DB };
+            let ms = if part.is_empty() {
+                0.0
+            } else {
+                part.iter().sum::<f64>() / part.len() as f64
+            };
+            let db = if ms > 0.0 {
+                10.0 * ms.log10()
+            } else {
+                FLOOR_DB
+            };
             (((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0) * 255.0).round() as u8
         })
         .collect())
