@@ -28,9 +28,12 @@ import { DesktopLyrics } from './components/lyrics/DesktopLyrics'
 import { applyPrefs } from './lib/prefs'
 import { watchPacks } from './lib/packs'
 import { watchAwake } from './lib/motion'
+import { keepLayoutSwept } from './lib/layoutSweep'
 
 // Nothing moves in a window that isn't on screen (lib/motion.ts).
 watchAwake()
+// Shared-layout stacks of elements long gone are let go (lib/layoutSweep.ts).
+keepLayoutSwept()
 
 // Before the first paint, so the chosen theme never flashes.
 applyPrefs()
