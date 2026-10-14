@@ -16,9 +16,21 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Something the queue holds: anything with a file to play.
+/// Something the queue holds: a local file or an ephemeral resolved media source.
 pub trait Item: Clone + Send + 'static {
-    fn path(&self) -> &Path;
+    fn path(&self) -> Option<&Path> {
+        None
+    }
+    fn open(&self) -> Result<Source, String> {
+        self.path()
+            .ok_or_else(|| "Queue item has no media source.".to_owned())
+            .and_then(Source::open)
+    }
+    fn label(&self) -> String {
+        self.path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "Remote media".into())
+    }
     /// ReplayGain values from the song's tags, if any.
     fn gain(&self) -> Gain {
         Gain::default()
@@ -27,11 +39,15 @@ pub trait Item: Clone + Send + 'static {
     fn album(&self) -> Option<String> {
         None
     }
+    /// Whether to reopen the current item after playback ends, for its stopped status.
+    fn reopen_when_stopped(&self) -> bool {
+        true
+    }
 }
 
 impl Item for PathBuf {
-    fn path(&self) -> &Path {
-        self
+    fn path(&self) -> Option<&Path> {
+        Some(self.as_path())
     }
 }
 
@@ -117,6 +133,8 @@ pub struct Status<T: Serialize> {
     pub queue: Option<Vec<T>>,
     pub index: Option<usize>,
     pub playing: bool,
+    /// True while the current song is still opening (e.g. a remote body downloading).
+    pub buffering: bool,
     pub position_ms: u64,
     pub duration_ms: u64,
     pub shuffle: bool,
@@ -141,6 +159,7 @@ pub struct Status<T: Serialize> {
 struct Said {
     index: Option<usize>,
     playing: bool,
+    buffering: bool,
     position_ms: u64,
     duration_ms: u64,
     shuffle: bool,
@@ -159,6 +178,7 @@ impl Said {
         Self {
             index: s.index,
             playing: s.playing,
+            buffering: s.buffering,
             position_ms: s.position_ms,
             duration_ms: s.duration_ms,
             shuffle: s.shuffle,
@@ -380,7 +400,11 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Jump(i) => {
-                if self.queue.jump(i) {
+                // Same song again: rewind in place (no re-resolve / re-download).
+                if self.queue.index == Some(i) {
+                    self.seek(0);
+                    self.set_playing(true);
+                } else if self.queue.jump(i) {
                     self.load_current(0);
                     self.set_playing(true);
                 }
@@ -479,7 +503,7 @@ impl<T: Item + Serialize> Engine<T> {
         self.segs.clear();
         let mut tries = self.queue.items().len();
         while let Some(item) = self.queue.current().cloned() {
-            match Source::open(item.path()) {
+            match item.open() {
                 Ok(mut source) => {
                     let start_frame = if start_ms > 0 {
                         source.seek(start_ms).unwrap_or(0)
@@ -499,7 +523,7 @@ impl<T: Item + Serialize> Engine<T> {
                     return;
                 }
                 Err(e) => {
-                    self.error = format!("{}: {e}", item.path().display());
+                    self.error = format!("{}: {e}", item.label());
                     tries = tries.saturating_sub(1);
                     if tries == 0 || self.queue.skip_next().is_none() {
                         self.playing = false;
@@ -529,6 +553,37 @@ impl<T: Item + Serialize> Engine<T> {
     /// Forget the song decoded ahead (the queue changed, so the next song may be another).
     fn drop_prefetch(&mut self) {
         self.segs.truncate(1);
+    }
+
+    /// Open the next queue item into `segs` when we only have the current one. Returns whether
+    /// a segment was added. Remote open starts the download without blocking the audio thread.
+    fn prefetch_next(&mut self) -> bool {
+        if self.segs.len() >= 2 || self.stop_after_current {
+            return false;
+        }
+        let Some(next) = self.queue.peek_next() else {
+            return false;
+        };
+        let Some(item) = self.queue.items().get(next).cloned() else {
+            return false;
+        };
+        match item.open() {
+            Ok(source) => {
+                self.segs.push_back(Segment {
+                    source,
+                    samples: VecDeque::new(),
+                    ended: false,
+                    played: 0,
+                    start_frame: 0,
+                    gain: item.gain(),
+                    album: item.album(),
+                    chain: None,
+                });
+                true
+            }
+            // It will be reported when its turn comes.
+            Err(_) => false,
+        }
     }
 
     // --- Playing --------------------------------------------------------------------------
@@ -563,67 +618,137 @@ impl<T: Item + Serialize> Engine<T> {
         }
         Ok(())
     }
+    /// Keep an already-open device clocked while the first remote audio chunk is arriving.
+    fn wait_for_remote(&mut self) -> Result<(), String> {
+        let Some(format) = self.dev_fmt.as_ref() else {
+            return Ok(());
+        };
+        let Some(device) = self.device.as_mut() else {
+            return Ok(());
+        };
+        let want = if self.started {
+            device.wait()?
+        } else {
+            device.available()?
+        };
+        if want == 0 {
+            return Ok(());
+        }
+        self.bytes.clear();
+        self.bytes.resize(want * format.bytes_per_frame(), 0);
+        device.write(&self.bytes, want)?;
+        if !self.started {
+            device.start()?;
+            self.started = true;
+        }
+        Ok(())
+    }
 
-    /// Keep the playing song (and the next one) decoded ahead.
+    /// Keep the playing song decoded ahead; only then warm the next one.
+    ///
+    /// Always refill the **front** first. Decoding only the back (a prefetched remote still
+    /// Pending) used to starve the current song after ~1s of buffer and freeze playback.
     fn fill(&mut self) -> Result<(), String> {
         let rate = self
             .segs
             .front()
             .map(|s| s.source.format.rate)
             .unwrap_or(44_100);
-        let target = (rate as f32 * (BUFFER_SECONDS + self.sound.crossfade_s.max(0.0))) as usize;
+        let front_target =
+            (rate as f32 * (BUFFER_SECONDS + self.sound.crossfade_s.max(0.0))) as usize;
+        // 1) Current song must stay full enough to play without gaps.
         loop {
-            let buffered: usize = self.segs.iter().map(Segment::frames).sum();
-            if buffered >= target {
-                return Ok(());
-            }
-            let Some(back) = self.segs.back_mut() else {
+            let Some(front) = self.segs.front_mut() else {
                 return Ok(());
             };
-            if back.ended {
-                // Open the next song, once, right behind this one.
-                if self.segs.len() >= 2 {
-                    return Ok(());
-                }
-                let Some(next) = self.queue.peek_next() else {
-                    return Ok(());
-                };
-                let Some(item) = self.queue.items().get(next).cloned() else {
-                    return Ok(());
-                };
-                match Source::open(item.path()) {
-                    Ok(source) => self.segs.push_back(Segment {
-                        source,
-                        samples: VecDeque::new(),
-                        ended: false,
-                        played: 0,
-                        start_frame: 0,
-                        gain: item.gain(),
-                        album: item.album(),
-                        chain: None,
-                    }),
-                    // It will be reported when its turn comes.
-                    Err(_) => return Ok(()),
-                }
-                continue;
+            if front.ended || front.frames() >= front_target {
+                break;
             }
-            match back.source.next(&mut self.scratch) {
-                Ok(true) => back.samples.extend(self.scratch.iter()),
-                Ok(false) => back.ended = true,
+            match front.source.next(&mut self.scratch) {
+                Ok(crate::decode::DecodeState::Samples) => {
+                    front.samples.extend(self.scratch.iter());
+                }
+                Ok(crate::decode::DecodeState::Pending) => {
+                    // Waiting on network: don't touch the next song yet; keep the pump alive.
+                    return Ok(());
+                }
+                Ok(crate::decode::DecodeState::End) => front.ended = true,
                 Err(e) => {
-                    // A damaged stretch ends this song early; the next one still plays.
                     self.error = e;
-                    back.ended = true;
+                    front.ended = true;
                 }
             }
         }
+        // 2) Open / warm the following song once the current one is healthy.
+        if self.segs.len() < 2 {
+            if self
+                .segs
+                .front()
+                .is_some_and(|f| f.ended || f.frames() >= front_target / 2)
+            {
+                self.prefetch_next();
+            }
+        }
+        if self.segs.len() >= 2 {
+            let next_target = (rate as f32 * 0.35) as usize; // light warmup only
+            loop {
+                let Some(next) = self.segs.get_mut(1) else {
+                    break;
+                };
+                if next.ended || next.frames() >= next_target || !next.source.is_ready() {
+                    // Not ready yet: still poll so progressive open can complete off-thread.
+                    if !next.ended && !next.source.is_ready() {
+                        match next.source.next(&mut self.scratch) {
+                            Ok(crate::decode::DecodeState::Samples) => {
+                                next.samples.extend(self.scratch.iter());
+                            }
+                            Ok(crate::decode::DecodeState::Pending) => break,
+                            Ok(crate::decode::DecodeState::End) => next.ended = true,
+                            Err(e) => {
+                                // Prefetch failure must not kill the song that is playing.
+                                let _ = e;
+                                next.ended = true;
+                            }
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                match next.source.next(&mut self.scratch) {
+                    Ok(crate::decode::DecodeState::Samples) => {
+                        next.samples.extend(self.scratch.iter());
+                    }
+                    Ok(crate::decode::DecodeState::Pending) => break,
+                    Ok(crate::decode::DecodeState::End) => next.ended = true,
+                    Err(_) => next.ended = true,
+                }
+            }
+        }
+        Ok(())
     }
 
     /// One device period: take frames from the playing song (and on into the next one when
     /// it has the same format), write them, and move through the queue as songs end.
     fn step(&mut self) -> Result<(), String> {
-        let Some(front) = self.segs.front() else {
+        if self.segs.is_empty() {
             self.playing = false;
+            return Ok(());
+        }
+        if self
+            .segs
+            .front()
+            .is_some_and(|front| !front.source.is_ready())
+        {
+            self.fill()?;
+            if self
+                .segs
+                .front()
+                .is_some_and(|front| !front.source.is_ready())
+            {
+                return self.wait_for_remote();
+            }
+        }
+        let Some(front) = self.segs.front() else {
             return Ok(());
         };
         let fmt = front.source.format.clone();
@@ -701,6 +826,7 @@ impl<T: Item + Serialize> Engine<T> {
                 self.load_current(0);
             }
             match self.segs.front() {
+                Some(next) if !next.source.is_ready() => break,
                 Some(next) if next.source.format == fmt => continue,
                 Some(_) => {
                     reopen_after = true;
@@ -749,7 +875,13 @@ impl<T: Item + Serialize> Engine<T> {
             let _ = dev.stop();
             self.started = false;
             self.paused_at = Some(Instant::now());
-            self.load_current(0);
+            if self
+                .queue
+                .current()
+                .is_some_and(|item| item.reopen_when_stopped())
+            {
+                self.load_current(0);
+            }
             self.publish(true);
         } else if reopen_after {
             // The next song has another format: give the device a moment to play out, then
@@ -898,10 +1030,15 @@ impl<T: Item + Serialize> Engine<T> {
             .front()
             .and_then(|s| s.source.duration_ms())
             .unwrap_or(0);
+        let buffering = self
+            .segs
+            .front()
+            .is_some_and(|s| !s.source.is_ready());
         let status = Status {
             queue: self.queue_changed.then(|| self.queue.items().to_vec()),
             index: self.queue.index,
             playing: self.playing,
+            buffering,
             position_ms: self.position_ms(),
             duration_ms,
             shuffle: self.queue.shuffled(),

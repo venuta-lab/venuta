@@ -11,9 +11,14 @@
 //! A song that isn't in the library (yet) keeps its place as a comment line players ignore
 //! (`#VENUTA-WANT:{json}`), so an imported playlist loses nothing and can be completed later;
 //! `#VENUTA-SOURCE:` remembers where a playlist came from.
+//!
+//! A song from the online catalog is a comment line too (`#VENUTA-ONLINE:{json}`): its stable
+//! provider id and what to show for it, never a stream address. Your own file wins: when the
+//! library has the song, the entry plays from it; otherwise it plays online (see `playables`).
 
 use crate::library::{Library, Track};
 use crate::plan::split_names;
+use media_access::{Availability, ONLINE_PLAYLIST_TAG, Playable, PlayableId, RemoteTrack};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -67,6 +72,126 @@ impl WantEntry {
     }
 }
 
+/// A song in the online catalog, held by its stable id with what to show for it. No address
+/// to stream it from: that is resolved each time it plays, and never written down. A cover
+/// picture URL is allowed (display only); stream hosts are rejected on write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnlineEntry {
+    pub provider: String,
+    pub track_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artists: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// The recording code, to find the song in the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isrc: Option<String>,
+    /// Cover picture only (https). Never a stream URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork_url: Option<String>,
+}
+
+impl OnlineEntry {
+    /// A catalog track as a playlist keeps it (album id stays behind; cover picture may stay).
+    pub fn from_remote(t: &RemoteTrack) -> Self {
+        Self {
+            provider: t.provider.clone(),
+            track_id: t.track_id.clone(),
+            title: t.title.clone(),
+            artists: t.artists.clone(),
+            album: t.album.clone(),
+            duration_ms: t.duration_ms,
+            isrc: t.isrc.clone(),
+            artwork_url: clean_artwork_url(t.artwork_url.as_deref()),
+        }
+    }
+
+    pub fn id(&self) -> PlayableId {
+        PlayableId::Online {
+            provider: self.provider.clone(),
+            track_id: self.track_id.clone(),
+        }
+    }
+
+    /// A real id: something there, and not an address.
+    pub fn is_stable(&self) -> bool {
+        let ok = |s: &str| !s.trim().is_empty() && !s.contains("://");
+        ok(&self.provider) && ok(&self.track_id)
+    }
+
+    /// As a song from elsewhere, for finding it in the library.
+    pub fn foreign(&self) -> Foreign {
+        Foreign {
+            title: self.title.clone(),
+            artist: self.artists.join("; "),
+            album: self.album.clone().unwrap_or_default(),
+            duration_ms: self.duration_ms,
+            isrc: self.isrc.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// To play from the catalog.
+    pub fn playable(&self) -> Playable {
+        Playable {
+            id: self.id(),
+            title: self.title.clone(),
+            artists: self.artists.clone(),
+            album: self.album.clone(),
+            duration_ms: self.duration_ms,
+            artwork_url: self.artwork_url.clone(),
+            availability: Some(Availability::Online),
+            local_file: None,
+        }
+    }
+}
+
+/// Keep only https picture URLs; drop stream hosts and anything that is not a picture address.
+fn clean_artwork_url(raw: Option<&str>) -> Option<String> {
+    let s = raw?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let url = if let Some(rest) = s.strip_prefix("//") {
+        format!("https://{rest}")
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        format!("https://{rest}")
+    } else {
+        s.to_owned()
+    };
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.contains("googlevideo.com") || lower.contains(".m3u8") || lower.contains("mime=audio") {
+        return None;
+    }
+    Some(url)
+}
+
+/// The playlist line for an online song (`#VENUTA-ONLINE:{json}`, no newline).
+pub fn encode_online(e: &OnlineEntry) -> String {
+    format!(
+        "{ONLINE_PLAYLIST_TAG}{}",
+        serde_json::to_string(e).expect("plain data serializes")
+    )
+}
+
+/// An online song from its playlist line; None for any other line, or one without a real id.
+/// Fields it doesn't know (an address someone typed in) are dropped, so never written back.
+pub fn decode_online(line: &str) -> Option<OnlineEntry> {
+    let json = line.trim().strip_prefix(ONLINE_PLAYLIST_TAG)?;
+    let mut entry = serde_json::from_str::<OnlineEntry>(json.trim()).ok()?;
+    if !entry.is_stable() {
+        return None;
+    }
+    entry.artwork_url = clean_artwork_url(entry.artwork_url.as_deref());
+    Some(entry)
+}
+
 /// A library song that may be one a playlist is waiting for, offered for you to confirm.
 #[derive(Debug, Clone, Serialize)]
 pub struct Maybe {
@@ -79,7 +204,7 @@ pub struct Maybe {
     pub why: String,
 }
 
-/// One line of a playlist to write: a song in the library, or one still wanted.
+/// One line of a playlist to write: a song in the library, one still wanted, or one online.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,6 +215,10 @@ pub struct Item {
     /// knows this file answers that song, even when the names differ).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<WantEntry>,
+    /// A song from the online catalog. Written as its id even when the library has it too: the
+    /// file is found again on every read, so it wins while it's here and the song stays if not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online: Option<OnlineEntry>,
 }
 
 impl Item {
@@ -98,6 +227,7 @@ impl Item {
             path: Some(path.into()),
             want: None,
             source: None,
+            online: None,
         }
     }
     pub fn wanted(w: WantEntry) -> Self {
@@ -105,6 +235,15 @@ impl Item {
             path: None,
             want: Some(w),
             source: None,
+            online: None,
+        }
+    }
+    pub fn online(o: OnlineEntry) -> Self {
+        Self {
+            path: None,
+            want: None,
+            source: None,
+            online: Some(o),
         }
     }
 }
@@ -204,6 +343,20 @@ pub fn want_keys(w: &WantEntry) -> Vec<String> {
     song_keys(None, &w.title, &w.artist, w.isrc.as_deref())
 }
 
+/// An online song's keys (title/artists/ISRC, plus its stable provider id).
+pub fn online_keys(o: &OnlineEntry) -> Vec<String> {
+    let mut k = song_keys(
+        None,
+        &o.title,
+        &o.artists.join("; "),
+        o.isrc.as_deref(),
+    );
+    if o.is_stable() {
+        k.push(short_key(&format!("o:{}:{}", o.provider, o.track_id)));
+    }
+    k
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PlaylistEntry {
     /// Library-relative path, or empty when the track is missing.
@@ -220,11 +373,18 @@ pub struct PlaylistEntry {
     /// For a missing song: one in your library that may be it (see `suggest`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maybe: Option<Maybe>,
+    /// A song from the online catalog. With `missing` it plays online; without, the library
+    /// has it (`path`) and the file plays instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub online: Option<OnlineEntry>,
 }
 
 impl PlaylistEntry {
     /// Back to a line to write (a missing song without details keeps its title).
     pub fn item(&self) -> Item {
+        if let Some(o) = &self.online {
+            return Item::online(o.clone());
+        }
         if !self.missing {
             return Item::track(self.path.clone());
         }
@@ -238,6 +398,44 @@ impl PlaylistEntry {
             not: Vec::new(),
         }))
     }
+
+    /// What to play for it, your own file first: the library's file when it's on disk, else
+    /// the online song. None for a song still to get (it stays on the want-list).
+    pub fn playable(&self, library_root: &Path) -> Option<Playable> {
+        let file = (!self.missing && !self.path.is_empty())
+            .then(|| library_root.join(&self.path))
+            .filter(|f| f.is_file());
+        match (file, &self.online) {
+            (Some(file), online) => Some(Playable {
+                id: PlayableId::Local {
+                    path: self.path.clone(),
+                },
+                title: self.title.clone(),
+                artists: split_names(&self.artist),
+                album: Some(self.album.clone()).filter(|a| !a.is_empty()),
+                duration_ms: Some(self.duration_ms).filter(|d| *d > 0),
+                artwork_url: None,
+                availability: Some(if online.is_some() {
+                    Availability::LocalPreferred
+                } else {
+                    Availability::Local
+                }),
+                local_file: Some(file),
+            }),
+            (None, Some(o)) => Some(o.playable()),
+            (None, None) => None,
+        }
+    }
+}
+
+/// A playlist as the player gets it: every song that can play, in order, each from your file
+/// when you have it and online when not. Songs still to get are left out, so playing on goes
+/// from one playable song to the next whether it's a file or online.
+pub fn playables(library_root: &Path, entries: &[PlaylistEntry]) -> Vec<Playable> {
+    entries
+        .iter()
+        .filter_map(|e| e.playable(library_root))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -246,7 +444,10 @@ pub struct PlaylistSummary {
     pub file: String,
     pub smart: bool,
     pub tracks: usize,
+    /// Songs still to get: not in the library, and not online either.
     pub missing: usize,
+    /// Songs not in the library that play online.
+    pub online: usize,
     /// Where it came from ("Spotify", "Apple Music"…), if imported.
     pub source: Option<String>,
     /// Which playlist at the source, when known (to update it from there).
@@ -366,6 +567,8 @@ pub fn read(
     let mut pending_md5: Option<String> = None;
     let mut pending_info: Option<(u64, String)> = None;
     let mut repaired = false;
+    // Made only for a playlist with online songs, to find them in the library first.
+    let mut matcher: Option<Matcher> = None;
     // Paths written in full (another player's list) still count when they're in this library.
     let root_prefix = format!(
         "{}/",
@@ -409,9 +612,19 @@ pub fn read(
                     missing: true,
                     want: Some(w),
                     maybe: None,
+                    online: None,
                 });
             }
             pending_md5 = None;
+            continue;
+        }
+        if line.starts_with(ONLINE_PLAYLIST_TAG) {
+            pending_info = None;
+            pending_md5 = None;
+            if let Some(o) = decode_online(line) {
+                let m = matcher.get_or_insert_with(|| Matcher::new(lib));
+                out.push(online_entry(o, m));
+            }
             continue;
         }
         if line.is_empty() || line.starts_with('#') {
@@ -448,6 +661,7 @@ pub fn read(
                     missing: true,
                     want: Some(w),
                     maybe: None,
+                    online: None,
                 }
             }
         });
@@ -466,6 +680,31 @@ fn entry(t: &Track) -> PlaylistEntry {
         missing: false,
         want: None,
         maybe: None,
+        online: None,
+    }
+}
+
+/// An online song, as the library's own file when it has the very same song (a sure match
+/// only), else as one that plays online.
+fn online_entry(o: OnlineEntry, m: &Matcher) -> PlaylistEntry {
+    if let Some(h) = m.grade(&o.foreign()).filter(|h| h.grade == Grade::Exact) {
+        return PlaylistEntry {
+            online: Some(o),
+            ..entry(h.track)
+        };
+    }
+    PlaylistEntry {
+        path: String::new(),
+        title: o.title.clone(),
+        artist: o.artists.join(", "),
+        album: o.album.clone().unwrap_or_default(),
+        duration_ms: o.duration_ms.unwrap_or(0),
+        audio_md5: None,
+        missing: true,
+        // Not wanted: it plays, so it isn't on the list of songs to get.
+        want: None,
+        maybe: None,
+        online: Some(o),
     }
 }
 
@@ -507,6 +746,51 @@ pub fn source_of(library_root: &Path, name: &str) -> Option<String> {
 /// Is there a playlist by this name?
 pub fn exists(library_root: &Path, name: &str) -> bool {
     existing_file(library_root, name).is_file()
+}
+
+/// Add songs to the end of a playlist (making it if it's new), skipping ones already in it:
+/// the same file, or the same online song (by its id, never an address). Returns how many
+/// were added.
+pub fn add(
+    library_root: &Path,
+    lib: &Library,
+    name: &str,
+    items: &[Item],
+) -> Result<usize, String> {
+    let entries = if exists(library_root, name) {
+        read(library_root, lib, name)?.0
+    } else {
+        vec![]
+    };
+    let mut paths: HashSet<String> = entries
+        .iter()
+        .filter(|e| !e.missing)
+        .map(|e| e.path.clone())
+        .collect();
+    let mut ids: HashSet<PlayableId> = entries
+        .iter()
+        .filter_map(|e| e.online.as_ref().map(OnlineEntry::id))
+        .collect();
+    let added: Vec<Item> = items
+        .iter()
+        .filter(|i| match (&i.online, &i.path) {
+            (Some(o), _) => o.is_stable() && ids.insert(o.id()),
+            (None, Some(p)) => !p.is_empty() && paths.insert(p.clone()),
+            (None, None) => i.want.is_some(),
+        })
+        .cloned()
+        .collect();
+    let mut all: Vec<Item> = entries.iter().map(PlaylistEntry::item).collect();
+    all.extend(added.iter().cloned());
+    write_items(
+        library_root,
+        lib,
+        name,
+        &all,
+        false,
+        source_of(library_root, name).as_deref(),
+    )?;
+    Ok(added.len())
 }
 
 /// Write a static playlist from library-relative paths (keeping the source it came from).
@@ -577,6 +861,27 @@ pub fn write_with(
         out.push_str(&format!("{BASE_TAG}{}\n", songs.join(" ")));
     }
     for item in items {
+        if let Some(o) = &item.online {
+            if o.is_stable() {
+                out.push_str(&encode_online(o));
+                out.push('\n');
+            } else {
+                // No real id (an empty one, or an address): kept as a song to get instead.
+                let w = WantEntry {
+                    title: o.title.clone(),
+                    artist: o.artists.join(", "),
+                    album: o.album.clone().unwrap_or_default(),
+                    duration_ms: o.duration_ms.unwrap_or(0),
+                    isrc: o.isrc.clone(),
+                    ..Default::default()
+                };
+                out.push_str(&format!(
+                    "{WANT_TAG}{}\n",
+                    serde_json::to_string(&w).map_err(|e| e.to_string())?
+                ));
+            }
+            continue;
+        }
         if let Some(w) = &item.want {
             out.push_str(&format!(
                 "{WANT_TAG}{}\n",
@@ -656,12 +961,19 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
                 file: e.path().to_string_lossy().into_owned(),
                 smart: text.contains(SMART_TAG) || text.contains(OLD_SMART_TAG),
                 tracks: entries.len(),
-                missing: entries.iter().filter(|x| x.missing).count(),
+                missing: entries
+                    .iter()
+                    .filter(|x| x.missing && x.online.is_none())
+                    .count(),
+                online: entries
+                    .iter()
+                    .filter(|x| x.missing && x.online.is_some())
+                    .count(),
                 source: source_in(&text),
                 source_id: header_in(&text).source_id,
                 duration_ms: entries
                     .iter()
-                    .filter(|x| !x.missing)
+                    .filter(|x| !x.missing || x.online.is_some())
                     .map(|x| x.duration_ms)
                     .sum(),
                 dirs,
@@ -943,6 +1255,42 @@ impl Foreign {
             md5: None,
             not: Vec::new(),
         }
+    }
+
+    /// A stable online id this import already carries (e.g. a Takeout video id). Never a stream URL.
+    /// Provider is the hybrid catalog name so resolve uses the same path as search.
+    pub fn online(&self) -> Option<OnlineEntry> {
+        let id = self.youtube.as_deref()?.trim();
+        if id.is_empty() || id.contains("://") {
+            return None;
+        }
+        // YouTube video ids are 11 chars of [A-Za-z0-9_-]; reject junk and playlist ids.
+        if id.len() != 11 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return None;
+        }
+        let title = self.title.trim();
+        let title = if title.is_empty() {
+            format!("Video {id}")
+        } else {
+            title.to_owned()
+        };
+        let artists: Vec<String> = split_names(&self.artist)
+            .into_iter()
+            .map(|a| a.trim().to_owned())
+            .filter(|a| !a.is_empty())
+            .collect();
+        Some(OnlineEntry {
+            provider: "remote_catalog".into(),
+            track_id: id.to_owned(),
+            title,
+            artists,
+            album: Some(self.album.clone()).filter(|a| !a.trim().is_empty()),
+            duration_ms: self.duration_ms.filter(|d| *d > 0),
+            isrc: self.isrc.clone(),
+            // Cover picture only; googlevideo stream hosts are rejected on write.
+            artwork_url: Some(format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")),
+        })
     }
 }
 
@@ -2029,5 +2377,263 @@ mod tests {
         suggest(&lib, &mut e);
         assert!(e[0].maybe.is_none());
         assert!(e[0].missing);
+    }
+
+    fn online(id: &str, title: &str, artist: &str) -> OnlineEntry {
+        OnlineEntry {
+            provider: "remote_catalog".into(),
+            track_id: id.into(),
+            title: title.into(),
+            artists: vec![artist.into()],
+            album: Some("Elsewhere".into()),
+            duration_ms: Some(201_000),
+            isrc: None,
+            artwork_url: Some("https://i.ytimg.com/vi/example/hqdefault.jpg".into()),
+        }
+    }
+
+    #[test]
+    fn online_lines_encode_and_decode() {
+        let o = online("t-1", "Kesariya", "Arijit Singh");
+        let line = encode_online(&o);
+        assert!(line.starts_with("#VENUTA-ONLINE:{"), "{line}");
+        assert_eq!(decode_online(&line), Some(o.clone()));
+        assert_eq!(decode_online(&format!("  {line}  ")), Some(o));
+        // The contract's own example.
+        let doc = r#"#VENUTA-ONLINE:{"provider":"remote_catalog","track_id":"x9","title":"T","artists":["A"],"album":"Al","duration_ms":123}"#;
+        assert_eq!(decode_online(doc).unwrap().duration_ms, Some(123));
+        // Not an online line, broken, or without a real id.
+        assert_eq!(decode_online("#VENUTA-WANT:{\"title\":\"x\"}"), None);
+        assert_eq!(decode_online("#VENUTA-ONLINE:{not json"), None);
+        assert_eq!(
+            decode_online(
+                r#"#VENUTA-ONLINE:{"provider":"remote_catalog","track_id":" ","title":"T"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            decode_online(
+                r#"#VENUTA-ONLINE:{"provider":"remote_catalog","track_id":"https://cdn.example/a.mp3","title":"T"}"#
+            ),
+            None
+        );
+        // A stream-shaped field someone added is dropped; a cover picture may stay.
+        let o = decode_online(r#"#VENUTA-ONLINE:{"provider":"p","track_id":"t","title":"T","url":"https://cdn.example/a.mp3"}"#).unwrap();
+        assert!(!encode_online(&o).contains("cdn.example"));
+        let art = decode_online(r#"#VENUTA-ONLINE:{"provider":"p","track_id":"t","title":"T","artwork_url":"//i.ytimg.com/vi/x/hqdefault.jpg"}"#).unwrap();
+        assert_eq!(
+            art.artwork_url.as_deref(),
+            Some("https://i.ytimg.com/vi/x/hqdefault.jpg")
+        );
+        let bad_art = decode_online(r#"#VENUTA-ONLINE:{"provider":"p","track_id":"t","title":"T","artwork_url":"https://googlevideo.com/a.mp3"}"#).unwrap();
+        assert_eq!(bad_art.artwork_url, None);
+    }
+
+    #[test]
+    fn online_songs_keep_their_place_and_are_never_addresses() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        let want = WantEntry {
+            title: "Missing".into(),
+            artist: "Y".into(),
+            album: "Gone".into(),
+            ..Default::default()
+        };
+        let o = online("t-1", "Kesariya", "Arijit Singh");
+        let items = vec![
+            Item::track("A/01.flac"),
+            Item::online(o.clone()),
+            Item::wanted(want.clone()),
+        ];
+        write_items(root.path(), &lib, "Mixed", &items, false, None).unwrap();
+        let file = file_for(root.path(), "Mixed");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(&format!("{}\n", encode_online(&o))), "{text}");
+        assert!(
+            !text.contains("googlevideo.com") && !text.contains("mime=audio"),
+            "no stream addresses in a playlist: {text}"
+        );
+        assert!(
+            text.contains("artwork_url") && text.contains("i.ytimg.com"),
+            "cover picture may stay: {text}"
+        );
+
+        let (e, _) = read(root.path(), &lib, "Mixed").unwrap();
+        assert_eq!(e.len(), 3);
+        assert_eq!((e[0].path.as_str(), e[0].missing), ("A/01.flac", false));
+        assert!(e[1].missing && e[1].want.is_none());
+        assert_eq!(e[1].online.as_ref(), Some(&o));
+        assert_eq!(
+            (e[1].title.as_str(), e[1].artist.as_str()),
+            ("Kesariya", "Arijit Singh")
+        );
+        assert_eq!(e[2].want.as_ref(), Some(&want));
+
+        // Saved back as it was read (any edit in the app): the very same file.
+        let again: Vec<Item> = e.iter().map(PlaylistEntry::item).collect();
+        write_items(root.path(), &lib, "Mixed", &again, false, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+
+        // It plays, so it isn't a song to get: the want-list has only the unbound one.
+        let listed = list(root.path(), &lib);
+        assert_eq!((listed[0].missing, listed[0].online), (1, 1));
+        assert_eq!(listed[0].duration_ms, 200_000 + 201_000);
+        let now = wanted_now(root.path(), &lib);
+        assert_eq!(
+            now.iter().map(|w| w.album.as_str()).collect::<Vec<_>>(),
+            ["Gone"]
+        );
+
+        // An id that is really an address is never written: the song stays, as one to get.
+        let bad = OnlineEntry {
+            track_id: "https://cdn.example/a.mp3".into(),
+            ..o
+        };
+        write_items(root.path(), &lib, "Bad", &[Item::online(bad)], false, None).unwrap();
+        let text = std::fs::read_to_string(file_for(root.path(), "Bad")).unwrap();
+        assert!(
+            !text.contains("://") && !text.contains(ONLINE_PLAYLIST_TAG),
+            "{text}"
+        );
+        let (e, _) = read(root.path(), &lib, "Bad").unwrap();
+        assert_eq!(e[0].want.as_ref().unwrap().title, "Kesariya");
+    }
+
+    #[test]
+    fn your_own_file_plays_first_and_online_fills_in() {
+        let root = tempfile::tempdir().unwrap();
+        let path = "A/01 - Kesariya.flac";
+        std::fs::create_dir_all(root.path().join("A")).unwrap();
+        std::fs::write(root.path().join(path), b"flac").unwrap();
+        let mut have = song(1, path, "Kesariya", "Arijit Singh", "Brahmastra", 268_000);
+        have.tags.insert("ISRC".into(), vec!["INZ032201234".into()]);
+        let lib = library(vec![have]);
+        let mine = OnlineEntry {
+            isrc: Some("INZ032201234".into()),
+            ..online("t-1", "Kesariya (From \"Brahmastra\")", "Arijit Singh")
+        };
+        let other = online("t-2", "Not Here", "Someone");
+        let items = vec![
+            Item::online(mine.clone()),
+            Item::wanted(WantEntry {
+                title: "To get".into(),
+                ..Default::default()
+            }),
+            Item::online(other.clone()),
+        ];
+        write_items(root.path(), &lib, "Hybrid", &items, false, None).unwrap();
+        let (e, _) = read(root.path(), &lib, "Hybrid").unwrap();
+        // The library has the first one: it is that file, and keeps its online id.
+        assert_eq!((e[0].path.as_str(), e[0].missing), (path, false));
+        assert_eq!(e[0].online.as_ref(), Some(&mine));
+
+        let p = playables(root.path(), &e);
+        assert_eq!(p.len(), 2, "the song to get is left out; the rest play on");
+        assert_eq!(p[0].id, PlayableId::Local { path: path.into() });
+        assert_eq!(p[0].availability, Some(Availability::LocalPreferred));
+        assert_eq!(
+            p[0].local_file.as_deref(),
+            Some(root.path().join(path).as_path())
+        );
+        assert_eq!(p[1].id, other.id());
+        assert_eq!(p[1].availability, Some(Availability::Online));
+        assert_eq!(p[1].local_file, None);
+
+        // The file goes away (still in the index): it plays online again, nothing breaks.
+        std::fs::remove_file(root.path().join(path)).unwrap();
+        let p = playables(root.path(), &e);
+        assert_eq!(p[0].id, mine.id());
+        assert_eq!(p[0].availability, Some(Availability::Online));
+
+        // Saved, it stays an online id (the file is found again on each read).
+        let again: Vec<Item> = e.iter().map(PlaylistEntry::item).collect();
+        assert_eq!(again[0].online.as_ref(), Some(&mine));
+        assert_eq!(again[0].path, None);
+    }
+
+    #[test]
+    fn a_catalog_track_round_trips_and_resolves_only_when_played() {
+        use media_access::{CancellationToken, FakeMediaAccess, MediaAccess, PageRequest};
+        let access = FakeMediaAccess::with_in_memory_fixture();
+        let cancel = CancellationToken::default();
+        let found = access
+            .search_tracks("Night", &PageRequest::default(), &cancel)
+            .unwrap()
+            .items
+            .remove(0);
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![]);
+        let items = [Item::online(OnlineEntry::from_remote(&found))];
+        write_items(root.path(), &lib, "Online", &items, false, None).unwrap();
+        let text = std::fs::read_to_string(file_for(root.path(), "Online")).unwrap();
+        assert!(!text.contains(access.fixture_url()), "{text}");
+        assert!(!text.contains("://"), "{text}");
+
+        let (e, _) = read(root.path(), &lib, "Online").unwrap();
+        let p = playables(root.path(), &e);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].id, found.playable_id());
+        assert_eq!(p[0].title, found.title);
+        // The stream is resolved from the stable id at play time, and only then.
+        let PlayableId::Online { track_id, .. } = &p[0].id else {
+            panic!("online")
+        };
+        let audio = access.resolve_audio(track_id, &cancel).unwrap();
+        assert_eq!(audio.url, access.fixture_url());
+    }
+
+    #[test]
+    fn adding_skips_songs_already_there_by_file_or_online_id() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        let o = online("t-1", "Kesariya", "Arijit Singh");
+        // A new playlist, mixed, in the order given.
+        let n = add(
+            root.path(),
+            &lib,
+            "Mix",
+            &[Item::online(o.clone()), Item::track("A/01.flac")],
+        )
+        .unwrap();
+        assert_eq!(n, 2);
+        // Again, with the same song online under fresh metadata, a duplicate in the same call,
+        // an id that is an address, and one new online song.
+        let renamed = OnlineEntry {
+            title: "Kesariya (Live)".into(),
+            ..o.clone()
+        };
+        let bad = online("https://cdn.example/a.mp3", "Bad", "Y");
+        let new = online("t-2", "Two", "Y");
+        let n = add(
+            root.path(),
+            &lib,
+            "Mix",
+            &[
+                Item::online(renamed),
+                Item::track("A/01.flac"),
+                Item::online(bad),
+                Item::online(new.clone()),
+                Item::online(new.clone()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        let (e, _) = read(root.path(), &lib, "Mix").unwrap();
+        assert_eq!(e.len(), 3);
+        assert_eq!(e[0].online.as_ref(), Some(&o));
+        assert_eq!(e[1].path, "A/01.flac");
+        assert_eq!(e[2].online.as_ref(), Some(&new));
+        let text = std::fs::read_to_string(file_for(root.path(), "Mix")).unwrap();
+        // Cover pictures may stay; stream hosts and bare media addresses must not.
+        assert!(
+            !text.contains("cdn.example")
+                && !text.contains("googlevideo.com")
+                && !text.contains("mime=audio"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("\"track_id\":\"https://"),
+            "track ids must never be addresses: {text}"
+        );
     }
 }

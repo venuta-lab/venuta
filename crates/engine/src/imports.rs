@@ -10,7 +10,8 @@
 //! - `.m3u`, `.m3u8` and `.pls` from any player.
 
 use crate::library::Library;
-use crate::playlists::{self, Foreign, Grade, Item, Matcher, WantGroup, WantedAlbum};
+use crate::playlists::{self, Foreign, Grade, Item, Matcher, OnlineEntry, WantGroup, WantedAlbum};
+use media_access::{CancellationToken, MediaAccess, PageRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -870,6 +871,9 @@ pub struct PreviewItem {
     pub found: Option<Candidate>,
     pub grade: Option<Grade>,
     pub why: String,
+    /// When not in the library: a stable online id (Takeout video id, or a catalog hit). Never a stream URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online: Option<OnlineEntry>,
 }
 
 /// One playlist as it would come in: every song with its match, ready for you to confirm.
@@ -886,7 +890,10 @@ pub struct PreviewPlaylist {
     pub items: Vec<PreviewItem>,
     pub exact: usize,
     pub close: usize,
+    /// Not in the library and not seeded as online either (true To get).
     pub missing: usize,
+    /// Not in the library, but will write as `#VENUTA-ONLINE:` (stable id).
+    pub online: usize,
 }
 
 /// A playlist you have that an incoming one updates, and what the update would do to it.
@@ -930,6 +937,9 @@ fn incoming_of(lib: &Library, items: &[Item]) -> Vec<Incoming> {
             for w in i.want.iter().chain(i.source.iter()) {
                 keys.extend(playlists::want_keys(w));
             }
+            if let Some(o) = &i.online {
+                keys.extend(playlists::online_keys(o));
+            }
             Incoming {
                 item: i.clone(),
                 keys,
@@ -970,9 +980,12 @@ fn merge(
         if let Some(t) = (!e.missing).then(|| by_path.get(e.path.as_str())).flatten() {
             k.extend(playlists::track_keys(t));
         }
+        if let Some(o) = &e.online {
+            k.extend(playlists::online_keys(o));
+        }
         if let Some(w) = &e.want {
             k.extend(playlists::want_keys(w));
-        } else if e.missing {
+        } else if e.missing && e.online.is_none() {
             k.extend(playlists::song_keys(None, &e.title, &e.artist, None));
         }
         k
@@ -1108,6 +1121,17 @@ pub fn preview(
     lib: &Library,
     lists: &[ForeignPlaylist],
 ) -> Vec<PreviewPlaylist> {
+    preview_with(library_root, lib, lists, None)
+}
+
+/// Like [`preview`], and for songs still missing after the library match, try a catalog hit
+/// (stable id only). `catalog` is optional so dry imports stay offline.
+pub fn preview_with(
+    library_root: &Path,
+    lib: &Library,
+    lists: &[ForeignPlaylist],
+    catalog: Option<&dyn MediaAccess>,
+) -> Vec<PreviewPlaylist> {
     let matcher = Matcher::new(lib);
     let have = playlists::list(library_root, lib);
     // A file that's already in the library is itself, whatever its tags say.
@@ -1120,6 +1144,7 @@ pub fn preview(
         .iter()
         .map(|t| (t.path.to_lowercase(), t))
         .collect();
+    let cancel = CancellationToken::default();
     lists
         .iter()
         .map(|l| {
@@ -1152,17 +1177,34 @@ pub fn preview(
                             }),
                             grade: Some(h.grade),
                             why: h.why,
+                            online: None,
                         },
-                        None => PreviewItem {
-                            foreign: f.clone(),
-                            found: None,
-                            grade: None,
-                            why: "Not in your library".into(),
-                        },
+                        None => {
+                            let online = f.online().or_else(|| {
+                                catalog.and_then(|a| catalog_online_for(a, f, &cancel))
+                            });
+                            let why = if online.is_some() {
+                                "Not in your library; plays from the online catalog".into()
+                            } else {
+                                "Not in your library".into()
+                            };
+                            PreviewItem {
+                                foreign: f.clone(),
+                                found: None,
+                                grade: None,
+                                why,
+                                online,
+                            }
+                        }
                     }
                 })
                 .collect();
             let count = |g: Option<Grade>| items.iter().filter(|i| i.grade == g).count();
+            let online_n = items.iter().filter(|i| i.found.is_none() && i.online.is_some()).count();
+            let missing = items
+                .iter()
+                .filter(|i| i.found.is_none() && i.online.is_none())
+                .count();
             let target = target_of(library_root, &have, l).and_then(|(name, linked)| {
                 let (entries, _) = playlists::read(library_root, lib, &name).ok()?;
                 let header = playlists::header_of(library_root, &name);
@@ -1195,23 +1237,88 @@ pub fn preview(
                 target,
                 exact: count(Some(Grade::Exact)),
                 close: count(Some(Grade::Close)),
-                missing: count(None),
+                missing,
+                online: online_n,
                 items,
             }
         })
         .collect()
 }
 
+/// A catalog track that is sure enough to write as online for this foreign song (stable id only).
+pub fn catalog_online_for(
+    access: &dyn MediaAccess,
+    f: &Foreign,
+    cancel: &CancellationToken,
+) -> Option<OnlineEntry> {
+    if let Some(o) = f.online() {
+        return Some(o);
+    }
+    let title = f.title.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let query = if f.artist.trim().is_empty() {
+        title.to_owned()
+    } else {
+        format!("{} {}", title, f.artist.trim())
+    };
+    let page = access
+        .search_tracks(&query, &PageRequest::new(5, None), cancel)
+        .ok()?;
+    let want_title = playlists::title_key(title);
+    if want_title.is_empty() {
+        return None;
+    }
+    let want_artists: HashSet<String> = crate::plan::split_names(&f.artist)
+        .iter()
+        .map(|a| crate::audit::name_key(a))
+        .filter(|a| !a.is_empty())
+        .collect();
+    page.items.into_iter().find_map(|t| {
+        if playlists::title_key(&t.title) != want_title {
+            return None;
+        }
+        if !want_artists.is_empty() {
+            let hit = t
+                .artists
+                .iter()
+                .any(|a| want_artists.contains(&crate::audit::name_key(a)));
+            if !hit {
+                return None;
+            }
+        }
+        if let (Some(a), Some(b)) = (f.duration_ms, t.duration_ms)
+            && a.abs_diff(b) > 5_000
+        {
+            return None;
+        }
+        let entry = OnlineEntry::from_remote(&t);
+        entry.is_stable().then_some(entry).filter(|_| {
+            // from_remote already drops stream-shaped artwork; track_id must not be an address.
+            !t.track_id.contains("://") && !t.provider.contains("://")
+        })
+    })
+}
+
 impl PreviewItem {
     /// The line this song becomes when every close match is taken.
+    /// Unmatched songs with a catalog/Takeout id become online; otherwise they stay wanted.
     pub fn item(&self) -> Item {
         match &self.found {
             Some(c) => Item {
                 path: Some(c.path.clone()),
                 want: None,
                 source: Some(self.foreign.want()),
+                online: None,
             },
-            None => Item::wanted(self.foreign.want()),
+            None => {
+                if let Some(o) = self.online.clone().or_else(|| self.foreign.online()) {
+                    Item::online(o)
+                } else {
+                    Item::wanted(self.foreign.want())
+                }
+            }
         }
     }
 }
@@ -1236,8 +1343,13 @@ pub struct Choice {
 pub struct Written {
     /// The name it was saved under (a number is added when the name was taken).
     pub name: String,
+    /// Songs matched to a library file.
     pub songs: usize,
+    /// Songs still waiting on To get.
     pub wanted: usize,
+    /// Songs written as online (stable id, playable without a file).
+    #[serde(default)]
+    pub online: usize,
     /// It updated a playlist you had: what changed, and the copy kept of how it was.
     pub updated: bool,
     pub added: usize,
@@ -1283,6 +1395,7 @@ pub fn apply(
                 name: t.to_owned(),
                 songs: m.items.iter().filter(|i| i.path.is_some()).count(),
                 wanted: m.items.iter().filter(|i| i.want.is_some()).count(),
+                online: m.items.iter().filter(|i| i.online.is_some() && i.path.is_none()).count(),
                 updated: true,
                 added: m.added,
                 removed: m.removed,
@@ -1314,6 +1427,7 @@ pub fn apply(
                 name: name.clone(),
                 songs: c.items.iter().filter(|i| i.path.is_some()).count(),
                 wanted: c.items.iter().filter(|i| i.want.is_some()).count(),
+                online: c.items.iter().filter(|i| i.online.is_some() && i.path.is_none()).count(),
                 updated: false,
                 added: c.items.len(),
                 removed: 0,
@@ -1449,7 +1563,7 @@ mod tests {
 
     #[test]
     fn takeout_csv_skips_its_header_block() {
-        let text = "Playlist Id,Channel Id,Time Created\nPL1,UC1,2024\n\nVideo Id,Time Added\nabc123,2024\ndef456,2024\n";
+        let text = "Playlist Id,Channel Id,Time Created\nPL1,UC1,2024\n\nVideo Id,Time Added\ndQw4w9WgXcQ,2024\njNQXAC9IVRw,2024\n";
         let lists = csv_playlists(text, "Chill-videos").unwrap();
         assert_eq!(lists[0].name, "Chill");
         assert_eq!(lists[0].source, "YouTube Music");
@@ -1459,7 +1573,217 @@ mod tests {
                 .iter()
                 .map(|t| t.youtube.clone().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["abc123", "def456"]
+            vec!["dQw4w9WgXcQ", "jNQXAC9IVRw"]
+        );
+    }
+
+    #[test]
+    fn unmatched_takeout_becomes_online_not_want() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library {
+            tracks: vec![],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+        };
+        let lists = vec![ForeignPlaylist {
+            name: "Chill".into(),
+            source: "YouTube Music".into(),
+            id: None,
+            tracks: vec![
+                Foreign {
+                    title: "Tum Hi Ho".into(),
+                    artist: "Arijit Singh".into(),
+                    youtube: Some("dQw4w9WgXcQ".into()),
+                    ..Default::default()
+                },
+                Foreign {
+                    title: "No Id Song".into(),
+                    artist: "Someone".into(),
+                    album: "Gone".into(),
+                    ..Default::default()
+                },
+                Foreign {
+                    // Address-shaped ids must never become online.
+                    title: "Bad".into(),
+                    youtube: Some("https://cdn.example/a.mp3".into()),
+                    ..Default::default()
+                },
+            ],
+        }];
+        let preview = preview(root.path(), &lib, &lists);
+        assert_eq!(preview[0].online, 1);
+        assert_eq!(preview[0].missing, 2);
+        let items: Vec<_> = preview[0].items.iter().map(PreviewItem::item).collect();
+        assert!(items[0].online.is_some());
+        assert_eq!(items[0].online.as_ref().unwrap().track_id, "dQw4w9WgXcQ");
+        assert_eq!(items[0].online.as_ref().unwrap().provider, "remote_catalog");
+        assert!(items[0].want.is_none());
+        assert!(items[1].want.is_some() && items[1].online.is_none());
+        assert!(items[2].want.is_some() && items[2].online.is_none());
+
+        let choice = Choice {
+            name: "Chill".into(),
+            source: "YouTube Music".into(),
+            items,
+            ..Default::default()
+        };
+        let (written, wanted) = apply(root.path(), &lib, &[choice], "2026-10-14").unwrap();
+        assert_eq!(written[0].online, 1);
+        assert_eq!(written[0].wanted, 2);
+        assert_eq!(written[0].songs, 0);
+        let text = std::fs::read_to_string(playlists::folder(root.path()).join("Chill.m3u8")).unwrap();
+        assert!(text.contains("#VENUTA-ONLINE:"), "{text}");
+        assert!(text.contains("dQw4w9WgXcQ"), "{text}");
+        assert!(!text.contains("://cdn.example"), "{text}");
+        assert!(!text.contains("googlevideo"), "{text}");
+        // Cover picture URLs are allowed; stream hosts are not.
+        assert!(text.contains("i.ytimg.com"), "{text}");
+        let (e, _) = playlists::read(root.path(), &lib, "Chill").unwrap();
+        assert_eq!(e[0].online.as_ref().map(|o| o.track_id.as_str()), Some("dQw4w9WgXcQ"));
+        assert!(e[1].want.is_some());
+        assert_eq!(wanted.len(), 1);
+        assert_eq!(wanted[0].album, "Gone");
+    }
+
+    #[test]
+    fn catalog_online_for_uses_youtube_id_or_strict_search_hit() {
+        use media_access::{
+            AccessError, AccessErrorKind, EphemeralAudio, FakeMediaAccess, MediaAccess, Page,
+            RemoteAlbum, RemoteArtist, RemoteTrack,
+        };
+
+        // Known Takeout id: no search needed.
+        let access = FakeMediaAccess::with_in_memory_fixture();
+        let from_id = catalog_online_for(
+            &access,
+            &Foreign {
+                title: "Anything".into(),
+                youtube: Some("dQw4w9WgXcQ".into()),
+                ..Default::default()
+            },
+            &CancellationToken::default(),
+        )
+        .expect("youtube id");
+        assert_eq!(from_id.track_id, "dQw4w9WgXcQ");
+        assert_eq!(from_id.provider, "remote_catalog");
+
+        struct ExactCatalog;
+        impl MediaAccess for ExactCatalog {
+            fn search_tracks(
+                &self,
+                query: &str,
+                page: &PageRequest,
+                cancel: &CancellationToken,
+            ) -> Result<Page<RemoteTrack>, AccessError> {
+                if cancel.is_cancelled() {
+                    return Err(AccessError::new(AccessErrorKind::Cancelled, "cancelled"));
+                }
+                let track = RemoteTrack {
+                    provider: "remote_catalog".into(),
+                    track_id: "hit-1".into(),
+                    title: if query.contains("Kesariya") {
+                        "Kesariya".into()
+                    } else {
+                        format!("{query} other")
+                    },
+                    artists: vec!["Arijit Singh".into()],
+                    album: Some("Brahmastra".into()),
+                    album_id: None,
+                    duration_ms: Some(268_000),
+                    artwork_url: None,
+                    isrc: None,
+                };
+                Ok(Page {
+                    items: vec![track].into_iter().take(page.limit).collect(),
+                    next_cursor: None,
+                })
+            }
+            fn search_albums(
+                &self,
+                _: &str,
+                _: &PageRequest,
+                _: &CancellationToken,
+            ) -> Result<Page<RemoteAlbum>, AccessError> {
+                Ok(Page {
+                    items: vec![],
+                    next_cursor: None,
+                })
+            }
+            fn search_artists(
+                &self,
+                _: &str,
+                _: &PageRequest,
+                _: &CancellationToken,
+            ) -> Result<Page<RemoteArtist>, AccessError> {
+                Ok(Page {
+                    items: vec![],
+                    next_cursor: None,
+                })
+            }
+            fn album_tracks(
+                &self,
+                _: &str,
+                _: &PageRequest,
+                _: &CancellationToken,
+            ) -> Result<Page<RemoteTrack>, AccessError> {
+                Ok(Page {
+                    items: vec![],
+                    next_cursor: None,
+                })
+            }
+            fn playlist_tracks(
+                &self,
+                _: &str,
+                _: &PageRequest,
+                _: &CancellationToken,
+            ) -> Result<Page<RemoteTrack>, AccessError> {
+                Ok(Page {
+                    items: vec![],
+                    next_cursor: None,
+                })
+            }
+            fn resolve_audio(
+                &self,
+                _: &str,
+                _: &CancellationToken,
+            ) -> Result<EphemeralAudio, AccessError> {
+                Err(AccessError::new(AccessErrorKind::Unsupported, "n/a"))
+            }
+        }
+
+        let cat = ExactCatalog;
+        let hit = catalog_online_for(
+            &cat,
+            &Foreign {
+                title: "Kesariya".into(),
+                artist: "Arijit Singh".into(),
+                duration_ms: Some(268_000),
+                ..Default::default()
+            },
+            &CancellationToken::default(),
+        )
+        .expect("strict title+artist hit");
+        assert_eq!(hit.track_id, "hit-1");
+        assert!(!format!("{hit:?}").contains("://"));
+
+        assert!(
+            catalog_online_for(
+                &cat,
+                &Foreign {
+                    title: "Kesariya".into(),
+                    artist: "Someone Else".into(),
+                    ..Default::default()
+                },
+                &CancellationToken::default(),
+            )
+            .is_none(),
+            "wrong artist stays WANT"
         );
     }
 
@@ -1652,6 +1976,7 @@ mod tests {
                         path: Some(h.track.path.clone()),
                         want: None,
                         source: Some(f.want()),
+                        online: None,
                     },
                     None => Item::wanted(f.want()),
                 }

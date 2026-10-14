@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
   checkHome,
@@ -8,6 +8,9 @@ import {
   engineVersion,
   getSettings,
   inApp,
+  onlineCatalogStatus,
+  onlineEnsureStreamTool,
+  type OnlineCatalogStatus,
   setSettings,
   type Settings,
 } from '../lib/engine'
@@ -17,6 +20,7 @@ import { Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
+import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { takeSettingsSection, type SettingsPage } from './settingsPage'
@@ -616,15 +620,127 @@ function KeyField(props: {
   )
 }
 
+/** The online catalog's state in words: what works now, and the one thing to do when it doesn't. */
+const CATALOG_STATES: Record<string, { label: string; tone: 'good' | 'problem' | 'quiet'; line: string }> = {
+  live: { label: 'Live', tone: 'good', line: 'Search and full-length play are on.' },
+  live_no_tool: {
+    label: 'Stream tool missing',
+    tone: 'problem',
+    line: 'Online search works, but songs can’t play in full until the stream tool is installed.',
+  },
+  off: {
+    label: 'Off',
+    tone: 'quiet',
+    line: 'The online catalog is forced off in this session (test mode), so online search shows a few sample songs only. Songs in your library play as always.',
+  },
+  fixture_only: {
+    label: 'Test catalog',
+    tone: 'quiet',
+    line: 'This build has a small test catalog only: a few sample songs, no real search.',
+  },
+}
+
+/** A command to copy, with a button that copies it. */
+function Command(props: { text: string }) {
+  return (
+    <span className="mt-1.5 flex max-w-full items-center gap-2">
+      <code className="min-w-0 truncate rounded-lg bg-ink/[0.06] px-2 py-1 text-[12.5px] text-ink/80">{props.text}</code>
+      <button
+        onClick={() => void navigator.clipboard.writeText(props.text).then(() => notify('Copied.'))}
+        className="btn-ghost btn-sm shrink-0"
+      >
+        Copy
+      </button>
+    </span>
+  )
+}
+
+/** Playback catalog health: Live / Off / stream tool missing, and how to fix what isn't working. */
+function CatalogHealth() {
+  const [catalog, setCatalog] = useState<OnlineCatalogStatus | null>(null)
+  const [failed, setFailed] = useState(false)
+  const check = useCallback(() => {
+    onlineCatalogStatus()
+      .then((c) => {
+        setCatalog(c)
+        setFailed(false)
+      })
+      .catch(() => setFailed(true))
+  }, [])
+  useEffect(check, [check])
+  const state = catalog ? (CATALOG_STATES[catalog.mode] ?? CATALOG_STATES.off) : null
+  const tone = state?.tone === 'good' ? 'bg-good' : state?.tone === 'problem' ? 'bg-fix' : 'bg-ink/35'
+  return (
+    <div className="border-b border-edge py-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="min-w-[220px] flex-1">
+          <div className="flex items-center gap-2 text-[14px] font-medium">
+            <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
+            {failed ? 'Couldn’t read the online catalog’s state' : state ? state.label : 'Checking…'}
+          </div>
+          {state && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">{state.line}</div>}
+        </div>
+        <button onClick={check} className="btn-ghost btn-sm">
+          Check again
+        </button>
+      </div>
+      {catalog?.mode === 'live' && catalog.stream_tool_kind && (
+        <p className="mt-2 text-[12px] text-ink/45">
+          Stream tool: {catalog.stream_tool_kind}
+          {catalog.stream_tool_detail ? ` (${catalog.stream_tool_detail})` : ''}
+        </p>
+      )}
+      {catalog?.mode === 'live_no_tool' && (
+        <div className="mt-3 max-w-[64ch] rounded-xl bg-ink/[0.04] px-3.5 py-3 text-[12.5px] leading-relaxed text-ink/65">
+          <p className="mb-2">Venuta can download the stream tool for you (no Python required):</p>
+          <button
+            className="btn-primary btn-sm"
+            onClick={() =>
+              void onlineEnsureStreamTool()
+                .then((p) => {
+                  notify(p ? `Stream tool ready (${p}).` : 'Stream tool ready.')
+                  check()
+                })
+                .catch((e) => notify(e instanceof Error ? e.message : String(e)))
+            }
+          >
+            Install stream tool
+          </button>
+          <p className="mt-3 text-ink/50">Or install yt-dlp yourself:</p>
+          <Command text="python -m pip install -U yt-dlp" />
+          <p className="mt-2 text-ink/50">
+            Optional: set <code className="rounded bg-ink/[0.06] px-1">VENUTA_STREAM_RESOLVER</code> to a yt-dlp.exe path.
+          </p>
+        </div>
+      )}
+      {catalog?.mode === 'off' && (
+        <div className="mt-3 max-w-[64ch] text-[12.5px] leading-relaxed text-ink/50">
+          <p>
+            Live catalog is the normal mode. This session opted into fixtures only. Unset{" "}
+            <code className="rounded bg-ink/[0.06] px-1">VENUTA_FAKE_CATALOG</code> and restart, or start:
+          </p>
+          <Command text="pwsh -File scripts/hybrid-dev.ps1" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Online() {
   const { s, save, saved } = useSettings()
   return (
     <div>
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Online sources</h2>
       <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
-        Looking up details online uses MusicBrainz, Apple's catalogue, Deezer and LRCLIB, which need no key. The keys
-        below are optional and add more. They are kept in your library's own settings (its .venuta folder), on this
-        computer, and are never sent anywhere but the service they belong to.
+        The <strong className="font-medium text-ink/70">online catalog</strong> lets you search and play songs you don't
+        have as files yet: the same player, queue and playlists as your own music, and your file always plays first when you
+        have the song. Venuta shows no ads, and playlists keep only each song's id, never an address to stream it from.
+      </p>
+      <h3 className="mt-6 text-[15px] font-semibold">Playback catalog</h3>
+      <CatalogHealth />
+      <h3 className="mt-8 text-[15px] font-semibold">Looking things up</h3>
+      <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
+        Tags, covers and lyrics for your files come from these sources. Optional keys stay on this computer.
       </p>
       <h3 className="mt-6 text-[15px] font-semibold">Accounts</h3>
       <SpotifyAccount />

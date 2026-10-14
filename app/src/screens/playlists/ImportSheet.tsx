@@ -268,13 +268,15 @@ export function ImportSheet(props: {
   const chosen = picks.map((p, i) => ({ p, l: lists[i] })).filter((x) => x.p.include && x.l)
   const totals = useMemo(() => {
     let found = 0
+    let online = 0
     let wanted = 0
     for (const { p, l } of chosen)
       l.items.forEach((it, i) => {
         if (it.found && (it.grade === 'exact' || !p.rejected.has(i))) found++
+        else if (it.online) online++
         else wanted++
       })
-    return { found, wanted }
+    return { found, online, wanted }
   }, [chosen])
 
   async function apply() {
@@ -287,9 +289,9 @@ export function ImportSheet(props: {
       items: l.items.map((it, i): PlaylistItem =>
         it.found && (it.grade === 'exact' || !p.rejected.has(i))
           ? { path: it.found.path, source: wantOf(it) }
-          : {
-              want: wantOf(it),
-            },
+          : it.online
+            ? { online: it.online }
+            : { want: wantOf(it) },
       ),
     }))
     setStep({ at: 'saving' })
@@ -497,7 +499,7 @@ export function ImportSheet(props: {
             <div className="sticky bottom-4 z-10 mt-8 flex flex-wrap items-center gap-3 rounded-[20px] bg-[var(--popover)] p-3 pl-5 shadow-[0_18px_40px_-16px_rgb(0_0_0/0.6),inset_0_0_0_1px_var(--edge)] backdrop-blur-xl">
               <p className="min-w-0 flex-1 text-[13px] text-ink/70">
                 {chosen.length
-                  ? `${plural(chosen.length, 'playlist')}: ${plural(totals.found, 'song')} from your library${totals.wanted ? `, ${totals.wanted} to get` : ''}.`
+                  ? `${plural(chosen.length, 'playlist')}: ${plural(totals.found, 'song')} from your library${totals.online ? `, ${totals.online} online` : ''}${totals.wanted ? `, ${totals.wanted} to get` : ''}.`
                   : 'Include a playlist to import it.'}
               </p>
               <button onClick={restart} className="btn">
@@ -528,7 +530,7 @@ export function ImportSheet(props: {
                       <span className="block text-[12.5px] text-ink/55">
                         {back
                           ? 'Put back as it was before.'
-                          : `${w.updated ? `Updated: ${w.added ? `${plural(w.added, 'song')} added` : 'no songs added'}${w.removed ? `, ${w.removed} dropped` : ''}. ` : ''}${plural(w.songs, 'song')} in your library${w.wanted ? `, ${w.wanted} waiting until you have them` : ''}.`}
+                          : `${w.updated ? `Updated: ${w.added ? `${plural(w.added, 'song')} added` : 'no songs added'}${w.removed ? `, ${w.removed} dropped` : ''}. ` : ''}${plural(w.songs, 'song')} in your library${w.online ? `, ${w.online} online` : ''}${w.wanted ? `, ${w.wanted} waiting until you have them` : ''}.`}
                       </span>
                     </span>
                     {w.updated && w.copy && !back && (
@@ -661,6 +663,7 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
     .filter(({ it }) => (show === 'check' ? it.grade === 'close' : show === 'found' ? it.grade === 'exact' : !it.found))
   const shown = more ? rows : rows.slice(0, 150)
   const accepted = l.close - [...pick.rejected].filter((i) => l.items[i]?.grade === 'close').length
+  const onlineN = l.online ?? l.items.filter((it) => !it.found && it.online).length
   const toGet = l.missing + (l.close - accepted)
   const t = l.target
   const nameClash = l.exists && pick.include && !t
@@ -681,6 +684,7 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
           <span className="rounded-full bg-ink/[0.07] px-2.5 py-1 text-ink/65">{l.source}</span>
           <span className="rounded-full bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] px-2.5 py-1 font-medium text-accent-ink">{l.exact} found</span>
           {l.close > 0 && <span className="rounded-full bg-ink/[0.07] px-2.5 py-1 text-ink/70">{l.close} close {l.close === 1 ? 'match' : 'matches'}</span>}
+          {onlineN > 0 && <span className="rounded-full bg-ink/[0.07] px-2.5 py-1 text-ink/70">{onlineN} online</span>}
           {toGet > 0 && <span className="rounded-full bg-ink/[0.07] px-2.5 py-1 text-ink/55">{toGet} to get</span>}
         </span>
         <button
@@ -754,7 +758,11 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
                 options={[
                   { value: 'check', label: `Close matches ${l.close}`, disabled: !l.close },
                   { value: 'found', label: `Found ${l.exact}`, disabled: !l.exact },
-                  { value: 'get', label: `Not in your library ${l.missing}`, disabled: !l.missing },
+                  {
+                    value: 'get',
+                    label: `Not in your library ${l.missing + onlineN}`,
+                    disabled: !(l.missing + onlineN),
+                  },
                 ]}
               />
               {show === 'check' && l.close > 0 && (
@@ -809,6 +817,11 @@ function SongRow(props: { item: PreviewItem; n: number; rejected: boolean; onTog
             </span>
             {grade === 'close' && why && <span className="block truncate text-[12px] text-accent-ink">{why}</span>}
           </>
+        ) : props.item.online ? (
+          <span className="text-[12.5px] text-ink/55">
+            Online catalog
+            {props.item.online.title ? ` · ${props.item.online.title}` : ''}
+          </span>
         ) : (
           <span className="text-[12.5px] text-ink/45">Not in your library; waits on To get</span>
         )}

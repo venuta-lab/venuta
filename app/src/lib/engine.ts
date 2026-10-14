@@ -700,7 +700,10 @@ export interface PlaylistSummary {
   file: string
   smart: boolean
   tracks: number
+  /** Songs still to get (not in the library, not online). */
   missing: number
+  /** Songs not in the library that play online. */
+  online: number
   /** "Spotify 2026-10-13": where it came from, if imported. */
   source: string | null
   /** Which playlist at the source ("spotify:…", "apple:Hindi"), when known: it can be updated from there. */
@@ -725,6 +728,74 @@ export interface WantEntry {
   not?: string[]
 }
 
+/** Whether a song plays from your library or from the online catalog ('local_preferred': an
+ *  online song you have, playing from your file). */
+export type Availability = 'local' | 'online' | 'local_preferred'
+
+/** A stable id for a song. Local ones use their library path; online ones a provider id.
+ *  Stream URLs never appear here. */
+export type PlayableId = { kind: 'local'; path: string } | { kind: 'online'; provider: string; track_id: string }
+
+/** A song ready to play, local first (see `playlistQueue`). */
+export interface Playable {
+  id: PlayableId
+  title: string
+  artists: string[]
+  album: string | null
+  duration_ms: number | null
+  artwork_url: string | null
+  availability: Availability | null
+}
+
+/** A song in the online catalog, as a search finds it. `artwork_url` is a picture, not audio. */
+export interface OnlineTrack {
+  provider: string
+  track_id: string
+  title: string
+  artists: string[]
+  album: string | null
+  album_id: string | null
+  duration_ms: number | null
+  artwork_url: string | null
+  isrc: string | null
+}
+
+export interface OnlineAlbum {
+  provider: string
+  album_id: string
+  title: string
+  artists: string[]
+  track_count: number | null
+  release_date: string | null
+  artwork_url: string | null
+}
+
+export interface OnlineArtist {
+  provider: string
+  artist_id: string
+  name: string
+  artwork_url: string | null
+}
+
+export interface OnlineResults {
+  tracks: OnlineTrack[]
+  albums: OnlineAlbum[]
+  artists: OnlineArtist[]
+}
+
+/** An online-catalog song a playlist holds by its stable id (never a stream address).
+ *  `artwork_url` is an optional cover picture only. */
+export interface OnlineEntry {
+  provider: string
+  track_id: string
+  title: string
+  artists?: string[]
+  album?: string
+  duration_ms?: number
+  isrc?: string
+  artwork_url?: string
+}
+
 /** A library song that may be one a playlist waits for. */
 export interface Maybe {
   path: string
@@ -745,10 +816,12 @@ export interface PlaylistEntry {
   missing: boolean
   want?: WantEntry
   maybe?: Maybe
+  /** An online song: plays online while `missing`, from `path` when the library has it. */
+  online?: OnlineEntry
 }
 
-/** One line of a playlist to save: a library song, or one still wanted. */
-export type PlaylistItem = { path: string; source?: WantEntry } | { want: WantEntry }
+/** One line of a playlist to save: a library song, one still wanted, or one online. */
+export type PlaylistItem = { path: string; source?: WantEntry } | { want: WantEntry } | { online: OnlineEntry }
 
 /** A song from elsewhere, as an import read it. */
 export interface ForeignSong {
@@ -774,6 +847,8 @@ export interface PreviewItem {
   found: MatchCandidate | null
   grade: 'exact' | 'close' | null
   why: string
+  /** Stable online id when not in the library (Takeout / catalog hit). Never a stream URL. */
+  online?: OnlineEntry | null
 }
 
 /** A playlist you have that an import updates, and what the update does to it. */
@@ -804,7 +879,10 @@ export interface PreviewPlaylist {
   items: PreviewItem[]
   exact: number
   close: number
+  /** Not in library and not online — true To get. */
   missing: number
+  /** Not in library; will write as online (stable id). */
+  online: number
 }
 
 export interface ImportChoice {
@@ -821,6 +899,8 @@ export interface ImportWritten {
   name: string
   songs: number
   wanted: number
+  /** Songs written as online (stable id). */
+  online?: number
   /** It updated a playlist you had: what changed, and the copy kept of how it was. */
   updated: boolean
   added: number
@@ -889,7 +969,64 @@ export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_
 export const playlistSaveItems = (root: string, name: string, items: PlaylistItem[]) =>
   invoke<void>('playlist_save_items', { root, name, items })
 /** Adds songs (skipping ones already in it); makes the playlist if it's new. Returns how many were added. */
-export const playlistAdd = (root: string, name: string, paths: string[]) => invoke<number>('playlist_add', { root, name, paths })
+export const playlistAdd = (root: string, name: string, items: PlaylistItem[]) => invoke<number>('playlist_add', { root, name, items })
+/** A playlist as the player gets it: each song from your file when it's here, else online; songs to get left out. */
+export const playlistQueue = (root: string, name: string) => invoke<Playable[]>('playlist_queue', { root, name })
+
+/** Songs, albums and artists in the online catalog for these words (empty outside the app). */
+export const onlineSearch = (query: string) =>
+  inApp() ? invoke<OnlineResults>('online_search', { query }) : Promise.resolve<OnlineResults>({ tracks: [], albums: [], artists: [] })
+/** An online album's songs, in order. */
+export const onlineAlbumTracks = (albumId: string) => invoke<OnlineTrack[]>('online_album_tracks', { albumId })
+
+/** Synced lyrics for an online song (LRCLIB by title/artist). Display only; not saved. */
+export interface OnlineLyrics {
+  lines: [number, string][]
+  text: string
+}
+export const onlineLyrics = (title: string, artist: string, album: string, durationMs: number) =>
+  inApp()
+    ? invoke<OnlineLyrics>('online_lyrics', {
+        title,
+        artist,
+        album,
+        durationMs,
+      }).then((r) => ({
+        lines: (r.lines ?? []).map((pair) => {
+          const a = pair as unknown as number[] | [number, string]
+          return [Number(a[0]), String(a[1] ?? '')] as [number, string]
+        }),
+        text: r.text ?? '',
+      }))
+    : Promise.resolve<OnlineLyrics>({ lines: [], text: '' })
+
+/** Playback catalog health for Settings (never includes stream URLs). */
+export interface OnlineCatalogStatus {
+  live_env: boolean
+  live_provider_built: boolean
+  stream_tool_available: boolean
+  stream_tool_kind: string
+  stream_tool_detail: string
+  summary: string
+  /** off | live | live_no_tool | fixture_only */
+  mode: string
+}
+/** Download/install the stream tool (yt-dlp) into the user data folder if missing. */
+export const onlineEnsureStreamTool = () =>
+  inApp() ? invoke<string>('online_ensure_stream_tool') : Promise.resolve('')
+
+export const onlineCatalogStatus = () =>
+  inApp()
+    ? invoke<OnlineCatalogStatus>('online_catalog_status')
+    : Promise.resolve<OnlineCatalogStatus>({
+        live_env: false,
+        live_provider_built: false,
+        stream_tool_available: false,
+        stream_tool_kind: '',
+        stream_tool_detail: '',
+        summary: 'Open the desktop app to see online catalog status.',
+        mode: 'off',
+      })
 export const playlistDuplicate = (root: string, name: string) => invoke<string>('playlist_duplicate', { root, name })
 export const playlistExport = (root: string, name: string, to: string) => invoke<number>('playlist_export', { root, name, to })
 export const playlistRefind = (root: string, name: string) => invoke<number>('playlist_refind', { root, name })

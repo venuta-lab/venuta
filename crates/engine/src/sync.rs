@@ -2478,6 +2478,7 @@ mod tests {
             missing,
             want: None,
             maybe: None,
+            online: None,
         }
     }
 

@@ -17,7 +17,7 @@ import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
 import { confirmAsk } from '../components/Confirm'
 import { playlistsChanged } from '../components/AddToPlaylist'
-import { playableSongs, plural } from './playlists/common'
+import { playlistSongs, plural } from './playlists/common'
 import type { ImportStart } from './playlists/ImportSheet'
 import { PlaylistPage } from './playlists/PlaylistPage'
 import { PlaylistsHome, type PlaylistMenu } from './playlists/PlaylistsHome'
@@ -152,7 +152,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
   /** A smart playlist's file may not be written yet; reading its songs writes it. */
   const ready = async (p: PlaylistSummary) => {
     const rule = ruleOf(p.name)
-    if (rule) await playableSongs(root, p.name, rule)
+    if (rule) await playlistSongs(root, p.name, rule)
   }
 
   const menu: PlaylistMenu = {

@@ -25,6 +25,7 @@ mod desktop;
 mod libcache;
 mod listening;
 mod lyric_windows;
+mod online;
 mod playback;
 mod theme_packs;
 mod updates;
@@ -1805,32 +1806,31 @@ async fn playlist_save_items(
     .await
 }
 
-/// Add songs to a playlist (making it if it's new), skipping ones already in it. Returns how
-/// many were added.
+/// Add songs to a playlist (making it if it's new), skipping ones already in it: library songs
+/// by path, online songs by their stable id. Returns how many were added.
 #[tauri::command]
-async fn playlist_add(root: String, name: String, paths: Vec<String>) -> CmdResult<usize> {
+async fn playlist_add(
+    root: String,
+    name: String,
+    items: Vec<engine::playlists::Item>,
+) -> CmdResult<usize> {
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let (_, lib) = load_lib(&rootp)?;
-        let entries = if engine::playlists::exists(&rootp, &name) {
-            engine::playlists::read(&rootp, &lib, &name)?.0
-        } else {
-            vec![]
-        };
-        let have: HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-        let mut seen = HashSet::new();
-        let added: Vec<String> = paths
-            .into_iter()
-            .filter(|p| !have.contains(p.as_str()) && seen.insert(p.clone()))
-            .collect();
-        let mut items: Vec<engine::playlists::Item> = entries
-            .iter()
-            .map(engine::playlists::PlaylistEntry::item)
-            .collect();
-        items.extend(added.iter().cloned().map(engine::playlists::Item::track));
-        let source = engine::playlists::source_of(&rootp, &name);
-        engine::playlists::write_items(&rootp, &lib, &name, &items, false, source.as_deref())?;
-        Ok(added.len())
+        engine::playlists::add(&rootp, &lib, &name, &items)
+    })
+    .await
+}
+
+/// A playlist as the player gets it, in order: each song from your file when it's here, else
+/// online; songs still to get are left out (see `engine::playlists::playables`).
+#[tauri::command]
+async fn playlist_queue(root: String, name: String) -> CmdResult<Vec<media_access::Playable>> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let (entries, _) = engine::playlists::read(&rootp, &lib, &name)?;
+        Ok(engine::playlists::playables(&rootp, &entries))
     })
     .await
 }
@@ -2340,6 +2340,7 @@ pub fn run() {
     builder
         .manage(Jobs::default())
         .manage(playback::Playback::default())
+        .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -2393,6 +2394,13 @@ pub fn run() {
             {
                 playback::start_media_controls(&app.state::<playback::Playback>(), hwnd.0 as isize);
             }
+            // Ensure the stream tool is ready before the first online play (download if needed).
+            std::thread::Builder::new()
+                .name("venuta-ensure-stream-tool".into())
+                .spawn(|| {
+                    let _ = media_access::ensure_stream_tool();
+                })
+                .ok();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2526,6 +2534,12 @@ pub fn run() {
             smart_save,
             playlist_save_items,
             playlist_add,
+            playlist_queue,
+            online::online_search,
+            online::online_album_tracks,
+            online::online_catalog_status,
+            online::online_ensure_stream_tool,
+            online::online_lyrics,
             playlist_duplicate,
             playlist_export,
             playlist_refind,

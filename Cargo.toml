@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/cli", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/media-access", "crates/cli", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.1"
@@ -11,6 +11,7 @@ repository = "https://github.com/venuta-lab/venuta"
 
 [workspace.dependencies]
 engine = { path = "crates/engine" }
+media-access = { path = "crates/media-access" }
 lofty = "=0.25.4"  # pinned: re-run spike S1 before upgrading (docs/decisions/0001)
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 blake3 = "1.8.7"
@@ -21,6 +22,7 @@ thiserror = "2.0.21"
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+base64 = "0.22"
 toml = "1.1.8"
 clap = { version = "4.6.7", features = ["derive"] }
 tracing = "0.1.44"

@@ -5,7 +5,7 @@
 //! flat slab. The RMS level of each slice, on a decibel scale from -42 dBFS to 0, shows verses,
 //! choruses and quiet intros as they sound.
 
-use crate::decode::Source;
+use crate::decode::{DecodeState, Source};
 use std::path::Path;
 
 /// The bottom of the scale: anything this quiet or quieter draws at the minimum.
@@ -28,7 +28,7 @@ pub fn waveform(path: &Path, buckets: usize) -> Result<Vec<u8>, String> {
     let full = f64::from(i32::MAX);
     let mut sum = 0.0f64;
     let mut count: u64 = 0;
-    while source.next(&mut buf)? {
+    while source.next(&mut buf)? == DecodeState::Samples {
         for frame in buf.chunks_exact(channels) {
             for &s in frame {
                 let x = f64::from(s) / full;

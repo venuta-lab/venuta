@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useState, type RefObject } from 'react'
-import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
+import { isHiRes, quality, type CatalogTrack, type OnlineAlbum } from '../../lib/engine'
 import type { From } from '../../lib/player'
 import { matcher, ranked, searchKey } from '../../lib/textsearch'
 
@@ -238,12 +238,15 @@ export interface Nav {
   /** `origin` names where the cover was, so it can fly from there to the album page. */
   openAlbum: (dir: string, origin?: string) => void
   openArtist: (name: string) => void
+  /** An online catalog album, as its own page (Back returns to the search). */
+  openOnlineAlbum: (album: OnlineAlbum) => void
   editDetails: (dir: string) => void
 }
 export const NavContext = createContext<Nav>({
   root: '',
   openAlbum: () => {},
   openArtist: () => {},
+  openOnlineAlbum: () => {},
   editDetails: () => {},
 })
 export const useNav = () => useContext(NavContext)

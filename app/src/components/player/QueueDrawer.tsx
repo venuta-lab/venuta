@@ -1,10 +1,12 @@
-import { askAddToPlaylist } from '../AddToPlaylist'
+import { askAddSongs } from '../AddToPlaylist'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, jumpTo, move, removeAt, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, isOnline, jumpTo, move, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { IconClose } from '../Icons'
+import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
 
@@ -17,17 +19,26 @@ const HEAD_H = 34
 /** A song in the queue as the list shows it: the song and its place in the queue. */
 type Row = { q: QueueItem; at: number }
 
-/** One song in the queue: click plays it (the one playing now pauses or resumes). */
-function RowBody(props: { item: QueueItem; index: number; current: boolean }) {
+/** One song in the queue: click plays it (the one playing now pauses or resumes). `badge`:
+ *  say where it plays from (the queue holds online songs). */
+function RowBody(props: { item: QueueItem; index: number; current: boolean; badge: boolean }) {
   const cover = useCovers(320)
-  const art = cover(props.item.dir)
+  const online = isOnline(props.item)
+  const local = !online ? cover(props.item.dir) : null
   return (
     <>
-      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
-        {art && <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />}
+      <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
+        {online ? (
+          <RemoteArt url={props.item.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+        ) : local ? (
+          <img src={local.src} alt="" className="h-full w-full object-cover" draggable={false} />
+        ) : null}
       </div>
       <div className="min-w-0 flex-1">
-        <div className={`truncate text-[13px] ${props.current ? 'font-medium text-accent-ink' : ''}`}>{props.item.title}</div>
+        <div className={`flex min-w-0 items-center gap-1.5 text-[13px] ${props.current ? 'font-medium text-accent-ink' : ''}`}>
+          <span className="truncate">{props.item.title}</span>
+          {props.badge && <AvailabilityBadge availability={props.item.availability ?? (online ? 'online' : 'local')} />}
+        </div>
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
       <span className="text-[11.5px] tabular-nums text-ink/45">{clock(props.item.duration_ms)}</span>
@@ -62,7 +73,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     const out: Line<Row>[] = []
     s.queue.forEach((q, at) => {
       if (at === s.index + 1) out.push({ kind: 'head', key: 'up-next', node: <div className="px-2 text-[12px] text-ink/50">Up next</div> })
-      out.push({ kind: 'row', key: `${q.path}#${at}`, row: { q, at } })
+      out.push({ kind: 'row', key: `${queueKey(q)}#${at}`, row: { q, at } })
     })
     return { lines: out, firstNext: s.index + 2 }
   }, [s.queue, s.index])
@@ -75,6 +86,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // Where each song plays from is said only when the queue holds online songs.
+  const mixed = useMemo(() => s.queue.some(isOnline), [s.queue])
   const upcoming = s.queue.length - s.index - 1
   const left = useMemo(() => s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0), [s.queue, s.index])
 
@@ -111,7 +124,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
               : `hover:bg-ink/[0.05] active:bg-ink/[0.09] ${played ? 'opacity-70' : ''}`
         }`}
       >
-        <RowBody item={r.q} index={r.at} current={current} />
+        <RowBody item={r.q} index={r.at} current={current} badge={mixed} />
       </div>
     )
   }
@@ -137,7 +150,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
             </div>
             {s.queue.length > 0 && (
               <button
-                onClick={() => askAddToPlaylist(s.queue.map((q) => q.path), 'the queue')}
+                onClick={() => askAddSongs(s.queue.map(songItemOf), 'the queue')}
                 className="btn-ghost btn-sm mt-0.5 shrink-0"
                 title="Save every song in the queue as a playlist, or add them to one"
               >

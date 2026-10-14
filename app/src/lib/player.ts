@@ -1,6 +1,18 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { editTags, inApp, type CatalogTrack, type Gain } from './engine'
+import { trackAt } from './catalog'
+import {
+  editTags,
+  inApp,
+  type Availability,
+  type CatalogTrack,
+  type Gain,
+  type OnlineEntry,
+  type OnlineTrack,
+  type Playable,
+  type PlayableId,
+  type PlaylistItem,
+} from './engine'
 import { notify } from './notify'
 import { isAwake, onAwake } from './motion'
 
@@ -11,7 +23,12 @@ import { isAwake, onAwake } from './motion'
 
 export type Repeat = 'off' | 'all' | 'one'
 
-/** A song in the queue: what the bar and Now Playing need to show it. */
+export type { Availability, PlayableId }
+
+/** A song in the queue: what the bar and Now Playing need to show it.
+ *
+ *  Hybrid — a local row carries `path`; a remote row carries `online` (a stable id) and
+ *  metadata only (no stream URL). The remaining fields are optional for remote rows. */
 export interface QueueItem {
   path: string
   dir: string
@@ -26,6 +43,12 @@ export interface QueueItem {
   lyrics: boolean
   stars: number
   rg: Gain
+  /** Set on remote rows; stable provider id, never a stream URL. */
+  online?: PlayableId
+  /** Cover art address for remote rows. */
+  artwork_url?: string
+  /** Filled in by the backend at play time. */
+  availability?: Availability
 }
 
 /** The sound tools (all off by default: bit-perfect). dB values. */
@@ -79,6 +102,8 @@ export interface PlayerState {
   queue: QueueItem[]
   index: number
   playing: boolean
+  /** Current song still opening (remote body downloading). */
+  buffering: boolean
   position_ms: number
   /** The playing song's length, as the file says (0 until known). */
   duration_ms: number
@@ -105,6 +130,7 @@ const idle: PlayerState = {
   queue: [],
   index: -1,
   playing: false,
+  buffering: false,
   position_ms: 0,
   duration_ms: 0,
   shuffle: false,
@@ -126,7 +152,7 @@ const tell = () => listeners.forEach((l) => l())
 
 /** Everything in a report but where the song is (and the sound's levels and path, which move with it). */
 const settled = (s: PlayerState) =>
-  `${s.index}|${s.playing}|${s.duration_ms}|${s.shuffle}|${s.repeat}|${s.volume}|${s.from}|${s.error}|${s.stop_after_current}|${s.sleep_in_s}|${JSON.stringify(s.sound)}`
+  `${s.index}|${s.playing}|${s.buffering}|${s.duration_ms}|${s.shuffle}|${s.repeat}|${s.volume}|${s.from}|${s.error}|${s.stop_after_current}|${s.sleep_in_s}|${JSON.stringify(s.sound)}`
 
 // A window that isn't on screen (lib/motion.ts) isn't drawn: while it is away, a report that only
 // moves the position is kept (getPlayerState has it) but not told; a new song, play or pause, the
@@ -155,7 +181,9 @@ export const getPlayerState = () => state
 
 /** The song's position to the millisecond: the last report plus the time since (while playing). */
 export const positionNow = () =>
-  state.playing ? state.position_ms + Math.min(250, performance.now() - reportedAt) : state.position_ms
+  state.playing && !state.buffering
+    ? state.position_ms + Math.min(250, performance.now() - reportedAt)
+    : state.position_ms
 
 let subscribed = false
 /** Start listening to the engine (once). */
@@ -185,6 +213,115 @@ export const toItem = (t: CatalogTrack): QueueItem => ({
   stars: t.stars,
   rg: t.rg,
 })
+
+/** A remote-catalog track to enqueue: stable id + display metadata, no stream URL. */
+export interface RemoteTrack {
+  provider: string
+  track_id: string
+  title: string
+  artists?: string[]
+  album?: string | null
+  duration_ms?: number | null
+  artwork_url?: string | null
+}
+
+/** Cover for an online id: catalog picture, else YouTube hqdefault when the id is a video id. */
+export function onlineCoverUrl(t: { track_id: string; artwork_url?: string | null }): string | undefined {
+  const raw = (t.artwork_url ?? '').trim()
+  if (raw) {
+    let url = raw
+    if (url.startsWith('//')) url = `https:${url}`
+    else if (url.startsWith('http://')) url = `https://${url.slice(7)}`
+    if (/^https:\/\//i.test(url) && !/googlevideo\.com|mime=audio|\.m3u8/i.test(url)) return url
+  }
+  // Stable YouTube-style id → always have a picture in search / Now Playing / SMTC.
+  if (/^[\w-]{11}$/.test(t.track_id)) return `https://i.ytimg.com/vi/${t.track_id}/hqdefault.jpg`
+  return undefined
+}
+
+/** Build a queue row for an online track. Leaves `path`/`dir` empty so the backend treats it
+ *  as remote and resolves its stream at play time. */
+export const toRemoteItem = (t: RemoteTrack): QueueItem => ({
+  path: '',
+  dir: '',
+  title: t.title,
+  artists: t.artists ?? [],
+  album: t.album ?? '',
+  album_artist: '',
+  duration_ms: t.duration_ms ?? 0,
+  format: '',
+  bit_depth: 0,
+  sample_rate: 0,
+  lyrics: false,
+  stars: 0,
+  rg: { track_db: null, album_db: null, track_peak: null, album_peak: null },
+  online: { kind: 'online', provider: t.provider, track_id: t.track_id },
+  artwork_url: onlineCoverUrl(t),
+  availability: 'online',
+})
+
+/** A queue row for a playlist's online song: its stable id only; the stream resolves at play time. */
+export const onlineItem = (o: OnlineEntry): QueueItem =>
+  toRemoteItem({
+    provider: o.provider,
+    track_id: o.track_id,
+    title: o.title,
+    artists: o.artists,
+    album: o.album,
+    duration_ms: o.duration_ms,
+    artwork_url: o.artwork_url,
+  })
+
+/** Is this row an online song (no file of yours behind it)? */
+export const isOnline = (q: QueueItem) => !q.path && q.online?.kind === 'online'
+
+/** Cover picture for a queue row: online artwork URL when set, else nothing (local uses covers). */
+export const remoteArtUrl = (q: QueueItem | null | undefined): string | undefined =>
+  q && isOnline(q) ? q.artwork_url : undefined
+
+/** What tells queue rows apart: the library path, or the online song's stable id. */
+export const queueKey = (q: QueueItem) => (isOnline(q) && q.online?.kind === 'online' ? `online:${q.online.provider}:${q.online.track_id}` : q.path)
+
+/** A song ready to play (from `playlistQueue`) as a queue row: your file with all the library
+ *  knows about it, or the online song. Null for a library song the catalog doesn't have yet. */
+export function fromPlayable(p: Playable): QueueItem | null {
+  if (p.id.kind === 'online')
+    return toRemoteItem({ ...p.id, title: p.title, artists: p.artists, album: p.album, duration_ms: p.duration_ms, artwork_url: p.artwork_url })
+  const t = trackAt(p.id.path)
+  return t ? { ...toItem(t), availability: p.availability ?? 'local' } : null
+}
+
+/** The online song a row is, as a playlist keeps it (stable id and what to show). */
+export function onlineEntryOf(q: QueueItem): OnlineEntry | null {
+  if (!isOnline(q) || q.online?.kind !== 'online') return null
+  return {
+    provider: q.online.provider,
+    track_id: q.online.track_id,
+    title: q.title,
+    artists: q.artists,
+    album: q.album || undefined,
+    duration_ms: q.duration_ms || undefined,
+    artwork_url: q.artwork_url,
+  }
+}
+
+/** An online catalog song as a playlist keeps it (cover picture may stay; never a stream URL). */
+export const onlineEntryFrom = (t: OnlineTrack): OnlineEntry => ({
+  provider: t.provider,
+  track_id: t.track_id,
+  title: t.title,
+  artists: t.artists,
+  album: t.album ?? undefined,
+  duration_ms: t.duration_ms ?? undefined,
+  isrc: t.isrc ?? undefined,
+  artwork_url: onlineCoverUrl(t),
+})
+
+/** A queue row as a playlist line: the online song by its id, else the library file. */
+export const songItemOf = (q: QueueItem): PlaylistItem => {
+  const o = onlineEntryOf(q)
+  return o ? { online: o } : { path: q.path }
+}
 
 const call = (cmd: string, args: Record<string, unknown> = {}) =>
   inApp() ? invoke(cmd, args).catch((e) => set({ ...state, error: String(e) })) : Promise.resolve()
@@ -220,30 +357,60 @@ export const fromIs = (s: string, kind: From['kind'], ref: string) => {
 }
 
 /** What the queue was last set to, to follow its source's changes (see `follow`). */
-let lastSet: { from: string; paths: string[] } | null = null
+let lastSet: { from: string; keys: string[] } | null = null
 
 /** Play these songs from `index`, replacing the queue. Shuffle stays as it is (a song picked
  *  from a list while shuffling plays, then the rest shuffled). */
-export function play(root: string, tracks: CatalogTrack[], index = 0, from: From | string = '') {
+export const play = (root: string, tracks: CatalogTrack[], index = 0, from: From | string = '') =>
+  playItems(root, tracks.map(toItem), index, from)
+
+/** `play` for queue rows of any kind: library songs and online ones, mixed. */
+export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '') {
   queueRoot = root
-  const items = tracks.map(toItem)
   const f = fromText(from)
-  lastSet = { from: f, paths: tracks.map((t) => t.path) }
-  // Show it at once; the engine confirms within a moment.
-  set({ ...state, queue: items, index, playing: true, position_ms: 0, from: f, error: '' })
+  const row = items[index]
+  // Same queue + same song again: rewind without a full reopen (uses in-memory resolve cache too).
+  if (
+    row &&
+    state.queue.length === items.length &&
+    state.index === index &&
+    items.every((it, i) => queueKey(it) === queueKey(state.queue[i]!)) &&
+    queueKey(row) === queueKey(state.queue[index]!)
+  ) {
+    set({ ...state, playing: true, position_ms: 0, from: f, error: '' })
+    return call('player_jump', { index }).then(() => call('player_seek', { ms: 0 }))
+  }
+  lastSet = { from: f, keys: items.map(queueKey) }
+  const opening = !!row && isOnline(row)
+  // Show the queue at once. Online rows stay in Opening… until the engine has real samples.
+  set({
+    ...state,
+    queue: items,
+    index,
+    playing: true,
+    buffering: opening,
+    position_ms: 0,
+    duration_ms: row?.duration_ms || 0,
+    from: f,
+    error: '',
+  })
   return call('player_play', { root, items, index, from: f })
 }
 
 /** The Play and Shuffle buttons: all of it in order (shuffle off), or shuffled from a random
  *  song (shuffle on, so the bar shows it and turning it off goes back to the order). */
-export async function playAll(root: string, tracks: CatalogTrack[], from: From | string, how: 'order' | 'shuffle' = 'order') {
-  if (!tracks.length) return
+export const playAll = (root: string, tracks: CatalogTrack[], from: From | string, how: 'order' | 'shuffle' = 'order') =>
+  playAllItems(root, tracks.map(toItem), from, how)
+
+/** `playAll` for queue rows of any kind. */
+export async function playAllItems(root: string, items: QueueItem[], from: From | string, how: 'order' | 'shuffle' = 'order') {
+  if (!items.length) return
   const shuffle = how === 'shuffle'
   if (state.shuffle !== shuffle) {
     set({ ...state, shuffle })
     await call('player_options', { shuffle, repeat: state.repeat })
   }
-  return play(root, tracks, shuffle ? Math.floor(Math.random() * tracks.length) : 0, from)
+  return playItems(root, items, shuffle ? Math.floor(Math.random() * items.length) : 0, from)
 }
 
 /**
@@ -251,32 +418,39 @@ export async function playAll(root: string, tracks: CatalogTrack[], from: From |
  * comes after follows the new list. Only when the queue is still the one the source made
  * (nothing added or taken out by hand); otherwise the queue is yours and is left alone.
  */
-export function follow(root: string, tracks: CatalogTrack[], from: From) {
+export const follow = (root: string, tracks: CatalogTrack[], from: From) => followItems(root, tracks.map(toItem), from)
+
+/** `follow` for queue rows of any kind (songs are told apart by `queueKey`). */
+export function followItems(root: string, next: QueueItem[], from: From) {
   const f = fromText(from)
   if (!lastSet || lastSet.from !== f || !fromIs(state.from, from.kind, from.ref)) return
   const cur = state.index >= 0 ? state.queue[state.index] : undefined
   if (!cur) return
-  const queued = state.queue.map((q) => q.path).sort()
-  const made = [...lastSet.paths].sort()
+  const queued = state.queue.map(queueKey).sort()
+  const made = [...lastSet.keys].sort()
   if (queued.length !== made.length || queued.some((p, i) => p !== made[i])) return
-  const paths = tracks.map((t) => t.path)
-  if (paths.length === lastSet.paths.length && paths.every((p, i) => p === lastSet!.paths[i])) return
-  const items = tracks.map(toItem)
-  let index = paths.indexOf(cur.path)
+  const keys = next.map(queueKey)
+  if (keys.length === lastSet.keys.length && keys.every((p, i) => p === lastSet!.keys[i])) return
+  const items = next.slice()
+  const curKey = queueKey(cur)
+  let index = keys.indexOf(curKey)
   if (index < 0) {
     // The playing song left the list: it plays on, where it was among the songs still there.
-    const was = lastSet.paths.indexOf(cur.path)
-    const before = new Set(lastSet.paths.slice(0, Math.max(0, was)))
-    index = paths.filter((p) => before.has(p)).length
+    const was = lastSet.keys.indexOf(curKey)
+    const before = new Set(lastSet.keys.slice(0, Math.max(0, was)))
+    index = keys.filter((p) => before.has(p)).length
     items.splice(index, 0, cur)
   }
-  lastSet = { from: f, paths: items.map((i) => i.path) }
+  lastSet = { from: f, keys: items.map(queueKey) }
   return call('player_follow', { root, items, index })
 }
 export const toggle = () => call('player_toggle')
 export const next = () => call('player_next')
 export const previous = () => call('player_previous')
 export const seek = (ms: number) => {
+  // An online song still opening has nothing to seek in yet: every seek (bar, keys, lyrics,
+  // mini player) waits until it plays.
+  if (state.buffering) return Promise.resolve()
   set({ ...state, position_ms: ms })
   return call('player_seek', { ms: Math.max(0, Math.round(ms)) })
 }
@@ -288,8 +462,9 @@ export const setVolume = (v: number) => {
 export const setShuffle = (shuffle: boolean) => call('player_options', { shuffle, repeat: state.repeat })
 export const setRepeat = (repeat: Repeat) => call('player_options', { shuffle: state.shuffle, repeat })
 /** After the current song (next) or at the end (not next). */
-export const enqueue = (root: string, tracks: CatalogTrack[], nextUp: boolean) =>
-  call('player_enqueue', { root, items: tracks.map(toItem), next: nextUp })
+export const enqueue = (root: string, tracks: CatalogTrack[], nextUp: boolean) => enqueueItems(root, tracks.map(toItem), nextUp)
+/** `enqueue` for queue rows of any kind. */
+export const enqueueItems = (root: string, items: QueueItem[], nextUp: boolean) => call('player_enqueue', { root, items, next: nextUp })
 export const removeAt = (i: number) => call('player_remove', { index: i })
 export const move = (from: number, to: number) => call('player_move', { from, to })
 export const jumpTo = (i: number) => call('player_jump', { index: i })

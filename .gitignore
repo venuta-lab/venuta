@@ -10,6 +10,9 @@ dist/
 # Tauri
 app/src-tauri/target/
 app/src-tauri/gen/
+# Stream tool binary is fetched at release time (not committed).
+app/src-tauri/resources/yt-dlp.exe
+app/src-tauri/resources/yt-dlp
 
 # Local data never committed
 *.sqlite
