@@ -5,8 +5,8 @@ change back.
 
 ## How changes come in
 
-`main` is the released app. Nobody pushes to it directly, the maintainer included; every
-change arrives as a pull request.
+`main` is the released app, and only the maintainer writes to it. Your changes arrive as pull
+requests from your fork.
 
 1. **Fork** `venuta` to your own account (the Fork button), and clone your fork.
 2. Add the original as `upstream`, so you can stay current:
