@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 import { inApp } from '../lib/engine'
 import { ActivityIndicator } from './Activity'
+import { Brand } from './Brand'
 import { IconSearch } from './Icons'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
@@ -15,8 +16,8 @@ export function TitleBar(props: { onPalette: () => void }) {
   }, [])
   return (
     <div data-tauri-drag-region className="relative z-30 flex h-10 shrink-0 items-center pl-5">
-      <span data-tauri-drag-region className="text-[13px] font-medium tracking-tight text-ink/70">
-        Venuta
+      <span data-tauri-drag-region className="pointer-events-none flex items-center">
+        <Brand size={29} word={17} />
       </span>
       {test && (
         <span data-tauri-drag-region className="ml-2 rounded-full bg-[#e5484d] px-2 py-0.5 text-[11px] font-semibold text-white">

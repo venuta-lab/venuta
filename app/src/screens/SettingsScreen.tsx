@@ -16,6 +16,7 @@ import { ACCENTS, STYLES, accentRoles, colourDistance, styleInfo, type StyleInfo
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
+import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { takeSettingsSection, type SettingsPage } from './settingsPage'
 
@@ -766,8 +767,13 @@ function About() {
               : 'New versions are signed, and installed only when you choose.'
   return (
     <div className="select-text">
-      <h2 className="title text-[22px]">About</h2>
-      <p className="mt-2 text-[13.5px] text-ink/70">Venuta (वेणुता) {v}. Free and open source under the MIT licence.</p>
+      <h2 className="sr-only">About</h2>
+      <div className="flex flex-col items-start gap-4 py-2">
+        <Brand size={96} word={62} />
+        <p className="text-[13.5px] text-ink/70">
+          The essence of the flute. Version {v}, free and open source under the MIT licence.
+        </p>
+      </div>
       <Row title="Updates" hint={line}>
         {u.at === 'found' ? (
           <button onClick={() => void installUpdate()} className="btn-primary">

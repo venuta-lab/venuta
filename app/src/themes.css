@@ -1830,3 +1830,55 @@ main.fx-split {
 .fx-blink {
   animation: fx-blink 1s steps(1) infinite;
 }
+
+/* --- Venuta's mark and name, as each theme draws them (components/Brand.tsx) -----------
+   The mark is lines in currentColor: the theme's accent, with the theme's light and line ends.
+   The name is set in the theme's display type. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  line-height: 1;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+.brand-mark {
+  flex: none;
+  color: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  overflow: visible;
+}
+.brand-word {
+  /* The cap height sits on the V's middle, the way the eye reads a mark and a name. */
+  padding-top: 0.08em;
+  font-family: var(--font-display);
+  font-weight: var(--title-weight);
+  letter-spacing: var(--title-tracking);
+  text-transform: var(--title-case);
+}
+/* Set in capitals, the name takes less height so it weighs the same as in lower case. */
+:root:is([data-style="neo-tokyo"], [data-style="thermoptic"], [data-style="sync-ratio"], [data-style="bounty"], [data-style="skin99"]) .brand-word {
+  font-size: 0.86em;
+}
+/* Lumen and Glasshouse: light through glass, the mark lit from within. */
+:root:is([data-style="venuta"], [data-style="glasshouse"]) .brand-mark {
+  filter: drop-shadow(0 0 0.18em color-mix(in oklab, var(--accent) 65%, transparent));
+}
+/* Neo-Tokyo: neon tubing. */
+:root[data-style="neo-tokyo"] .brand-mark {
+  filter: drop-shadow(0 0 0.12em var(--accent)) drop-shadow(0 0 0.4em var(--accent));
+}
+/* Thermoptic and Skin '99: square ends and corners, as their screens draw. */
+:root:is([data-style="thermoptic"], [data-style="skin99"]) .brand-mark {
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+:root[data-style="skin99"] .brand-mark {
+  filter: drop-shadow(0 0 0.1em color-mix(in oklab, var(--accent) 80%, transparent));
+}
+/* Bounty Session: ink, not colour, like a stamp on the poster. */
+:root[data-style="bounty"] .brand-mark {
+  color: var(--color-ink);
+}
+/* The colour themes after other players keep the mark in their key colour, unlit. */
