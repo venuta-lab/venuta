@@ -17,7 +17,8 @@ const SPOTIFY: &str = "spotify";
 /// Spotify's sign-in, or for a test copy a stand-in (VENUTA_SPOTIFY_ACCOUNTS = its base).
 fn provider() -> oauth::Provider {
     let mut p = spotify::provider();
-    if let Ok(base) = std::env::var("VENUTA_SPOTIFY_ACCOUNTS") {
+    // Only a test copy: the token is sent to this address.
+    if let (true, Ok(base)) = (crate::test_copy(), std::env::var("VENUTA_SPOTIFY_ACCOUNTS")) {
         p.authorize_url = format!("{base}/authorize");
         p.token_url = format!("{base}/api/token");
     }
@@ -27,8 +28,8 @@ fn provider() -> oauth::Provider {
 /// Spotify's API, or for a test copy a stand-in (VENUTA_SPOTIFY_API).
 fn api(token: &str) -> Api {
     match std::env::var("VENUTA_SPOTIFY_API") {
-        Ok(base) => Api::with_base(token, &base),
-        Err(_) => Api::new(token),
+        Ok(base) if crate::test_copy() => Api::with_base(token, &base),
+        _ => Api::new(token),
     }
 }
 

@@ -25,7 +25,7 @@ fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     let mut b = app
         .updater_builder()
         .timeout(std::time::Duration::from_secs(20));
-    if let Ok(url) = std::env::var("VENUTA_UPDATE_URL") {
+    if let (true, Ok(url)) = (crate::test_copy(), std::env::var("VENUTA_UPDATE_URL")) {
         let url = url.parse().map_err(|e| format!("VENUTA_UPDATE_URL: {e}"))?;
         b = b.endpoints(vec![url]).map_err(|e| e.to_string())?;
     }

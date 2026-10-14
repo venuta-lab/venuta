@@ -157,6 +157,11 @@ impl<T: Item + Serialize> Player<T> {
     pub fn send(&self, cmd: Cmd<T>) {
         let _ = self.tx.send(cmd);
     }
+
+    /// Whether the player thread is still running (it ends only on Quit, or a panic).
+    pub fn is_alive(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
 }
 
 impl<T> Drop for Player<T> {

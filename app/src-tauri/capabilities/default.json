@@ -1,12 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window, the mini player, the big screen and the desktop lyrics",
+  "description": "Permissions for the main window and the mini player",
   "windows": [
     "main",
-    "mini",
-    "stage",
-    "overlay"
+    "mini"
   ],
   "permissions": [
     "core:default",

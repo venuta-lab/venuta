@@ -127,7 +127,18 @@ impl Playback {
             let window = self.window.clone();
             let media = self.media.clone();
             let root = self.root.clone();
-            let mut tracker = crate::listening::Tracker::default();
+            // Plays and where you were are written to disk on a thread of their own: never on
+            // the player's, where a slow disk or a busy database would starve the sound.
+            let (keep, kept) = std::sync::mpsc::channel::<Keep>();
+            std::thread::Builder::new()
+                .name("venuta-listening".into())
+                .spawn(move || {
+                    let mut tracker = crate::listening::Tracker::default();
+                    for k in kept {
+                        k.write(&mut tracker);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
             let mut saved: (i64, bool, u64, u32, bool, Repeat) =
                 (-2, false, 0, 0, false, Repeat::Off);
             // The order before shuffling, while shuffled (saved with the queue).
@@ -147,14 +158,14 @@ impl Playback {
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
                     {
                         let song = s.index.and_then(|i| queue.get(i));
-                        tracker.update(
-                            &folder,
-                            song.map(|q| (q.path.as_str(), q.dir.as_str())),
-                            s.playing,
-                            s.position_ms,
-                            s.duration_ms,
-                            &s.from,
-                        );
+                        let _ = keep.send(Keep::Heard {
+                            folder: folder.clone(),
+                            song: song.map(|q| (q.path.clone(), q.dir.clone())),
+                            playing: s.playing,
+                            position_ms: s.position_ms,
+                            duration_ms: s.duration_ms,
+                            from: s.from.clone(),
+                        });
                         // Where you were: when the queue, song or play state changes, and every
                         // ten seconds of playing.
                         let mark = (
@@ -166,20 +177,17 @@ impl Playback {
                             s.repeat,
                         );
                         if !folder.is_empty() && (s.queue.is_some() || mark != saved) {
-                            let q = s.queue.as_ref().and_then(|q| serde_json::to_string(q).ok());
-                            tracker.save_place(
-                                &folder,
-                                q.as_deref(),
+                            let _ = keep.send(Keep::Place {
+                                folder: folder.clone(),
+                                queue: s.queue.clone(),
                                 index,
-                                s.position_ms,
-                                &s.from,
-                                &crate::listening::HowItPlays {
-                                    volume: s.volume,
-                                    shuffle: s.shuffle,
-                                    repeat: s.repeat,
-                                    order: order.as_deref(),
-                                },
-                            );
+                                position_ms: s.position_ms,
+                                from: s.from.clone(),
+                                volume: s.volume,
+                                shuffle: s.shuffle,
+                                repeat: s.repeat,
+                                order: order.clone(),
+                            });
                             saved = mark;
                         }
                     }
@@ -241,6 +249,22 @@ impl Playback {
     }
 
     fn send(&self, cmd: Cmd<QueueItem>) -> Result<(), String> {
+        // A player whose thread has died (a panic on a damaged file) is started again, back
+        // where you were and paused, so the controls never go quietly dead.
+        let died = {
+            let mut slot = self.player.lock().map_err(|e| e.to_string())?;
+            let dead = slot.as_ref().is_some_and(|p| !p.is_alive());
+            if dead {
+                *slot = None;
+            }
+            dead
+        };
+        if died {
+            let root = self.root.lock().map(|r| r.clone()).unwrap_or_default();
+            if !root.is_empty() {
+                let _ = self.resume(&root);
+            }
+        }
         self.with(|p| p.send(cmd))
     }
 
@@ -265,6 +289,11 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
     };
     let rx = pb.follow();
     let player = pb.player.clone();
+    // Windows hears about Venuta only once you've played something this time. A restored
+    // queue sits paused, and Windows sends Play to a paused session when a headset reconnects
+    // or the flyout is touched: that must never start the music by itself.
+    let live = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let live_events = live.clone();
     std::thread::Builder::new()
         .name("venuta-media-keys".into())
         .spawn(move || {
@@ -283,6 +312,7 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                 }
             };
             let _ = controls.attach(move |e| match e {
+                _ if !live_events.load(std::sync::atomic::Ordering::Relaxed) => {}
                 MediaControlEvent::Play => send(Cmd::Play),
                 MediaControlEvent::Pause => send(Cmd::Pause),
                 MediaControlEvent::Toggle => send(Cmd::Toggle),
@@ -297,6 +327,13 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
             // The cover file for the song showing (looked up once per song).
             let mut cover: (Option<PathBuf>, Option<String>) = (None, None);
             for now in rx {
+                if now.playing {
+                    live.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                if !live.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = controls.set_playback(MediaPlayback::Stopped);
+                    continue;
+                }
                 let Some(file) = now.file.clone() else {
                     let _ = controls.set_playback(MediaPlayback::Stopped);
                     cover = (None, None);
@@ -371,55 +408,135 @@ pub fn player_sleep(minutes: Option<f64>, pb: State<'_, Playback>) -> Result<(),
 /// you stopped, paused.
 #[tauri::command]
 pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, String> {
-    let Some((queue, place)) = crate::listening::saved_place() else {
-        return Ok(false);
-    };
-    let same = place.get("root").and_then(|r| r.as_str()).is_some_and(|r| {
-        engine::paths::canonical_root_string(Path::new(r))
-            == engine::paths::canonical_root_string(Path::new(&root))
-    });
-    let items: Vec<QueueItem> = serde_json::from_value(queue).unwrap_or_default();
-    let index = place.get("index").and_then(|i| i.as_i64()).unwrap_or(-1);
-    if !same || items.is_empty() || index < 0 {
-        return Ok(false);
+    pb.resume(&root)
+}
+
+impl Playback {
+    fn resume(&self, root: &str) -> Result<bool, String> {
+        let pb = self;
+        let root = root.to_owned();
+        let Some((queue, place)) = crate::listening::saved_place() else {
+            return Ok(false);
+        };
+        let same = place.get("root").and_then(|r| r.as_str()).is_some_and(|r| {
+            engine::paths::canonical_root_string(Path::new(r))
+                == engine::paths::canonical_root_string(Path::new(&root))
+        });
+        let items: Vec<QueueItem> = serde_json::from_value(queue).unwrap_or_default();
+        let index = place.get("index").and_then(|i| i.as_i64()).unwrap_or(-1);
+        if !same || items.is_empty() || index < 0 {
+            return Ok(false);
+        }
+        let items = crate::fresh_gains(&root, items);
+        *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
+        pb.send(Cmd::Set {
+            items: resolve(&root, items),
+            index: index as usize,
+            start_ms: place
+                .get("position_ms")
+                .and_then(|p| p.as_u64())
+                .unwrap_or(0),
+            play: false,
+            from: place
+                .get("from")
+                .and_then(|f| f.as_str())
+                .unwrap_or_default()
+                .to_owned(),
+        })?;
+        // The volume you left it at, too.
+        if let Some(v) = place.get("volume").and_then(|v| v.as_f64()) {
+            pb.send(Cmd::Volume(v as f32))?;
+        }
+        // And shuffle and repeat, the shuffled order as it was (unshuffling still goes back).
+        let order: Option<Vec<usize>> = place
+            .get("order")
+            .and_then(|o| serde_json::from_value(o.clone()).ok());
+        let shuffle = place
+            .get("shuffle")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false);
+        if let (true, Some(order)) = (shuffle, order) {
+            pb.send(Cmd::RestoreOrder(order))?;
+        }
+        let repeat: Repeat = place
+            .get("repeat")
+            .and_then(|r| serde_json::from_value(r.clone()).ok())
+            .unwrap_or_default();
+        pb.send(Cmd::Options { shuffle, repeat })?;
+        Ok(true)
     }
-    let items = crate::fresh_gains(&root, items);
-    *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
-    pb.send(Cmd::Set {
-        items: resolve(&root, items),
-        index: index as usize,
-        start_ms: place
-            .get("position_ms")
-            .and_then(|p| p.as_u64())
-            .unwrap_or(0),
-        play: false,
-        from: place
-            .get("from")
-            .and_then(|f| f.as_str())
-            .unwrap_or_default()
-            .to_owned(),
-    })?;
-    // The volume you left it at, too.
-    if let Some(v) = place.get("volume").and_then(|v| v.as_f64()) {
-        pb.send(Cmd::Volume(v as f32))?;
+}
+
+/// What the listening thread writes: a moment heard (plays are counted from these), or where
+/// you were and how it plays.
+enum Keep {
+    Heard {
+        folder: String,
+        song: Option<(String, String)>,
+        playing: bool,
+        position_ms: u64,
+        duration_ms: u64,
+        from: String,
+    },
+    Place {
+        folder: String,
+        queue: Option<Vec<QueueItem>>,
+        index: i64,
+        position_ms: u64,
+        from: String,
+        volume: f32,
+        shuffle: bool,
+        repeat: Repeat,
+        order: Option<Vec<usize>>,
+    },
+}
+
+impl Keep {
+    fn write(self, tracker: &mut crate::listening::Tracker) {
+        match self {
+            Keep::Heard {
+                folder,
+                song,
+                playing,
+                position_ms,
+                duration_ms,
+                from,
+            } => tracker.update(
+                &folder,
+                song.as_ref().map(|(p, d)| (p.as_str(), d.as_str())),
+                playing,
+                position_ms,
+                duration_ms,
+                &from,
+            ),
+            Keep::Place {
+                folder,
+                queue,
+                index,
+                position_ms,
+                from,
+                volume,
+                shuffle,
+                repeat,
+                order,
+            } => {
+                let q = queue.as_ref().and_then(|q| serde_json::to_string(q).ok());
+                tracker.save_place(
+                    &folder,
+                    q.as_deref(),
+                    index,
+                    position_ms,
+                    &from,
+                    &crate::listening::HowItPlays {
+                        volume,
+                        shuffle,
+                        repeat,
+                        order: order.as_deref(),
+                    },
+                );
+            }
+        }
     }
-    // And shuffle and repeat, the shuffled order as it was (unshuffling still goes back).
-    let order: Option<Vec<usize>> = place
-        .get("order")
-        .and_then(|o| serde_json::from_value(o.clone()).ok());
-    let shuffle = place
-        .get("shuffle")
-        .and_then(|s| s.as_bool())
-        .unwrap_or(false);
-    if let (true, Some(order)) = (shuffle, order) {
-        pb.send(Cmd::RestoreOrder(order))?;
-    }
-    let repeat: Repeat = place
-        .get("repeat")
-        .and_then(|r| serde_json::from_value(r.clone()).ok())
-        .unwrap_or_default();
-    pb.send(Cmd::Options { shuffle, repeat })?;
-    Ok(true)
 }
 
 /// Start receiving the player's status (the window calls this once).

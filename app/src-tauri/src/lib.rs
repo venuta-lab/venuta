@@ -421,6 +421,18 @@ async fn choose_home(app: AppHandle, path: String) -> CmdResult<paths::HomeKind>
     Ok(kind)
 }
 
+/// Whether `root` is your library (or inside it) or the folder you opened.
+fn own_folder(root: &str) -> bool {
+    let Ok(r) = Path::new(root).canonicalize() else {
+        return false;
+    };
+    let inside = |p: Option<PathBuf>| {
+        p.and_then(|p| p.canonicalize().ok())
+            .is_some_and(|p| r.starts_with(p))
+    };
+    inside(paths::home()) || inside(settings_with_defaults().open_folder.map(PathBuf::from))
+}
+
 /// Covers and spectrograms are files in the data folder; let the window show them.
 fn allow_data_assets(app: &AppHandle) {
     let data = paths::app_data_dir();
@@ -434,8 +446,11 @@ fn allow_data_assets(app: &AppHandle) {
 /// Build the plan for a library and return what the Review screen shows.
 #[tauri::command]
 async fn review(app: AppHandle, root: String, jobs: State<'_, Jobs>) -> CmdResult<Review> {
-    // Clips on question cards play your own files, so the music folder may be read.
-    let _ = app.asset_protocol_scope().allow_directory(&root, true);
+    // Clips on question cards play your own files, so the music folder may be read: your
+    // library, or the folder you opened, never one the window merely names.
+    if own_folder(&root) {
+        let _ = app.asset_protocol_scope().allow_directory(&root, true);
+    }
     let r = root.clone();
     let plan = blocking(move || build_plan(Path::new(&r))).await?;
     let view = plan.view();
@@ -713,10 +728,38 @@ fn list_edits() -> Vec<Change> {
     out
 }
 
+/// Edits and undos wait while a build or a tidy is moving files: a tag written to a file
+/// that is mid-move would leave two copies.
+fn files_settled(jobs: &Jobs) -> CmdResult<()> {
+    match jobs.apply.lock() {
+        Ok(slot) if slot.is_some() => {
+            Err("Venuta is moving files right now. Try again when that's done.".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A journal Venuta wrote: a file directly in its own journal folder. Undo replays a journal's
+/// entries, so it never takes one from anywhere else.
+fn own_journal(journal: &str) -> CmdResult<PathBuf> {
+    let dir = engine::apply::journal_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let path = Path::new(journal)
+        .canonicalize()
+        .map_err(|_| "That change's record is gone.".to_string())?;
+    if path.parent() != Some(dir.as_path()) {
+        return Err("That record isn't one of Venuta's.".into());
+    }
+    Ok(path)
+}
+
 #[tauri::command]
-async fn undo_edit(journal: String) -> CmdResult<usize> {
+async fn undo_edit(journal: String, jobs: State<'_, Jobs>) -> CmdResult<usize> {
+    files_settled(&jobs)?;
     blocking(move || {
-        let path = Path::new(&journal);
+        let journal_path = own_journal(&journal)?;
+        let path = journal_path.as_path();
         if !journal.ends_with("-lyrics.jsonl") {
             return engine::edit::undo_edits(path);
         }
@@ -745,7 +788,9 @@ async fn save_synced_lyrics(
     root: String,
     path: String,
     lines: Vec<(u64, String)>,
+    jobs: State<'_, Jobs>,
 ) -> CmdResult<String> {
+    files_settled(&jobs)?;
     blocking(move || {
         let root = PathBuf::from(root);
         let journal = engine::lrc::save(&root, &path, &lines)?;
@@ -782,8 +827,9 @@ fn save_aliases(view: AliasesView) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn undo_run(journal: String) -> CmdResult<usize> {
-    blocking(move || engine::apply::undo(Path::new(&journal))).await
+async fn undo_run(journal: String, jobs: State<'_, Jobs>) -> CmdResult<usize> {
+    files_settled(&jobs)?;
+    blocking(move || engine::apply::undo(&own_journal(&journal)?)).await
 }
 
 // --- Listening --------------------------------------------------------------------------------
@@ -1032,9 +1078,10 @@ async fn tidy_apply(
 
 /// Put back everything a tidy run did; the library is read again afterwards.
 #[tauri::command]
-async fn tidy_undo(root: String, journal: String) -> CmdResult<usize> {
+async fn tidy_undo(root: String, journal: String, jobs: State<'_, Jobs>) -> CmdResult<usize> {
+    files_settled(&jobs)?;
     blocking(move || {
-        let n = engine::tidy::undo(Path::new(&journal))?;
+        let n = engine::tidy::undo(&own_journal(&journal)?)?;
         let root = PathBuf::from(root);
         let mut index = open_index(&root)?;
         libcache::scan(&mut index, &root)?;
@@ -2111,7 +2158,9 @@ async fn rate_playlist(
     root: String,
     name: String,
     stars: u8,
+    jobs: State<'_, Jobs>,
 ) -> CmdResult<engine::edit::EditReport> {
+    files_settled(&jobs)?;
     if !settings_with_defaults().backup_confirmed {
         return Err("BACKUP_NOT_CONFIRMED".into());
     }
@@ -2241,7 +2290,9 @@ async fn album_detail(root: String, dir: String) -> CmdResult<AlbumDetail> {
 async fn edit_tags(
     root: String,
     edits: Vec<engine::edit::TagEdit>,
+    jobs: State<'_, Jobs>,
 ) -> CmdResult<engine::edit::EditReport> {
+    files_settled(&jobs)?;
     if !settings_with_defaults().backup_confirmed {
         return Err("BACKUP_NOT_CONFIRMED".into());
     }
