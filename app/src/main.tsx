@@ -29,6 +29,7 @@ import { applyPrefs } from './lib/prefs'
 import { watchPacks } from './lib/packs'
 import { watchAwake } from './lib/motion'
 import { keepLayoutSwept } from './lib/layoutSweep'
+import { ContextMenuHost } from './components/ContextMenu'
 
 // Nothing moves in a window that isn't on screen (lib/motion.ts).
 watchAwake()
@@ -49,5 +50,7 @@ const Shown = place === 'mini' ? MiniPlayer : place === 'stage' ? BigScreen : pl
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Shown />
+    {/* The window owns right-click; every menu opens here (components/ContextMenu.tsx). */}
+    <ContextMenuHost />
   </StrictMode>,
 )

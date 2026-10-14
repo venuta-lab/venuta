@@ -20,6 +20,7 @@ use tauri::{AppHandle, Manager, State};
 
 mod accounts;
 mod app_icon;
+mod clipboard;
 mod desktop;
 mod libcache;
 mod listening;
@@ -2439,6 +2440,7 @@ pub fn run() {
             lyric_windows::desktop_lyrics,
             lyric_windows::desktop_lyrics_lock,
             lyric_windows::desktop_lyrics_open,
+            clipboard::clipboard_text,
             playback::player_spectrum,
             listening::listening_summary,
             tidy_preview,
