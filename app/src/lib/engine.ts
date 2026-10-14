@@ -942,6 +942,15 @@ export interface Gain {
 export const musicCatalog = (root: string) =>
   inApp() ? invoke<CatalogTrack[]>('music_catalog', { root }) : Promise.resolve([] as CatalogTrack[])
 
+/** One song's lyrics as lines to search (no times, each line once). */
+export interface SongWords {
+  path: string
+  lines: string[]
+}
+
+export const allLyrics = (root: string) =>
+  inApp() ? invoke<SongWords[]>('all_lyrics', { root }) : Promise.resolve([] as SongWords[])
+
 /** "FLAC 24/96", "MP3", "FLAC 16/44.1". */
 export function quality(t: Pick<CatalogTrack, 'format' | 'bit_depth' | 'sample_rate'>): string {
   const khz = t.sample_rate ? (t.sample_rate / 1000).toFixed(t.sample_rate % 1000 ? 1 : 0) : ''

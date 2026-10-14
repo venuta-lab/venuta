@@ -43,12 +43,19 @@ median of repeats; start is process start to album covers on screen, median of f
 - [x] Covers, theme switching, search and Now Playing measured: nothing slow enough to change.
       `crates/engine/tests/timings.rs` times each Playlists step on a copy of a library.
 
-## 2. Search across scripts
-- [ ] Searching "kesariya" finds केसरिया and the other way round, for titles, artists, albums,
-      playlists and lyrics: every name is also indexed in Roman letters by rule (Devanagari
-      first: Hindi, Marathi; the same for Gurmukhi and the other Indian scripts), and a typed
-      query matches loosely ("kesariya", "kesaria", "kesariyaa" all find it).
-- [ ] The same search in Music, Ctrl+K and the song finders (Add songs, Find).
+## 2. Search across scripts: done 2026-10-13
+- [x] Searching "kesariya" finds केसरिया and the other way round, for titles, artists, albums,
+      playlists and lyrics (`app/src/lib/textsearch.ts`): Devanagari read in Roman letters by
+      rule, with Hindi's dropped "a" (dhadkan, zindagi, kesariya); Gurmukhi, Bengali, Gujarati,
+      Odia, Tamil, Telugu, Kannada and Malayalam read through the same table. Names and queries
+      fold to one loose spelling (aa/a, ee/i, ph/f, w/v, z/j, iya/ia, doubled letters), and a
+      word of 5 letters or more may be off by one ("arjit"); exact results come first.
+- [x] The same search in Music, the Metadata wall, Ctrl+K, a playlist's Find, Add to playlist,
+      the Playlists filter and artist names.
+- [x] **In the lyrics**: Music's search also finds songs by a line of their words, shown in its
+      script and in Roman letters. His library: names are all in Roman letters, but 1,142 of the
+      1,910 songs with lyrics are in Devanagari. Reading them takes 0.2 s, folding 46,507 lines
+      0.8 s in slices (no frame longer than 17 ms), then 8 ms a key.
 
 ## 3. Lyrics on the big screen, and on the desktop
 - [ ] A full-window lyrics view (from Now Playing, or F11): the cover's colours, large synced

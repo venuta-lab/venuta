@@ -8,6 +8,7 @@ import { Page } from '../../components/ui'
 import { IconPause, IconPlay, IconSearch } from '../../components/Icons'
 import { useContextMenu } from '../listen/parts'
 import { playPlaylist, plural, sourceName } from './common'
+import { keyFor, matcher } from '../../lib/textsearch'
 
 const spring = { type: 'spring', stiffness: 360, damping: 30 } as const
 
@@ -109,7 +110,8 @@ export function PlaylistsHome(props: {
   const { data, root } = props
   const [q, setQ] = useState('')
   const all = data?.playlists ?? []
-  const match = (p: PlaylistSummary) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase())
+  const has = matcher(q)
+  const match = (p: PlaylistSummary) => has(keyFor(p, () => p.name))
   const smartNames = new Set(data?.smart.map((r) => r.name) ?? [])
   const yours = all.filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && match(p))
   const imported = useMemo(() => {

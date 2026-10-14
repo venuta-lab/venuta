@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
 import type { From } from '../../lib/player'
+import { matcher, ranked, searchKey } from '../../lib/textsearch'
 
 /*
   The Music home's view of the library: the flat catalog of songs grouped into albums and
@@ -43,8 +44,10 @@ export interface Library {
   categories: [string, number][]
   hiRes: Album[]
   /** Lower-cased text to search, one per track and one per album (same order as the lists). */
+  /** Search keys (see lib/textsearch), one per track, album and artist. */
   trackText: string[]
   albumText: string[]
+  artistText: string[]
 }
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
@@ -130,8 +133,9 @@ export function buildLibrary(tracks: CatalogTrack[]): Library {
     byArtist,
     categories,
     hiRes: albums.filter((a) => a.hiRes),
-    trackText: tracks.map((t) => `${t.title} ${t.artists.join(' ')} ${t.album} ${t.album_artist}`.toLowerCase()),
-    albumText: albums.map((a) => `${a.title} ${a.artist} ${a.year}`.toLowerCase()),
+    trackText: tracks.map((t) => searchKey(`${t.title} ${t.artists.join(' ')} ${t.album} ${t.album_artist}`)),
+    albumText: albums.map((a) => searchKey(`${a.title} ${a.artist} ${a.year}`)),
+    artistText: artists.map((a) => searchKey(a.name)),
   }
 }
 
@@ -154,15 +158,18 @@ export interface Results {
   tracks: CatalogTrack[]
 }
 
-/** Everything that holds every word typed, in any order. */
+/** Everything that holds every word typed, in any order, in any script, spelled loosely. */
 export function search(lib: Library, query: string): Results {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return { albums: [], artists: [], tracks: [] }
-  const has = (text: string) => words.every((w) => text.includes(w))
+  if (!searchKey(query)) return { albums: [], artists: [], tracks: [] }
+  const has = matcher(query)
+  const at = <T,>(list: T[], keys: string[]) => {
+    const index = new Map(list.map((x, i) => [x, i]))
+    return ranked(list, (x) => has(keys[index.get(x)!]))
+  }
   return {
-    albums: lib.albums.filter((_, i) => has(lib.albumText[i])),
-    artists: lib.artists.filter((a) => has(`${a.key} ${a.name.toLowerCase()}`)),
-    tracks: lib.tracks.filter((_, i) => has(lib.trackText[i])),
+    albums: at(lib.albums, lib.albumText),
+    artists: at(lib.artists, lib.artistText),
+    tracks: at(lib.tracks, lib.trackText),
   }
 }
 

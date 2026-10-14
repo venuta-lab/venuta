@@ -667,9 +667,78 @@ pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// One song's words for searching: its lines without times, each once.
+#[derive(Serialize)]
+pub struct SongWords {
+    pub path: String,
+    pub lines: Vec<String>,
+}
+
+/// Lines to search in a song's lyrics text (timed or not), each line once, in order.
+fn words_of(text: &str) -> Vec<String> {
+    let timed = parse_lrc(text);
+    let lines: Vec<String> = if timed.is_empty() {
+        text.lines().map(|l| l.trim().to_owned()).collect()
+    } else {
+        timed.into_iter().map(|(_, l)| l).collect()
+    };
+    let mut seen = std::collections::HashSet::new();
+    lines
+        .into_iter()
+        .filter(|l| !l.is_empty() && seen.insert(l.to_lowercase()))
+        .collect()
+}
+
+/// The words of every song in the open folder that has any (a .lrc beside it, or lyrics in
+/// its tags), for searching lyrics.
+#[tauri::command]
+pub async fn all_lyrics(root: String) -> Result<Vec<SongWords>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let index = crate::open_index(&rootp)?;
+        let lib = crate::libcache::indexed(&index, &rootp)?;
+        let mut out = Vec::new();
+        for t in &lib.tracks {
+            let lrc = std::path::Path::new(&t.path).with_extension("lrc");
+            let lrc = lrc.to_string_lossy().replace('\\', "/");
+            let text = if lib.lyrics_files.contains(&lrc) {
+                engine::text::read_text(&rootp.join(&lrc)).ok()
+            } else {
+                None
+            }
+            .or_else(|| {
+                t.first("LYRICS")
+                    .or_else(|| t.first("UNSYNCEDLYRICS"))
+                    .map(str::to_owned)
+            });
+            if let Some(text) = text {
+                let lines = words_of(&text);
+                if !lines.is_empty() {
+                    out.push(SongWords {
+                        path: t.path.clone(),
+                        lines,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_lrc;
+    use super::{parse_lrc, words_of};
+
+    #[test]
+    fn words_to_search_have_no_times_and_no_repeats() {
+        let w = words_of(
+            "[ar:X]\n[00:01.00]Kesariya tera\n[00:05.00]ishq hai piya\n[00:09.00]Kesariya Tera\n[00:12.00]",
+        );
+        assert_eq!(w, vec!["Kesariya tera", "ishq hai piya"]);
+        assert_eq!(words_of("one\n\ntwo\none"), vec!["one", "two"]);
+    }
 
     #[test]
     fn timed_lines_and_headers() {

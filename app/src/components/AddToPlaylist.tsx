@@ -4,6 +4,7 @@ import { playlistAdd, playlists as loadPlaylists, type PlaylistSummary } from '.
 import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
 import { Mosaic } from './Mosaic'
+import { keyFor, matcher } from '../lib/textsearch'
 
 /*
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
@@ -55,8 +56,8 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
   }, [req, root])
 
   const shown = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    return (lists ?? []).filter((p) => !s || p.name.toLowerCase().includes(s))
+    const has = matcher(q)
+    return (lists ?? []).filter((p) => has(keyFor(p, () => p.name)))
   }, [lists, q])
   const exact = (lists ?? []).some((p) => p.name.toLowerCase() === q.trim().toLowerCase())
 

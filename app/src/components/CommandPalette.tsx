@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconSearch } from './Icons'
+import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
 
 export interface Command {
   id: string
@@ -16,17 +17,22 @@ export interface Command {
   run: () => void
 }
 
-/** Fuzzy-ish match: every typed word must appear somewhere; earlier and whole-word hits rank higher. */
-function score(c: Command, q: string): number {
-  if (!q) return 1
-  const hay = `${c.label} ${c.keywords ?? ''} ${c.detail ?? ''} ${c.group}`.toLowerCase()
-  let s = 0
-  for (const w of q.toLowerCase().split(/\s+/).filter(Boolean)) {
+/**
+ * Every typed word must be there (in any script, spelled loosely, a longer word off by a
+ * letter); earlier and whole-word hits rank higher.
+ */
+function score(c: Command, words: string[], has: (key: string) => number): number {
+  if (!words.length) return 1
+  const hay = keyFor(c, () => `${c.label} ${c.keywords ?? ''} ${c.detail ?? ''} ${c.group}`)
+  const how = has(hay)
+  if (!how) return 0
+  // A result with a slip in it comes after the exact ones.
+  let s = how === EXACTLY ? 100 : 1
+  for (const w of words) {
     const i = hay.indexOf(w)
-    if (i < 0) return 0
-    s += 10 - Math.min(i, 9) + (hay[i - 1] === ' ' || i === 0 ? 5 : 0)
+    if (i >= 0) s += 10 - Math.min(i, 9) + (hay[i - 1] === ' ' || i === 0 ? 5 : 0)
   }
-  if (c.label.toLowerCase().startsWith(q.toLowerCase())) s += 20
+  if (searchKey(c.label).startsWith(words.join(' '))) s += 20
   return s
 }
 
@@ -45,8 +51,10 @@ export function CommandPalette(props: { open: boolean; onClose: () => void; comm
   }, [props.open])
 
   const results = useMemo(() => {
+    const words = searchKey(q).split(' ').filter(Boolean)
+    const has = matcher(q)
     const ranked = props.commands
-      .map((c) => ({ c, s: score(c, q.trim()) }))
+      .map((c) => ({ c, s: score(c, words, has) }))
       .filter((x) => x.s > 0)
     // Without a query, show actions first and keep albums out of the way.
     const shown = q.trim()

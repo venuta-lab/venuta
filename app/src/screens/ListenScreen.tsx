@@ -12,6 +12,7 @@ import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
 import { buildLibrary, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
+import { useLyricHits } from '../lib/lyricsSearch'
 
 export type Tab = 'home' | 'albums' | 'artists' | 'songs' | 'playlists'
 const TABS: [Tab, string][] = [
@@ -213,6 +214,16 @@ function Listen(props: Props) {
   }, [props.reset])
 
   const results = useMemo(() => search(lib, typed), [lib, typed])
+  const lyricHits = useLyricHits(root, typed)
+  // Songs found by their words, apart from the ones already found by name.
+  const inLyrics = useMemo(() => {
+    const byName = new Set(results.tracks.map((t) => t.path))
+    const byPath = new Map(lib.tracks.map((t) => [t.path, t]))
+    return lyricHits.flatMap((h) => {
+      const track = byPath.get(h.path)
+      return track && !byName.has(h.path) ? [{ ...h, track }] : []
+    })
+  }, [lyricHits, results.tracks, lib.tracks])
   const seeAll = useCallback((f: string) => {
     setFilter(f)
     setFadeIn(true)
@@ -250,7 +261,7 @@ function Listen(props: Props) {
     }
     if (page?.kind === 'artist') return <ArtistPage key={page.name} lib={lib} name={page.name} onBack={back} />
     const view = typed.trim() ? (
-      <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} />
+      <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} lyrics={inLyrics} />
     ) : tab === 'home' ? (
       <HomeView
         root={root}

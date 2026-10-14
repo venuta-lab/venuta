@@ -8,6 +8,7 @@ import { IconSearch } from '../components/Icons'
 import { Bar } from '../components/Activity'
 import { Chip, Page } from '../components/ui'
 import { counted, fraction, timeLeft, useJob, useNow } from '../lib/jobs'
+import { keyFor, matcher } from '../lib/textsearch'
 
 const fmtNum = (n: number) => n.toLocaleString('en-IN')
 
@@ -64,7 +65,7 @@ export function MusicScreen({
   const needing = albums.filter(needs).length
 
   const shown = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const has = matcher(query)
     return albums
       .filter((a) =>
         filter === 'all'
@@ -73,7 +74,7 @@ export function MusicScreen({
             ? !!a.untagged || (gaps.get(a.dir)?.length ?? 0) > 0
             : (gaps.get(a.dir) ?? []).includes(filter),
       )
-      .filter((a) => !q || `${a.title} ${a.album_artist} ${a.year ?? ''}`.toLowerCase().includes(q))
+      .filter((a) => has(keyFor(a, () => `${a.title} ${a.album_artist} ${a.year ?? ''}`)))
       .sort((a, b) => a.title.localeCompare(b.title))
   }, [albums, query, filter, gaps])
 

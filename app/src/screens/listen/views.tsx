@@ -20,6 +20,7 @@ import {
 import { Detail, InBar } from '../../components/ui'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
+import { play } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 
 export const HI_RES = 'Hi-Res'
@@ -314,9 +315,22 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
 
 // --- Search ----------------------------------------------------------------------------------
 
-/** Everything that matches, together: albums, artists, then songs. */
-export function SearchResults(props: { query: string; albums: Album[]; artists: Artist[]; tracks: Library['tracks'] }) {
-  const nothing = !props.albums.length && !props.artists.length && !props.tracks.length
+/** A song found by its words, and the line that holds them. */
+export interface LyricResult {
+  track: Library['tracks'][number]
+  line: string
+  latin?: string
+}
+
+/** Everything that matches, together: albums, artists, songs, then songs by their words. */
+export function SearchResults(props: {
+  query: string
+  albums: Album[]
+  artists: Artist[]
+  tracks: Library['tracks']
+  lyrics: LyricResult[]
+}) {
+  const nothing = !props.albums.length && !props.artists.length && !props.tracks.length && !props.lyrics.length
   if (nothing) return <p className="py-20 text-center text-[14px] text-ink/55">Nothing matches “{props.query.trim()}”.</p>
   return (
     <div className="pb-16">
@@ -331,6 +345,48 @@ export function SearchResults(props: { query: string; albums: Album[]; artists: 
           <SongList tracks={props.tracks} from={{ kind: 'search', ref: props.query.trim(), label: `Search: ${props.query.trim()}` }} pin />
         </section>
       )}
+      {props.lyrics.length > 0 && (
+        <section className={props.albums.length || props.artists.length || props.tracks.length ? 'mt-10' : ''}>
+          <div className="mb-3 flex items-baseline gap-3">
+            <h2 className="text-[19px] font-semibold tracking-[-0.02em]">In the lyrics</h2>
+            <span className="text-[12.5px] text-ink/50">{props.lyrics.length.toLocaleString('en-IN')}</span>
+          </div>
+          <LyricResults hits={props.lyrics} query={props.query.trim()} />
+        </section>
+      )}
+    </div>
+  )
+}
+
+/** Songs found by a line of their lyrics: the song, and the line (in Roman letters too). */
+function LyricResults(props: { hits: LyricResult[]; query: string }) {
+  const { root } = useNav()
+  const cover = useCovers(320)
+  const tracks = props.hits.map((h) => h.track)
+  return (
+    <div className="grid gap-1">
+      {props.hits.map((h, i) => {
+        const art = cover(h.track.dir)
+        return (
+          <button
+            key={h.track.path}
+            onClick={() => void play(root, tracks, i, { kind: 'search', ref: props.query, label: `Lyrics: ${props.query}` })}
+            className="row group grid grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09]"
+          >
+            <span className="h-10 w-10 overflow-hidden rounded-md bg-ink/[0.06]">
+              {art && <img src={art.src} alt="" draggable={false} loading="lazy" className="h-full w-full object-cover" />}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-[13.5px] font-medium">
+                {h.track.title}
+                <span className="font-normal text-ink/55"> · {h.track.artists.join(', ')}</span>
+              </span>
+              <span className="block truncate text-[13px] text-ink/70">“{h.line}”</span>
+              {h.latin && <span className="block truncate text-[12.5px] text-ink/50">{h.latin}</span>}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }

@@ -87,6 +87,10 @@ Shortcuts: **Ctrl+K** opens the command palette, **Ctrl+1 to Ctrl+5** switch pla
 opens Settings, **Space** plays or pauses, **Ctrl+M** opens the mini player, **/** searches,
 **?** lists every shortcut.
 
+Search finds names and lyrics in any script and forgives spelling: "kesariya", "kesaria" and
+केसरिया find the same song, and "dard mein zindagi" finds the line wherever it is written in
+Devanagari.
+
 ### Where things live
 
 | What | Where |

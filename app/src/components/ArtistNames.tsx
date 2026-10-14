@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getAliases, saveAliases, type Aliases } from '../lib/engine'
+import { matcher, searchKey } from '../lib/textsearch'
 
 /**
  * Your artist names: one spelling per person, the spellings that mean them, and names kept
@@ -40,10 +41,10 @@ export function ArtistNames(props: { onSaved?: (previous: Aliases) => void }) {
     void save({ ...view, artists }, `Now written as ${name}.`)
   }
   if (!view) return <p className="text-[13px] text-ink/55">{status || 'Reading your artist names…'}</p>
-  const ql = q.trim().toLowerCase()
+  const has = matcher(q)
   const shown = view.artists
     .map((a, i) => ({ a, i }))
-    .filter(({ a }) => !ql || [a.name, ...a.variants].some((n) => n.toLowerCase().includes(ql)))
+    .filter(({ a }) => has(searchKey([a.name, ...a.variants].join(' '))))
     .sort((x, y) => x.a.name.localeCompare(y.a.name))
   return (
     <div>

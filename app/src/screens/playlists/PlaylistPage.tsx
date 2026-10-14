@@ -23,6 +23,7 @@ import {
 } from '../../lib/engine'
 import { clock, enqueue, follow, fromIs, play, playAll, toggle, usePlayerValue, current } from '../../lib/player'
 import { notify } from '../../lib/notify'
+import { keyFor, matcher } from '../../lib/textsearch'
 import { useEscape } from '../../lib/layers'
 import { confirmAsk } from '../../components/Confirm'
 import { askAddToPlaylist } from '../../components/AddToPlaylist'
@@ -774,12 +775,11 @@ function PlaylistRow(props: {
 /** Search your library for songs, by any words of their title, artists or album. */
 function useSongSearch(q: string, catalog: CatalogTrack[] | null, limit = 40): CatalogTrack[] {
   return useMemo(() => {
-    const words = q.toLowerCase().split(/\s+/).filter(Boolean)
-    if (!words.length) return []
+    if (!q.trim()) return []
+    const has = matcher(q)
     const out: CatalogTrack[] = []
     for (const t of catalog ?? []) {
-      const hay = `${t.title} ${t.artists.join(' ')} ${t.album}`.toLowerCase()
-      if (words.every((w) => hay.includes(w))) {
+      if (has(keyFor(t, () => `${t.title} ${t.artists.join(' ')} ${t.album}`))) {
         out.push(t)
         if (out.length >= limit) break
       }
