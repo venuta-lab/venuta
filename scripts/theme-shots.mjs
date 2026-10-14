@@ -20,9 +20,9 @@ const PORT = process.env.VENUTA_CDP_PORT ?? '9333'
  *  but not a failure: about 0.01% of the screen. */
 const NOISE_PX = 200
 
-/** Each theme, in the modes it has. */
+/** Each theme, in the modes it has (Lumen also Frosted; everything else on Glass). */
 const THEMES = [
-  ['venuta', 'dark'], ['venuta', 'light'],
+  ['venuta', 'dark'], ['venuta', 'light'], ['venuta', 'dark', '', 'frosted'],
   ['green-room', 'dark'],
   ['orchard', 'dark'], ['orchard', 'light'],
   ['redline', 'dark'],
@@ -113,7 +113,7 @@ async function take(dir) {
     await I('player_volume', { volume: 0 })
     if (document.querySelector('button[aria-label^="Pause ("]')) await I('player_toggle')
     const p = window.__venutaPrefs.get()
-    return { style: p.style, theme: p.theme, pack: p.pack ?? '', motion: p.motion }
+    return { style: p.style, theme: p.theme, pack: p.pack ?? '', surface: p.surface, backdrop: p.backdrop, motion: p.motion }
   })()`)
   let n = 0
   const unstable = []
@@ -121,8 +121,9 @@ async function take(dir) {
   const packs = process.argv.includes('--packs')
     ? await run(`(async () => (await window.__TAURI_INTERNALS__.invoke('themes_list')).flatMap((p) => { try { const j = JSON.parse(p.json); return [[j.extends ?? 'venuta', (j.modes ?? ['dark'])[0], p.id]] } catch { return [] } }))()`)
     : null
-  for (const [style, theme, pack = ''] of packs ?? THEMES) {
-    await run(`(async () => { window.__venutaPrefs.try({ style: '${style}', theme: '${theme}', pack: '${pack}', motion: 'reduced' }); await __shots.sleep(${pack ? 1500 : 700}) })()`)
+  for (const [style, theme, pack = '', surface = 'glass'] of packs ?? THEMES) {
+    // The same look whatever the test copy has saved: surface and album background set too.
+    await run(`(async () => { window.__venutaPrefs.try({ style: '${style}', theme: '${theme}', pack: '${pack}', surface: '${surface}', backdrop: true, motion: 'reduced' }); await __shots.sleep(${pack ? 1500 : 700}) })()`)
     for (const [name, go] of Object.entries(SCREENS)) {
       await run(`(async () => { ${go}; await __shots.sleep(1300);
         const b = [...document.querySelectorAll('span,div')].find((e) => e.textContent === 'Test copy' && e.children.length === 0); if (b) b.style.visibility = 'hidden' })()`)
@@ -135,7 +136,7 @@ async function take(dir) {
         last = shot
         if (!settled) await new Promise((r) => setTimeout(r, 500))
       }
-      const file = pack ? `${pack}-${name}` : `${style}-${theme}-${name}`
+      const file = pack ? `${pack}-${name}` : `${style}-${theme}${surface === 'glass' ? '' : `-${surface}`}-${name}`
       writeFileSync(join(dir, `${file}.png`), Buffer.from(last, 'base64'))
       if (!settled) unstable.push(file)
       n++

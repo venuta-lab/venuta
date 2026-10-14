@@ -80,11 +80,12 @@
 }
 
 :root[data-style="venuta"][data-surface="frosted"] {
-  /* Mica-like: near-opaque, only faintly tinted by the cover; the rail has no panel of its own. */
+  /* Mica-like: calm and near-opaque panels, the window tinted by the cover (as Windows tints it
+     by the wallpaper); the rail has no panel of its own. */
   --app-bg: #202020;
   --solid: #202020;
-  --backdrop-opacity: 0.2;
-  --scrim: rgb(32 32 32 / 0.8);
+  --backdrop-opacity: 0.45;
+  --scrim: rgb(32 32 32 / 0.6);
   --vignette: none;
   --ink: #ffffff;
   --glass: rgb(58 58 58 / 0.3);
@@ -197,8 +198,8 @@
 :root[data-style="venuta"][data-theme="light"][data-surface="frosted"] {
   --app-bg: #f3f3f3;
   --solid: #f3f3f3;
-  --backdrop-opacity: 0.16;
-  --scrim: rgb(243 243 243 / 0.82);
+  --backdrop-opacity: 0.4;
+  --scrim: rgb(243 243 243 / 0.64);
   --vignette: none;
   --ink: #1b1b1b;
   --glass: rgb(255 255 255 / 0.5);
@@ -246,9 +247,6 @@
   --np-edge: #dde0e6;
 }
 
-:root[data-backdrop="off"] {
-  --backdrop-opacity: 0;
-}
 
 /* ---------------------------------------------------------------------------------------- */
 /* Neo-Tokyo: red bike light-trails through a neon night city (after Akira, 1988).          */

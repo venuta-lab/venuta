@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { themeInfo, usePrefs } from '../lib/prefs'
 
 /*
   The living backdrop: the library's own covers as a soft field of colour, with a glow in the
@@ -26,6 +27,9 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
   const canvas = useRef<HTMLCanvasElement>(null)
   const [ready, setReady] = useState(false)
   const key = covers.slice(0, 6).join('|')
+  // The album background switch, for the themes that offer it (the others decide it themselves).
+  const p = usePrefs()
+  const shown = p.backdrop || !themeInfo(p).albumBackground
 
   useEffect(() => {
     if (!covers.length || !canvas.current) return
@@ -53,7 +57,7 @@ export function Backdrop({ covers, focus }: { covers: string[]; focus?: string |
     <div
       aria-hidden
       className="pointer-events-none fixed inset-0 overflow-hidden transition-opacity duration-500"
-      style={{ opacity: 'var(--backdrop-opacity)', filter: 'var(--backdrop-filter)' }}
+      style={{ opacity: shown ? 'var(--backdrop-opacity)' : 0, filter: 'var(--backdrop-filter)' }}
     >
       <canvas
         ref={canvas}

@@ -17,6 +17,10 @@
   lately in one row, and every theme in a browser that opens when you want it (search, filters,
   groups that show one row until opened). Colour, Window, Motion and App icon are one line each
   saying what they are set to, opened to change them.
+- **The album background switch works in every theme that has it** (it did nothing in Frosted,
+  Neo-Tokyo, Thermoptic, Sync Ratio and Layer Zero), and **Frosted shows the album** as a calm
+  tint of the window, the way Windows tints Mica with the wallpaper (it was all but invisible).
+- Built-in themes come first: in the theme browser, its filters, and the suggestions.
 - A theme that can't load never breaks Venuta: the theme it's built on shows, and Settings says
   why. Reduced motion no longer fades the accent between albums.
 - **A logo**: the Venuta mark, a V with a peacock feather and a flute's holes, on the program,
