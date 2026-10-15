@@ -1,0 +1,21 @@
+{
+  "about": "What a typed playlist name is saved as. Read by app/tests/playlistName.test.ts and by the engine's own test (crates/engine/src/plan.rs), so the app shows exactly what the engine saves.",
+  "cases": [
+    ["Road trip", "Road trip"],
+    ["Road/trip: best* of?", "Road trip best of"],
+    ["  spaced    out  ", "spaced out"],
+    ["a<b>c|d\"e\\f", "a b c d e f"],
+    ["Ends with dots...", "Ends with dots"],
+    ["Ends with a space and dot . ", "Ends with a space and dot"],
+    ["CON", "CON_"],
+    ["nul", "nul_"],
+    ["Console", "Console"],
+    ["Tab\tand\nnew line", "Tab and new line"],
+    ["Café", "Café"],
+    ["केसरिया", "केसरिया"],
+    ["Always❤️", "Always❤️"],
+    ["LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL", "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"],
+    ["Ninety-nine letters then a space and more xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx tail", "Ninety-nine letters then a space and more xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx t"],
+    ["***", ""]
+  ]
+}

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { playlists as loadPlaylists, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useEscape } from '../lib/layers'
 import { addSongsTo } from '../screens/playlists/ops'
+import { nameNote, savedName } from '../lib/playlistName'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
 
@@ -66,7 +67,10 @@ export function AddToPlaylist({ root }: { root: string }) {
     const has = matcher(q)
     return (lists ?? []).filter((p) => has(keyFor(p, () => p.name)))
   }, [lists, q])
-  const exact = (lists ?? []).some((p) => p.name.toLowerCase() === q.trim().toLowerCase())
+  // A new playlist is made under the name it will be saved as (lib/playlistName.ts).
+  const fresh = savedName(q)
+  const freshNote = nameNote(q)
+  const exact = (lists ?? []).some((p) => p.name.toLowerCase() === fresh.toLowerCase())
 
   async function add(name: string) {
     if (!req || busy) return
@@ -115,7 +119,7 @@ export function AddToPlaylist({ root }: { root: string }) {
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     if (shown[0]) void add(shown[0].name)
-                    else if (q.trim()) void add(q.trim())
+                    else if (fresh) void add(fresh)
                   }
                 }}
                 placeholder="Find a playlist, or name a new one"
@@ -123,15 +127,17 @@ export function AddToPlaylist({ root }: { root: string }) {
               />
             </div>
             <div className="fade-y min-h-0 flex-1 overflow-y-auto p-1.5">
-              {q.trim() && !exact && (
+              {fresh && !exact && (
                 <button
-                  onClick={() => void add(q.trim())}
+                  onClick={() => void add(fresh)}
                   className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
                 >
                   <span className="grid h-10 w-10 shrink-0 place-items-center accent-fill rounded-lg text-[20px] leading-none text-on-accent">+</span>
                   <span className="min-w-0">
-                    <span className="block truncate text-[14px] font-medium">New playlist “{q.trim()}”</span>
-                    <span className="block text-[12px] text-ink/55">Made with {req.items.length === 1 ? 'this song' : `these ${req.items.length} songs`}</span>
+                    <span className="block truncate text-[14px] font-medium">New playlist “{fresh}”</span>
+                    <span className="block text-[12px] text-ink/55">
+                      {freshNote ?? `Made with ${req.items.length === 1 ? 'this song' : `these ${req.items.length} songs`}`}
+                    </span>
                   </span>
                 </button>
               )}

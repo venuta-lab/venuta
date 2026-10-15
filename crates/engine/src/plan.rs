@@ -1804,6 +1804,23 @@ pub fn build_checked(
 mod tests {
     use super::*;
 
+    /// The app shows a typed playlist name as it will be saved (app/src/lib/playlistName.ts);
+    /// this table, which its test reads too, keeps the two rules the same.
+    #[test]
+    fn playlist_names_are_saved_as_the_app_says() {
+        let table = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../app/tests/fixtures/playlist-names.json"),
+        )
+        .expect("the shared table");
+        let v: serde_json::Value = serde_json::from_str(&table).unwrap();
+        for case in v["cases"].as_array().unwrap() {
+            let typed = case[0].as_str().unwrap();
+            let saved = case[1].as_str().unwrap();
+            assert_eq!(sanitize(typed, 100), saved, "{typed:?}");
+        }
+    }
+
     fn fields<'a>(year: &'a str, album: &'a str) -> PathFields<'a> {
         PathFields {
             category: "Film & Series",

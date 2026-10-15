@@ -56,6 +56,7 @@ import { useDropTarget } from '../../lib/drag'
 import { AddSongs } from './AddSongs'
 import { DragHandle, MOVE_KEYS } from '../../components/DragHandle'
 import { addSongsTo, deletePlaylist } from './ops'
+import { nameNote, savedName } from '../../lib/playlistName'
 import { useNav } from '../listen/model'
 import { entryAvailability, fromWhere, length, onlineId, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
@@ -304,8 +305,10 @@ export function PlaylistPage(props: {
   }, [root, queue, from, rows])
 
   async function rename(to: string) {
-    const next = to.trim()
-    if (!next || next === name) return
+    // The name as it will be saved (lib/playlistName.ts): what is saved is what is shown.
+    const next = savedName(to)
+    if (!to.trim() || next === name) return
+    if (!next) return notify('A name needs at least one letter or number.')
     try {
       await playlistRename(root, name, next)
       props.onRenamed(next)
@@ -764,12 +767,17 @@ function Title(props: { name: string; editable: boolean; startEditing: boolean; 
         {props.name}
       </h1>
     )
+  // While it is typed: the name it will be saved as, when that isn't what was typed.
+  const note = nameNote(value)
   return (
+    <>
     <input
       autoFocus
       onFocus={(e) => e.currentTarget.select()}
       value={value}
       aria-label="Playlist name"
+      aria-describedby={note ? 'playlist-name-note' : undefined}
+      spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {
         setEditing(false)
@@ -787,6 +795,12 @@ function Title(props: { name: string; editable: boolean; startEditing: boolean; 
       }}
       className="title mt-1 w-full rounded-lg bg-ink/[0.06] px-2 py-0.5 text-[34px] leading-[1.1] outline-none ring-1 ring-[color-mix(in_oklab,var(--accent)_60%,transparent)] -mx-2"
     />
+    {note && (
+      <p id="playlist-name-note" aria-live="polite" className="mt-1.5 text-[12.5px] text-ink/60">
+        {note}
+      </p>
+    )}
+    </>
   )
 }
 
