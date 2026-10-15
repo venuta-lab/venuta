@@ -739,6 +739,30 @@ pub fn deezer_id(link: &str) -> Option<String> {
 }
 
 /// A public Deezer playlist, every page of it.
+/// The songs on one page of a Deezer playlist (`tracks`, or a `next` page): title, artist,
+/// album, length and the recording code (ISRC), which Deezer gives for every song.
+fn deezer_tracks(page: &serde_json::Value) -> Vec<Foreign> {
+    let s =
+        |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).unwrap_or_default().to_owned();
+    page.get("data")
+        .and_then(|d| d.as_array())
+        .into_iter()
+        .flatten()
+        .map(|t| Foreign {
+            title: s(t.get("title")),
+            artist: s(t.get("artist").and_then(|a| a.get("name"))),
+            album: s(t.get("album").and_then(|a| a.get("title"))),
+            duration_ms: t.get("duration").and_then(|d| d.as_u64()).map(|d| d * 1000),
+            isrc: t
+                .get("isrc")
+                .and_then(|i| i.as_str())
+                .map(|i| i.trim().to_uppercase())
+                .filter(|i| i.len() >= 12),
+            ..Default::default()
+        })
+        .collect()
+}
+
 pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, String> {
     let v = http
         .get_json(&format!("https://api.deezer.com/playlist/{id}"))
@@ -760,23 +784,7 @@ pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, Stri
     let mut page = v.get("tracks").cloned();
     let mut guard = 0;
     while let Some(p) = page.take() {
-        for t in p
-            .get("data")
-            .and_then(|d| d.as_array())
-            .into_iter()
-            .flatten()
-        {
-            let s = |v: Option<&serde_json::Value>| {
-                v.and_then(|x| x.as_str()).unwrap_or_default().to_owned()
-            };
-            tracks.push(Foreign {
-                title: s(t.get("title")),
-                artist: s(t.get("artist").and_then(|a| a.get("name"))),
-                album: s(t.get("album").and_then(|a| a.get("title"))),
-                duration_ms: t.get("duration").and_then(|d| d.as_u64()).map(|d| d * 1000),
-                ..Default::default()
-            });
-        }
+        tracks.extend(deezer_tracks(&p));
         guard += 1;
         if let Some(next) = p.get("next").and_then(|n| n.as_str())
             && guard < 100
@@ -1847,6 +1855,21 @@ mod tests {
         assert_eq!(p.tracks[0].title, "O Sanam");
         assert_eq!(p.tracks[0].duration_ms, Some(215_000));
         assert_eq!(p.tracks[1].title, "Kya Mujhe Pyar Hai");
+    }
+
+    #[test]
+    fn a_deezer_page_gives_every_song_with_its_recording_code() {
+        let page: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/pages/deezer-playlist.json"))
+                .unwrap();
+        let songs = deezer_tracks(&page["tracks"]);
+        assert_eq!(songs.len(), 100);
+        let first = &songs[0];
+        assert_eq!(first.title, "Boston");
+        assert_eq!(first.isrc.as_deref(), Some("QZJ842603468"));
+        assert!(first.duration_ms.is_some_and(|ms| ms > 60_000));
+        assert!(!first.artist.is_empty() && !first.album.is_empty());
+        assert!(songs.iter().all(|s| s.isrc.is_some()));
     }
 
     #[test]
