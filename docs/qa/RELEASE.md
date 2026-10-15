@@ -60,3 +60,7 @@ the release are added to it first.
 
 `scripts/release.mjs` (it needs `git -c user.name=… -c user.email=…` on a machine without a git
 identity). The maintainer signs and publishes.
+
+To try the real installer first, `node scripts/release.mjs <x.y.z> --local` builds the same signed
+installer into `target/release/bundle/nsis` and stops: nothing committed, tagged, pushed or
+released.

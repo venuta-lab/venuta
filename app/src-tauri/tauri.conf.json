@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Venuta",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "identifier": "app.venuta.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -34,7 +34,7 @@
       }
     ],
     "security": {
-"csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https://*.scdn.co https://*.spotifycdn.com https://*.googleusercontent.com https://*.ggpht.com https://i.ytimg.com https://*.ytimg.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https://*.scdn.co https://*.spotifycdn.com https://*.googleusercontent.com https://*.ggpht.com https://i.ytimg.com https://*.ytimg.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost blob:",
       "assetProtocol": {
         "enable": true,
         "scope": [

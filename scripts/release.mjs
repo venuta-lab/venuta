@@ -1,4 +1,4 @@
-// Make a release: node scripts/release.mjs <version> [--notes file.md] [--publish]
+// Make a release: node scripts/release.mjs <version> [--notes file.md] [--publish | --local]
 //
 //   1. sets the version (tauri.conf.json, Cargo workspace, app/package.json);
 //   2. builds the Windows installer, signed with the updater key (never stored in the repo:
@@ -6,6 +6,9 @@
 //   3. writes latest.json, which installed copies read to find the new version;
 //   4. tags the commit and creates a GitHub release with both files, as a draft unless
 //      --publish (a draft is seen by nobody until you publish it on GitHub).
+//
+// --local stops after step 3: the same signed installer to install and try, with nothing
+// committed, tagged, pushed or released. Run again without it to release.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -16,12 +19,13 @@ const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '
 const args = process.argv.slice(2)
 const version = args.find((a) => /^\d+\.\d+\.\d+$/.test(a))
 if (!version) {
-  console.error('Usage: node scripts/release.mjs <x.y.z> [--notes notes.md] [--publish]')
+  console.error('Usage: node scripts/release.mjs <x.y.z> [--notes notes.md] [--publish | --local]')
   process.exit(1)
 }
 const notesAt = args.indexOf('--notes')
 const notes = notesAt >= 0 ? readFileSync(args[notesAt + 1], 'utf8').trim() : `Venuta ${version}`
 const publish = args.includes('--publish')
+const local = args.includes('--local')
 // Only pnpm needs the Windows shell (it is a .cmd); git and gh get their arguments as they are, so a
 // title with a space stays one argument.
 const run = (cmd, a, opts = {}) =>
@@ -74,6 +78,10 @@ const latest = {
   },
 }
 writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n')
+if (local) {
+  console.log(`Built ${join(dir, setup)}: nothing committed, tagged or released.`)
+  process.exit(0)
+}
 
 // 4. Tag and release.
 run('git', ['add', 'app/src-tauri/tauri.conf.json', 'Cargo.toml', 'Cargo.lock', 'app/package.json'])
