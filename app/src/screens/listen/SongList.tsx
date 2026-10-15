@@ -5,7 +5,9 @@ import { clock, play, toggle, type From } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { compareText, scrollerOf, useNav, useNowPlaying } from './model'
 import { InBar } from '../../components/ui'
-import { Equalizer, QualityBadge, TrackMenu, trackActions, useContextMenu } from './parts'
+import { Equalizer, QualityBadge, TrackMenu } from './parts'
+import { menuFor, songFacts, songWork } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 
 const ROW = 44
 const OVERSCAN = 10
@@ -154,10 +156,11 @@ const SongRow = memo(function SongRow(props: {
   const nav = useNav()
   const { openAlbum } = nav
   const isNow = now !== 'no'
-  const ctx = useContextMenu(() => trackActions(nav, t))
+  // Play from the menu plays the list from this song, as a click does.
+  const playHere = () => props.onPlay(i)
   return (
     <div
-      onContextMenu={ctx.onContextMenu}
+      onContextMenu={(e) => menuFromEvent(e, menuFor('song', songFacts(t), songWork(nav, t, playHere)))}
       role="listitem"
       tabIndex={0}
       data-index={i}
@@ -229,8 +232,7 @@ const SongRow = memo(function SongRow(props: {
       <span className="min-w-0">
         <QualityBadge text={quality(t)} />
       </span>
-      <TrackMenu track={t} label={t.title} />
-      {ctx.menu}
+      <TrackMenu track={t} label={t.title} play={playHere} />
     </div>
   )
 })

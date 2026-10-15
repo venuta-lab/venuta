@@ -4,7 +4,9 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, isOnline, jumpTo, move, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, isOnline, jumpTo, move, openFrom, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { goToEach, menuFor } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 import { IconClose } from '../Icons'
 import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
@@ -91,6 +93,20 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   const upcoming = s.queue.length - s.index - 1
   const left = useMemo(() => s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0), [s.queue, s.index])
 
+  // Right-click a song in the queue: what lib/actionModel.ts says a queued song can do.
+  const rowMenu = (r: Row, current: boolean) => {
+    const q = r.q
+    const online = isOnline(q)
+    const names = q.artists.length ? q.artists : q.album_artist ? [q.album_artist] : []
+    return menuFor('queued', { current, online, noArtist: !names.length }, {
+      play: current ? undefined : () => void jumpTo(r.at),
+      playlist: () => askAddSongs([songItemOf(q)], q.title),
+      artist: goToEach(names, (n) => openFrom({ kind: 'artist', ref: n, label: n })),
+      album: online ? undefined : () => openFrom({ kind: 'album', ref: q.dir, label: q.album }),
+      remove: current ? undefined : () => void removeAt(r.at),
+    })
+  }
+
   const row = (r: Row, _line: number, style: React.CSSProperties, grab: Grab | null) => {
     const current = r.at === s.index
     const played = r.at < s.index
@@ -101,6 +117,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
         style={style}
         data-current={current}
         onPointerDown={grab?.onGrab}
+        onContextMenu={(e) => menuFromEvent(e, rowMenu(r, current))}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button') || grab?.justDropped()) return
           void (current ? toggle() : jumpTo(r.at))

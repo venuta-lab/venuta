@@ -1,10 +1,10 @@
-import { askAddToPlaylist } from '../../components/AddToPlaylist'
-import { AnimatePresence, motion } from 'motion/react'
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { motion } from 'motion/react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { enqueue, playAll, toggle, type From } from '../../lib/player'
+import { playAll, toggle, type From } from '../../lib/player'
+import { albumWork, menuFor, songFacts, songWork } from '../../lib/actions'
+import { closeMenu, menuFromEvent, useMenuOpen, type MenuGroups } from '../../lib/menu'
 import { useJob } from '../../lib/jobs'
 import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { CoverImage, NoCover } from '../MusicScreen'
@@ -96,12 +96,10 @@ export const AlbumCard = memo(function AlbumCard(props: {
   const nav = useNav()
   const { root, openAlbum } = nav
   const sub = props.subtitle === 'year' ? a.year : `${a.artist}${a.year ? `, ${a.year}` : ''}`
-  const ctx = useContextMenu(() => albumActions(nav, a))
   // The lift on hover and the press on Play are CSS (.card, .card-play in index.css), so a page
   // of cards is plain elements; motion is kept for the cover's flight into the album page.
   return (
-    <div onContextMenu={ctx.onContextMenu} className="card group relative">
-      {ctx.menu}
+    <div onContextMenu={(e) => menuFromEvent(e, menuFor('album', {}, albumWork(nav, a)))} className="card group relative">
       <button
         onClick={() => {
           openAlbum(a.dir, origin)
@@ -269,175 +267,46 @@ export function Avatar({ name, cover }: { name: string; cover: Cover | undefined
   )
 }
 
-// --- The "…" menu on a song ------------------------------------------------------------------
+// --- Menus ------------------------------------------------------------------------------------
 
-/** "…" on a song: play next, add to queue, go to artist, edit details. */
-/** A menu opened with the right mouse button, at the pointer. */
-export function useContextMenu(items: () => [string, () => void][]) {
-  const [at, setAt] = useState<{ x: number; y: number; up: boolean; items: [string, () => void][] } | null>(null)
+/**
+ * A right-click menu (and a "…" button's): opens the window's one menu (components/ContextMenu)
+ * with these items, at the pointer or under the button. Items are groups from lib/actions.ts,
+ * or a plain list of [label, run] for menus outside the music (themes).
+ */
+export function useContextMenu(items: () => MenuGroups | [string, () => void][]) {
   const onContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
     const list = items()
-    const h = list.length * 36 + 20
-    // From a button (a click, or a key with no pointer): under the button, right edges lined up.
-    if (e.type === 'click' || (e.clientX === 0 && e.clientY === 0)) {
-      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      const up = r.bottom + 6 + h > window.innerHeight
-      setAt({ x: Math.min(r.right, window.innerWidth - 8), y: up ? r.top - 6 : r.bottom + 6, up, items: list })
-      return
-    }
-    // At the pointer, opening downward unless that would run off the window.
-    const up = e.clientY + h > window.innerHeight
-    setAt({ x: Math.min(e.clientX + 180, window.innerWidth - 8), y: e.clientY, up, items: list })
+    const groups: MenuGroups = typeof list[0]?.[0] === 'string'
+      ? [(list as [string, () => void][]).map(([label, run]) => ({ label, run }))]
+      : (list as MenuGroups)
+    menuFromEvent(e, groups)
   }
-  const close = useCallback(() => setAt(null), [])
-  const menu = createPortal(<AnimatePresence>{at && <Menu at={at} items={at.items} onClose={close} />}</AnimatePresence>, document.body)
-  return { onContextMenu, menu }
+  return { onContextMenu, menu: null }
 }
 
-/** What can be done with a whole album (right-click a cover). */
-export function albumActions(nav: ReturnType<typeof useNav>, a: Album): [string, () => void][] {
-  return [
-    ['Play', () => void playAll(nav.root, a.tracks, albumFrom(a))],
-    ['Shuffle', () => void playAll(nav.root, a.tracks, albumFrom(a), 'shuffle')],
-    ['Play next', () => void enqueue(nav.root, a.tracks, true)],
-    ['Add to queue', () => void enqueue(nav.root, a.tracks, false)],
-    ['Add to playlist…', () => askAddToPlaylist(a.tracks.map((t) => t.path), a.title)],
-    ['Go to artist', () => nav.openArtist(a.artist)],
-    ['Edit details', () => nav.editDetails(a.dir)],
-  ]
-}
-
-/** What can be done with one song. */
-export function trackActions(nav: ReturnType<typeof useNav>, track: CatalogTrack): [string, () => void][] {
-  const artist = track.artists[0] || track.album_artist
-  return [
-    ['Play next', () => void enqueue(nav.root, [track], true)],
-    ['Add to queue', () => void enqueue(nav.root, [track], false)],
-    ['Add to playlist…', () => askAddToPlaylist([track.path], track.title)],
-    ...(artist ? ([['Go to artist', () => nav.openArtist(artist)]] as [string, () => void][]) : []),
-    ['Go to album', () => nav.openAlbum(track.dir)],
-    ['Edit details', () => nav.editDetails(track.dir)],
-  ]
-}
-
-export function TrackMenu({ track, label }: { track: CatalogTrack; label: string }) {
+/** "…" on a song: the same menu as right-clicking it. `play`: play it within its list. */
+export function TrackMenu({ track, label, play }: { track: CatalogTrack; label: string; play?: () => void }) {
   const nav = useNav()
   const button = useRef<HTMLButtonElement>(null)
-  const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null)
-
-  const openMenu = () => {
-    const r = button.current?.getBoundingClientRect()
-    if (!r) return
-    const up = r.bottom + items.length * 36 + 20 > window.innerHeight
-    setAt({ x: Math.min(r.right, window.innerWidth - 8), y: up ? r.top - 6 : r.bottom + 6, up })
-  }
-  const close = useCallback((refocus = true) => {
-    setAt(null)
-    if (refocus) button.current?.focus()
-  }, [])
-  const items = trackActions(nav, track)
-
+  const open = useMenuOpen()
+  const shown = !!open && open.back === button.current
   return (
-    <>
-      <button
-        ref={button}
-        aria-label={`More for ${label}`}
-        aria-haspopup="menu"
-        aria-expanded={!!at}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (at) close()
-          else openMenu()
-        }}
-        onDoubleClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.key === 'Enter' && e.stopPropagation()}
-        className={`grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 ${at ? 'opacity-100' : 'opacity-0'}`}
-      >
-        <IconMore />
-      </button>
-      {createPortal(
-        <AnimatePresence>
-          {at && <Menu at={at} items={items} onClose={close} />}
-        </AnimatePresence>,
-        document.body,
-      )}
-    </>
-  )
-}
-
-function Menu(props: { at: { x: number; y: number; up: boolean }; items: [string, () => void][]; onClose: (refocus?: boolean) => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const { onClose } = props
-  useEffect(() => {
-    ref.current?.querySelector<HTMLButtonElement>('button')?.focus()
-  }, [])
-  useEffect(() => {
-    const away = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose(false)
-    }
-    const gone = () => onClose(false)
-    document.addEventListener('pointerdown', away, true)
-    window.addEventListener('scroll', gone, true)
-    window.addEventListener('resize', gone)
-    window.addEventListener('blur', gone)
-    return () => {
-      document.removeEventListener('pointerdown', away, true)
-      window.removeEventListener('scroll', gone, true)
-      window.removeEventListener('resize', gone)
-      window.removeEventListener('blur', gone)
-    }
-  }, [onClose])
-
-  const onKey = (e: React.KeyboardEvent) => {
-    const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
-    const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
-    if (e.key === 'Escape' || e.key === 'Tab') {
-      e.preventDefault()
-      e.stopPropagation()
-      onClose()
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      const n = buttons.length
-      buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n]?.focus()
-    } else if (e.key === 'Home' || e.key === 'End') {
-      e.preventDefault()
-      buttons[e.key === 'Home' ? 0 : buttons.length - 1]?.focus()
-    }
-    // Keys used here never reach the rows or the screen behind the menu.
-    if (e.key === 'Enter') e.stopPropagation()
-  }
-
-  return (
-    <motion.div
-      ref={ref}
-      role="menu"
-      onKeyDown={onKey}
-      initial={{ opacity: 0, scale: 0.96, y: props.at.up ? 4 : -4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.12 } }}
-      transition={spring}
-      className="popover fixed z-50 min-w-[180px] rounded-2xl p-1.5"
-      style={{
-        left: props.at.x,
-        top: props.at.y,
-        translate: props.at.up ? '-100% -100%' : '-100% 0',
-        transformOrigin: props.at.up ? 'bottom right' : 'top right',
+    <button
+      ref={button}
+      aria-label={`More for ${label}`}
+      aria-haspopup="menu"
+      aria-expanded={shown}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (shown) closeMenu()
+        else menuFromEvent(e, menuFor('song', songFacts(track), songWork(nav, track, play)))
       }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.key === 'Enter' && e.stopPropagation()}
+      className={`grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 ${shown ? 'opacity-100' : 'opacity-0'}`}
     >
-      {props.items.map(([label, run]) => (
-        <button
-          key={label}
-          role="menuitem"
-          onClick={() => {
-            props.onClose()
-            run()
-          }}
-          className="block w-full rounded-xl px-3 py-2 text-left text-[13px] text-ink/85 hover:bg-ink/[0.08] hover:text-ink focus-visible:bg-ink/[0.08] focus-visible:outline-none"
-        >
-          {label}
-        </button>
-      ))}
-    </motion.div>
+      <IconMore />
+    </button>
   )
 }

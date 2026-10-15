@@ -9,7 +9,8 @@ import { notify } from '../../lib/notify'
 import { onlineSearch } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
 import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
-import { useContextMenu } from '../../screens/listen/parts'
+import { goToEach, menuFor, showInFolder } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
 import { hasIndic, useLyricColour } from '../lyrics/useNowLyrics'
@@ -219,31 +220,26 @@ export function SongActions(props: {
       notify(onlineProblem(e))
     }
   }
-  const more = useContextMenu(() => {
-    const rows: [string, () => void][] = [
-      ...artists.slice(0, 3).map((a) => [`Go to ${a}`, () => props.onArtist(a)] as [string, () => void]),
-      ...(song.album_artist && !artists.includes(song.album_artist)
-        ? ([[`Go to ${song.album_artist}`, () => props.onArtist(song.album_artist)]] as [string, () => void][])
-        : []),
-      ['Add to playlist…', () => askAddSongs([songItemOf(song)], song.title)],
-    ]
-    if (!remote) {
-      rows.unshift(['Go to album', () => props.onAlbum(song.dir)])
-      if (props.lyrics && (props.lyrics.lines.length || props.lyrics.text)) {
-        rows.push([props.lyrics.lines.length ? 'Fix the lyrics timing' : 'Time the lyrics', props.onTiming])
-      } else {
-        rows.push(['Add lyrics', props.onTiming])
-      }
-      rows.push([
-        'Show in folder',
-        () => void invoke('show_in_folder', { root: props.root, path: song.path }).catch((e) => notify(String(e))),
-      ])
-    } else if (artists[0]) {
-      rows.push([`More online by ${artists[0]}`, () => void moreBy(artists[0])])
-    }
-    rows.push(['Search the web', () => void invoke('search_web', { words: `${song.title} ${artists[0] ?? ''}` })])
-    return rows
-  })
+  // "More": what lib/actionModel.ts says a playing song can do.
+  const moreMenu = () => {
+    const names = [...artists, ...(song.album_artist && !artists.includes(song.album_artist) ? [song.album_artist] : [])]
+    const timed = !!props.lyrics?.lines.length
+    const words = !!(props.lyrics && (props.lyrics.lines.length || props.lyrics.text))
+    return menuFor(
+      'song',
+      { nowPlaying: true, online: remote, noArtist: !names.length },
+      {
+        playlist: () => askAddSongs([songItemOf(song)], song.title),
+        artist: goToEach(names, props.onArtist),
+        album: remote ? undefined : () => props.onAlbum(song.dir),
+        moreOnline: remote && artists[0] ? [{ label: `More online by ${artists[0]}`, run: () => void moreBy(artists[0]) }] : undefined,
+        lyrics: [{ label: words ? (timed ? 'Fix the lyrics timing' : 'Time the lyrics') : 'Add lyrics', run: props.onTiming }],
+        folder: remote ? undefined : () => showInFolder(props.root, song.path),
+        web: () => void invoke('search_web', { words: `${song.title} ${artists[0] ?? ''}` }),
+      },
+    )
+  }
+
   const link = 'rounded-md transition-colors hover:text-ink hover:underline decoration-ink/35 underline-offset-[5px]'
   return (
     <>
@@ -280,12 +276,11 @@ export function SongActions(props: {
               <IconAlbum width={18} height={18} />
             </IconAction>
           )}
-          <IconAction label="More" onClick={more.onContextMenu}>
+          <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu())}>
             <IconMore width={18} height={18} />
           </IconAction>
         </div>
       </div>
-      {more.menu}
     </>
   )
 }

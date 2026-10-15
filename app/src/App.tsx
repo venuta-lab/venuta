@@ -41,7 +41,9 @@ import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from
 import { track } from './lib/jobs'
 import { dismissNotice, notify, useNotice } from './lib/notify'
 import * as player from './lib/player'
-import { ensureCatalog, trackAt } from './lib/catalog'
+import { catalogNow, ensureCatalog, trackAt } from './lib/catalog'
+import { albumWork, menuFor, playlistFacts, playlistWork } from './lib/actions'
+import { indexTracks } from './screens/listen/model'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { cleanArtUrl } from './components/RemoteArt'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
@@ -55,6 +57,7 @@ import { MusicScreen } from './screens/MusicScreen'
 import { ListenScreen, showMusicTab } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
+import { onGoToPlaylists } from './screens/playlists/ops'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { StudioHost } from './components/themes/ThemeStudio'
@@ -380,6 +383,8 @@ export default function App() {
     [go],
   )
   const openPlaylist = useCallback((name: string) => openPlaylists({ kind: 'playlist', name }), [openPlaylists])
+  // A playlist's menu anywhere (rename, a copy's Open, Update from…) asks to go there.
+  useEffect(() => onGoToPlaylists(openPlaylists), [openPlaylists])
 
   // Time a song's lyrics (from Health): play it, and open its lyrics with the maker.
   useEffect(() => {
@@ -397,7 +402,7 @@ export default function App() {
     return () => window.removeEventListener('venuta:time-lyrics', on)
   }, [])
 
-  // "Playing from …" (the queue, Now Playing): back to that playlist or album.
+  // "Playing from …" and menus outside Music (the queue): to that playlist, album or artist.
   useEffect(() => {
     const on = (e: Event) => {
       const f = (e as CustomEvent<player.From>).detail
@@ -405,6 +410,9 @@ export default function App() {
       else if (f.kind === 'album') {
         go('listen')
         setListenAlbum(f.ref)
+      } else if (f.kind === 'artist') {
+        go('listen')
+        setListenArtist(f.ref)
       } else go('listen')
     }
     window.addEventListener('venuta:open-from', on)
@@ -548,6 +556,7 @@ export default function App() {
           label: p.name,
           keywords: `playlist ${p.source ?? ''}`,
           run: () => openPlaylist(p.name),
+          menu: () => menuFor('playlist', playlistFacts(p), playlistWork(root, p)),
         }),
       ),
       goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
@@ -667,6 +676,24 @@ export default function App() {
         run: () => setPrefs({ backdrop: !getPrefs().backdrop }),
       },
     ]
+    // An album's menu here is the same as on its card (lib/actions.ts), once the songs are read.
+    const palNav = {
+      root,
+      openAlbum: (dir: string) => {
+        go('listen')
+        setListenAlbum(dir)
+      },
+      openArtist: (name: string) => {
+        go('listen')
+        setListenArtist(name)
+      },
+      editDetails: () => go('music'),
+    }
+    const albumMenu = (dir: string) => () => {
+      const tracks = catalogNow(root)
+      const album = tracks ? indexTracks(tracks).byDir.get(dir) : undefined
+      return album ? menuFor('album', {}, albumWork(palNav, album)) : []
+    }
     for (const a of report?.albums ?? []) {
       list.push({
         id: `album-${a.dir}`,
@@ -677,6 +704,7 @@ export default function App() {
           go('listen')
           setListenAlbum(a.dir)
         },
+        menu: albumMenu(a.dir),
       })
     }
     return list

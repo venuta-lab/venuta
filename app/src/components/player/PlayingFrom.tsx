@@ -1,7 +1,4 @@
-import { readFrom, usePlayerValue, type From } from '../../lib/player'
-
-/** Ask the app to show where the queue came from (App listens, see `venuta:open-from`). */
-const openFrom = (f: From) => window.dispatchEvent(new CustomEvent<From>('venuta:open-from', { detail: f }))
+import { openFrom, readFrom, usePlayerValue } from '../../lib/player'
 
 /** "Playing from Hindi": the playlist, album or artist the queue came from, as a way back to it. */
 export function PlayingFrom(props: { className?: string; onOpen?: () => void }) {

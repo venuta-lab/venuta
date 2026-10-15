@@ -1,4 +1,3 @@
-import { motion } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import { playlistSourcesCheck, type BehindSource, type PlaylistSummary, type PlaylistsView, type SmartRule } from '../../lib/engine'
 import { fromIs, usePlayerValue } from '../../lib/player'
@@ -6,18 +5,10 @@ import { toggle } from '../../lib/player'
 import { Mosaic } from '../../components/Mosaic'
 import { Page } from '../../components/ui'
 import { IconPause, IconPlay, IconSearch } from '../../components/Icons'
-import { useContextMenu } from '../listen/parts'
+import { menuFor, playlistFacts, playlistWork } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 import { playPlaylist, plural, sourceName } from './common'
 import { keyFor, matcher } from '../../lib/textsearch'
-
-const spring = { type: 'spring', stiffness: 360, damping: 30 } as const
-
-export interface PlaylistMenu {
-  rename: (p: PlaylistSummary) => void
-  duplicate: (p: PlaylistSummary) => void
-  exportFile: (p: PlaylistSummary) => void
-  remove: (p: PlaylistSummary) => void
-}
 
 /** A playlist as a card: its mosaic, name and size; hover to play, right-click for the rest. */
 export function PlaylistCard(props: {
@@ -26,7 +17,6 @@ export function PlaylistCard(props: {
   rule?: SmartRule
   count?: number
   onOpen: () => void
-  menu?: PlaylistMenu
 }) {
   const { root, p } = props
   const from = usePlayerValue((s) => s.from)
@@ -48,28 +38,8 @@ export function PlaylistCard(props: {
           .filter(Boolean)
           .join(' · ')
       : plural(local, 'song')
-  const ctx = useContextMenu(() => [
-    ['Play', () => void playPlaylist(root, p, 'play', props.rule)],
-    ['Shuffle', () => void playPlaylist(root, p, 'shuffle', props.rule)],
-    ['Play next', () => void playPlaylist(root, p, 'next', props.rule)],
-    ['Add to queue', () => void playPlaylist(root, p, 'queue', props.rule)],
-    ...((props.menu && !p.smart
-      ? [
-          ['Rename', () => props.menu!.rename(p)],
-          ['Duplicate', () => props.menu!.duplicate(p)],
-          ['Export as a file…', () => props.menu!.exportFile(p)],
-          ['Delete', () => props.menu!.remove(p)],
-        ]
-      : props.menu && p.smart
-        ? [
-            ['Duplicate as an ordinary playlist', () => props.menu!.duplicate(p)],
-            ['Export as a file…', () => props.menu!.exportFile(p)],
-          ]
-        : []) as [string, () => void][]),
-  ])
   return (
-    <motion.div whileHover={{ y: -6 }} transition={spring} onContextMenu={ctx.onContextMenu} className="card group relative">
-      {ctx.menu}
+    <div onContextMenu={(e) => menuFromEvent(e, menuFor('playlist', playlistFacts(p), playlistWork(root, p, props.rule)))} className="card group relative">
       <button onClick={props.onOpen} className="block w-full text-left">
         <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>
@@ -93,20 +63,18 @@ export function PlaylistCard(props: {
       </button>
       {playable > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 aspect-square">
-          <motion.button
-            whileTap={{ scale: 0.92 }}
-            transition={spring}
+          <button
             aria-label={isNow && playing ? `Pause ${p.name}` : `Play ${p.name}`}
             onClick={() => (isNow ? void toggle() : void playPlaylist(root, p, 'play', props.rule))}
-            className={`card-play accent-fill pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate] duration-200 group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
+            className={`card-play accent-fill pointer-events-auto absolute bottom-3 right-3 grid h-11 w-11 place-items-center rounded-full text-on-accent shadow-lg shadow-black/30 transition-[opacity,translate,scale] duration-200 active:scale-[0.92] group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 ${
               isNow ? 'opacity-100' : 'translate-y-1.5 opacity-0'
             }`}
           >
             {isNow && playing ? <IconPause /> : <IconPlay />}
-          </motion.button>
+          </button>
         </div>
       )}
-    </motion.div>
+    </div>
   )
 }
 
@@ -123,7 +91,6 @@ export function PlaylistsHome(props: {
   onImport: () => void
   /** Bring these Apple Music playlists in whole (the source's names). */
   onComplete?: (only: string[]) => void
-  menu: PlaylistMenu
   /** Shown inside Music: no page of its own, its buttons in a row at the top. */
   embedded?: boolean
 }) {
@@ -237,7 +204,7 @@ export function PlaylistsHome(props: {
               'Made by you',
               <div className={GRID}>
                 {yours.map((p) => (
-                  <PlaylistCard key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} menu={props.menu} />
+                  <PlaylistCard key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} />
                 ))}
               </div>,
             )}
@@ -246,7 +213,7 @@ export function PlaylistsHome(props: {
               from === 'Playlist file' ? 'From other players' : `From ${from}`,
               <div className={GRID}>
                 {lists.map((p) => (
-                  <PlaylistCard key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} menu={props.menu} />
+                  <PlaylistCard key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} />
                 ))}
               </div>,
             ),
@@ -263,7 +230,6 @@ export function PlaylistsHome(props: {
                     rule={rule}
                     count={data.smart_counts[rule.name]}
                     onOpen={() => props.onOpen(rule.name)}
-                    menu={props.menu}
                   />
                 ))}
               </div>,

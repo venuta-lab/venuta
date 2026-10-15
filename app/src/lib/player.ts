@@ -330,6 +330,9 @@ const call = (cmd: string, args: Record<string, unknown> = {}) =>
 let queueRoot = ''
 
 /** Where a queue came from: "Playing from Hindi", and the way back to it. */
+/** Ask the app to show a playlist, an album or an artist, from anywhere (App listens). */
+export const openFrom = (f: From) => window.dispatchEvent(new CustomEvent<From>('venuta:open-from', { detail: f }))
+
 export interface From {
   kind: 'playlist' | 'album' | 'artist' | 'songs' | 'search'
   /** The playlist's name, the album's folder, the artist's name, the words searched. */

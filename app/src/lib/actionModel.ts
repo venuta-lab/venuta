@@ -16,6 +16,7 @@ export type ActionId =
   | 'open'
   | 'artist'
   | 'album'
+  | 'moreOnline'
   | 'lyrics'
   | 'details'
   | 'folder'
@@ -24,9 +25,12 @@ export type ActionId =
   | 'duplicate'
   | 'update'
   | 'refind'
+  | 'fillOnline'
   | 'rate'
   | 'export'
   | 'use'
+  | 'playOnline'
+  | 'useOnline'
   | 'find'
   | 'copy'
   | 'remove'
@@ -50,6 +54,8 @@ export interface Facts {
   missing?: boolean
   /** A wanted song with a likely match in your library. */
   maybe?: boolean
+  /** An online song or album: no file of its own (no folder, details or lyrics timing). */
+  online?: boolean
   /** The song playing now, in the queue. */
   current?: boolean
 }
@@ -64,6 +70,7 @@ export const LABELS: Record<ActionId, string> = {
   open: 'Open',
   artist: 'Go to artist',
   album: 'Go to album',
+  moreOnline: 'More online by this artist',
   lyrics: 'Time the lyrics',
   details: 'Edit details',
   folder: 'Show in folder',
@@ -72,9 +79,12 @@ export const LABELS: Record<ActionId, string> = {
   duplicate: 'Duplicate',
   update: 'Update from where it came from…',
   refind: 'Look for missing songs again',
+  fillOnline: 'Fill missing online…',
   rate: 'Give unrated songs four stars',
   export: 'Export as a file…',
   use: 'Use the song from your library',
+  playOnline: 'Play online…',
+  useOnline: 'Use online in this playlist…',
   find: 'Find it in your library…',
   copy: 'Copy its name',
   remove: 'Remove',
@@ -92,12 +102,17 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
         return [
           ['play', 'next', 'queue'],
           ['playlist'],
-          [...when(!f.noArtist, 'artist'), 'album'],
-          [...when(f.nowPlaying, 'lyrics'), 'details', 'folder', 'web'],
+          [...when(!f.noArtist, 'artist'), ...when(!f.online, 'album'), ...when(f.online && !f.noArtist, 'moreOnline')],
+          [
+            ...when(f.nowPlaying && !f.online, 'lyrics'),
+            ...when(!f.online, 'details', 'folder'),
+            ...when(f.online && f.inPlaylist, 'find'),
+            'web',
+          ],
           when(f.inPlaylist && !f.smart, 'remove'),
         ]
       case 'album':
-        return [PLAY, ['playlist'], ['artist'], ['details', 'folder']]
+        return f.online ? [PLAY, ['playlist'], ['open']] : [PLAY, ['playlist'], ['artist'], ['details', 'folder']]
       case 'artist':
         return [PLAY, ['playlist'], ['open']]
       case 'playlist':
@@ -108,19 +123,19 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
             ...when(!f.smart, 'rename'),
             'duplicate',
             ...when(f.sourced && !f.smart, 'update'),
-            ...when(f.missing && !f.smart, 'refind'),
+            ...when(f.missing && !f.smart, 'refind', 'fillOnline'),
             'rate',
             'export',
           ],
           when(!f.smart, 'delete'),
         ]
       case 'wanted':
-        return [[...when(f.maybe, 'use'), 'find', 'copy', 'web'], when(!f.smart, 'remove')]
+        return [[...when(f.maybe, 'use'), 'playOnline', 'useOnline', 'find', 'copy', 'web'], when(!f.smart, 'remove')]
       case 'queued':
         return [
           ['play'],
           ['playlist'],
-          [...when(!f.noArtist, 'artist'), 'album'],
+          [...when(!f.noArtist, 'artist'), ...when(!f.online, 'album')],
           when(!f.current, 'remove'),
         ]
     }

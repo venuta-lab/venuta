@@ -20,6 +20,8 @@ import {
 import { Detail, InBar } from '../../components/ui'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
+import { albumWork, artistWork, menuFor } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { play } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
@@ -148,6 +150,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }}
       transition={spring}
+      onContextMenu={(e) => menuFromEvent(e, menuFor('album', {}, albumWork(nav, a)))}
       className="glass relative overflow-hidden rounded-[28px] p-6"
     >
       {cover && (
@@ -257,7 +260,11 @@ function ArtistCard({ artist: ar }: { artist: Artist }) {
   const nav = useNav()
   const c = useArtistCover(ar)
   return (
-    <button onClick={() => nav.openArtist(ar.name)} className="lift group block w-full min-w-0 text-center">
+    <button
+      onClick={() => nav.openArtist(ar.name)}
+      onContextMenu={(e) => menuFromEvent(e, menuFor('artist', {}, artistWork(nav, ar)))}
+      className="lift group block w-full min-w-0 text-center"
+    >
       <Avatar name={ar.name} cover={c} />
       <div className="mt-3 truncate text-[14px] font-medium">{ar.name}</div>
       <div className="text-[12.5px] text-ink/55">{plural(ar.albums.length, 'album')}</div>

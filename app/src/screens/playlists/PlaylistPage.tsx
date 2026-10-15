@@ -51,7 +51,10 @@ import { RemoteArt } from '../../components/RemoteArt'
 import { Detail, Segmented } from '../../components/ui'
 import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../components/Icons'
 import { useOnlineSearch } from '../listen/OnlineResults'
-import { Equalizer, useContextMenu } from '../listen/parts'
+import { Equalizer } from '../listen/parts'
+import { menuFor, songFacts, songWork } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
+import { useNav } from '../listen/model'
 import { entryAvailability, fromWhere, length, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
 import { describeRule, SmartRules } from './SmartRules'
@@ -366,25 +369,35 @@ export function PlaylistPage(props: {
     }
   }
 
-  const more = useContextMenu(() => [
-    ['Play next', () => void enqueueItems(root, songs, true)],
-    ['Add to queue', () => void enqueueItems(root, songs, false)],
-    ['Add all to another playlist…', () => askAddSongs([...have, ...online].map(songOf), name)],
-    ...((smart
-      ? [['Duplicate as an ordinary playlist', () => void playlistDuplicate(root, name).then((n) => (props.onChanged(), props.onOpen(n)))]]
-      : [
-          ['Rename', () => setRenameAsk((n) => n + 1)],
-          ['Duplicate', () => void playlistDuplicate(root, name).then((n) => (props.onChanged(), props.onOpen(n)))],
-          ...(props.summary?.source_id && props.onUpdate
-            ? [[`Update from ${fromWhere(props.summary.source ?? '') || 'where it came from'}…`, () => props.onUpdate!(name)]]
-            : []),
-          ...(missing ? [['Look for missing songs again', () => void refind()]] : []),
-          ...(missing ? [['Fill missing online…', () => setPicking({ rows: (rows ?? []).filter(toGet), mode: 'use' })]] : []),
-        ]) as [string, () => void][]),
-    ...((have.length ? [['Give unrated songs four stars', () => void rateUnrated()]] : []) as [string, () => void][]),
-    ['Export as a file…', () => void exportFile()],
-    ...((smart ? [] : [['Delete…', () => void remove()]]) as [string, () => void][]),
-  ])
+  // "…" for the whole playlist: the same actions as its card (lib/actionModel.ts), done here
+  // with what the page knows.
+  const pageMenu = () =>
+    menuFor(
+      'playlist',
+      { smart, sourced: !!(props.summary?.source_id && props.onUpdate), missing: missing > 0 },
+      {
+        play: songs.length ? () => void playAllItems(root, songs, from) : undefined,
+        shuffle: songs.length > 1 ? () => void playAllItems(root, songs, from, 'shuffle') : undefined,
+        next: () => void enqueueItems(root, songs, true),
+        queue: () => void enqueueItems(root, songs, false),
+        playlist: [{ label: 'Add all to another playlist…', run: () => askAddSongs([...have, ...online].map(songOf), name) }],
+        rename: () => setRenameAsk((n) => n + 1),
+        duplicate: [
+          {
+            label: smart ? 'Duplicate as an ordinary playlist' : 'Duplicate',
+            run: () => void playlistDuplicate(root, name).then((n) => (props.onChanged(), props.onOpen(n))),
+          },
+        ],
+        update: props.onUpdate
+          ? [{ label: `Update from ${fromWhere(props.summary?.source ?? '') || 'where it came from'}…`, run: () => props.onUpdate!(name) }]
+          : undefined,
+        refind: () => void refind(),
+        fillOnline: () => setPicking({ rows: (rows ?? []).filter(toGet), mode: 'use' }),
+        rate: have.length ? () => void rateUnrated() : undefined,
+        export: () => void exportFile(),
+        delete: () => void remove(),
+      },
+    )
 
   /** "Yes, that's it": the song takes its place. */
   const takeMaybe = (r: Row) => {
@@ -484,7 +497,6 @@ export function PlaylistPage(props: {
         ) : undefined
       }
     >
-      {more.menu}
       <div className="flex flex-wrap items-end gap-8">
         <Mosaic root={root} dirs={dirs} smart={smart} className="aspect-square w-[220px] shrink-0 rounded-3xl shadow-2xl shadow-black/40" />
         <div className="min-w-[280px] flex-1 pb-1">
@@ -546,7 +558,7 @@ export function PlaylistPage(props: {
                 {adding ? 'Done adding' : 'Add songs'}
               </button>
             )}
-            <button onClick={more.onContextMenu} aria-label="More for this playlist" title="More" className="grid h-10 w-10 place-items-center rounded-full text-ink/70 transition-colors hover:bg-ink/10 hover:text-ink active:scale-90">
+            <button onClick={(e) => menuFromEvent(e, pageMenu())} onContextMenu={(e) => menuFromEvent(e, pageMenu())} aria-label="More for this playlist" title="More" className="grid h-10 w-10 place-items-center rounded-full text-ink/70 transition-colors hover:bg-ink/10 hover:text-ink active:scale-90">
               <IconMore />
             </button>
           </div>
@@ -806,43 +818,61 @@ function PlaylistRow(props: {
   const get = toGet(r)
   const remote = isRemote(r)
   const onlineArt = r.online?.artwork_url
-  const removable = (props.smart ? [] : [['Remove from playlist', props.onRemove]]) as [string, () => void][]
-  const ctx = useContextMenu(() =>
-    remote && r.online
-      ? [
-          ['Play', props.onPlay],
-          ['Play next', () => void enqueueItems(props.root, [onlineItem(r.online!)], true)],
-          ['Add to queue', () => void enqueueItems(props.root, [onlineItem(r.online!)], false)],
-          ['Add to another playlist…', props.onAddTo],
-          ['Find it in your library…', props.onFind],
-          ...removable,
-        ]
-      : get
-      ? [
-          ...((r.maybe ? [[`Use “${r.maybe.title}” from your library`, props.onYes]] : []) as [string, () => void][]),
-          ['Play online…', () => props.onPickOnline('play')],
-          ['Use online in this playlist…', () => props.onPickOnline('use')],
-          ['Find it in your library…', props.onFind],
-          [`Copy “${wordsFor(r) || r.title}”`, () => void navigator.clipboard.writeText(wordsFor(r) || r.title).then(() => notify('Copied.'))],
-          ['Search the web', () => void searchWeb(`${wordsFor(r)} ${r.album}`.trim())],
-          ...removable,
-        ]
-      : [
-          ['Play', props.onPlay],
-          ['Play next', () => void enqueue(props.root, tracksFor([r.path]), true)],
-          ['Add to queue', () => void enqueue(props.root, tracksFor([r.path]), false)],
-          ['Add to another playlist…', props.onAddTo],
-          ['Go to album', props.onAlbum],
-          ...removable,
-        ],
-  )
+  const nav = useNav()
+  // Right-click and "…": what lib/actionModel.ts says this row can do.
+  const rowMenu = () => {
+    const remove = [{ label: 'Remove from playlist', run: props.onRemove }]
+    const words = wordsFor(r) || r.title
+    const web = () => void searchWeb(`${wordsFor(r)} ${r.album}`.trim())
+    if (remote && r.online) {
+      const item = onlineItem(r.online)
+      return menuFor(
+        'song',
+        { online: true, inPlaylist: true, smart: props.smart, noArtist: true },
+        {
+          play: props.onPlay,
+          next: () => void enqueueItems(props.root, [item], true),
+          queue: () => void enqueueItems(props.root, [item], false),
+          playlist: [{ label: 'Add to another playlist…', run: props.onAddTo }],
+          find: props.onFind,
+          web,
+          remove,
+        },
+      )
+    }
+    if (get)
+      return menuFor(
+        'wanted',
+        { maybe: !!r.maybe, smart: props.smart },
+        {
+          use: r.maybe ? [{ label: `Use “${r.maybe.title}” from your library`, run: props.onYes }] : undefined,
+          playOnline: () => props.onPickOnline('play'),
+          useOnline: () => props.onPickOnline('use'),
+          find: props.onFind,
+          copy: [{ label: `Copy “${words}”`, run: () => void navigator.clipboard.writeText(words).then(() => notify('Copied.')) }],
+          web,
+          remove,
+        },
+      )
+    const track = tracksFor([r.path])[0]
+    const base = track ? songWork(nav, track, props.onPlay) : { play: props.onPlay }
+    return menuFor('song', { ...(track ? songFacts(track) : { noArtist: true }), inPlaylist: true, smart: props.smart }, {
+      ...base,
+      next: () => void enqueue(props.root, tracksFor([r.path]), true),
+      queue: () => void enqueue(props.root, tracksFor([r.path]), false),
+      playlist: [{ label: 'Add to another playlist…', run: props.onAddTo }],
+      album: props.onAlbum,
+      remove,
+    })
+  }
+
   return (
     <div
       role="listitem"
       style={props.style}
       aria-label={get ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
-      onContextMenu={ctx.onContextMenu}
+      onContextMenu={(e) => menuFromEvent(e, rowMenu())}
       onClick={(e) => {
         if (grab?.justDropped() || (e.target as HTMLElement).closest('button')) return
         if (!get) props.onPlay()
@@ -864,7 +894,6 @@ function PlaylistRow(props: {
         get ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
       } ${isNow ? 'text-accent-ink' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
     >
-      {ctx.menu}
       {!grab ? (
         <span />
       ) : (
@@ -964,7 +993,7 @@ function PlaylistRow(props: {
       </span>
       <span className="text-right text-[12.5px] tabular-nums text-ink/55">{r.duration_ms ? clock(r.duration_ms) : ''}</span>
       {props.smart || get ? (
-        <button onClick={ctx.onContextMenu} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
+        <button onClick={(e) => menuFromEvent(e, rowMenu())} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
           <IconMore />
         </button>
       ) : (

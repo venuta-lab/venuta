@@ -4,7 +4,10 @@ import { IconSearch } from './Icons'
 import { AvailabilityBadge } from './AvailabilityBadge'
 import { onlineSearch, type OnlineTrack } from '../lib/engine'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../lib/online'
-import { playItems, toRemoteItem } from '../lib/player'
+import { enqueueItems, playItems, songItemOf, toRemoteItem } from '../lib/player'
+import { menuFor } from '../lib/actions'
+import { menuFromEvent, openMenu, type MenuGroups } from '../lib/menu'
+import { askAddSongs } from './AddToPlaylist'
 import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
 
 export interface Command {
@@ -19,6 +22,8 @@ export interface Command {
   /** A second line, e.g. an album's artist. */
   detail?: string
   run: () => void
+  /** Everything else that can be done with it (lib/actions.ts): right-click, or → when chosen. */
+  menu?: () => MenuGroups
 }
 
 /**
@@ -122,6 +127,20 @@ export function CommandPalette(props: {
                     { kind: 'search', ref: q.trim(), label: `Online: ${q.trim()}` },
                   )
                 },
+                menu: () => {
+                  const root = props.root ?? ''
+                  const item = toRemoteItem(t)
+                  return menuFor(
+                    'song',
+                    { online: true, noArtist: true },
+                    {
+                      play: () => void playItems(root, [item], 0, { kind: 'search', ref: q.trim(), label: `Online: ${q.trim()}` }),
+                      next: () => void enqueueItems(root, [item], true),
+                      queue: () => void enqueueItems(root, [item], false),
+                      playlist: () => askAddSongs([songItemOf(item)], t.title),
+                    },
+                  )
+                },
               } satisfies Command,
             }
           })
@@ -142,6 +161,18 @@ export function CommandPalette(props: {
     window.setTimeout(c.run, 0)
   }
 
+  /** A result's menu, whose items close the palette first and then do their work. */
+  const menuOf = (c: Command): MenuGroups =>
+    (c.menu?.() ?? []).map((g) =>
+      g.map((item) => ({
+        ...item,
+        run: () => {
+          props.onClose()
+          window.setTimeout(item.run, 0)
+        },
+      })),
+    )
+
   function onKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -149,6 +180,11 @@ export function CommandPalette(props: {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setSel((s) => Math.max(s - 1, 0))
+    } else if (e.key === 'ArrowRight' && results[sel]?.c.menu && (e.currentTarget as HTMLInputElement).selectionStart === q.length) {
+      // At the end of what was typed, → opens the chosen result's menu.
+      e.preventDefault()
+      const row = list.current?.querySelector<HTMLElement>(`[data-i="${sel}"]`)
+      if (row) openMenu(menuOf(results[sel].c), { anchor: row }, e.currentTarget as HTMLElement)
     } else if (e.key === 'Enter') {
       e.preventDefault()
       run(results[sel]?.c)
@@ -234,6 +270,7 @@ export function CommandPalette(props: {
                       aria-selected={i === sel}
                       onMouseMove={() => setSel(i)}
                       onClick={() => run(c)}
+                      onContextMenu={(e) => (c.menu ? menuFromEvent(e, menuOf(c)) : e.preventDefault())}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left ${
                         i === sel ? 'palette-on bg-[color-mix(in_oklab,var(--accent)_22%,transparent)]' : ''
                       }`}
@@ -263,6 +300,11 @@ export function CommandPalette(props: {
               <span>
                 <kbd>Enter</kbd> to run
               </span>
+              {results[sel]?.c.menu && (
+                <span>
+                  <kbd>→</kbd> more
+                </span>
+              )}
               <span className="ml-auto">
                 <kbd>?</kbd> all shortcuts
               </span>

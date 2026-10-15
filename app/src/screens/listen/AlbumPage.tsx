@@ -7,6 +7,8 @@ import { IconPause, IconPlay } from '../../components/Icons'
 import { albumFrom, coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
 import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
+import { menuFor, songFacts, songWork } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 
 /** One album: its cover large, what it is, and its songs to play. */
 export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?: string; onBack: () => void }) {
@@ -63,7 +65,8 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
 }
 
 const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
-  const { root } = useNav()
+  const nav = useNav()
+  const { root } = nav
   const now = useNowPlaying()
   const list = useRef<HTMLDivElement>(null)
   const discs = useMemo(() => {
@@ -96,6 +99,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
               <div
                 key={t.path}
                 role="listitem"
+                onContextMenu={(e) => menuFromEvent(e, menuFor('song', songFacts(t), songWork(nav, t, () => playAt(i))))}
                 tabIndex={0}
                 data-index={i}
                 aria-current={isNow || undefined}
@@ -144,7 +148,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                 </span>
                 <span>{q !== a.quality && <QualityBadge text={q} />}</span>
                 <span className={`text-right text-[12.5px] ${isNow ? '' : 'text-ink/55'}`}>{clock(t.duration_ms)}</span>
-                <TrackMenu track={t} label={t.title} />
+                <TrackMenu track={t} label={t.title} play={() => playAt(i)} />
               </div>
             )
           })}

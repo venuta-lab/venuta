@@ -59,3 +59,6 @@ export function tracksFor(paths: string[]): CatalogTrack[] {
 
 /** One song by its library path, if known. */
 export const trackAt = (path: string) => cached?.byPath.get(path)
+
+/** The library's songs as read last, if they have been (for menus that are built at once). */
+export const catalogNow = (root: string) => (cached && cached.root === root ? cached.tracks : null)

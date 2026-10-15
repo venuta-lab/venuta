@@ -59,11 +59,12 @@ test('a playlist is managed the same from every card and its page', () => {
   assert.ok(smart.includes('duplicate'))
   assert.ok(ids(actionsFor('playlist', { sourced: true })).includes('update'))
   assert.ok(ids(actionsFor('playlist', { missing: true })).includes('refind'))
+  assert.ok(ids(actionsFor('playlist', { missing: true })).includes('fillOnline'), 'songs to get can be filled online')
 })
 
 test('a song still to get is found, copied or looked up, and can be removed', () => {
   const w = ids(actionsFor('wanted', {}))
-  assert.deepEqual(w, ['find', 'copy', 'web', 'remove'])
+  assert.deepEqual(w, ['playOnline', 'useOnline', 'find', 'copy', 'web', 'remove'])
   assert.equal(ids(actionsFor('wanted', { maybe: true }))[0], 'use')
 })
 
@@ -80,4 +81,18 @@ test('no action appears twice, and every one has words', () => {
       for (const id of list) assert.ok(LABELS[id], id)
     }
   }
+})
+
+test('an online song plays and is added like any song, but has no file to show or edit', () => {
+  const o = ids(actionsFor('song', { online: true, nowPlaying: true }))
+  for (const id of ['play', 'next', 'queue', 'playlist', 'artist', 'moreOnline', 'web'] as const) assert.ok(o.includes(id), id)
+  for (const id of ['album', 'details', 'folder', 'lyrics'] as const) assert.ok(!o.includes(id), id)
+  assert.ok(ids(actionsFor('song', { online: true, inPlaylist: true })).includes('find'), 'in a playlist: find it in your library')
+})
+
+test('an online album opens, plays and is added, with nothing local to edit', () => {
+  const a = ids(actionsFor('album', { online: true }))
+  assert.deepEqual(actionsFor('album', { online: true })[0], PLAY)
+  assert.ok(a.includes('open') && a.includes('playlist'))
+  assert.ok(!a.includes('details') && !a.includes('folder'))
 })

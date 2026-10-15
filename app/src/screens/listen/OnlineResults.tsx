@@ -8,7 +8,8 @@ import { notify } from '../../lib/notify'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
 import { clock, enqueueItems, onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/player'
 import { useNav } from './model'
-import { useContextMenu } from './parts'
+import { menuFor } from '../../lib/actions'
+import { menuFromEvent } from '../../lib/menu'
 
 /*
   The online catalog under your library's search results: songs, albums and artists for the
@@ -275,23 +276,22 @@ export function OnlineTrackRow(props: {
 }) {
   const t = props.track
   const artists = t.artists.join(', ') || '—'
-  const ctx = useContextMenu(() => [
-    ['Play', props.onPlay],
-    ['Play next', () => props.onQueue(true)],
-    ['Add to queue', () => props.onQueue(false)],
-    ['Add to playlist…', props.onAdd],
-  ])
+  const menu = () =>
+    menuFor(
+      'song',
+      { online: true, noArtist: true },
+      { play: props.onPlay, next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd },
+    )
   return (
     <div
       role="button"
       tabIndex={0}
-      onContextMenu={ctx.onContextMenu}
+      onContextMenu={(e) => menuFromEvent(e, menu())}
       onClick={(e) => !(e.target as HTMLElement).closest('button') && props.onPlay()}
       onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && props.onPlay()}
       aria-current={props.now || undefined}
       className={`row group grid ${COLS} h-11 cursor-pointer items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${props.now ? 'text-accent-ink' : ''}`}
     >
-      {ctx.menu}
       <button
         tabIndex={-1}
         aria-label={`Play ${t.title}`}
@@ -330,7 +330,7 @@ export function OnlineTrackRow(props: {
         >
           <IconPlaylistAdd width={17} height={17} />
         </button>
-        <button onClick={ctx.onContextMenu} aria-label={`More for ${t.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/10 hover:text-ink">
+        <button onClick={(e) => menuFromEvent(e, menu())} aria-label={`More for ${t.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/10 hover:text-ink">
           <IconMore />
         </button>
       </span>
@@ -340,17 +340,15 @@ export function OnlineTrackRow(props: {
 
 function AlbumCard(props: { album: OnlineAlbum; onOpen: () => void; onPlay: () => void; onQueue: (next: boolean) => void; onAdd: () => void }) {
   const a = props.album
-  const ctx = useContextMenu(() => [
-    ['Open', props.onOpen],
-    ['Play', props.onPlay],
-    ['Play next', () => props.onQueue(true)],
-    ['Add to queue', () => props.onQueue(false)],
-    ['Add to playlist…', props.onAdd],
-  ])
+  const menu = () =>
+    menuFor(
+      'album',
+      { online: true },
+      { open: props.onOpen, play: props.onPlay, next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd },
+    )
   return (
     <div className="group relative w-[148px] shrink-0">
-      {ctx.menu}
-      <button onClick={props.onOpen} onContextMenu={ctx.onContextMenu} title={`Open “${a.title}”`} className="block w-full text-left">
+      <button onClick={props.onOpen} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${a.title}”`} className="block w-full text-left">
         <span className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-ink/[0.06] text-[28px] text-ink/25">
           <RemoteArt url={a.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
         </span>

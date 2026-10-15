@@ -1,26 +1,19 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { useCatalog } from '../lib/catalog'
 import {
   inApp,
-  playlistDelete,
-  playlistDuplicate,
-  playlistExport,
   playlists as loadPlaylists,
   playlistSaveItems,
   type HealthReport,
-  type PlaylistSummary,
   type PlaylistsView,
 } from '../lib/engine'
 import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
-import { confirmAsk } from '../components/Confirm'
 import { playlistsChanged } from '../components/AddToPlaylist'
-import { playlistSongs, plural } from './playlists/common'
 import type { ImportStart } from './playlists/ImportSheet'
 import { PlaylistPage } from './playlists/PlaylistPage'
-import { PlaylistsHome, type PlaylistMenu } from './playlists/PlaylistsHome'
+import { PlaylistsHome } from './playlists/PlaylistsHome'
 import { WantList } from './playlists/WantList'
 
 // Importing is opened now and then: it loads the first time.
@@ -149,52 +142,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
 
   const ruleOf = (name: string) => data?.smart.find((r) => r.name === name)
 
-  /** A smart playlist's file may not be written yet; reading its songs writes it. */
-  const ready = async (p: PlaylistSummary) => {
-    const rule = ruleOf(p.name)
-    if (rule) await playlistSongs(root, p.name, rule)
-  }
 
-  const menu: PlaylistMenu = {
-    rename: (p) => setView(at({ kind: 'playlist', name: p.name, rename: true })),
-    duplicate: async (p) => {
-      try {
-        await ready(p)
-        const made = await playlistDuplicate(root, p.name)
-        await load()
-        notify(`Made “${made}”, a copy you can change.`, { label: 'Open', run: () => setView(at({ kind: 'playlist', name: made })) })
-      } catch (e) {
-        notify(`Couldn't copy ${p.name}: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    },
-    exportFile: async (p) => {
-      const to = await saveDialog({ defaultPath: `${p.name}.m3u8`, filters: [{ name: 'Playlist', extensions: ['m3u8'] }] })
-      if (!to) return
-      try {
-        await ready(p)
-        const n = await playlistExport(root, p.name, to)
-        notify(`Saved ${plural(n, 'song')} to ${to}.`)
-      } catch (e) {
-        notify(`Couldn't export ${p.name}: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    },
-    remove: async (p) => {
-      const ok = await confirmAsk({
-        title: `Delete “${p.name}”?`,
-        text: 'The playlist file is moved to the Set aside folder beside your music, not destroyed. Your songs stay where they are.',
-        confirm: 'Delete playlist',
-        danger: true,
-      })
-      if (!ok) return
-      try {
-        await playlistDelete(root, p.name)
-        await load()
-        notify(`Deleted ${p.name}. Its file is in Set aside.`)
-      } catch (e) {
-        notify(`Couldn't delete ${p.name}: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    },
-  }
 
   if (!root) return <div className="grid h-full place-items-center text-ink/60">Choose a library first.</div>
   if (!inApp()) return <div className="grid h-full place-items-center text-ink/60">Playlists are managed by the desktop app.</div>
@@ -219,7 +167,6 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               onNew={() => void create()}
               onImport={() => setView(at({ kind: 'import' }))}
               onComplete={(only) => setView(at({ kind: 'import', start: { kind: 'apple', only } }))}
-              menu={menu}
               embedded={props.embedded}
             />
           )}
