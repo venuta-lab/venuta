@@ -206,7 +206,7 @@ pub struct Maybe {
 }
 
 /// One line of a playlist to write: a song in the library, one still wanted, or one online.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -765,6 +765,18 @@ pub fn add(
     name: &str,
     items: &[Item],
 ) -> Result<usize, String> {
+    add_with(library_root, lib, name, items, false)
+}
+
+/// `add`, and with `again` the songs already in it are added once more (asked for, after
+/// "already in this playlist").
+pub fn add_with(
+    library_root: &Path,
+    lib: &Library,
+    name: &str,
+    items: &[Item],
+    again: bool,
+) -> Result<usize, String> {
     let entries = if exists(library_root, name) {
         read(library_root, lib, name)?.0
     } else {
@@ -782,8 +794,8 @@ pub fn add(
     let added: Vec<Item> = items
         .iter()
         .filter(|i| match (&i.online, &i.path) {
-            (Some(o), _) => o.is_stable() && ids.insert(o.id()),
-            (None, Some(p)) => !p.is_empty() && paths.insert(p.clone()),
+            (Some(o), _) => o.is_stable() && (ids.insert(o.id()) || again),
+            (None, Some(p)) => !p.is_empty() && (paths.insert(p.clone()) || again),
             (None, None) => i.want.is_some(),
         })
         .cloned()
@@ -2247,6 +2259,31 @@ mod tests {
         assert!(!folder(root.path()).join("Road.m3u8").exists());
         assert!(rename(root.path(), "Night drive", "Night drive").is_err());
     }
+    #[test]
+    fn a_song_already_there_is_added_again_only_when_asked() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01 - One.flac", "One", "X", "Al", 200_000)]);
+        let one = Item {
+            path: Some("A/01 - One.flac".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            add(root.path(), &lib, "Mix", std::slice::from_ref(&one)).unwrap(),
+            1
+        );
+        assert_eq!(
+            add(root.path(), &lib, "Mix", std::slice::from_ref(&one)).unwrap(),
+            0,
+            "already in it"
+        );
+        assert_eq!(
+            add_with(root.path(), &lib, "Mix", std::slice::from_ref(&one), true).unwrap(),
+            1,
+            "again, asked"
+        );
+        assert_eq!(read(root.path(), &lib, "Mix").unwrap().0.len(), 2);
+    }
+
     #[test]
     fn a_new_playlist_never_takes_the_place_of_one_there() {
         let root = tempfile::tempdir().unwrap();

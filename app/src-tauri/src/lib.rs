@@ -1831,11 +1831,13 @@ async fn playlist_add(
     root: String,
     name: String,
     items: Vec<engine::playlists::Item>,
+    // Add them even when they are in it already (asked for, after "already in").
+    again: Option<bool>,
 ) -> CmdResult<usize> {
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let (_, lib) = load_lib(&rootp)?;
-        engine::playlists::add(&rootp, &lib, &name, &items)
+        engine::playlists::add_with(&rootp, &lib, &name, &items, again.unwrap_or(false))
     })
     .await
 }

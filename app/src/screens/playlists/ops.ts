@@ -98,10 +98,24 @@ export async function addSongsTo(root: string, name: string, items: PlaylistItem
   try {
     const n = await playlistAdd(root, name, items)
     const what = items.length === 1 ? `“${label}”` : `${items.length} songs`
+    if (n === 0) {
+      // All of them were in it already: say so, with the way to add them once more.
+      notify(`${what} ${items.length === 1 ? 'is' : 'are'} already in ${name}.`, {
+        label: 'Add again',
+        run: () =>
+          void playlistAdd(root, name, items, true)
+            .then(() => {
+              playlistsChanged()
+              notify(`Added ${what} to ${name} again.`, { label: 'Open', run: () => goToPlaylists({ kind: 'playlist', name }) })
+            })
+            .catch((e) => notify(`Couldn't add to ${name}: ${why(e)}`)),
+      })
+      return 0
+    }
     notify(
-      n === 0
-        ? `${what} ${items.length === 1 ? 'is' : 'are'} already in ${name}.`
-        : `Added ${n === items.length ? what : `${n} of ${items.length} songs`} to ${name}.`,
+      n === items.length
+        ? `Added ${what} to ${name}.`
+        : `Added ${n} of ${items.length} songs to ${name}; the others were in it already.`,
       { label: 'Open', run: () => goToPlaylists({ kind: 'playlist', name }) },
     )
     playlistsChanged()

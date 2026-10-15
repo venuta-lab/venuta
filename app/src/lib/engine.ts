@@ -978,7 +978,9 @@ export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_
 export const playlistSaveItems = (root: string, name: string, items: PlaylistItem[]) =>
   invoke<void>('playlist_save_items', { root, name, items })
 /** Adds songs (skipping ones already in it); makes the playlist if it's new. Returns how many were added. */
-export const playlistAdd = (root: string, name: string, items: PlaylistItem[]) => invoke<number>('playlist_add', { root, name, items })
+/** Add songs to a playlist (made if new); ones already in it are skipped unless `again`. Returns how many were added. */
+export const playlistAdd = (root: string, name: string, items: PlaylistItem[], again = false) =>
+  invoke<number>('playlist_add', { root, name, items, again })
 /** A playlist as the player gets it: each song from your file when it's here, else online; songs to get left out. */
 export const playlistQueue = (root: string, name: string) => invoke<Playable[]>('playlist_queue', { root, name })
 
