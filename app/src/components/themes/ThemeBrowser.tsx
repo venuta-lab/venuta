@@ -345,7 +345,7 @@ function Browser({ entries, current }: { entries: Entry[]; current: string }) {
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
           </svg>
-          <input className="field h-9 w-full py-1 pl-9 text-[13px]" placeholder="Find a theme" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="field h-9 w-full py-1 pl-9! text-[13px]" placeholder="Find a theme" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         <button className="btn" onClick={() => void importFile()} disabled={!inApp()}>
           Import…
