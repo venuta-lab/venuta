@@ -1200,7 +1200,10 @@ pub fn preview_with(
                 })
                 .collect();
             let count = |g: Option<Grade>| items.iter().filter(|i| i.grade == g).count();
-            let online_n = items.iter().filter(|i| i.found.is_none() && i.online.is_some()).count();
+            let online_n = items
+                .iter()
+                .filter(|i| i.found.is_none() && i.online.is_some())
+                .count();
             let missing = items
                 .iter()
                 .filter(|i| i.found.is_none() && i.online.is_none())
@@ -1395,7 +1398,11 @@ pub fn apply(
                 name: t.to_owned(),
                 songs: m.items.iter().filter(|i| i.path.is_some()).count(),
                 wanted: m.items.iter().filter(|i| i.want.is_some()).count(),
-                online: m.items.iter().filter(|i| i.online.is_some() && i.path.is_none()).count(),
+                online: m
+                    .items
+                    .iter()
+                    .filter(|i| i.online.is_some() && i.path.is_none())
+                    .count(),
                 updated: true,
                 added: m.added,
                 removed: m.removed,
@@ -1427,7 +1434,11 @@ pub fn apply(
                 name: name.clone(),
                 songs: c.items.iter().filter(|i| i.path.is_some()).count(),
                 wanted: c.items.iter().filter(|i| i.want.is_some()).count(),
-                online: c.items.iter().filter(|i| i.online.is_some() && i.path.is_none()).count(),
+                online: c
+                    .items
+                    .iter()
+                    .filter(|i| i.online.is_some() && i.path.is_none())
+                    .count(),
                 updated: false,
                 added: c.items.len(),
                 removed: 0,
@@ -1637,7 +1648,8 @@ mod tests {
         assert_eq!(written[0].online, 1);
         assert_eq!(written[0].wanted, 2);
         assert_eq!(written[0].songs, 0);
-        let text = std::fs::read_to_string(playlists::folder(root.path()).join("Chill.m3u8")).unwrap();
+        let text =
+            std::fs::read_to_string(playlists::folder(root.path()).join("Chill.m3u8")).unwrap();
         assert!(text.contains("#VENUTA-ONLINE:"), "{text}");
         assert!(text.contains("dQw4w9WgXcQ"), "{text}");
         assert!(!text.contains("://cdn.example"), "{text}");
@@ -1645,7 +1657,10 @@ mod tests {
         // Cover picture URLs are allowed; stream hosts are not.
         assert!(text.contains("i.ytimg.com"), "{text}");
         let (e, _) = playlists::read(root.path(), &lib, "Chill").unwrap();
-        assert_eq!(e[0].online.as_ref().map(|o| o.track_id.as_str()), Some("dQw4w9WgXcQ"));
+        assert_eq!(
+            e[0].online.as_ref().map(|o| o.track_id.as_str()),
+            Some("dQw4w9WgXcQ")
+        );
         assert!(e[1].want.is_some());
         assert_eq!(wanted.len(), 1);
         assert_eq!(wanted[0].album, "Gone");
