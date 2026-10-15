@@ -1,5 +1,38 @@
 # Changes
 
+## 0.2.0 (2026-10-15)
+
+- **Import & export**, one screen with two sides. **Bring in** reads a share link from
+  Spotify, Apple Music, YouTube Music (the whole playlist, with its name), TIDAL, JioSaavn,
+  Deezer (and your Deezer favourites) or ListenBrainz, free and without signing in; songs
+  copied from Spotify; a plain list; or any playlist file by what's in it (M3U, PLS, XSPF,
+  JSPF, WPL, ASX, CSV, spreadsheets, zips). It shows what matched before anything is saved,
+  and a close match you turn down stays turned down. A bookmark reads playlists that only
+  show when you're signed in.
+- **Send out**: every format, with paths for where the playlist will be played (this PC, a
+  phone, a card); one backup of every playlist that brings them all back, empty ones too;
+  your songs found on Deezer, Apple Music, Spotify or YouTube to rebuild a playlist there,
+  free; or the playlist as text.
+- **Check for new songs** in every imported playlist at once.
+- A playlist from a phone or another computer finds the same files here.
+- **The online catalog** beside your library: search shows your library first, then the
+  online catalog with the real song ahead of covers. Online songs play in the same player and
+  go into playlists and the queue; Home follows what you play.
+- **Search**: one rule for every search box, its forgiveness scaled to what you type; the
+  first search after starting stays smooth.
+- **Add songs** to a playlist is one search, your library first, then online; "already in
+  this playlist", with Add again.
+- **Undo** when a play replaces your queue, and when a playlist is deleted. New playlist is a
+  draft until it has a name or a song.
+- **Drag** music where it should go, with handles that show; one menu for the window and every
+  right-click, read from one list of actions.
+- **Quicker**: Playlists opens in a fifth of the time; Albums, Artists, Metadata and Home
+  open without a stall; a whole-library queue opens at once; the window rests when nothing
+  is happening.
+- **Fixed**: a genre like R&B stays whole (it was split into "R" and "B"); online search
+  results keep their columns inside the window; the song columns in a search sit with their
+  songs, not over the Top result; the theme search box no longer draws its icon over the text.
+
 ## 0.1.1 (2026-10-14)
 
 - **Themes anyone can make.** The Theme Studio (Settings, Look and feel, New theme) makes a

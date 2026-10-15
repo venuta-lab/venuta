@@ -29,6 +29,15 @@ in their places, marked, until you do. Importing a playlist you already have fil
 keeps your own changes, and **Update from…** brings it up to date with its source. **To get**
 lists the albums your playlists want and your library doesn't have.
 
+**Import & export** (in Playlists) has two sides. **Bring in** takes a share link from Spotify,
+Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer or ListenBrainz, songs copied from an app,
+a plain list, or any playlist file or folder of them, and shows what matched before anything is
+saved; a bookmark reads playlists that only show when you are signed in. **Send out** writes
+playlists in any format with paths for where they will be played, makes one backup of every
+playlist, finds your songs on Deezer, Apple Music, Spotify or YouTube to rebuild a playlist
+there, or copies it as text. **Check for new songs** looks at every imported playlist's source.
+No account, nothing paid.
+
 **Devices** writes SD cards for portable players. A card can carry the whole library or a
 selection (playlists, albums, artists) in the library's own folder layout, converted to 16-bit
 FLAC or AAC for players that need it; a gift card adds a tracklist and a list of what's missing.
@@ -61,6 +70,10 @@ tray, the windows and the shortcuts that open Venuta; the program file keeps Dus
 Search finds names and lyrics in any script and forgives spelling: "kesariya", "kesaria" and
 केसरिया find the same song, and "dard mein zindagi" finds the line wherever it is written in
 Devanagari.
+
+Below your library, the **online catalog** answers too, with the real song ahead of covers and
+remixes. Online songs play in the same player, and can go into playlists and the queue beside
+your own. Your library always comes first.
 
 ## Shortcuts
 
