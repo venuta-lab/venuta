@@ -9,7 +9,8 @@ import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
 import { clock, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
-import { RemoteArt } from '../RemoteArt'
+import { cleanArtUrl, RemoteArt } from '../RemoteArt'
+import { SteadyArt } from '../SteadyArt'
 import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
@@ -214,13 +215,8 @@ export function NowPlaying(props: {
                 transition={spring}
                 className="grid aspect-square w-full max-w-[min(400px,40vh)] place-items-center overflow-hidden rounded-[28px] bg-ink/[0.08] text-[48px] text-ink/25 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)]"
               >
-                {onlineArt ? (
-                  <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
-                ) : art ? (
-                  <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
-                ) : (
-                  '♪'
-                )}
+                {/* Held steady across a change of song (no blank frame). */}
+                <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : art?.src} fallback="♪" />
               </motion.div>
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
                 <h2 className="title flex items-center justify-center gap-2 truncate text-[26px]">

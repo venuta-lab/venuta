@@ -107,8 +107,14 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
   const [screens, setScreens] = useState<Monitor[]>([])
   const desktop = useDesktopLyricsShown()
   const colour = useLyricColour('cover', props.root, props.song.dir)
-  const timed = !!props.lyrics?.lines.length
-  const plain = !timed && !!props.lyrics?.text
+  // While the next song's words are still being found (lyrics null), the tools keep the shape
+  // they had, so the bar doesn't empty and refill between songs; they change once it is known.
+  const shape = props.lyrics ? (props.lyrics.lines.length ? 'timed' : props.lyrics.text ? 'plain' : 'none') : null
+  const [last, setLast] = useState<'timed' | 'plain' | 'none'>(shape ?? 'none')
+  if (shape && shape !== last) setLast(shape)
+  const now = shape ?? last
+  const timed = now === 'timed'
+  const plain = now === 'plain'
   if (!timed && !plain) return null
 
   async function big() {

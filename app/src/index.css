@@ -451,3 +451,16 @@ select.field option {
   outline-offset: 3px;
   background-color: color-mix(in oklab, var(--accent) 12%, transparent);
 }
+
+/* A new picture of what is playing fades in over the old one (components/SteadyArt). */
+@keyframes art-in {
+  from {
+    opacity: 0;
+  }
+}
+.art-in {
+  animation: art-in 280ms ease-out;
+}
+:root[data-motion="reduced"] .art-in {
+  animation: none;
+}

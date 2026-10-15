@@ -30,7 +30,8 @@ import {
   useWaveform,
   verifyCurrent,
 } from '../../lib/player'
-import { RemoteArt } from '../RemoteArt'
+import { cleanArtUrl } from '../RemoteArt'
+import { SteadyArt } from '../SteadyArt'
 import { AvailabilityBadge } from '../AvailabilityBadge'
 import { useDropTarget } from '../../lib/drag'
 import { notify } from '../../lib/notify'
@@ -666,11 +667,8 @@ export function NowPlayingBar(props: {
             >
               {!props.expanded && (
                 <motion.div layoutId="now-playing-cover" className="grid h-full w-full place-items-center" transition={spring}>
-                  {onlineArt ? (
-                    <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
-                  ) : localArt ? (
-                    <img src={localArt.src} alt="" className="h-full w-full object-cover" draggable={false} />
-                  ) : null}
+                  {/* Held steady across a change of song (no blank frame); online or local alike. */}
+                  <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : localArt?.src} fallback={<span className="text-ink/30">♪</span>} />
                 </motion.div>
               )}
               <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">

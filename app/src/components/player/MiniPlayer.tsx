@@ -5,6 +5,7 @@ import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
 import { clock, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
 import { cleanArtUrl } from '../RemoteArt'
+import { SteadyArt } from '../SteadyArt'
 import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
 import { lineAt, useLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
@@ -275,10 +276,8 @@ export function MiniPlayer() {
           <div className="relative min-h-0 flex-1">
             {queueOn ? (
               <UpNext s={s} />
-            ) : art ? (
-              <img src={art.src} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
             ) : (
-              <Art title={song.album} className="absolute inset-0 h-full w-full" big />
+              <Art src={art?.src} title={song.album} className="absolute inset-0 h-full w-full" big />
             )}
             <div
               className="absolute inset-0"
@@ -392,24 +391,23 @@ function Light({ src: given, card }: { src?: string; card: boolean }) {
   )
 }
 
-/** The cover, or a tile in the accent with a note when there is none. */
-function Art({ src: given, title, className = '', big = false }: { src?: string; title: string; className?: string; big?: boolean }) {
-  // An online picture that can't be loaded shows the tile, never a broken image.
-  const [failed, setFailed] = useState<string | null>(null)
-  const src = failed === given ? undefined : given
+/**
+ * The cover, held steady across a change of song (components/SteadyArt), or a tile in the accent
+ * with a note when there is none (and when an online picture can't be loaded).
+ */
+function Art({ src, title, className = '', big = false }: { src?: string; title: string; className?: string; big?: boolean }) {
+  const tile = (
+    <div
+      title={title}
+      className={`grid h-full w-full place-items-center text-ink/70 ${big ? 'text-[64px]' : 'text-[20px]'}`}
+      style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 55%, transparent), color-mix(in oklab, var(--accent) 12%, transparent))' }}
+    >
+      ♪
+    </div>
+  )
   return (
-    <div className={`relative shrink-0 overflow-hidden bg-ink/[0.08] shadow-[0_8px_24px_-10px_rgb(0_0_0/0.6)] ${className}`}>
-      {src ? (
-        <img src={src} alt="" draggable={false} onError={() => setFailed(src ?? null)} className="h-full w-full object-cover" />
-      ) : (
-        <div
-          title={title}
-          className={`grid h-full w-full place-items-center text-ink/70 ${big ? 'text-[64px]' : 'text-[20px]'}`}
-          style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 55%, transparent), color-mix(in oklab, var(--accent) 12%, transparent))' }}
-        >
-          ♪
-        </div>
-      )}
+    <div className={`shrink-0 overflow-hidden bg-ink/[0.08] shadow-[0_8px_24px_-10px_rgb(0_0_0/0.6)] ${className}`}>
+      <SteadyArt src={src} fallback={tile} />
     </div>
   )
 }
