@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { playlistSourcesCheck, type BehindSource, type PlaylistSummary, type PlaylistsView, type SmartRule } from '../../lib/engine'
-import { fromIs, usePlayerValue } from '../../lib/player'
+import { fromIs, songItemOf, usePlayerValue } from '../../lib/player'
 import { toggle } from '../../lib/player'
 import { Mosaic } from '../../components/Mosaic'
 import { Page } from '../../components/ui'
 import { IconPause, IconPlay, IconSearch } from '../../components/Icons'
 import { menuFor, playlistFacts, playlistWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
-import { playPlaylist, plural, sourceName } from './common'
+import { dragSource, useDropTarget } from '../../lib/drag'
+import { addSongsTo } from './ops'
+import { playlistSongs, playPlaylist, plural, sourceName } from './common'
 import { keyFor, matcher } from '../../lib/textsearch'
 
 /** A playlist as a card: its mosaic, name and size; hover to play, right-click for the rest. */
@@ -38,8 +40,23 @@ export function PlaylistCard(props: {
           .filter(Boolean)
           .join(' · ')
       : plural(local, 'song')
+  // Songs dropped on it are added to it (not onto itself, not into a smart playlist's rules).
+  const drop = useDropTarget(
+    p.smart
+      ? null
+      : {
+          label: `Add to ${p.name}`,
+          accepts: (c) => c.from !== `playlist:${p.name}`,
+          drop: async (c) => void addSongsTo(root, p.name, (await c.songs()).map(songItemOf), c.label),
+        },
+  )
   return (
-    <div onContextMenu={(e) => menuFromEvent(e, menuFor('playlist', playlistFacts(p), playlistWork(root, p, props.rule)))} className="card group relative">
+    <div
+      {...drop.props}
+      onContextMenu={(e) => menuFromEvent(e, menuFor('playlist', playlistFacts(p), playlistWork(root, p, props.rule)))}
+      {...dragSource(() => ({ label: p.name, count: playable, songs: () => playlistSongs(root, p.name, props.rule), from: `playlist:${p.name}` }))}
+      className="card group relative rounded-2xl"
+    >
       <button onClick={props.onOpen} className="block w-full text-left">
         <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>

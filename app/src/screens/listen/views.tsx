@@ -22,8 +22,9 @@ import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, She
 import { SongList } from './SongList'
 import { albumWork, artistWork, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { dragSource } from '../../lib/drag'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { play } from '../../lib/player'
+import { play, toItem } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 import { OnlineResults } from './OnlineResults'
 
@@ -263,6 +264,10 @@ function ArtistCard({ artist: ar }: { artist: Artist }) {
     <button
       onClick={() => nav.openArtist(ar.name)}
       onContextMenu={(e) => menuFromEvent(e, menuFor('artist', {}, artistWork(nav, ar)))}
+      {...dragSource(() => {
+        const tracks = ar.albums.flatMap((a) => a.tracks)
+        return { label: ar.name, count: tracks.length, cover: c?.src, songs: async () => tracks.map(toItem) }
+      })}
       className="lift group block w-full min-w-0 text-center"
     >
       <Avatar name={ar.name} cover={c} />

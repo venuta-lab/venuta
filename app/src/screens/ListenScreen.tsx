@@ -3,7 +3,9 @@ import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { type HealthReport, type OnlineAlbum } from '../lib/engine'
 import { useCatalog } from '../lib/catalog'
-import { current, usePlayer } from '../lib/player'
+import { current, songItemOf, usePlayer } from '../lib/player'
+import { askAddSongs } from '../components/AddToPlaylist'
+import type { Target } from '../lib/drag'
 import { IconSearch } from '../components/Icons'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
@@ -239,6 +241,24 @@ function Listen(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.reset])
 
+  const choose = (id: Tab) => {
+    setQuery('')
+    leavePages()
+    setFadeIn(true)
+    if (id === 'albums' && tab !== 'albums') setFilter('all')
+    setTab(id)
+  }
+  // Music dropped on the Playlists tab: pick the playlist. Held over it: the playlists show, to
+  // drop onto one of them.
+  const toPlaylists: Target = {
+    label: 'Add to a playlist…',
+    drop: async (c) => askAddSongs((await c.songs()).map(songItemOf), c.label),
+    dwell: () => {
+      if (tab !== 'playlists') choose('playlists')
+      showPlaylists({ kind: 'home' })
+    },
+  }
+
   const results = useMemo(() => search(lib, typed), [lib, typed])
   const lyricHits = useLyricHits(root, typed)
   // Songs found by their words, apart from the ones already found by name.
@@ -348,14 +368,8 @@ function Listen(props: Props) {
                 tabs
                 label="Music views"
                 value={query.trim() ? ('' as Tab) : tab}
-                options={TABS.map(([value, label]) => ({ value, label }))}
-                onChange={(id) => {
-                  setQuery('')
-                  leavePages()
-                  setFadeIn(true)
-                  if (id === 'albums' && tab !== 'albums') setFilter('all')
-                  setTab(id)
-                }}
+                options={TABS.map(([value, label]) => ({ value, label, drop: value === 'playlists' ? toPlaylists : null }))}
+                onChange={choose}
               />
           <div className="ml-auto flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1] focus-within:shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_60%,transparent)]">
             <IconSearch className="shrink-0 text-ink/45" />

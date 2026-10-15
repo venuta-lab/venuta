@@ -10,6 +10,7 @@ import { clock, enqueueItems, onlineEntryFrom, playItems, toRemoteItem, type Fro
 import { useNav } from './model'
 import { menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { dragSource } from '../../lib/drag'
 
 /*
   The online catalog under your library's search results: songs, albums and artists for the
@@ -287,6 +288,7 @@ export function OnlineTrackRow(props: {
       role="button"
       tabIndex={0}
       onContextMenu={(e) => menuFromEvent(e, menu())}
+      {...dragSource(() => ({ label: t.title, count: 1, cover: t.artwork_url ?? undefined, songs: async () => [toRemoteItem(t)] }))}
       onClick={(e) => !(e.target as HTMLElement).closest('button') && props.onPlay()}
       onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && props.onPlay()}
       aria-current={props.now || undefined}

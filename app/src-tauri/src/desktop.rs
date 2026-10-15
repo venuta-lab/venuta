@@ -71,7 +71,7 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                 "mini" => {
                     let app = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        let _ = crate::playback::mini_player(true, app).await;
+                        let _ = crate::playback::mini_player_toggle(app).await;
                     });
                 }
                 "lyrics" => crate::lyric_windows::ask_main(app, "toggle"),

@@ -1195,6 +1195,17 @@ pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String
     Ok(())
 }
 
+/// The mini player button, Ctrl+M and the tray: open the mini player, or, while it is showing,
+/// close it and bring the main window back.
+#[tauri::command]
+pub async fn mini_player_toggle(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let showing = app
+        .get_webview_window("mini")
+        .is_some_and(|w| w.is_visible().unwrap_or(false));
+    mini_player(!showing, app).await
+}
+
 /// A window starts or stops showing a spectrum display; the engine measures band levels while
 /// any window shows one.
 #[tauri::command]

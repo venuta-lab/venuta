@@ -36,6 +36,7 @@ import {
   playAllItems,
   playItems,
   queueKey,
+  songItemOf,
   toggle,
   usePlayerValue,
   type QueueItem,
@@ -54,6 +55,9 @@ import { useOnlineSearch } from '../listen/OnlineResults'
 import { Equalizer } from '../listen/parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { useDropTarget } from '../../lib/drag'
+import { DragHandle, MOVE_KEYS } from '../../components/DragHandle'
+import { addSongsTo } from './ops'
 import { useNav } from '../listen/model'
 import { entryAvailability, fromWhere, length, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
@@ -483,7 +487,18 @@ export function PlaylistPage(props: {
       ? `From ${fromWhere(props.summary.source)}${sourceDate(props.summary.source) ? `, brought over ${sourceDate(props.summary.source)}` : ''}`
       : 'Playlist'
 
+  // Music dropped anywhere on the page is added to the end of this playlist.
+  const pageDrop = useDropTarget(
+    smart
+      ? null
+      : {
+          label: `Add to ${name}`,
+          accepts: (c) => c.from !== `playlist:${name}`,
+          drop: async (c) => void addSongsTo(root, name, (await c.songs()).map(songItemOf), c.label),
+        },
+  )
   return (
+    <div {...pageDrop.props} className="rounded-[28px]">
     <Detail
       title={name}
       onBack={props.onBack}
@@ -739,6 +754,7 @@ export function PlaylistPage(props: {
         )}
       </AnimatePresence>
     </Detail>
+    </div>
   )
 }
 
@@ -869,6 +885,7 @@ function PlaylistRow(props: {
   return (
     <div
       role="listitem"
+      aria-keyshortcuts={grab ? MOVE_KEYS : undefined}
       style={props.style}
       aria-label={get ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
@@ -897,21 +914,7 @@ function PlaylistRow(props: {
       {!grab ? (
         <span />
       ) : (
-        <span
-          onPointerDown={grab.onGrab}
-          className={`grid h-8 cursor-grab touch-none place-items-center text-ink/25 transition-opacity hover:text-ink/70 active:cursor-grabbing group-hover:opacity-100 ${grab.dragging ? 'opacity-100' : 'opacity-0'}`}
-          title="Drag to move (or Alt+Up, Alt+Down)"
-          aria-hidden
-        >
-          <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
-            {[2, 7, 12].map((y) => (
-              <g key={y}>
-                <circle cx="3" cy={y} r="1.3" />
-                <circle cx="9" cy={y} r="1.3" />
-              </g>
-            ))}
-          </svg>
-        </span>
+        <DragHandle label={r.title} onPointerDown={grab.onGrab} dragging={grab.dragging} />
       )}
       <span className="relative grid h-8 place-items-center text-[13px] tabular-nums text-ink/45">
         {isNow ? (

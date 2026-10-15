@@ -2,7 +2,8 @@ import { motion } from 'motion/react'
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { playAll, toggle, type From } from '../../lib/player'
+import { playAll, toItem, toggle, type From } from '../../lib/player'
+import { dragSource } from '../../lib/drag'
 import { albumWork, menuFor, songFacts, songWork } from '../../lib/actions'
 import { closeMenu, menuFromEvent, useMenuOpen, type MenuGroups } from '../../lib/menu'
 import { useJob } from '../../lib/jobs'
@@ -99,7 +100,11 @@ export const AlbumCard = memo(function AlbumCard(props: {
   // The lift on hover and the press on Play are CSS (.card, .card-play in index.css), so a page
   // of cards is plain elements; motion is kept for the cover's flight into the album page.
   return (
-    <div onContextMenu={(e) => menuFromEvent(e, menuFor('album', {}, albumWork(nav, a)))} className="card group relative">
+    <div
+      onContextMenu={(e) => menuFromEvent(e, menuFor('album', {}, albumWork(nav, a)))}
+      {...dragSource(() => ({ label: a.title, count: a.tracks.length, cover: c?.src, songs: async () => a.tracks.map(toItem) }))}
+      className="card group relative"
+    >
       <button
         onClick={() => {
           openAlbum(a.dir, origin)

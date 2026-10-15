@@ -30,6 +30,7 @@ import { watchPacks } from './lib/packs'
 import { watchAwake } from './lib/motion'
 import { keepLayoutSwept } from './lib/layoutSweep'
 import { ContextMenuHost } from './components/ContextMenu'
+import { DragLayer } from './components/DragLayer'
 
 // Nothing moves in a window that isn't on screen (lib/motion.ts).
 watchAwake()
@@ -52,5 +53,7 @@ createRoot(document.getElementById('root')!).render(
     <Shown />
     {/* The window owns right-click; every menu opens here (components/ContextMenu.tsx). */}
     <ContextMenuHost />
+    {/* What is being dragged follows the pointer (lib/drag.ts). */}
+    <DragLayer />
   </StrictMode>,
 )

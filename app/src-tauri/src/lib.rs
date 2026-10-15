@@ -2443,6 +2443,7 @@ pub fn run() {
             playback::player_stop_after,
             playback::player_sleep,
             playback::mini_player,
+            playback::mini_player_toggle,
             lyric_windows::monitors,
             lyric_windows::lyrics_stage,
             lyric_windows::desktop_lyrics,

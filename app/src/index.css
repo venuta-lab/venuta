@@ -433,3 +433,21 @@ select.field option {
   background: var(--solid);
   color: var(--color-ink);
 }
+
+/* Dragging music (lib/drag.ts): the hand while carrying, no text selected on the way, and every
+   place to drop marked the same way: dashed while it would take what is carried, solid while it
+   is held over. */
+:root[data-dragging] * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+[data-drop-ready] {
+  outline: 2px dashed color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+  transition: outline-color 120ms ease, background-color 120ms ease;
+}
+[data-drop-over] {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  background-color: color-mix(in oklab, var(--accent) 12%, transparent);
+}

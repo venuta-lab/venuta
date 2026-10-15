@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlistAdd, playlists as loadPlaylists, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { playlists as loadPlaylists, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useEscape } from '../lib/layers'
-import { notify } from '../lib/notify'
+import { addSongsTo } from '../screens/playlists/ops'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
 
@@ -32,7 +32,7 @@ export function askAddSongs(items: PlaylistItem[], label: string) {
 /** Tell open playlist views that a playlist changed (so they re-read it). */
 export const playlistsChanged = () => window.dispatchEvent(new CustomEvent('venuta:playlists-changed'))
 
-export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: string) => void }) {
+export function AddToPlaylist({ root }: { root: string }) {
   const req = useSyncExternalStore(
     (l) => {
       listeners.add(l)
@@ -72,20 +72,14 @@ export function AddToPlaylist({ root, onOpen }: { root: string; onOpen: (name: s
     if (!req || busy) return
     setBusy(true)
     try {
-      const n = await playlistAdd(root, name, req.items)
-      const what = req.items.length === 1 ? req.label : `${req.items.length} songs`
-      notify(
-        n === 0 ? `${what} ${req.items.length === 1 ? 'is' : 'are'} already in ${name}.` : `Added ${n === req.items.length ? what : `${n} of ${req.items.length} songs`} to ${name}.`,
-        { label: 'Open', run: () => onOpen(name) },
-      )
-      playlistsChanged()
+      // The same as dropping songs on a playlist (screens/playlists/ops.ts).
+      await addSongsTo(root, name, req.items, req.label)
       close()
-    } catch (e) {
-      notify(`Couldn't add to ${name}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBusy(false)
     }
   }
+
 
   return (
     <AnimatePresence>

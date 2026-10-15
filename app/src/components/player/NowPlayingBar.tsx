@@ -7,7 +7,8 @@ import { LcdSpectrum } from './Spectrum'
 import { openBigScreen } from '../../lib/lyricWindows'
 import {
   clock,
-  miniPlayer,
+  enqueueItems,
+  toggleMiniPlayer,
   current,
   isOnline,
   next,
@@ -31,6 +32,8 @@ import {
 } from '../../lib/player'
 import { RemoteArt } from '../RemoteArt'
 import { AvailabilityBadge } from '../AvailabilityBadge'
+import { useDropTarget } from '../../lib/drag'
+import { notify } from '../../lib/notify'
 import {
   IconExpand,
   IconLyrics,
@@ -593,7 +596,7 @@ function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => v
         open.queue()
       } else if (e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault()
-        void miniPlayer(true)
+        void toggleMiniPlayer()
       } else if (e.key === 'F11' && s.queue[s.index]?.lyrics) {
         e.preventDefault()
         void openBigScreen()
@@ -625,10 +628,23 @@ export function NowPlayingBar(props: {
   const onlineArt = remoteArtUrl(song)
   const duration = s.duration_ms || song?.duration_ms || 0
   const wave = useWaveform(song?.path)
+  // Music dropped on the bar plays next.
+  const drop = useDropTarget(
+    song
+      ? {
+          label: 'Play next',
+          drop: async (c) => {
+            await enqueueItems(s.root ?? '', await c.songs(), true)
+            notify(`${c.label} plays next.`)
+          },
+        }
+      : null,
+  )
   return (
     <AnimatePresence initial={false}>
       {song && (
         <motion.section
+          {...drop.props}
           aria-label="Now playing"
           initial={{ y: 90, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -748,7 +764,7 @@ export function NowPlayingBar(props: {
               <IconQueue />
             </Round>
             <span className="hidden @[900px]:contents">
-            <Round label="Mini player (Ctrl M)" onClick={() => void miniPlayer(true)}>
+            <Round label="Mini player (Ctrl M)" onClick={() => void toggleMiniPlayer()}>
               <IconMini />
             </Round>
             </span>

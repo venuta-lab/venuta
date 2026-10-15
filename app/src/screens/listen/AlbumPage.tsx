@@ -2,13 +2,14 @@ import { motion } from 'motion/react'
 import { memo, useMemo, useRef } from 'react'
 import { quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, usePageAccent } from '../../lib/covers'
-import { clock, play, toggle } from '../../lib/player'
+import { clock, play, toggle, toItem } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { albumFrom, coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
 import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { dragSource } from '../../lib/drag'
 
 /** One album: its cover large, what it is, and its songs to play. */
 export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?: string; onBack: () => void }) {
@@ -67,6 +68,8 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
 const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
   const nav = useNav()
   const { root } = nav
+  // The album's cover, carried with a song dragged from here.
+  const art = useCovers(320)(a.dir)
   const now = useNowPlaying()
   const list = useRef<HTMLDivElement>(null)
   const discs = useMemo(() => {
@@ -100,6 +103,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                 key={t.path}
                 role="listitem"
                 onContextMenu={(e) => menuFromEvent(e, menuFor('song', songFacts(t), songWork(nav, t, () => playAt(i))))}
+                {...dragSource(() => ({ label: t.title, count: 1, cover: art?.src, songs: async () => [toItem(t)] }))}
                 tabIndex={0}
                 data-index={i}
                 aria-current={isNow || undefined}

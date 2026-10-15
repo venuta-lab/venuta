@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import { createContext, use, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useDropTarget, type Target } from '../lib/drag'
 
 /*
   The few controls every screen shares, so they look and move the same everywhere:
@@ -13,7 +14,8 @@ const spring = { type: 'spring', stiffness: 420, damping: 36 } as const
 /** Pick one of a few: a row of pills with one sliding highlight. Used for tabs too. */
 export function Segmented<T extends string>(props: {
   value: T
-  options: { value: T; label: ReactNode; disabled?: boolean }[]
+  /** `drop`: music can be dropped on this one (the Playlists tab; lib/drag.ts). */
+  options: { value: T; label: ReactNode; disabled?: boolean; drop?: Target | null }[]
   onChange: (v: T) => void
   label: string
   /** Tabs switch views; otherwise it is a choice (radio). */
@@ -29,32 +31,45 @@ export function Segmented<T extends string>(props: {
       aria-label={props.label}
       className={`seg inline-flex shrink-0 rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)] ${props.className ?? ''}`}
     >
-      {props.options.map((o) => {
-        const on = o.value === props.value
-        return (
-          <button
-            key={o.value}
-            role={props.tabs ? 'tab' : 'radio'}
-            aria-selected={props.tabs ? on : undefined}
-            aria-checked={props.tabs ? undefined : on}
-            disabled={o.disabled}
-            onClick={() => props.onChange(o.value)}
-            className={`seg-item relative rounded-full font-medium transition-colors disabled:opacity-35 ${
-              sm ? 'px-3 py-1 text-[12px]' : 'px-4 py-1.5 text-[13px]'
-            } ${on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
-          >
-            {on && (
-              <motion.span
-                layoutId={`seg-${id}`}
-                transition={spring}
-                className="seg-on absolute inset-0 rounded-full bg-ink/[0.13] shadow-[inset_0_1px_0_var(--highlight),0_1px_6px_-2px_rgb(0_0_0/0.3)]"
-              />
-            )}
-            <span className="relative">{o.label}</span>
-          </button>
-        )
-      })}
+      {props.options.map((o) => (
+        <SegItem key={o.value} option={o} on={o.value === props.value} tabs={props.tabs} sm={sm} id={id} onChange={props.onChange} />
+      ))}
     </div>
+  )
+}
+
+/** One choice of a Segmented control (a component, so a tab can take dropped music). */
+function SegItem<T extends string>(props: {
+  option: { value: T; label: ReactNode; disabled?: boolean; drop?: Target | null }
+  on: boolean
+  tabs?: boolean
+  sm: boolean
+  id: string
+  onChange: (v: T) => void
+}) {
+  const { option: o, on, sm, id } = props
+  const drop = useDropTarget(o.drop ?? null)
+  return (
+    <button
+      {...drop.props}
+      role={props.tabs ? 'tab' : 'radio'}
+      aria-selected={props.tabs ? on : undefined}
+      aria-checked={props.tabs ? undefined : on}
+      disabled={o.disabled}
+      onClick={() => props.onChange(o.value)}
+      className={`seg-item relative rounded-full font-medium transition-colors disabled:opacity-35 ${
+        sm ? 'px-3 py-1 text-[12px]' : 'px-4 py-1.5 text-[13px]'
+      } ${on ? 'text-ink' : 'text-ink/60 hover:text-ink'}`}
+    >
+      {on && (
+        <motion.span
+          layoutId={`seg-${id}`}
+          transition={spring}
+          className="seg-on absolute inset-0 rounded-full bg-ink/[0.13] shadow-[inset_0_1px_0_var(--highlight),0_1px_6px_-2px_rgb(0_0_0/0.3)]"
+        />
+      )}
+      <span className="relative">{o.label}</span>
+    </button>
   )
 }
 

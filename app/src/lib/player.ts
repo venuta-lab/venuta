@@ -602,6 +602,8 @@ export function useSpectrum(): number[] | null {
 
 /** The mini player: open it (the main window steps aside) or close it and come back. */
 export const miniPlayer = (open: boolean) => call('mini_player', { open })
+/** The mini player button, Ctrl+M, the palette: open it, or back to the main window when it is open. */
+export const toggleMiniPlayer = () => call('mini_player_toggle')
 
 export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
 /** Pause after `minutes` (null cancels). */

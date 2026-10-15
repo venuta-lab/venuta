@@ -1,13 +1,14 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHiRes, quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
-import { clock, play, toggle, type From } from '../../lib/player'
+import { clock, play, toggle, toItem, type From } from '../../lib/player'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { compareText, scrollerOf, useNav, useNowPlaying } from './model'
 import { InBar } from '../../components/ui'
 import { Equalizer, QualityBadge, TrackMenu } from './parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { dragSource } from '../../lib/drag'
 
 const ROW = 44
 const OVERSCAN = 10
@@ -161,6 +162,7 @@ const SongRow = memo(function SongRow(props: {
   return (
     <div
       onContextMenu={(e) => menuFromEvent(e, menuFor('song', songFacts(t), songWork(nav, t, playHere)))}
+      {...dragSource(() => ({ label: t.title, count: 1, cover: props.cover?.src, songs: async () => [toItem(t)] }))}
       role="listitem"
       tabIndex={0}
       data-index={i}

@@ -181,7 +181,7 @@ export function MiniPlayer() {
   const at = lineAt(lyrics, s.position_ms)
   const line = at >= 0 ? lyrics?.lines[at]?.[1] || '♪' : ''
 
-  // Space plays and pauses; arrows skip.
+  // Space plays and pauses; arrows skip; Ctrl+M goes back.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       if (e.key === ' ') {
@@ -189,6 +189,11 @@ export function MiniPlayer() {
         void toggle()
       } else if (e.key === 'ArrowRight' && e.ctrlKey) void next()
       else if (e.key === 'ArrowLeft' && e.ctrlKey) void previous()
+      // Ctrl+M again: back to the main window (as the button says).
+      else if (e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
+        e.preventDefault()
+        void miniPlayer(false)
+      }
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)

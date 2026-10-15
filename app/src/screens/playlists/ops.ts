@@ -1,7 +1,7 @@
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { confirmAsk } from '../../components/Confirm'
 import { playlistsChanged } from '../../components/AddToPlaylist'
-import { playlistDelete, playlistDuplicate, playlistExport, type PlaylistSummary, type SmartRule } from '../../lib/engine'
+import { playlistAdd, playlistDelete, playlistDuplicate, playlistExport, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { playlistSongs, plural } from './common'
 import type { PlaylistsPlace } from '../PlaylistsScreen'
@@ -77,5 +77,27 @@ export async function deletePlaylist(root: string, p: Pick<PlaylistSummary, 'nam
   } catch (e) {
     notify(`Couldn't delete ${p.name}: ${why(e)}`)
     return false
+  }
+}
+
+/**
+ * Add songs to a playlist (from the picker, or dropped on it), and say how it went: added, some
+ * already there, or all already there. Returns how many were added.
+ */
+export async function addSongsTo(root: string, name: string, items: PlaylistItem[], label: string): Promise<number> {
+  try {
+    const n = await playlistAdd(root, name, items)
+    const what = items.length === 1 ? `“${label}”` : `${items.length} songs`
+    notify(
+      n === 0
+        ? `${what} ${items.length === 1 ? 'is' : 'are'} already in ${name}.`
+        : `Added ${n === items.length ? what : `${n} of ${items.length} songs`} to ${name}.`,
+      { label: 'Open', run: () => goToPlaylists({ kind: 'playlist', name }) },
+    )
+    playlistsChanged()
+    return n
+  } catch (e) {
+    notify(`Couldn't add to ${name}: ${why(e)}`)
+    return 0
   }
 }

@@ -4,9 +4,12 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, isOnline, jumpTo, move, openFrom, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, enqueueItems, isOnline, jumpTo, move, openFrom, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { goToEach, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { useDropTarget } from '../../lib/drag'
+import { DragHandle, MOVE_KEYS } from '../DragHandle'
+import { notify } from '../../lib/notify'
 import { IconClose } from '../Icons'
 import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
@@ -91,6 +94,18 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   // Where each song plays from is said only when the queue holds online songs.
   const mixed = useMemo(() => s.queue.some(isOnline), [s.queue])
   const upcoming = s.queue.length - s.index - 1
+  // Music dropped on the open queue joins its end.
+  const drop = useDropTarget(
+    open
+      ? {
+          label: 'Add to the queue',
+          drop: async (c) => {
+            await enqueueItems(s.root ?? '', await c.songs(), false)
+            notify(`Added ${c.label} to the queue.`)
+          },
+        }
+      : null,
+  )
   const left = useMemo(() => s.queue.slice(s.index + 1).reduce((t, q) => t + q.duration_ms, 0), [s.queue, s.index])
 
   // Right-click a song in the queue: what lib/actionModel.ts says a queued song can do.
@@ -113,6 +128,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     return (
       <div
         role="listitem"
+        aria-keyshortcuts={grab ? MOVE_KEYS : undefined}
         tabIndex={0}
         style={style}
         data-current={current}
@@ -141,6 +157,8 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
               : `hover:bg-ink/[0.05] active:bg-ink/[0.09] ${played ? 'opacity-70' : ''}`
         }`}
       >
+        {/* What comes next can move: the grip says so (the whole row drags too). */}
+        {grab ? <DragHandle label={r.q.title} dragging={grab.dragging} /> : <span aria-hidden className="w-3 shrink-0" />}
         <RowBody item={r.q} index={r.at} current={current} badge={mixed} />
       </div>
     )
@@ -150,6 +168,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
     <AnimatePresence>
       {props.open && (
         <motion.aside
+          {...drop.props}
           aria-label="Queue"
           initial={{ x: 420, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
