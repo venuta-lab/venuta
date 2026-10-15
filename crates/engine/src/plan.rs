@@ -734,7 +734,7 @@ fn plan_album(
             .get("GENRE")
             .map(|v| {
                 v.iter()
-                    .flat_map(|g| g.split(['&', ';', '/']))
+                    .flat_map(|g| genre_parts(g))
                     .filter_map(|g| rules.map_genre(g))
                     .collect()
             })
@@ -1148,6 +1148,16 @@ fn title_key_eq(a: &str, b: &str) -> bool {
         name_key(&s)
     };
     k(a) == k(b)
+}
+
+/// One genre value as the genres in it: "R&B/Soul" is R&B and Soul, "Pop & Rock" is Pop and
+/// Rock. An ampersand inside a word (R&B, Drum&Bass) is part of the name.
+fn genre_parts(g: &str) -> Vec<&str> {
+    g.split([';', '/'])
+        .flat_map(|g| g.split(" & "))
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .collect()
 }
 
 /// A category from the catalogues' genres, used when no rule of yours matches. Apple files
@@ -1803,6 +1813,15 @@ pub fn build_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_genre_with_an_ampersand_in_it_stays_whole() {
+        assert_eq!(genre_parts("R&B/Soul"), ["R&B", "Soul"]);
+        assert_eq!(genre_parts("Drum&Bass"), ["Drum&Bass"]);
+        assert_eq!(genre_parts("Pop & Rock"), ["Pop", "Rock"]);
+        assert_eq!(genre_parts("Filmi;Romantic"), ["Filmi", "Romantic"]);
+        assert_eq!(genre_parts("Hip-Hop/Rap"), ["Hip-Hop", "Rap"]);
+    }
 
     /// The app shows a typed playlist name as it will be saved (app/src/lib/playlistName.ts);
     /// this table, which its test reads too, keeps the two rules the same.
