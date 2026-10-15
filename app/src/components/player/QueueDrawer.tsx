@@ -4,7 +4,7 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, enqueueItems, isOnline, jumpTo, move, openFrom, queueKey, removeAt, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, enqueueItems, isOnline, jumpTo, move, openFrom, queueKey, removeAt, setShuffle, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { goToEach, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
@@ -183,6 +183,15 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
               <p className="mt-0.5 truncate text-[12px] text-ink/55">
                 {upcoming > 0 ? `${upcoming.toLocaleString('en-IN')} up next, ${clock(left)}` : 'Nothing after this song'}
               </p>
+              {/* Shuffled, what comes next isn't the order of the list it came from: say so, with the way back. */}
+              {s.shuffle && upcoming > 0 && (
+                <p className="mt-1 flex items-center gap-2 text-[12px] text-ink/55">
+                  <span>Shuffled</span>
+                  <button onClick={() => void setShuffle(false)} className="rounded-full px-2 py-0.5 text-accent-ink hover:bg-ink/[0.08]">
+                    Play in order
+                  </button>
+                </p>
+              )}
             </div>
             {s.queue.length > 0 && (
               <button

@@ -2431,6 +2431,7 @@ pub fn run() {
             playback::player_remove,
             playback::player_move,
             playback::player_follow,
+            playback::player_restore,
             playback::player_jump,
             playback::player_devices,
             playback::player_output,

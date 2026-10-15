@@ -144,6 +144,9 @@ impl Item for QueueItem {
 #[derive(Serialize, Clone)]
 pub struct WindowStatus {
     queue: Option<Vec<QueueItem>>,
+    /// With `queue`, while shuffled: where each song of the order before shuffling is (so a
+    /// window can put this queue back exactly, see `player_restore`).
+    unshuffled: Option<Vec<usize>>,
     /// The folder the queue's songs are in (the mini player needs it for covers and lyrics).
     root: String,
     index: i64,
@@ -351,6 +354,7 @@ impl Playback {
                     {
                         let status = WindowStatus {
                             queue: s.queue,
+                            unshuffled: s.unshuffled,
                             root: folder,
                             index: s.index.map(|i| i as i64).unwrap_or(-1),
                             playing: s.playing,
@@ -776,6 +780,38 @@ pub fn player_play(
         play: true,
         from,
     })
+}
+
+/// Put a queue back as it was (Undo after playing something else replaced it): the same songs
+/// in the same order, on the same song at the same moment, playing or paused as it was, with
+/// shuffle and repeat, and the order before shuffling so turning shuffle off still goes back.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn player_restore(
+    root: String,
+    items: Vec<QueueItem>,
+    index: usize,
+    position_ms: u64,
+    play: bool,
+    from: String,
+    shuffle: bool,
+    repeat: Repeat,
+    order: Option<Vec<usize>>,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
+    *pb.root.lock().map_err(|e| e.to_string())? = root.clone();
+    let items = pb.resolve(&root, items);
+    pb.send(Cmd::Set {
+        items,
+        index,
+        start_ms: position_ms,
+        play,
+        from,
+    })?;
+    if let (true, Some(order)) = (shuffle, order) {
+        pb.send(Cmd::RestoreOrder(order))?;
+    }
+    pb.send(Cmd::Options { shuffle, repeat })
 }
 
 /// The source the queue came from has a new list (a playlist edited while it plays): the song

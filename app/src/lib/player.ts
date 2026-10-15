@@ -124,6 +124,8 @@ export interface PlayerState {
   root?: string
   /** Band levels of what's playing (0-255, bass to treble) while a spectrum display asks. */
   bands?: number[] | null
+  /** With the queue, while shuffled: where each song of the order before shuffling is. */
+  unshuffled?: number[] | null
 }
 
 const idle: PlayerState = {
@@ -192,7 +194,7 @@ export function connectPlayer() {
   subscribed = true
   // The queue comes only when it changed; everything else every time.
   const channel = new Channel<Omit<PlayerState, 'queue'> & { queue: QueueItem[] | null }>()
-  channel.onmessage = (m) => set({ ...m, queue: m.queue ?? state.queue })
+  channel.onmessage = (m) => set({ ...m, queue: m.queue ?? state.queue, unshuffled: m.queue ? (m.unshuffled ?? null) : state.unshuffled })
   invoke('player_subscribe', { onState: channel }).catch(() => {
     subscribed = false
   })
@@ -367,8 +369,70 @@ let lastSet: { from: string; keys: string[] } | null = null
 export const play = (root: string, tracks: CatalogTrack[], index = 0, from: From | string = '') =>
   playItems(root, tracks.map(toItem), index, from)
 
+/*
+  Playing something else replaces the queue. When the queue it replaces still had more than a
+  few songs to come, the notice offers Undo: the queue comes back exactly (the same songs in the
+  same order, on the same song at the same moment, playing or paused, shuffle and repeat as they
+  were). The engine does the putting back (player_restore).
+*/
+type Kept = {
+  root: string
+  items: QueueItem[]
+  index: number
+  position_ms: number
+  playing: boolean
+  from: string
+  shuffle: boolean
+  repeat: Repeat
+  order: number[] | null
+}
+/** Songs still to come (the playing one too) for a replaced queue to be worth getting back. */
+const WORTH = 5
+
+const keep = (): Kept | null =>
+  state.index >= 0 && state.queue.length
+    ? {
+        root: queueRoot || state.root || '',
+        items: state.queue,
+        index: state.index,
+        position_ms: Math.round(positionNow()),
+        playing: state.playing,
+        from: state.from,
+        shuffle: state.shuffle,
+        repeat: state.repeat,
+        order: state.unshuffled ?? null,
+      }
+    : null
+
+/** Put a kept queue back. */
+export function restoreQueue(k: Kept) {
+  queueRoot = k.root
+  lastSet = null
+  set({ ...state, queue: k.items, index: k.index, playing: k.playing, position_ms: k.position_ms, from: k.from, shuffle: k.shuffle, repeat: k.repeat, error: '' })
+  return call('player_restore', {
+    root: k.root,
+    items: k.items,
+    index: k.index,
+    positionMs: k.position_ms,
+    play: k.playing,
+    from: k.from,
+    shuffle: k.shuffle,
+    repeat: k.repeat,
+    order: k.order,
+  })
+}
+
+/** After a play: offer the queue it replaced back, when that was another list worth having. */
+function offerBack(before: Kept | null, items: QueueItem[], from: string) {
+  if (!before || before.items.length - before.index < WORTH) return
+  const now = items.map(queueKey)
+  if (now.length === before.items.length && before.items.every((q, i) => queueKey(q) === now[i])) return
+  const what = readFrom(from)?.label || (items.length === 1 ? items[0].title : `${items.length} songs`)
+  notify(`Playing ${what}.`, { label: 'Undo', run: () => void restoreQueue(before) })
+}
+
 /** `play` for queue rows of any kind: library songs and online ones, mixed. */
-export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '') {
+export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '', before: Kept | null = keep()) {
   queueRoot = root
   const f = fromText(from)
   const row = items[index]
@@ -397,7 +461,7 @@ export function playItems(root: string, items: QueueItem[], index = 0, from: Fro
     from: f,
     error: '',
   })
-  return call('player_play', { root, items, index, from: f })
+  return call('player_play', { root, items, index, from: f }).then(() => offerBack(before, items, f))
 }
 
 /** The Play and Shuffle buttons: all of it in order (shuffle off), or shuffled from a random
@@ -408,12 +472,14 @@ export const playAll = (root: string, tracks: CatalogTrack[], from: From | strin
 /** `playAll` for queue rows of any kind. */
 export async function playAllItems(root: string, items: QueueItem[], from: From | string, how: 'order' | 'shuffle' = 'order') {
   if (!items.length) return
+  // What to offer back is the queue as it was before shuffle was switched for this play.
+  const before = keep()
   const shuffle = how === 'shuffle'
   if (state.shuffle !== shuffle) {
     set({ ...state, shuffle })
     await call('player_options', { shuffle, repeat: state.repeat })
   }
-  return playItems(root, items, shuffle ? Math.floor(Math.random() * items.length) : 0, from)
+  return playItems(root, items, shuffle ? Math.floor(Math.random() * items.length) : 0, from, before)
 }
 
 /**
