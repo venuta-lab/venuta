@@ -127,6 +127,14 @@ pub struct RemoteAlbum {
     pub kind: Option<String>,
 }
 
+/// A whole playlist from the online catalog: its name and every song, in order (ids and what to
+/// show only, never a stream address).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePlaylist {
+    pub title: Option<String>,
+    pub tracks: Vec<RemoteTrack>,
+}
+
 /// An artist's page in the online catalog: who they are, their songs, their records, and
 /// artists like them. Ids and what to show only, never a stream address.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

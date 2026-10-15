@@ -2533,26 +2533,28 @@ struct ImportDone {
 }
 
 /// Write the playlists you confirmed; the albums they still want go on the want-list.
-/// A YouTube or YouTube Music playlist, through Venuta's catalogue (free, no sign-in).
+/// A YouTube or YouTube Music playlist, through Venuta's catalogue (free, no sign-in): every
+/// page of it, with its name.
 fn youtube_playlist(
     catalog: &dyn media_access::MediaAccess,
     id: &str,
 ) -> Result<engine::imports::ForeignPlaylist, String> {
-    let page = catalog
-        .playlist_tracks(
-            id,
-            &media_access::PageRequest::new(500, None),
-            &media_access::CancellationToken::default(),
-        )
+    let list = catalog
+        .playlist(id, &media_access::CancellationToken::default())
         .map_err(|e| {
             format!("YouTube didn't show that playlist ({e}). Is it public or unlisted?")
         })?;
+    if list.tracks.is_empty() {
+        return Err("YouTube shows no songs in that playlist. Is it public or unlisted?".into());
+    }
     Ok(engine::imports::ForeignPlaylist {
-        name: "YouTube Music playlist".into(),
+        name: list
+            .title
+            .unwrap_or_else(|| "YouTube Music playlist".into()),
         source: "YouTube Music".into(),
         id: Some(format!("youtube:{id}")),
-        tracks: page
-            .items
+        tracks: list
+            .tracks
             .into_iter()
             .map(|t| engine::playlists::Foreign {
                 title: t.title,

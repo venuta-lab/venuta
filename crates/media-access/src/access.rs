@@ -1,6 +1,6 @@
 use crate::types::{
     CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemoteTrack,
+    RemoteArtistPage, RemotePlaylist, RemoteTrack,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -76,6 +76,30 @@ pub trait MediaAccess: Send + Sync {
         page: &PageRequest,
         cancel: &CancellationToken,
     ) -> Result<Page<RemoteTrack>, AccessError>;
+
+    /// A whole playlist, page after page (at most 6,000 songs): its name when the catalog says
+    /// it, and every song in order.
+    fn playlist(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemotePlaylist, AccessError> {
+        let mut tracks = Vec::new();
+        let mut cursor = None;
+        for _ in 0..60 {
+            let page =
+                self.playlist_tracks(playlist_id, &PageRequest::new(100, cursor.take()), cancel)?;
+            tracks.extend(page.items);
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        Ok(RemotePlaylist {
+            title: None,
+            tracks,
+        })
+    }
 
     fn resolve_audio(
         &self,
@@ -203,6 +227,14 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Page<RemoteTrack>, AccessError> {
         self.inner.playlist_tracks(playlist_id, page, cancel)
+    }
+
+    fn playlist(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemotePlaylist, AccessError> {
+        self.inner.playlist(playlist_id, cancel)
     }
 
     fn resolve_audio(

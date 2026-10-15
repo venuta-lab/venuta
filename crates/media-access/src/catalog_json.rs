@@ -644,6 +644,43 @@ pub(crate) fn read_continuation(raw: &Value) -> Option<String> {
     found
 }
 
+/// The next page of a playlist: its song shelf's own continuation command. (The sections below a
+/// playlist carry tokens of their own, which aren't its songs, so they're never followed.)
+pub(crate) fn read_playlist_continuation(raw: &Value) -> Option<String> {
+    let mut found = None;
+    walk(raw, &mut |m| {
+        if found.is_none()
+            && let Some(t) = m
+                .get("continuationItemRenderer")
+                .and_then(|c| c.pointer("/continuationEndpoint/continuationCommand/token"))
+                .and_then(Value::as_str)
+                .filter(|t| !t.trim().is_empty())
+        {
+            found = Some(t.to_owned());
+        }
+    });
+    found
+}
+
+/// A playlist page's name, from its header.
+pub(crate) fn read_playlist_title(raw: &Value) -> Option<String> {
+    let mut found = None;
+    walk(raw, &mut |m| {
+        if found.is_none()
+            && let Some(h) = m
+                .get("musicResponsiveHeaderRenderer")
+                .or_else(|| m.get("musicDetailHeaderRenderer"))
+                .or_else(|| m.get("musicEditablePlaylistDetailHeaderRenderer"))
+        {
+            let title = joined(&runs_of(h.get("title")));
+            if !title.trim().is_empty() {
+                found = Some(title.trim().to_owned());
+            }
+        }
+    });
+    found
+}
+
 /// Songs read straight from a response's rows (for a page innertube-rs doesn't parse, such as
 /// a continuation page). Rows without a title are left out.
 pub(crate) fn tracks_from_hits(hits: &[RawHit], provider: &str) -> Vec<RemoteTrack> {
@@ -924,6 +961,32 @@ mod tests {
         let mut plain: Vec<RemoteTrack> = ["a", "b"].iter().map(|id| track(id)).collect();
         keep_top_in_page(&mut plain, 1);
         assert_eq!(plain[0].track_id, "a");
+    }
+
+    fn saved(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ytm")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_long_playlist_reads_page_after_page() {
+        // A 307-song public playlist, signed out (trimmed): 100 rows and a next page.
+        let first = saved("playlist-first.json");
+        assert_eq!(
+            read_playlist_title(&first).as_deref(),
+            Some("Carvaan Classics Radio Show")
+        );
+        assert_eq!(read_hits(&first).len(), 3);
+        let token = read_playlist_continuation(&first).expect("a next page");
+        assert!(token.starts_with("4qmF"));
+        // The next page: its rows and a token for the one after.
+        let next = saved("playlist-next.json");
+        assert_eq!(read_hits(&next).len(), 2);
+        assert!(read_playlist_continuation(&next).is_some_and(|t| t != token));
+        // The last page has none.
+        assert!(read_playlist_continuation(&saved("playlist-last.json")).is_none());
     }
 
     #[test]

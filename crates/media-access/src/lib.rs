@@ -28,5 +28,6 @@ pub use online::UnconfiguredOnlineAccess;
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, ONLINE_PLAYLIST_TAG, Page,
-    PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteTrack,
+    PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteArtistPage, RemotePlaylist,
+    RemoteTrack,
 };

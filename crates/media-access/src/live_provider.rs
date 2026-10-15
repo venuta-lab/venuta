@@ -7,7 +7,7 @@ use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
     CancellationToken, EphemeralAudio, MediaHeader, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemoteTrack,
+    RemoteArtistPage, RemotePlaylist, RemoteTrack,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -80,8 +80,15 @@ trait LiveBackend: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<MusicAlbumView, AccessError>;
 
-    /// A catalog page as it comes (an artist, an artist's song list).
+    /// A catalog page as it comes (an artist, an artist's song list, a playlist).
     fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError>;
+
+    /// The next page of a catalog page (a long playlist's next songs), from its continuation.
+    fn browse_continuation(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Value, AccessError>;
 
     fn resolve(
         &self,
@@ -95,6 +102,40 @@ struct InnertubeBackend {
 }
 
 impl InnertubeBackend {
+    /// POST /browse with this body (a page by id, or the next page by its continuation).
+    fn browse_body(&self, body: Value, cancel: &CancellationToken) -> Result<Value, AccessError> {
+        let cancel = cancel.clone();
+        self.call(move |runtime, client| {
+            let client = client.map_err(|_| {
+                AccessError::new(
+                    AccessErrorKind::Transport,
+                    "could not initialize the live catalog client",
+                )
+            })?;
+            runtime.block_on(cancellable(cancel, async move {
+                let response = client
+                    .session
+                    .post_innertube_client("YTMUSIC", "/browse", body)
+                    .await
+                    .map_err(|_| {
+                        AccessError::new(AccessErrorKind::Transport, "catalog page failed")
+                    })?;
+                if !response.status().is_success() {
+                    return Err(AccessError::new(
+                        AccessErrorKind::Transport,
+                        "catalog page returned an unsuccessful response",
+                    ));
+                }
+                response.json().await.map_err(|_| {
+                    AccessError::new(
+                        AccessErrorKind::MalformedResponse,
+                        "catalog returned an unreadable page",
+                    )
+                })
+            }))
+        })
+    }
+
     fn new() -> Result<Self, AccessError> {
         let runtime = Arc::new(
             Builder::new_multi_thread()
@@ -274,37 +315,15 @@ impl LiveBackend for InnertubeBackend {
     }
 
     fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError> {
-        let browse_id = browse_id.to_owned();
-        let cancel = cancel.clone();
-        self.call(move |runtime, client| {
-            let client = client.map_err(|_| {
-                AccessError::new(
-                    AccessErrorKind::Transport,
-                    "could not initialize the live catalog client",
-                )
-            })?;
-            runtime.block_on(cancellable(cancel, async move {
-                let response = client
-                    .session
-                    .post_innertube_client("YTMUSIC", "/browse", json!({ "browseId": browse_id }))
-                    .await
-                    .map_err(|_| {
-                        AccessError::new(AccessErrorKind::Transport, "catalog page failed")
-                    })?;
-                if !response.status().is_success() {
-                    return Err(AccessError::new(
-                        AccessErrorKind::Transport,
-                        "catalog page returned an unsuccessful response",
-                    ));
-                }
-                response.json().await.map_err(|_| {
-                    AccessError::new(
-                        AccessErrorKind::MalformedResponse,
-                        "catalog returned an unreadable page",
-                    )
-                })
-            }))
-        })
+        self.browse_body(json!({ "browseId": browse_id }), cancel)
+    }
+
+    fn browse_continuation(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Value, AccessError> {
+        self.browse_body(json!({ "continuation": token }), cancel)
     }
 
     fn resolve(
@@ -927,13 +946,41 @@ impl MediaAccess for LiveCatalogAccess {
         page: &PageRequest,
         cancel: &CancellationToken,
     ) -> Result<Page<RemoteTrack>, AccessError> {
-        if playlist_id.trim().is_empty() {
-            return Err(AccessError::new(
-                AccessErrorKind::InvalidInput,
-                "playlist id must not be empty",
+        let cursor = decode_cursor(page.cursor.as_deref(), CursorKind::PlaylistTracks)?;
+        // The first page by the playlist's id; the next ones by the continuation it gave.
+        let raw = match cursor.continuation.as_deref() {
+            Some(token) => self.backend.browse_continuation(token, cancel)?,
+            None => self
+                .backend
+                .browse(&playlist_browse_id(playlist_id)?, cancel)?,
+        };
+        let tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let next = catalog_json::read_playlist_continuation(&raw);
+        page_batch(tracks, next, cursor, CursorKind::PlaylistTracks, page.limit)
+    }
+
+    fn playlist(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemotePlaylist, AccessError> {
+        let raw = self
+            .backend
+            .browse(&playlist_browse_id(playlist_id)?, cancel)?;
+        let title = catalog_json::read_playlist_title(&raw);
+        let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let mut next = catalog_json::read_playlist_continuation(&raw);
+        // At most 60 more pages (6,000 songs, more than YouTube keeps in one playlist).
+        for _ in 0..60 {
+            let Some(token) = next.take() else { break };
+            let raw = self.backend.browse_continuation(&token, cancel)?;
+            tracks.extend(catalog_json::tracks_from_hits(
+                &catalog_json::read_hits(&raw),
+                PROVIDER,
             ));
+            next = catalog_json::read_playlist_continuation(&raw).filter(|t| *t != token);
         }
-        self.album_tracks(playlist_id, page, cancel)
+        Ok(RemotePlaylist { title, tracks })
     }
 
     fn resolve_audio(
@@ -1030,6 +1077,7 @@ enum CursorKind {
     Albums,
     Artists,
     AlbumTracks,
+    PlaylistTracks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1048,6 +1096,22 @@ fn encode_cursor(cursor: Cursor) -> Result<String, AccessError> {
         )
     })?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// A playlist's page id: "VL" and its list id (as a share link has it, or already with VL).
+fn playlist_browse_id(playlist_id: &str) -> Result<String, AccessError> {
+    let id = playlist_id.trim();
+    if id.is_empty() {
+        return Err(AccessError::new(
+            AccessErrorKind::InvalidInput,
+            "playlist id must not be empty",
+        ));
+    }
+    Ok(if id.starts_with("VL") {
+        id.to_owned()
+    } else {
+        format!("VL{id}")
+    })
 }
 
 fn decode_cursor(raw: Option<&str>, kind: CursorKind) -> Result<Cursor, AccessError> {

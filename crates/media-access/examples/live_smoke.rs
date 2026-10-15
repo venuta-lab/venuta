@@ -45,16 +45,16 @@ async fn main() {
     }
     let first = &page.items[0];
 
-    if std::env::var("VENUTA_LIVE_SMOKE_DIAG").ok().as_deref() == Some("1") {
-        if let Err(e) = run_diag(&first.track_id).await {
-            eprintln!("diag failed: {e}");
-        }
+    if std::env::var("VENUTA_LIVE_SMOKE_DIAG").ok().as_deref() == Some("1")
+        && let Err(e) = run_diag(&first.track_id).await
+    {
+        eprintln!("diag failed: {e}");
     }
 
     match access.resolve_audio(&first.track_id, &cancel) {
         Ok(audio) => {
             println!("resolve ok for {}", first.track_id);
-            println!("debug={}", format!("{audio:?}"));
+            println!("debug={audio:?}");
             let has_http = audio.url.starts_with("http://") || audio.url.starts_with("https://");
             println!("url_is_http={has_http}");
             println!("mime={:?}", audio.mime_type);
