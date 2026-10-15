@@ -1675,6 +1675,44 @@ mod tests {
     }
 
     #[test]
+    fn a_file_you_said_is_not_it_stays_refused_after_the_import() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library {
+            tracks: vec![],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+        };
+        // What the import screen sends for a close match you turned down.
+        let refused = playlists::Item {
+            want: Some(playlists::WantEntry {
+                title: "Tum Hi Ho".into(),
+                artist: "Arijit Singh".into(),
+                not: vec!["A/02 - Tum Hi Ho (Remix).flac".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let choice = Choice {
+            name: "Road".into(),
+            source: "Spotify".into(),
+            items: vec![refused],
+            ..Default::default()
+        };
+        apply(root.path(), &lib, &[choice], "2026-10-14").unwrap();
+        let (e, _) = playlists::read(root.path(), &lib, "Road").unwrap();
+        assert_eq!(
+            e[0].want.as_ref().map(|w| w.not.clone()),
+            Some(vec!["A/02 - Tum Hi Ho (Remix).flac".to_owned()])
+        );
+    }
+
+    #[test]
     fn catalog_online_for_uses_youtube_id_or_strict_search_hit() {
         use media_access::{
             AccessError, AccessErrorKind, EphemeralAudio, FakeMediaAccess, MediaAccess, Page,

@@ -291,7 +291,8 @@ export function ImportSheet(props: {
           ? { path: it.found.path, source: wantOf(it) }
           : it.online
             ? { online: it.online }
-            : { want: wantOf(it) },
+            : // "Not it": that file is remembered, so it's never offered or filled in again.
+              { want: it.found ? { ...wantOf(it), not: [it.found.path] } : wantOf(it) },
       ),
     }))
     setStep({ at: 'saving' })
