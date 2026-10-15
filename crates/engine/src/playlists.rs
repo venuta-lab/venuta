@@ -1387,18 +1387,77 @@ pub struct Found<'a> {
     pub why: String,
 }
 
-pub struct Matcher<'a> {
-    by_title: HashMap<String, Vec<&'a Track>>,
+/// What the matcher looks songs up by, built once per library (the first time a playlist is
+/// matched) and shared by every match after: song positions in [`Library::tracks`].
+#[derive(Default)]
+pub(crate) struct MatchIndex {
+    by_title: HashMap<String, Vec<usize>>,
     /// The same, by the loose spelling: titles spelled differently ("Kesariyaa").
-    by_fold: HashMap<String, Vec<&'a Track>>,
-    by_loose: HashMap<String, Vec<&'a Track>>,
+    by_fold: HashMap<String, Vec<usize>>,
+    by_loose: HashMap<String, Vec<usize>>,
     /// Recording codes: one recording can be on a single and an album (two files).
-    by_isrc: HashMap<String, Vec<&'a Track>>,
+    by_isrc: HashMap<String, Vec<usize>>,
     /// Files by name without extension (a phone's copy may be converted), to find the file a
     /// list from another device names.
-    by_file: HashMap<String, Vec<&'a Track>>,
+    by_file: HashMap<String, Vec<usize>>,
     /// MusicBrainz recording ids (the `MUSICBRAINZ_TRACKID` tag Picard writes).
-    by_mbid: HashMap<String, &'a Track>,
+    by_mbid: HashMap<String, usize>,
+    /// Each song's [`artist_keys`], of every ARTIST and ALBUMARTIST name.
+    artists: Vec<Vec<String>>,
+}
+
+impl MatchIndex {
+    fn build(lib: &Library) -> Self {
+        let mut idx = MatchIndex::default();
+        for (n, t) in lib.tracks.iter().enumerate() {
+            idx.by_file
+                .entry(file_stem_key(&t.path))
+                .or_default()
+                .push(n);
+            if let Some(m) = t
+                .first("MUSICBRAINZ_TRACKID")
+                .map(|m| m.trim().to_lowercase())
+                .filter(|m| m.len() == 36)
+            {
+                idx.by_mbid.entry(m).or_insert(n);
+            }
+            if let Some(title) = t.first("TITLE") {
+                idx.by_title.entry(title_key(title)).or_default().push(n);
+                idx.by_fold
+                    .entry(title_fold_key(title))
+                    .or_default()
+                    .push(n);
+                idx.by_loose.entry(loose_key(title)).or_default().push(n);
+            }
+            if let Some(i) = t
+                .first("ISRC")
+                .map(|i| i.trim().to_uppercase())
+                .filter(|i| i.len() >= 12)
+            {
+                idx.by_isrc.entry(i).or_default().push(n);
+            }
+            idx.artists.push(
+                t.first("ARTIST")
+                    .map(split_names)
+                    .unwrap_or_default()
+                    .iter()
+                    .chain(
+                        t.first("ALBUMARTIST")
+                            .map(split_names)
+                            .unwrap_or_default()
+                            .iter(),
+                    )
+                    .flat_map(|a| artist_keys(a))
+                    .collect(),
+            );
+        }
+        idx
+    }
+}
+
+pub struct Matcher<'a> {
+    lib: &'a Library,
+    idx: &'a MatchIndex,
 }
 
 /// A file's name without its extension, lower case: "04 - kesariya".
@@ -1429,57 +1488,23 @@ fn artist_keys(name: &str) -> [String; 2] {
 
 impl<'a> Matcher<'a> {
     pub fn new(lib: &'a Library) -> Self {
-        let mut by_title: HashMap<String, Vec<&Track>> = HashMap::new();
-        let mut by_fold: HashMap<String, Vec<&Track>> = HashMap::new();
-        let mut by_loose: HashMap<String, Vec<&Track>> = HashMap::new();
-        let mut by_isrc: HashMap<String, Vec<&Track>> = HashMap::new();
-        let mut by_mbid: HashMap<String, &Track> = HashMap::new();
-        let mut by_file: HashMap<String, Vec<&Track>> = HashMap::new();
-        for t in lib.tracks.iter() {
-            by_file.entry(file_stem_key(&t.path)).or_default().push(t);
-            if let Some(m) = t
-                .first("MUSICBRAINZ_TRACKID")
-                .map(|m| m.trim().to_lowercase())
-                .filter(|m| m.len() == 36)
-            {
-                by_mbid.entry(m).or_insert(t);
-            }
-            if let Some(title) = t.first("TITLE") {
-                by_title.entry(title_key(title)).or_default().push(t);
-                by_fold.entry(title_fold_key(title)).or_default().push(t);
-                by_loose.entry(loose_key(title)).or_default().push(t);
-            }
-            if let Some(i) = t
-                .first("ISRC")
-                .map(|i| i.trim().to_uppercase())
-                .filter(|i| i.len() >= 12)
-            {
-                by_isrc.entry(i).or_default().push(t);
-            }
-        }
         Self {
-            by_title,
-            by_fold,
-            by_loose,
-            by_isrc,
-            by_mbid,
-            by_file,
+            lib,
+            idx: lib.match_index.get_or_init(|| MatchIndex::build(lib)),
         }
     }
 
+    /// The songs at these positions.
+    fn songs(&self, at: &[usize]) -> Vec<&'a Track> {
+        at.iter().map(|&n| &self.lib.tracks[n]).collect()
+    }
+
     /// `artists` holds [`artist_keys`] of every name the song from elsewhere credits.
-    fn shares_artist(t: &Track, artists: &HashSet<String>) -> bool {
-        t.first("ARTIST")
-            .map(split_names)
-            .unwrap_or_default()
-            .iter()
-            .chain(
-                t.first("ALBUMARTIST")
-                    .map(split_names)
-                    .unwrap_or_default()
-                    .iter(),
-            )
-            .any(|a| artist_keys(a).iter().any(|k| artists.contains(k)))
+    fn shares_artist(&self, t: &Track, artists: &HashSet<String>) -> bool {
+        // `t` is always one of the library's songs: its position is its offset in the list.
+        let n = (t as *const Track as usize - self.lib.tracks.as_ptr() as usize)
+            / std::mem::size_of::<Track>();
+        self.idx.artists[n].iter().any(|k| artists.contains(k))
     }
 
     /// The one nearest in length, if lengths are known (else the first).
@@ -1512,7 +1537,7 @@ impl<'a> Matcher<'a> {
         let mine: Vec<&Track> = cands
             .iter()
             .copied()
-            .filter(|t| Self::shares_artist(t, artists))
+            .filter(|t| self.shares_artist(t, artists))
             .collect();
         if mine.is_empty() {
             // The title alone: only one song, and the same length, is worth offering.
@@ -1597,8 +1622,9 @@ impl<'a> Matcher<'a> {
         if let Some(t) = f
             .isrc
             .as_ref()
-            .and_then(|i| self.by_isrc.get(&i.trim().to_uppercase()))
-            .map(|twins| {
+            .and_then(|i| self.idx.by_isrc.get(&i.trim().to_uppercase()))
+            .map(|at| {
+                let twins = self.songs(at);
                 // On a single and an album: the one on the album named, else the nearest length.
                 let album = title_key(&f.album);
                 twins
@@ -1607,7 +1633,7 @@ impl<'a> Matcher<'a> {
                     .find(|t| {
                         !album.is_empty() && t.first("ALBUM").is_some_and(|a| title_key(a) == album)
                     })
-                    .unwrap_or_else(|| Self::nearest(twins, f.duration_ms))
+                    .unwrap_or_else(|| Self::nearest(&twins, f.duration_ms))
             })
         {
             return Some(Found {
@@ -1619,7 +1645,8 @@ impl<'a> Matcher<'a> {
         if let Some(t) = f
             .mbid
             .as_ref()
-            .and_then(|m| self.by_mbid.get(&m.trim().to_lowercase()))
+            .and_then(|m| self.idx.by_mbid.get(&m.trim().to_lowercase()))
+            .map(|&n| &self.lib.tracks[n])
         {
             return Some(Found {
                 track: t,
@@ -1629,8 +1656,11 @@ impl<'a> Matcher<'a> {
         }
         // 1b. A list from another device: the same file name in the same folder is the same file.
         if let Some(at) = f.was_at.as_deref()
-            && let Some(cands) = self.by_file.get(&file_stem_key(at))
-            && let Some(t) = cands.iter().find(|t| parent_key(&t.path) == parent_key(at))
+            && let Some(cands) = self.idx.by_file.get(&file_stem_key(at))
+            && let Some(t) = self
+                .songs(cands)
+                .into_iter()
+                .find(|t| parent_key(&t.path) == parent_key(at))
         {
             return Some(Found {
                 track: t,
@@ -1644,8 +1674,8 @@ impl<'a> Matcher<'a> {
             .flat_map(|a| artist_keys(a))
             .collect();
         // 2. The same title by the same artist: the album or the length settles twins.
-        if let Some(cands) = self.by_title.get(&title_key(&f.title))
-            && let Some(found) = self.same_title(cands, f, &artists, false)
+        if let Some(cands) = self.idx.by_title.get(&title_key(&f.title))
+            && let Some(found) = self.same_title(&self.songs(cands), f, &artists, false)
         {
             return Some(found);
         }
@@ -1653,20 +1683,20 @@ impl<'a> Matcher<'a> {
         // agrees too.
         let fold = title_fold_key(&f.title);
         if !fold.is_empty()
-            && let Some(cands) = self.by_fold.get(&fold)
-            && let Some(found) = self.same_title(cands, f, &artists, true)
+            && let Some(cands) = self.idx.by_fold.get(&fold)
+            && let Some(found) = self.same_title(&self.songs(cands), f, &artists, true)
         {
             return Some(found);
         }
         // 3. Another version of the song by the same artist.
         let loose = loose_key(&f.title);
         if !loose.is_empty()
-            && let Some(cands) = self.by_loose.get(&loose)
+            && let Some(cands) = self.idx.by_loose.get(&loose)
         {
-            let mine: Vec<&Track> = cands
-                .iter()
-                .copied()
-                .filter(|t| Self::shares_artist(t, &artists))
+            let mine: Vec<&Track> = self
+                .songs(cands)
+                .into_iter()
+                .filter(|t| self.shares_artist(t, &artists))
                 .collect();
             if !mine.is_empty() {
                 let t = Self::nearest(&mine, f.duration_ms);
@@ -1683,7 +1713,7 @@ impl<'a> Matcher<'a> {
     /// Same title, then a shared artist name, then the album as a tiebreak. Only one clear
     /// candidate counts as a match.
     pub fn find(&self, title: &str, artist: &str, album: &str) -> Option<&'a Track> {
-        let cands = self.by_title.get(&title_key(title))?;
+        let cands = self.songs(self.idx.by_title.get(&title_key(title))?);
         let artists: HashSet<String> = split_names(artist)
             .iter()
             .map(|a| crate::audit::name_key(a))
@@ -2141,6 +2171,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         }
     }
 

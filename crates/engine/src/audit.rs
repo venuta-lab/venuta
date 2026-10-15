@@ -722,6 +722,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         let report = run(&lib);
         let issue = report
@@ -755,6 +756,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         let report = run(&lib);
         let issue = report

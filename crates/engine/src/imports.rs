@@ -1977,6 +1977,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         let lists = vec![ForeignPlaylist {
             name: "Chill".into(),
@@ -2055,6 +2056,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         let backup = r#"{"playlist": {"title": "Road", "creator": "Venuta", "track": []}}"#;
         let lists = read_bytes(backup.as_bytes(), "Road", root.path()).unwrap();
@@ -2088,6 +2090,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         // What the import screen sends for a close match you turned down.
         let refused = playlists::Item {
@@ -2345,6 +2348,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         };
         let want = |t: &str| {
             Item::wanted(playlists::WantEntry {
@@ -2426,6 +2430,7 @@ mod tests {
             identities: Default::default(),
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         }
     }
 

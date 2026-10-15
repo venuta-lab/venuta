@@ -108,6 +108,9 @@ pub struct Library {
     /// Songs by path and by checksum, made the first time they're needed (a playlist being
     /// read) and then shared by every read of this library.
     pub(crate) lookup: std::sync::OnceLock<Lookup>,
+    /// What playlists from elsewhere are matched by (`crate::playlists::Matcher`), made the
+    /// first time one is matched and then shared by every match of this library.
+    pub(crate) match_index: std::sync::OnceLock<crate::playlists::MatchIndex>,
 }
 
 /// Where each song is in [`Library::tracks`], by relative path and by audio checksum
@@ -263,6 +266,7 @@ impl Library {
             identities: crate::enrich::load_identities(index)?,
             in_library: false,
             lookup: Default::default(),
+            match_index: Default::default(),
         })
     }
 
