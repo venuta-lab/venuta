@@ -1,5 +1,10 @@
 # Changes
 
+## 0.2.1 (2026-10-16)
+
+- **Fixed**: two lyric timings saved in the same moment each keep their own Undo in
+  Activity (the second used to replace the first's).
+
 ## 0.2.0 (2026-10-15)
 
 - **Import & export**, one screen with two sides. **Bring in** reads a share link from
