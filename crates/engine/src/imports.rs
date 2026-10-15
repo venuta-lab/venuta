@@ -89,13 +89,18 @@ pub fn read_bytes(bytes: &[u8], stem: &str, dir: &Path) -> Result<Vec<ForeignPla
             if let Some(rows) = formats::xlsx_rows(&entries) {
                 rows_playlists(rows, stem)?
             } else {
-                // A data download: every playlist file inside, the rest left alone.
+                // A data download or a backup: every playlist file inside, the rest left
+                // alone. Loose text (notes, settings, a To get list) is never read as songs.
                 let mut all = Vec::new();
                 for (name, body) in &entries {
                     let inner = Path::new(name)
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| stem.to_owned());
+                    let kind = formats::detect(body, &crate::text::decode(body));
+                    if matches!(kind, Kind::Songs | Kind::Unknown | Kind::Zip) {
+                        continue;
+                    }
                     if let Ok(mut lists) = read_bytes(body, &inner, dir) {
                         all.append(&mut lists);
                     }

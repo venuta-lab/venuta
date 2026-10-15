@@ -14,11 +14,11 @@
 use crate::net::{Http, NetError, enc};
 use crate::playlists::Foreign;
 use crate::songid::{Sureness, same_song};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The services a song can be looked for on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Service {
     Spotify,

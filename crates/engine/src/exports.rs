@@ -614,3 +614,220 @@ mod tests {
         assert!(!dir.path().join("Road.m3u8.part").exists());
     }
 }
+
+// --- Sending out to services, free ------------------------------------------------------------
+
+/// Songs found on a service, and the ones that weren't.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OnService {
+    /// (place in the playlist, the song there).
+    pub found: Vec<(usize, crate::bridges::Elsewhere)>,
+    /// Places of the songs the service didn't show.
+    pub missing: Vec<usize>,
+}
+
+/// Find each song on `service` (free bridges, paced and cached). `on_progress(done, total)`.
+pub fn on_service(
+    http: &crate::net::Http,
+    service: crate::bridges::Service,
+    songs: &[Song],
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> OnService {
+    let mut out = OnService::default();
+    for (i, s) in songs.iter().enumerate() {
+        let want = crate::playlists::Foreign {
+            title: s.title.clone(),
+            artist: s.artist.clone(),
+            album: s.album.clone(),
+            duration_ms: s.duration_ms,
+            isrc: s.isrc.clone(),
+            mbid: s.mbid.clone(),
+            ..Default::default()
+        };
+        match crate::bridges::find(http, service, &want) {
+            Ok(Some(e)) => out.found.push((i, e)),
+            _ => out.missing.push(i),
+        }
+        on_progress(i + 1, songs.len());
+    }
+    out
+}
+
+/// "Copy for Spotify": one song link per line, to paste into a playlist in Spotify's app.
+pub fn spotify_paste(found: &OnService) -> String {
+    found
+        .found
+        .iter()
+        .map(|(_, e)| format!("{}\n", e.url))
+        .collect()
+}
+
+/// YouTube links that each open up to 50 songs as one list (YouTube's own limit), to save on
+/// YouTube Music: `https://www.youtube.com/watch_videos?video_ids=…`.
+pub fn youtube_lists(video_ids: &[String]) -> Vec<String> {
+    video_ids
+        .chunks(50)
+        .map(|c| {
+            format!(
+                "https://www.youtube.com/watch_videos?video_ids={}",
+                c.join(",")
+            )
+        })
+        .collect()
+}
+
+/// A page that lists a playlist's songs with a link to each on a service, to add by hand where
+/// the service takes nothing else (Apple Music, JioSaavn). Opens in your browser.
+pub fn links_page(name: &str, service: &str, songs: &[Song], found: &OnService) -> String {
+    let link_at: std::collections::HashMap<usize, &crate::bridges::Elsewhere> =
+        found.found.iter().map(|(i, e)| (*i, e)).collect();
+    let mut rows = String::new();
+    for (i, s) in songs.iter().enumerate() {
+        let who = if s.artist.is_empty() {
+            String::new()
+        } else {
+            format!("<span>{}</span>", xml(&s.artist))
+        };
+        match link_at.get(&i) {
+            Some(e) => rows.push_str(&format!(
+                "<li><a href=\"{}\" target=\"_blank\" rel=\"noopener\">{}</a>{who}</li>\n",
+                xml(&e.url),
+                xml(&s.title)
+            )),
+            None => rows.push_str(&format!(
+                "<li class=\"none\">{}{who}<em>Not found on {}</em></li>\n",
+                xml(&s.title),
+                xml(service)
+            )),
+        }
+    }
+    let style = concat!(
+        ":root{color-scheme:light dark;--ink:#1d1b20;--soft:#6b6770;--line:#e7e3ea;--bg:#fbfaf8}\n",
+        "@media (prefers-color-scheme:dark){:root{--ink:#ece9ef;--soft:#a6a1ab;--line:#2c2a30;--bg:#141316}}\n",
+        "body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}\n",
+        "main{max-width:640px;margin:0 auto;padding:32px 16px}h1{font-size:24px;margin:0 0 4px}\n",
+        "p{color:var(--soft);margin:0 0 20px}ol{padding-left:28px}\n",
+        "li{padding:8px 0;border-bottom:1px solid var(--line)}li span{display:block;color:var(--soft);font-size:13px}\n",
+        "a{color:inherit;font-weight:600}li.none{color:var(--soft)}em{display:block;font-size:12px}\n"
+    );
+    format!(
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{name} on {service}</title>\n<style>\n{style}</style></head>\n<body><main><h1>{name}</h1><p>{found} of {total} songs found on {service}. Open each and add it to your playlist there.</p>\n<ol>\n{rows}</ol></main></body></html>\n",
+        name = xml(name),
+        service = xml(service),
+        found = found.found.len(),
+        total = songs.len(),
+    )
+}
+
+// --- Backup and restore ---------------------------------------------------------------------------
+
+/// Everything about your playlists in one zip: each playlist as JSPF (every song, with what's
+/// known: files, songs you don't have, online songs, recording codes), the To get list, and the
+/// smart playlists' rules. Bringing the zip in (import) puts every playlist back. Returns how
+/// many playlists it holds.
+pub fn backup(music: &Path, lib: &Library, rules: &Path, to: &Path) -> Result<usize, String> {
+    use std::io::Write;
+    let part = to.with_extension("zip.part");
+    let file = std::fs::File::create(&part).map_err(|e| format!("{}: {e}", to.display()))?;
+    let mut z = zip::ZipWriter::new(file);
+    let o = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let err = |e: zip::result::ZipError| e.to_string();
+    let opts = Options {
+        format: Format::Jspf,
+        style: PathStyle::ThisPc,
+        include_missing: true,
+    };
+    let mut n = 0;
+    for p in playlists::list(music, lib) {
+        let songs = songs_of(music, lib, &p.name)?;
+        let text = render(&p.name, &songs, &opts, music, music);
+        z.start_file(
+            format!("Playlists/{}.jspf", crate::plan::sanitize(&p.name, 100)),
+            o,
+        )
+        .map_err(err)?;
+        z.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        n += 1;
+    }
+    let wanted = playlists::wanted_now(music, lib);
+    z.start_file("To get.csv", o).map_err(err)?;
+    z.write_all(playlists::wanted_csv(&wanted).as_bytes())
+        .map_err(|e| e.to_string())?;
+    for e in std::fs::read_dir(playlists::smart_dir(rules))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if e.path().extension().is_some_and(|x| x == "toml")
+            && let Ok(body) = std::fs::read(e.path())
+        {
+            z.start_file(
+                format!("Smart playlists/{}", e.file_name().to_string_lossy()),
+                o,
+            )
+            .map_err(err)?;
+            z.write_all(&body).map_err(|e| e.to_string())?;
+        }
+    }
+    z.finish().map_err(err)?;
+    std::fs::rename(&part, to).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        format!("{}: {e}", to.display())
+    })?;
+    Ok(n)
+}
+
+#[cfg(test)]
+mod out_tests {
+    use super::*;
+
+    #[test]
+    fn youtube_takes_fifty_songs_a_link() {
+        let ids: Vec<String> = (0..120).map(|i| format!("id{i:09}")).collect();
+        let links = youtube_lists(&ids);
+        assert_eq!(links.len(), 3);
+        assert_eq!(links[0].matches(',').count(), 49);
+        assert!(links[2].ends_with("id000000119"));
+    }
+
+    #[test]
+    fn copy_for_spotify_and_a_page_of_links() {
+        let found = OnService {
+            found: vec![(
+                0,
+                crate::bridges::Elsewhere {
+                    service: crate::bridges::Service::Spotify,
+                    id: "3z8h0TU7ReDPLIbEnYhWZb".into(),
+                    url: "https://open.spotify.com/track/3z8h0TU7ReDPLIbEnYhWZb".into(),
+                    title: "Bohemian Rhapsody".into(),
+                    artist: "Queen".into(),
+                    album: String::new(),
+                    duration_ms: None,
+                    sure: true,
+                    why: String::new(),
+                },
+            )],
+            missing: vec![1],
+        };
+        assert_eq!(
+            spotify_paste(&found),
+            "https://open.spotify.com/track/3z8h0TU7ReDPLIbEnYhWZb\n"
+        );
+        let songs = [
+            Song {
+                title: "Bohemian Rhapsody".into(),
+                artist: "Queen".into(),
+                ..Default::default()
+            },
+            Song {
+                title: "Kesariya".into(),
+                ..Default::default()
+            },
+        ];
+        let page = links_page("Road & Trip", "Apple Music", &songs, &found);
+        assert!(page.contains("Road &amp; Trip"));
+        assert!(page.contains("1 of 2 songs found on Apple Music"));
+        assert!(page.contains("Not found on Apple Music"));
+    }
+}

@@ -1877,6 +1877,197 @@ async fn playlist_export(root: String, name: String, to: String) -> CmdResult<us
     .await
 }
 
+// --- Playlists out ----------------------------------------------------------------------------
+
+/// Export playlists in any format and path style. One playlist: `to` is the file. Several: `to`
+/// is a folder, each written as "<name>.<ext>". Returns the files written.
+#[tauri::command]
+async fn playlists_export(
+    root: String,
+    names: Vec<String>,
+    to: String,
+    options: engine::exports::Options,
+) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let to = PathBuf::from(&to);
+        // Paths for a phone or a server start inside the Music folder.
+        let music = Some(paths::music_dir(&rootp))
+            .filter(|m| m.is_dir())
+            .unwrap_or_else(|| rootp.clone());
+        let mut written = Vec::new();
+        for name in &names {
+            let file = if names.len() == 1 && !to.is_dir() {
+                to.clone()
+            } else {
+                to.join(format!(
+                    "{}.{}",
+                    engine::plan::sanitize(name, 100),
+                    options.format.extension()
+                ))
+            };
+            let songs = engine::exports::songs_of(&rootp, &lib, name)?;
+            let saved_in = file.parent().unwrap_or(Path::new("."));
+            let text = engine::exports::render(name, &songs, &options, &music, saved_in);
+            engine::exports::write(&file, &text)?;
+            written.push(file.to_string_lossy().replace('\\', "/"));
+        }
+        Ok(written)
+    })
+    .await
+}
+
+/// A playlist as text to copy: a plain list of songs, or any other format.
+#[tauri::command]
+async fn playlist_text(
+    root: String,
+    name: String,
+    format: engine::exports::Format,
+) -> CmdResult<String> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let songs = engine::exports::songs_of(&rootp, &lib, &name)?;
+        let options = engine::exports::Options {
+            format,
+            style: engine::exports::PathStyle::ThisPc,
+            include_missing: true,
+        };
+        Ok(engine::exports::render(
+            &name, &songs, &options, &rootp, &rootp,
+        ))
+    })
+    .await
+}
+
+/// Every playlist, the To get list and the smart playlists' rules in one zip. Bringing the zip
+/// in puts the playlists back.
+#[tauri::command]
+async fn playlists_backup(root: String, to: String) -> CmdResult<usize> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::exports::backup(&rootp, &lib, &rules_dir(), Path::new(&to))
+    })
+    .await
+}
+
+/// A playlist's songs found on a service, free: Spotify links to paste into Spotify's app, or a
+/// page of Apple Music or Deezer links (saved, its path returned) to add by hand.
+#[derive(Serialize)]
+struct OnServiceOut {
+    total: usize,
+    found: usize,
+    /// The places of songs the service didn't show.
+    missing: Vec<usize>,
+    /// Spotify: one link a line, to paste.
+    paste: String,
+    /// A page listing every song with its link there, to open in the browser.
+    page: String,
+}
+
+#[tauri::command]
+async fn playlist_on_service(
+    root: String,
+    name: String,
+    service: engine::bridges::Service,
+    on_progress: Channel<DeepProgress>,
+) -> CmdResult<OnServiceOut> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let songs = engine::exports::songs_of(&rootp, &lib, &name)?;
+        let http = engine::net::Http::open()?;
+        let found = engine::exports::on_service(&http, service, &songs, &mut |done, total| {
+            let _ = on_progress.send(DeepProgress {
+                done,
+                total,
+                note: String::new(),
+            });
+        });
+        let label = match service {
+            engine::bridges::Service::Spotify => "Spotify",
+            engine::bridges::Service::AppleMusic => "Apple Music",
+            engine::bridges::Service::Deezer => "Deezer",
+        };
+        let dir = paths::app_data_dir().join("exports");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let page = dir.join(format!(
+            "{} on {label}.html",
+            engine::plan::sanitize(&name, 100)
+        ));
+        engine::exports::write(
+            &page,
+            &engine::exports::links_page(&name, label, &songs, &found),
+        )?;
+        Ok(OnServiceOut {
+            total: songs.len(),
+            found: found.found.len(),
+            missing: found.missing.clone(),
+            paste: engine::exports::spotify_paste(&found),
+            page: page.to_string_lossy().replace('\\', "/"),
+        })
+    })
+    .await
+}
+
+/// A playlist as YouTube links of up to 50 songs each (YouTube's limit), to save on YouTube
+/// Music without signing in to Venuta. Songs found through Venuta's catalogue.
+#[derive(Serialize)]
+struct YouTubeLinks {
+    links: Vec<String>,
+    found: usize,
+    total: usize,
+}
+
+#[tauri::command]
+async fn playlist_youtube_links(
+    root: String,
+    name: String,
+    on_progress: Channel<DeepProgress>,
+    pb: State<'_, playback::Playback>,
+) -> CmdResult<YouTubeLinks> {
+    let catalog = pb.catalog();
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let songs = engine::exports::songs_of(&rootp, &lib, &name)?;
+        let cancel = media_access::CancellationToken::default();
+        let mut ids = Vec::new();
+        for (i, s) in songs.iter().enumerate() {
+            let id = match &s.online {
+                Some(o) if o.provider == "remote_catalog" => Some(o.track_id.clone()),
+                _ => engine::imports::catalog_online_for(
+                    catalog.as_ref(),
+                    &engine::playlists::Foreign {
+                        title: s.title.clone(),
+                        artist: s.artist.clone(),
+                        album: s.album.clone(),
+                        duration_ms: s.duration_ms,
+                        isrc: s.isrc.clone(),
+                        ..Default::default()
+                    },
+                    &cancel,
+                )
+                .map(|o| o.track_id),
+            };
+            ids.extend(id);
+            let _ = on_progress.send(DeepProgress {
+                done: i + 1,
+                total: songs.len(),
+                note: String::new(),
+            });
+        }
+        Ok(YouTubeLinks {
+            links: engine::exports::youtube_lists(&ids),
+            found: ids.len(),
+            total: songs.len(),
+        })
+    })
+    .await
+}
+
 /// Look for a playlist's missing songs again (after new music came in).
 #[tauri::command]
 async fn playlist_refind(root: String, name: String) -> CmdResult<usize> {
@@ -2622,6 +2813,11 @@ pub fn run() {
             online::online_lyrics,
             playlist_duplicate,
             playlist_export,
+            playlists_export,
+            playlist_text,
+            playlists_backup,
+            playlist_on_service,
+            playlist_youtube_links,
             playlist_refind,
             playlist_sources_check,
             playlist_update_read,

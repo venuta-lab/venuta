@@ -112,3 +112,37 @@ fn playlists_come_back_whole() {
     }
     assert!(!failed, "a song didn't come back in place");
 }
+
+/// The backup holds every playlist, and bringing it in gives each one back whole.
+#[test]
+#[ignore]
+fn a_backup_brings_every_playlist_back() {
+    let home = PathBuf::from(std::env::var_os("VENUTA_HOME").expect("set VENUTA_HOME to a copy"));
+    let root = paths::music_dir(&home);
+    let index = Index::open(
+        &paths::index_path_for(&root),
+        &paths::canonical_root_string(&root),
+    )
+    .unwrap();
+    let lib = Library::load(&index).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let zip = out.path().join("Venuta playlists.zip");
+    let n = exports::backup(&root, &lib, &paths::app_data_dir().join("rules"), &zip).unwrap();
+    let back = imports::read_file(&zip).unwrap();
+    let mut whole = 0;
+    for p in playlists::list(&root, &lib) {
+        let songs = exports::songs_of(&root, &lib, &p.name).unwrap();
+        let Some(b) = back.iter().find(|b| b.name == p.name) else {
+            assert!(songs.is_empty(), "{} missing from the backup", p.name);
+            continue;
+        };
+        let titles: Vec<&str> = songs.iter().map(|s| s.title.as_str()).collect();
+        let again: Vec<&str> = b.tracks.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, again, "{}", p.name);
+        whole += 1;
+    }
+    eprintln!(
+        "backup: {n} playlists, {} KB; {whole} came back whole",
+        std::fs::metadata(&zip).unwrap().len() / 1024
+    );
+}
