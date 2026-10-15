@@ -166,7 +166,8 @@ fn clean_artwork_url(raw: Option<&str>) -> Option<String> {
         return None;
     }
     let lower = url.to_ascii_lowercase();
-    if lower.contains("googlevideo.com") || lower.contains(".m3u8") || lower.contains("mime=audio") {
+    if lower.contains("googlevideo.com") || lower.contains(".m3u8") || lower.contains("mime=audio")
+    {
         return None;
     }
     Some(url)
@@ -345,12 +346,7 @@ pub fn want_keys(w: &WantEntry) -> Vec<String> {
 
 /// An online song's keys (title/artists/ISRC, plus its stable provider id).
 pub fn online_keys(o: &OnlineEntry) -> Vec<String> {
-    let mut k = song_keys(
-        None,
-        &o.title,
-        &o.artists.join("; "),
-        o.isrc.as_deref(),
-    );
+    let mut k = song_keys(None, &o.title, &o.artists.join("; "), o.isrc.as_deref());
     if o.is_stable() {
         k.push(short_key(&format!("o:{}:{}", o.provider, o.track_id)));
     }
@@ -1025,9 +1021,43 @@ pub fn repair_all(library_root: &Path, lib: &Library) -> usize {
     n
 }
 
+/// Where a deleted playlist went, and where it was: what Undo needs to put it back.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Deleted {
+    pub aside: PathBuf,
+    pub was: PathBuf,
+}
+
 /// Deleted playlists are moved aside, never destroyed.
-pub fn delete(library_root: &Path, name: &str) -> Result<(), String> {
-    set_aside(library_root, &existing_file(library_root, name), name).map(|_| ())
+pub fn delete(library_root: &Path, name: &str) -> Result<Deleted, String> {
+    let was = existing_file(library_root, name);
+    let aside = set_aside(library_root, &was, name)?;
+    Ok(Deleted { aside, was })
+}
+
+/// Undo a delete: the file moves back from Set aside to where it was, the same bytes under the
+/// same name. Never over a playlist made since, and only between Set aside and the playlists.
+pub fn undelete(library_root: &Path, name: &str, aside: &Path, was: &Path) -> Result<(), String> {
+    let same_dir = |p: &Path, dir: PathBuf| {
+        p.parent()
+            .and_then(|d| d.canonicalize().ok())
+            .zip(dir.canonicalize().ok())
+            .is_some_and(|(d, want)| d == want)
+    };
+    let set_aside_dir =
+        crate::paths::beside(library_root, crate::paths::Helper::SetAside).join("playlists");
+    if !aside.is_file() || !same_dir(aside, set_aside_dir) {
+        return Err(format!("The deleted “{name}” isn't in Set aside any more."));
+    }
+    if !same_dir(was, folder(library_root)) {
+        return Err("That isn't a place for a playlist.".into());
+    }
+    if was.exists() || exists(library_root, name) {
+        return Err(format!(
+            "A playlist called “{name}” has been made since. Rename it, then undo again."
+        ));
+    }
+    std::fs::rename(aside, was).map_err(|e| e.to_string())
 }
 
 /// Where a playlist's file goes in Set aside, under a name that is never taken.
@@ -1265,7 +1295,10 @@ impl Foreign {
             return None;
         }
         // YouTube video ids are 11 chars of [A-Za-z0-9_-]; reject junk and playlist ids.
-        if id.len() != 11 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        if id.len() != 11
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         {
             return None;
         }
@@ -2202,6 +2235,62 @@ mod tests {
         assert!(!folder(root.path()).join("Road.m3u8").exists());
         assert!(rename(root.path(), "Night drive", "Night drive").is_err());
     }
+    #[test]
+    fn a_deleted_playlist_comes_back_byte_for_byte() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(folder(root.path())).unwrap();
+        // An .m3u another player wrote, with bytes Venuta wouldn't write itself (CRLF).
+        let was = folder(root.path()).join("Road trip.m3u");
+        let bytes = b"#EXTM3U\r\n#EXTINF:200,X - One\r\n../A/01 - One.flac\r\n".to_vec();
+        std::fs::write(&was, &bytes).unwrap();
+        let gone = delete(root.path(), "Road trip").unwrap();
+        assert!(!was.exists(), "moved aside");
+        assert!(gone.aside.is_file(), "into Set aside");
+        assert_eq!(gone.was, was);
+        undelete(root.path(), "Road trip", &gone.aside, &gone.was).unwrap();
+        assert_eq!(
+            std::fs::read(&was).unwrap(),
+            bytes,
+            "the same file, the same bytes"
+        );
+        assert!(!gone.aside.exists(), "and no longer in Set aside");
+    }
+
+    #[test]
+    fn undo_never_overwrites_a_playlist_made_since() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(folder(root.path())).unwrap();
+        let was = folder(root.path()).join("Mix.m3u8");
+        std::fs::write(&was, "#EXTM3U\n").unwrap();
+        let gone = delete(root.path(), "Mix").unwrap();
+        std::fs::write(&was, "#EXTM3U\n# a new one\n").unwrap();
+        assert!(undelete(root.path(), "Mix", &gone.aside, &gone.was).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&was).unwrap(),
+            "#EXTM3U\n# a new one\n"
+        );
+        assert!(gone.aside.is_file(), "the deleted one stays in Set aside");
+    }
+
+    #[test]
+    fn undo_only_moves_files_between_set_aside_and_the_playlists() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(folder(root.path())).unwrap();
+        let elsewhere = root.path().join("elsewhere.m3u8");
+        std::fs::write(&elsewhere, "#EXTM3U\n").unwrap();
+        let was = folder(root.path()).join("X.m3u8");
+        assert!(
+            undelete(root.path(), "X", &elsewhere, &was).is_err(),
+            "not from outside Set aside"
+        );
+        std::fs::write(&was, "#EXTM3U\n").unwrap();
+        let gone = delete(root.path(), "X").unwrap();
+        assert!(
+            undelete(root.path(), "X", &gone.aside, &root.path().join("out.m3u8")).is_err(),
+            "not to outside the playlists"
+        );
+    }
+
     #[test]
     fn no_song_of_any_playlist_is_ever_dropped() {
         let root = tempfile::tempdir().unwrap();

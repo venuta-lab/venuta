@@ -1754,9 +1754,16 @@ async fn playlist_save(root: String, name: String, paths: Vec<String>) -> CmdRes
     .await
 }
 
+/// Delete a playlist (its file goes to Set aside); returns what Undo needs to put it back.
 #[tauri::command]
-fn playlist_delete(root: String, name: String) -> CmdResult<()> {
+fn playlist_delete(root: String, name: String) -> CmdResult<engine::playlists::Deleted> {
     engine::playlists::delete(Path::new(&root), &name)
+}
+
+/// Undo a delete: the playlist's file comes back from Set aside, as it was.
+#[tauri::command]
+fn playlist_undelete(root: String, name: String, aside: String, was: String) -> CmdResult<()> {
+    engine::playlists::undelete(Path::new(&root), &name, Path::new(&aside), Path::new(&was))
 }
 
 #[tauri::command]
@@ -2548,6 +2555,7 @@ pub fn run() {
             playlist_sources_check,
             playlist_update_read,
             playlist_restore,
+            playlist_undelete,
             is_test_copy,
             search_web,
             import_preview,

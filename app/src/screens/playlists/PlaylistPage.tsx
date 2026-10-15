@@ -5,7 +5,6 @@ import { tracksFor } from '../../lib/catalog'
 import { useCovers } from '../../lib/covers'
 import {
   confirmBackup,
-  playlistDelete,
   playlistDuplicate,
   playlistExport,
   playlistQueue,
@@ -56,7 +55,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
 import { AddSongs } from './AddSongs'
 import { DragHandle, MOVE_KEYS } from '../../components/DragHandle'
-import { addSongsTo } from './ops'
+import { addSongsTo, deletePlaylist } from './ops'
 import { useNav } from '../listen/model'
 import { entryAvailability, fromWhere, length, onlineId, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
@@ -326,22 +325,10 @@ export function PlaylistPage(props: {
     }
   }
 
+  // The same as deleting it from its card (screens/playlists/ops.ts): it asks first, and the
+  // notice after has Undo.
   async function remove() {
-    const ok = await confirmAsk({
-      title: `Delete “${name}”?`,
-      text: 'The playlist file is moved to the Set aside folder beside your music, not destroyed. Your songs stay where they are.',
-      confirm: 'Delete playlist',
-      danger: true,
-    })
-    if (!ok) return
-    try {
-      await playlistDelete(root, name)
-    } catch (e) {
-      notify(`Couldn't delete ${name}: ${String(e)}`)
-      return
-    }
-    notify(`Deleted ${name}. Its file is in Set aside.`)
-    props.onGone()
+    if (await deletePlaylist(root, { name })) props.onGone()
   }
 
   /** Four stars for every song here without a rating; it writes the files, so a backup comes first. */

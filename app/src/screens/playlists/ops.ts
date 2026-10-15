@@ -1,7 +1,7 @@
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { confirmAsk } from '../../components/Confirm'
 import { playlistsChanged } from '../../components/AddToPlaylist'
-import { playlistAdd, playlistDelete, playlistDuplicate, playlistExport, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
+import { playlistAdd, playlistDelete, playlistUndelete, playlistDuplicate, playlistExport, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { playlistSongs, plural } from './common'
 import type { PlaylistsPlace } from '../PlaylistsScreen'
@@ -70,9 +70,19 @@ export async function deletePlaylist(root: string, p: Pick<PlaylistSummary, 'nam
   })
   if (!ok) return false
   try {
-    await playlistDelete(root, p.name)
+    const gone = await playlistDelete(root, p.name)
     playlistsChanged()
-    notify(`Deleted ${p.name}. Its file is in Set aside.`)
+    // Undo puts the file back as it was (from Set aside); the notice says so.
+    notify(`Deleted ${p.name}.`, {
+      label: 'Undo',
+      run: () =>
+        void playlistUndelete(root, p.name, gone)
+          .then(() => {
+            playlistsChanged()
+            notify(`${p.name} is back.`, { label: 'Open', run: () => goToPlaylists({ kind: 'playlist', name: p.name }) })
+          })
+          .catch((e) => notify(why(e))),
+    })
     return true
   } catch (e) {
     notify(`Couldn't delete ${p.name}: ${why(e)}`)

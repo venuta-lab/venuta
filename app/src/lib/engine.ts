@@ -962,7 +962,14 @@ export const playlists = (root: string) =>
     ? invoke<PlaylistsView>('playlists', { root })
     : Promise.resolve<PlaylistsView>({ playlists: [], smart: [], smart_counts: {}, smart_dirs: {}, folder: '', wanted: [], apple_ready: false })
 export const playlistTracks = (root: string, name: string) => invoke<PlaylistEntry[]>('playlist_tracks', { root, name })
-export const playlistDelete = (root: string, name: string) => invoke<void>('playlist_delete', { root, name })
+/** Where a deleted playlist went and where it was: what Undo needs. */
+export interface DeletedPlaylist {
+  aside: string
+  was: string
+}
+export const playlistDelete = (root: string, name: string) => invoke<DeletedPlaylist>('playlist_delete', { root, name })
+export const playlistUndelete = (root: string, name: string, gone: DeletedPlaylist) =>
+  invoke<void>('playlist_undelete', { root, name, aside: gone.aside, was: gone.was })
 export const playlistRename = (root: string, from: string, to: string) =>
   invoke<void>('playlist_rename', { root, from, to })
 export const smartSave = (root: string, rule: SmartRule) => invoke<void>('smart_save', { root, rule })
