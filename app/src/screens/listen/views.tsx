@@ -540,8 +540,9 @@ export function SearchResults(props: {
                   <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
                   <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
                 </div>
-                {/* A few songs here; See all opens the Songs chip with every one. */}
-                <SongList tracks={songsShown} from={from} pin />
+                {/* A few songs here; See all opens the Songs chip with every one. Its column
+                    heads stay with it: pinned, they would sit over the Top result. */}
+                <SongList tracks={songsShown} from={from} />
                 {songsShown.length < props.tracks.length && (
                   <button onClick={() => setChip('songs')} className="btn-ghost btn-sm mt-2">
                     See all {props.tracks.length.toLocaleString('en-IN')} songs

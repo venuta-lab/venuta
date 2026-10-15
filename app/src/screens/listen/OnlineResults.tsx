@@ -166,7 +166,9 @@ export function OnlineResults(props: {
         ) : empty ? (
           <p className="py-3 text-[13px] text-ink/55">Nothing in the online catalog for “{q}”.</p>
         ) : showResults && results ? (
-          <div className={`grid gap-8 transition-opacity duration-200 ${stale || loading ? 'opacity-55' : 'opacity-100'}`}>
+          // One column that can shrink: sized by its content, long names would push the
+          // song columns past the window.
+          <div className={`grid grid-cols-[minmax(0,1fr)] gap-8 transition-opacity duration-200 ${stale || loading ? 'opacity-55' : 'opacity-100'}`}>
             {show.songs && results.tracks.length > 0 && (
               <div>
                 <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
