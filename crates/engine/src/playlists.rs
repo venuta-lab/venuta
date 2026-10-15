@@ -744,6 +744,18 @@ pub fn exists(library_root: &Path, name: &str) -> bool {
     existing_file(library_root, name).is_file()
 }
 
+/// Make a new, empty playlist (a draft given its name or its first song); never over one that
+/// exists, under that name or one that is saved as the same file.
+pub fn create(library_root: &Path, lib: &Library, name: &str) -> Result<(), String> {
+    if crate::plan::sanitize(name, 100).is_empty() {
+        return Err("A name needs at least one letter or number.".into());
+    }
+    if exists(library_root, name) {
+        return Err(format!("A playlist called “{name}” already exists."));
+    }
+    write_items(library_root, lib, name, &[], false, None)
+}
+
 /// Add songs to the end of a playlist (making it if it's new), skipping ones already in it:
 /// the same file, or the same online song (by its id, never an address). Returns how many
 /// were added.
@@ -2235,6 +2247,25 @@ mod tests {
         assert!(!folder(root.path()).join("Road.m3u8").exists());
         assert!(rename(root.path(), "Night drive", "Night drive").is_err());
     }
+    #[test]
+    fn a_new_playlist_never_takes_the_place_of_one_there() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![]);
+        create(root.path(), &lib, "Fresh").unwrap();
+        assert!(exists(root.path(), "Fresh"));
+        std::fs::write(folder(root.path()).join("Kept.m3u8"), "#EXTM3U\n# mine\n").unwrap();
+        assert!(create(root.path(), &lib, "Kept").is_err());
+        assert!(
+            create(root.path(), &lib, "Kept?").is_err(),
+            "saved as the same file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder(root.path()).join("Kept.m3u8")).unwrap(),
+            "#EXTM3U\n# mine\n"
+        );
+        assert!(create(root.path(), &lib, "***").is_err());
+    }
+
     #[test]
     fn a_deleted_playlist_comes_back_byte_for_byte() {
         let root = tempfile::tempdir().unwrap();

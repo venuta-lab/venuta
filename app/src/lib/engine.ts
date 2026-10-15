@@ -968,6 +968,8 @@ export interface DeletedPlaylist {
   was: string
 }
 export const playlistDelete = (root: string, name: string) => invoke<DeletedPlaylist>('playlist_delete', { root, name })
+/** A new, empty playlist; refused when one with that name is there. */
+export const playlistCreate = (root: string, name: string) => invoke<void>('playlist_create', { root, name })
 export const playlistUndelete = (root: string, name: string, gone: DeletedPlaylist) =>
   invoke<void>('playlist_undelete', { root, name, aside: gone.aside, was: gone.was })
 export const playlistRename = (root: string, from: string, to: string) =>

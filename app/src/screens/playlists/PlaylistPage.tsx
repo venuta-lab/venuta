@@ -10,6 +10,7 @@ import {
   playlistQueue,
   playlistRefind,
   playlistRename,
+  playlistCreate,
   playlistSaveItems,
   playlistTracks,
   ratePlaylist,
@@ -112,6 +113,8 @@ export function PlaylistPage(props: {
   rule?: SmartRule
   /** A playlist just made: its name ready to type, then the song finder. */
   fresh?: boolean
+  /** Just made with New playlist: not written until it has a name or a song. */
+  draft?: boolean
   /** Open with the name ready to type (Rename, from a card). */
   rename?: boolean
   onBack: () => void
@@ -138,9 +141,17 @@ export function PlaylistPage(props: {
   latest.current = rows ?? []
   /** The order as last read or saved, so a drag that ends where it began writes nothing. */
   const saved = useRef('')
+  // A draft has no file yet; its first name or first song writes it.
+  const [exists, setExists] = useState(!props.draft)
   const orderOf = (list: Row[]) => list.map((r) => r.key).join(',')
 
   const load = useCallback(async () => {
+    if (!exists) {
+      saved.current = ''
+      setRows([])
+      setProblem('')
+      return
+    }
     try {
       let entries: PlaylistEntry[]
       try {
@@ -161,7 +172,7 @@ export function PlaylistPage(props: {
       setProblem(e instanceof Error ? e.message : String(e))
       setRows([])
     }
-  }, [root, name, props.rule])
+  }, [root, name, props.rule, exists])
 
   useEffect(() => {
     void load()
@@ -176,7 +187,10 @@ export function PlaylistPage(props: {
       setRows(next)
       saved.current = orderOf(next)
       try {
+        // A draft's first song makes it: never over a playlist that is there.
+        if (!exists) await playlistCreate(root, name)
         await playlistSaveItems(root, name, next.map(itemOf))
+        setExists(true)
         props.onChanged()
         if (message)
           notify(
@@ -199,7 +213,7 @@ export function PlaylistPage(props: {
         void load()
       }
     },
-    [root, name, props, load],
+    [root, name, props, load, exists],
   )
 
   const have = useMemo(() => (rows ?? []).filter((r) => !r.missing), [rows])
@@ -309,6 +323,17 @@ export function PlaylistPage(props: {
     const next = savedName(to)
     if (!to.trim() || next === name) return
     if (!next) return notify('A name needs at least one letter or number.')
+    // A draft named is a playlist: written now, empty, under its name.
+    if (!exists) {
+      try {
+        await playlistCreate(root, next)
+        setExists(true)
+        props.onRenamed(next)
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+      }
+      return
+    }
     try {
       await playlistRename(root, name, next)
       props.onRenamed(next)
@@ -364,8 +389,10 @@ export function PlaylistPage(props: {
 
   // "…" for the whole playlist: the same actions as its card (lib/actionModel.ts), done here
   // with what the page knows.
-  const pageMenu = () =>
-    menuFor(
+  const pageMenu = () => {
+    // A draft not written yet: only what applies to it (adding songs is on the page).
+    if (!exists) return menuFor('playlist', {}, { rename: () => setRenameAsk((n) => n + 1) })
+    return menuFor(
       'playlist',
       { smart, sourced: !!(props.summary?.source_id && props.onUpdate), missing: missing > 0 },
       {
@@ -391,6 +418,7 @@ export function PlaylistPage(props: {
         delete: () => void remove(),
       },
     )
+  }
 
   /** "Yes, that's it": the song takes its place. */
   const takeMaybe = (r: Row) => {

@@ -1813,6 +1813,17 @@ async fn playlist_save_items(
     .await
 }
 
+/// Make a new, empty playlist (a draft named, or given its first song); never over one there.
+#[tauri::command]
+async fn playlist_create(root: String, name: String) -> CmdResult<()> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        engine::playlists::create(&rootp, &lib, &name)
+    })
+    .await
+}
+
 /// Add songs to a playlist (making it if it's new), skipping ones already in it: library songs
 /// by path, online songs by their stable id. Returns how many were added.
 #[tauri::command]
@@ -2556,6 +2567,7 @@ pub fn run() {
             playlist_update_read,
             playlist_restore,
             playlist_undelete,
+            playlist_create,
             is_test_copy,
             search_web,
             import_preview,

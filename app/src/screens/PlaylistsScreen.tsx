@@ -4,12 +4,10 @@ import { useCatalog } from '../lib/catalog'
 import {
   inApp,
   playlists as loadPlaylists,
-  playlistSaveItems,
   type HealthReport,
   type PlaylistsView,
 } from '../lib/engine'
 import { useEscape } from '../lib/layers'
-import { notify } from '../lib/notify'
 import { playlistsChanged } from '../components/AddToPlaylist'
 import type { ImportStart } from './playlists/ImportSheet'
 import { PlaylistPage } from './playlists/PlaylistPage'
@@ -21,7 +19,7 @@ const ImportSheet = lazy(() => import('./playlists/ImportSheet').then((m) => ({ 
 
 export type PlaylistsPlace =
   | { kind: 'home' }
-  | { kind: 'playlist'; name: string; fresh?: boolean; rename?: boolean }
+  | { kind: 'playlist'; name: string; fresh?: boolean; rename?: boolean; draft?: boolean }
   | { kind: 'wanted' }
   | { kind: 'import'; start?: ImportStart }
   | { kind: 'new' }
@@ -118,13 +116,9 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
     const names = new Set((data?.playlists ?? []).map((p) => p.name.toLowerCase()))
     let name = 'New playlist'
     for (let n = 2; names.has(name.toLowerCase()); n++) name = `New playlist ${n}`
-    try {
-      await playlistSaveItems(root, name, [])
-      await load()
-      setView(at({ kind: 'playlist', name, fresh: true }))
-    } catch (e) {
-      notify(`Couldn't make a playlist: ${e instanceof Error ? e.message : String(e)}`)
-    }
+    // A draft: nothing is written until it has a name or a song, so leaving it untouched
+    // leaves nothing behind.
+    setView(at({ kind: 'playlist', name, fresh: true, draft: true }))
   }
 
   // Requests from outside.
@@ -178,12 +172,13 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               catalog={catalog}
               rule={ruleOf(view.name)}
               fresh={view.fresh}
+              draft={view.draft}
               rename={view.rename}
               onBack={home}
               onChanged={() => void load()}
               onRenamed={(name) => {
                 // Same page, new name: keep its id so nothing reloads or animates.
-                const next = { ...view, name, fresh: view.fresh, rename: false }
+                const next = { ...view, name, fresh: view.fresh, rename: false, draft: false }
                 kept.view = next
                 setViewState(next)
                 void load()
