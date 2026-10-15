@@ -3,7 +3,7 @@ import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { type HealthReport, type OnlineAlbum } from '../lib/engine'
 import { useCatalog } from '../lib/catalog'
-import { current, songItemOf, usePlayer } from '../lib/player'
+import { current, isOnline, queueKey, songItemOf, usePlayer } from '../lib/player'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
 import { IconSearch } from '../components/Icons'
@@ -91,7 +91,10 @@ function NowPlaying({ children }: { children: ReactNode }) {
   const path = song?.path ?? ''
   const dir = song?.dir ?? ''
   const playing = !!song && player.playing
-  const value = useMemo(() => ({ path, dir, playing }), [path, dir, playing])
+  const online = song && isOnline(song) ? song : undefined
+  const onlineKey = online ? queueKey(online) : ''
+  // Keyed by the online song, not the row object, so a status that brings the queue again changes nothing.
+  const value = useMemo(() => ({ path, dir, playing, online }), [path, dir, playing, onlineKey])
   return <NowContext value={value}>{children}</NowContext>
 }
 

@@ -5,7 +5,7 @@ import { IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import type { OnlineEntry, OnlineTrack, PlaylistEntry } from '../../lib/engine'
 import { useEscape } from '../../lib/layers'
-import { clock, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
+import { clock, songLength, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
 import { useOnlineSearch } from '../listen/OnlineResults'
 import { plural } from './common'
 
@@ -134,7 +134,7 @@ export function OnlinePick<R extends PlaylistEntry & { key: string }>(props: {
                       title="Listen"
                       className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink/[0.07] text-ink/30"
                     >
-                      <RemoteArt url={t.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+                      <RemoteArt url={t.artwork_url} seed={t.album || t.title} imgClassName="h-full w-full object-cover" />
                       <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">
                         <IconPlay width={14} height={14} />
                       </span>
@@ -148,7 +148,7 @@ export function OnlinePick<R extends PlaylistEntry & { key: string }>(props: {
                         <span className="block truncate text-[12px] text-ink/55">{[t.artists.join(', '), t.album].filter(Boolean).join(' · ')}</span>
                       </span>
                       <span className="shrink-0 text-right">
-                        <span className="block text-[12.5px] tabular-nums text-ink/60">{t.duration_ms ? clock(t.duration_ms) : ''}</span>
+                        <span className="block text-[12.5px] tabular-nums text-ink/60">{songLength(t.duration_ms)}</span>
                         {len && <span className={`block text-[11px] ${len.close ? 'text-good' : 'text-ink/45'}`}>{len.text}</span>}
                       </span>
                       <span className="btn btn-sm shrink-0 opacity-0 transition-opacity group-hover:opacity-100">{props.mode === 'play' ? 'Play' : 'Use'}</span>

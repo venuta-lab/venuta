@@ -1,6 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useState, type RefObject } from 'react'
 import { isHiRes, quality, type CatalogTrack, type OnlineAlbum } from '../../lib/engine'
-import type { From } from '../../lib/player'
+import type { From, QueueItem } from '../../lib/player'
 import { matcher, ranked, searchKey } from '../../lib/textsearch'
 
 /*
@@ -256,6 +256,8 @@ export interface Now {
   path: string
   dir: string
   playing: boolean
+  /** The online song playing (it has no path or folder), for Home's top card. */
+  online?: QueueItem
 }
 export const NowContext = createContext<Now>({ path: '', dir: '', playing: false })
 export const useNowPlaying = () => useContext(NowContext)

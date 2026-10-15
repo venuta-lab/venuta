@@ -973,6 +973,11 @@ impl<T: Item + Serialize> Engine<T> {
 
     fn signal(&self) -> Option<Signal> {
         let seg = self.segs.front()?;
+        // An online song still opening has no format yet (its placeholder's is made up): nothing
+        // is said about the sound until the stream is read.
+        if !seg.source.is_ready() {
+            return None;
+        }
         let dev_fmt = self.dev_fmt.clone()?;
         let dev = self.device.as_ref()?;
         let src = seg.source.format.clone();

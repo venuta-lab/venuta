@@ -569,14 +569,7 @@ export function usePlayerValue<T>(pick: (s: PlayerState) => T): T {
 /** The song playing (or paused) now. */
 export const current = (s: PlayerState) => (s.index >= 0 ? s.queue[s.index] : undefined)
 
-/** 3:05, 1:02:10. */
-export function clock(ms: number): string {
-  const t = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(t / 3600)
-  const m = Math.floor((t % 3600) / 60)
-  const s = String(t % 60).padStart(2, '0')
-  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
-}
+export { clock, onlineQuality, songLength } from './onlineSong'
 
 export interface OutputDevice {
   id: string

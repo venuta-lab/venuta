@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { loadCovers, useCovers } from '../../lib/covers'
 import { closeBigScreen } from '../../lib/lyricWindows'
 import { scaleOf, setLyricLook, useLyricLook } from '../../lib/lyricLook'
-import { clock, connectPlayer, isOnline, toggle, usePlayerValue } from '../../lib/player'
+import { clock, songLength, connectPlayer, isOnline, toggle, usePlayerValue } from '../../lib/player'
 import { cleanArtUrl } from '../RemoteArt'
 import { LyricText } from './LyricText'
 import { LookPanel } from './LookPanel'
@@ -161,7 +161,7 @@ export function BigScreen() {
               <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/15">
                 <div className="h-full rounded-full" style={{ width: `${duration ? Math.min(100, (position / duration) * 100) : 0}%`, background: colour }} />
               </div>
-              <span className="tabular-nums">{clock(duration)}</span>
+              <span className="tabular-nums">{songLength(duration)}</span>
             </div>
           </div>
         </div>

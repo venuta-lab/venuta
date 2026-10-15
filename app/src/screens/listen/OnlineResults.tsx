@@ -6,7 +6,7 @@ import { RemoteArt } from '../../components/RemoteArt'
 import { onlineAlbumTracks, onlineSearch, type OnlineAlbum, type OnlineArtist, type OnlineResults as Results, type OnlineTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
-import { clock, enqueueItems, onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/player'
+import { songLength, enqueueItems, onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/player'
 import { useNav } from './model'
 import { menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
@@ -300,18 +300,7 @@ export function OnlineTrackRow(props: {
         onClick={props.onPlay}
         className="relative h-8 w-8 overflow-hidden rounded-md bg-ink/[0.06] text-ink/30"
       >
-        <RemoteArt
-          url={t.artwork_url}
-          fallback={
-            <span
-              className="grid h-full w-full place-items-center text-[12px] font-semibold text-ink/45"
-              style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 22%, transparent), color-mix(in oklab, var(--ink) 4%, transparent))' }}
-            >
-              {/^\p{L}/u.test((t.album || t.title).trim()) ? (t.album || t.title).trim()[0]!.toUpperCase() : '♪'}
-            </span>
-          }
-          imgClassName="h-full w-full object-cover"
-        />
+        <RemoteArt url={t.artwork_url} seed={t.album || t.title} imgClassName="h-full w-full object-cover" />
         <span className="absolute inset-0 grid place-items-center bg-scrim text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100">
           <IconPlay width={14} height={14} />
         </span>
@@ -319,7 +308,7 @@ export function OnlineTrackRow(props: {
       <span className="truncate text-[13.5px] font-medium">{t.title}</span>
       <span className="truncate text-[13px] text-ink/60">{artists}</span>
       <span className="truncate text-[13px] text-ink/60">{t.album ?? ''}</span>
-      <span className="text-right text-[12.5px] tabular-nums text-ink/55">{t.duration_ms ? clock(t.duration_ms) : ''}</span>
+      <span className="text-right text-[12.5px] tabular-nums text-ink/55">{songLength(t.duration_ms)}</span>
       <span className="min-w-0">
         <AvailabilityBadge availability="online" />
       </span>
@@ -352,7 +341,7 @@ function AlbumCard(props: { album: OnlineAlbum; onOpen: () => void; onPlay: () =
     <div className="group relative w-[148px] shrink-0">
       <button onClick={props.onOpen} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${a.title}”`} className="block w-full text-left">
         <span className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-ink/[0.06] text-[28px] text-ink/25">
-          <RemoteArt url={a.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={a.artwork_url} seed={a.title} imgClassName="h-full w-full object-cover" />
         </span>
         <span className="mt-2 block truncate text-[13px] font-medium">{a.title}</span>
         <span className="block truncate text-[12px] text-ink/55">{[a.artists.join(', '), a.release_date?.slice(0, 4)].filter(Boolean).join(' · ')}</span>

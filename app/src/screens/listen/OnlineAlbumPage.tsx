@@ -67,7 +67,7 @@ export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBa
     <Detail title={a.title} onBack={onBack} glow={art} tools={items.length ? playButton('sm') : undefined}>
       <div className="relative flex flex-wrap items-end gap-8">
         <div className="grid aspect-square w-[240px] shrink-0 place-items-center overflow-hidden rounded-3xl bg-ink/[0.06] text-[56px] text-ink/25 shadow-2xl shadow-black/40">
-          <RemoteArt url={a.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={a.artwork_url} seed={a.title} imgClassName="h-full w-full object-cover" />
         </div>
         <motion.div className="min-w-[260px] flex-1 pb-1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.05 }}>
           <p className="flex items-center gap-2 text-[13px] font-medium text-ink/60">

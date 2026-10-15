@@ -3,8 +3,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
-import { cleanArtUrl } from '../RemoteArt'
+import { clock, songLength, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { cleanArtUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
 import { lineAt, useLyrics } from '../../lib/lyrics'
@@ -230,7 +230,7 @@ export function MiniPlayer() {
         </div>
       ) : shape === 'micro' ? (
         <div className="relative flex h-full items-center gap-3 pl-2 pr-2">
-          <Art src={art?.src} title={song.album} className="h-11 w-11 rounded-[10px]" />
+          <Art src={art?.src} title={song.album} seed={online ? song.album || song.title : undefined} className="h-11 w-11 rounded-[10px]" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-semibold leading-tight">{song.title}</div>
             <div className="truncate text-[11.5px] leading-tight text-ink/60">{artist}</div>
@@ -241,7 +241,7 @@ export function MiniPlayer() {
         </div>
       ) : shape === 'mini' ? (
         <div className="relative flex h-full items-center gap-3.5 p-3 pb-4">
-          <Art src={art?.src} title={song.album} className="aspect-square h-full rounded-[14px]" />
+          <Art src={art?.src} title={song.album} seed={online ? song.album || song.title : undefined} className="aspect-square h-full rounded-[14px]" />
           <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 self-stretch">
             <div className="min-w-0 pr-16">
               <div className={`truncate text-[14.5px] font-semibold leading-tight ${retro ? 'title' : ''}`}>{song.title}</div>
@@ -277,7 +277,7 @@ export function MiniPlayer() {
             {queueOn ? (
               <UpNext s={s} />
             ) : (
-              <Art src={art?.src} title={song.album} className="absolute inset-0 h-full w-full" big />
+              <Art src={art?.src} title={song.album} seed={online ? song.album || song.title : undefined} className="absolute inset-0 h-full w-full" big />
             )}
             <div
               className="absolute inset-0"
@@ -393,10 +393,12 @@ function Light({ src: given, card }: { src?: string; card: boolean }) {
 
 /**
  * The cover, held steady across a change of song (components/SteadyArt), or a tile in the accent
- * with a note when there is none (and when an online picture can't be loaded).
+ * with a note when there is none; an online song without a picture gets the online cover.
  */
-function Art({ src, title, className = '', big = false }: { src?: string; title: string; className?: string; big?: boolean }) {
-  const tile = (
+function Art({ src, title, seed, className = '', big = false }: { src?: string; title: string; seed?: string; className?: string; big?: boolean }) {
+  const tile = seed !== undefined ? (
+    <OnlineCover seed={seed} />
+  ) : (
     <div
       title={title}
       className={`grid h-full w-full place-items-center text-ink/70 ${big ? 'text-[64px]' : 'text-[20px]'}`}
@@ -479,7 +481,7 @@ function Seek({ value, duration, position, canSeek }: { value: number; duration:
           <div className="h-full rounded-full bg-accent" style={{ width: `${value * 100}%` }} />
         </div>
       </div>
-      <span className="w-8 text-right">{clock(duration)}</span>
+      <span className="w-8 text-right">{songLength(duration)}</span>
     </div>
   )
 }

@@ -7,6 +7,7 @@ import { LcdSpectrum } from './Spectrum'
 import { openBigScreen } from '../../lib/lyricWindows'
 import {
   clock,
+  songLength,
   enqueueItems,
   toggleMiniPlayer,
   current,
@@ -20,6 +21,7 @@ import {
   setRepeat,
   setShuffle,
   setVolume,
+  onlineQuality,
   sourceLabel,
   toggle,
   usePlayer,
@@ -30,9 +32,8 @@ import {
   useWaveform,
   verifyCurrent,
 } from '../../lib/player'
-import { cleanArtUrl } from '../RemoteArt'
+import { cleanArtUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
-import { AvailabilityBadge } from '../AvailabilityBadge'
 import { useDropTarget } from '../../lib/drag'
 import { notify } from '../../lib/notify'
 import {
@@ -267,7 +268,7 @@ export function SeekBar(props: {
         aria-valuemin={0}
         aria-valuemax={Math.round(props.duration / 1000)}
         aria-valuenow={Math.round(shown / 1000)}
-        aria-valuetext={props.disabled ? 'Opening…' : `${clock(shown)} of ${clock(props.duration)}`}
+        aria-valuetext={props.disabled ? 'Opening…' : props.duration ? `${clock(shown)} of ${clock(props.duration)}` : clock(shown)}
         aria-disabled={props.disabled || undefined}
         title={props.disabled ? 'Opening…' : undefined}
         tabIndex={0}
@@ -319,7 +320,7 @@ export function SeekBar(props: {
           </div>
         )}
       </div>
-      <span className="readout w-10">{clock(props.duration)}</span>
+      <span className="readout w-10">{songLength(props.duration)}</span>
     </div>
   )
 }
@@ -371,7 +372,9 @@ function Volume(props: { volume: number }) {
 }
 
 /** "FLAC 24/96, Bit-perfect": opens the signal path and where the sound goes. */
-function SignalBadge(props: { signal: Signal | null; fallback: string }) {
+/** The sound in a word or two, and the way to where it goes. Your file: "FLAC 24/96". An online
+ *  song: "Online · AAC 129 kbps", the one Online label it gets here (just "Online" until it opens). */
+function SignalBadge(props: { signal: Signal | null; online: boolean; fallback: string }) {
   const [open, setOpen] = useState(false)
   const [choices, setChoices] = useState<OutputChoices | null>(null)
   const box = useRef<HTMLDivElement>(null)
@@ -383,7 +386,7 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
   }, [open])
-  const label = s ? sourceLabel(s.source) : props.fallback
+  const label = props.online ? ['Online', onlineQuality(s)].filter(Boolean).join(' · ') : s ? sourceLabel(s.source) : props.fallback
   return (
     <div ref={box} className="relative">
       <button
@@ -393,7 +396,14 @@ function SignalBadge(props: { signal: Signal | null; fallback: string }) {
         title={s ? `${label}, ${s.bit_perfect ? 'bit-perfect' : s.mode === 'shared' ? 'shared mode' : 'changed on the way'}. Where the sound goes.` : 'Where the sound goes'}
       >
         {s && <span className={`keep-round h-1.5 w-1.5 rounded-full ${s.bit_perfect ? 'bg-good' : 'bg-fix'}`} aria-hidden />}
-        <span className="readout">{label}</span>
+        {props.online ? (
+          <span className="readout">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-accent-ink">Online</span>
+            {label.slice('Online'.length)}
+          </span>
+        ) : (
+          <span className="readout">{label}</span>
+        )}
         {s && <span className="hidden font-normal text-ink/50 @[1240px]:inline">{s.bit_perfect ? 'Bit-perfect' : s.mode === 'shared' ? 'Shared' : 'Changed'}</span>}
       </button>
       <AnimatePresence>
@@ -668,7 +678,7 @@ export function NowPlayingBar(props: {
               {!props.expanded && (
                 <motion.div layoutId="now-playing-cover" className="grid h-full w-full place-items-center" transition={spring}>
                   {/* Held steady across a change of song (no blank frame); online or local alike. */}
-                  <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : localArt?.src} fallback={<span className="text-ink/30">♪</span>} />
+                  <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : localArt?.src} fallback={isOnline(song) ? <OnlineCover seed={song.album || song.title} /> : <span className="text-ink/30">♪</span>} />
                 </motion.div>
               )}
               <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">
@@ -678,8 +688,7 @@ export function NowPlayingBar(props: {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-[14px] font-medium">{song.title}</span>
-                {isOnline(song) && <AvailabilityBadge availability={song.availability ?? 'online'} />}
-                <SignalBadge signal={s.signal} fallback={song.format || (isOnline(song) ? 'Online' : '')} />
+                <SignalBadge signal={s.signal} online={isOnline(song)} fallback={song.format} />
               </div>
               <div className="truncate text-[12.5px] text-ink/60">
                 {s.buffering ? (

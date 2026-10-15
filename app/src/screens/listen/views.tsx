@@ -24,7 +24,10 @@ import { albumWork, artistWork, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { play, toItem } from '../../lib/player'
+import { play, queueKey, toggle, toItem, type QueueItem } from '../../lib/player'
+import { cleanArtUrl, RemoteArt } from '../../components/RemoteArt'
+import { AvailabilityBadge } from '../../components/AvailabilityBadge'
+import { IconPause, IconPlay } from '../../components/Icons'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 import { OnlineResults } from './OnlineResults'
 
@@ -119,7 +122,9 @@ export const HomeView = memo(function HomeView(props: {
   return (
     <div className="pb-16">
       <AnimatePresence mode="wait" initial={false}>
-        {hero && (
+        {!playing && now.online ? (
+          <OnlineHero key={queueKey(now.online)} song={now.online} playing={now.playing} />
+        ) : hero && (
           <Hero
             key={hero.dir}
             album={hero}
@@ -141,6 +146,54 @@ export const HomeView = memo(function HomeView(props: {
     </div>
   )
 })
+
+/**
+ * Home's top card while an online song plays: the song as the card shows an album of yours, its
+ * cover (or the online cover), Online, and Pause/Resume. It has no page of its own to open.
+ */
+function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
+  const art = cleanArtUrl(song.artwork_url)
+  const artist = song.artists.join(', ') || song.album_artist
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }}
+      transition={spring}
+      className="glass relative overflow-hidden rounded-[28px] p-6"
+    >
+      {art && (
+        <img
+          aria-hidden
+          src={art}
+          alt=""
+          className="pointer-events-none absolute inset-0 h-full w-full scale-150 object-cover opacity-45"
+          style={{ filter: 'blur(64px) var(--art-tint)' }}
+        />
+      )}
+      <div className="relative flex flex-wrap items-center gap-7">
+        <div className="aspect-square w-[200px] shrink-0 overflow-hidden rounded-2xl bg-ink/[0.06] shadow-2xl shadow-black/40">
+          <RemoteArt url={song.artwork_url} seed={song.album || song.title} imgClassName="h-full w-full object-cover" />
+        </div>
+        <div className="min-w-[240px] flex-1">
+          <p className="text-[13px] text-ink/60">{playing ? 'Playing now' : 'Paused'}</p>
+          <h2 className="title mt-1.5 text-[30px] leading-[1.1]">{song.title}</h2>
+          {artist && <p className="mt-1.5 text-[15px] text-ink/80">{artist}</p>}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
+            {song.album && <span>{song.album}</span>}
+            <AvailabilityBadge availability="online" />
+          </div>
+          <div className="mt-5">
+            <button onClick={() => void toggle()} className="btn-primary play-main btn-lg">
+              {playing ? <IconPause /> : <IconPlay />}
+              {playing ? 'Pause' : 'Resume'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </motion.section>
+  )
+}
 
 function Hero({ album: a, label }: { album: Album; label: string }) {
   const nav = useNav()

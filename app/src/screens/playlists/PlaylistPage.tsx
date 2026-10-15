@@ -25,6 +25,7 @@ import {
 } from '../../lib/engine'
 import {
   clock,
+  songLength,
   current,
   enqueue,
   enqueueItems,
@@ -978,7 +979,7 @@ function PlaylistRow(props: {
         </span>
       ) : remote ? (
         <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-lg bg-ink/[0.07] text-ink/30">
-          <RemoteArt url={onlineArt} fallback="♪" imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={onlineArt} seed={r.album || r.title} imgClassName="h-full w-full object-cover" />
         </span>
       ) : (
         <span className="h-11 w-11 overflow-hidden rounded-lg bg-ink/[0.07]">
@@ -1024,7 +1025,7 @@ function PlaylistRow(props: {
           <span className="block truncate">{r.album}</span>
         )}
       </span>
-      <span className="text-right text-[12.5px] tabular-nums text-ink/55">{r.duration_ms ? clock(r.duration_ms) : ''}</span>
+      <span className="text-right text-[12.5px] tabular-nums text-ink/55">{songLength(r.duration_ms)}</span>
       {props.smart || get ? (
         <button onClick={(e) => menuFromEvent(e, rowMenu())} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
           <IconMore />

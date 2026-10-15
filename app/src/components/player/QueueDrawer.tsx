@@ -4,7 +4,7 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useCovers } from '../../lib/covers'
-import { clock, enqueueItems, isOnline, jumpTo, move, openFrom, queueKey, removeAt, setShuffle, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
+import { clock, songLength, enqueueItems, isOnline, jumpTo, move, openFrom, queueKey, removeAt, setShuffle, songItemOf, toggle, usePlayer, type QueueItem } from '../../lib/player'
 import { goToEach, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
@@ -34,7 +34,7 @@ function RowBody(props: { item: QueueItem; index: number; current: boolean; badg
     <>
       <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
         {online ? (
-          <RemoteArt url={props.item.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={props.item.artwork_url} seed={props.item.album || props.item.title} imgClassName="h-full w-full object-cover" />
         ) : local ? (
           <img src={local.src} alt="" className="h-full w-full object-cover" draggable={false} />
         ) : null}
@@ -46,7 +46,7 @@ function RowBody(props: { item: QueueItem; index: number; current: boolean; badg
         </div>
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
-      <span className="text-[11.5px] tabular-nums text-ink/45">{clock(props.item.duration_ms)}</span>
+      <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(props.item.duration_ms)}</span>
       {!props.current && (
         <button
           aria-label={`Remove ${props.item.title} from the queue`}
