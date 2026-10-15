@@ -54,7 +54,7 @@ import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs,
 import { DeepProgressBar } from './screens/libraryParts'
 import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
-import { ListenScreen, showMusicTab } from './screens/ListenScreen'
+import { ListenScreen, showMusicTab, showOnlineArtist } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { onGoToPlaylists } from './screens/playlists/ops'
@@ -1021,6 +1021,11 @@ export default function App() {
               onArtist={(name) => {
                 setNowOpen(false)
                 setListenArtist(name)
+                go('listen')
+              }}
+              onOnlineArtist={(artist) => {
+                setNowOpen(false)
+                showOnlineArtist(artist)
                 go('listen')
               }}
             />

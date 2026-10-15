@@ -53,7 +53,7 @@ pub struct Playable {
     pub local_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteTrack {
     pub provider: String,
     pub track_id: String,
@@ -70,6 +70,21 @@ pub struct RemoteTrack {
     pub artwork_url: Option<String>,
     #[serde(default)]
     pub isrc: Option<String>,
+    // --- Ranking hints (search only; all optional, never needed to play) ---
+    /// What kind of upload the catalog says it is: "ATV" (the artist's own audio track),
+    /// "OMV" (official music video), "UGC" (someone's upload), "PODCAST_EPISODE", or another
+    /// catalog word as given. None when unknown.
+    #[serde(default)]
+    pub video_type: Option<String>,
+    /// Plays (songs) or views (videos), as a number, when the catalog shows one.
+    #[serde(default)]
+    pub plays: Option<u64>,
+    /// The catalog's own top result for this search.
+    #[serde(default)]
+    pub is_top: bool,
+    /// Where it sat among the unfiltered search's songs and videos (0 = first), when it did.
+    #[serde(default)]
+    pub shelf_rank: Option<u16>,
 }
 
 impl RemoteTrack {
@@ -94,7 +109,7 @@ impl RemoteTrack {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteAlbum {
     pub provider: String,
     pub album_id: String,
@@ -107,15 +122,49 @@ pub struct RemoteAlbum {
     pub release_date: Option<String>,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    /// "Album", "Single", "EP"… as the catalog labels it (a ranking hint).
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// An artist's page in the online catalog: who they are, their songs, their records, and
+/// artists like them. Ids and what to show only, never a stream address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteArtistPage {
+    pub provider: String,
+    pub artist_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    /// Monthly listeners, when the catalog shows it.
+    #[serde(default)]
+    pub audience: Option<u64>,
+    /// The catalog's top songs for them (a handful).
+    #[serde(default)]
+    pub top_songs: Vec<RemoteTrack>,
+    /// More of their songs (their song list's first page), the top ones left out.
+    #[serde(default)]
+    pub songs: Vec<RemoteTrack>,
+    #[serde(default)]
+    pub albums: Vec<RemoteAlbum>,
+    /// Singles and EPs.
+    #[serde(default)]
+    pub singles: Vec<RemoteAlbum>,
+    /// Artists their listeners also play.
+    #[serde(default)]
+    pub similar: Vec<RemoteArtist>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteArtist {
     pub provider: String,
     pub artist_id: String,
     pub name: String,
     #[serde(default)]
     pub artwork_url: Option<String>,
+    /// Monthly listeners (or subscribers) as a number, when the catalog shows it (a ranking hint).
+    #[serde(default)]
+    pub audience: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

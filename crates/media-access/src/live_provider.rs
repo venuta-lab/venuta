@@ -4,9 +4,10 @@
 //! [`crate::FakeMediaAccess`] unless an explicit live factory is selected.
 
 use crate::access::{AccessError, AccessErrorKind, MediaAccess};
+use crate::catalog_json;
 use crate::types::{
     CancellationToken, EphemeralAudio, MediaHeader, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteTrack,
+    RemoteArtistPage, RemoteTrack,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -26,6 +27,30 @@ use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 
 const PROVIDER: &str = "remote_catalog";
+
+/// Search filters as the catalog reads them today (checked against live responses on
+/// 2026-10-15, and the same as ytmusicapi's). innertube-rs 0.9's own filter codes are ignored
+/// by the server: they return the unfiltered mix (uploads, videos, podcast episodes) under a
+/// Songs / Albums / Artists label, so these are kept here.
+const SONGS_PARAMS: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+const ALBUMS_PARAMS: &str = "EgWKAQIYAWoMEA4QChADEAQQCRAF";
+const ARTISTS_PARAMS: &str = "EgWKAQIgAWoMEA4QChADEAQQCRAF";
+
+fn search_params(filter: MusicSearchFilter) -> &'static str {
+    match filter {
+        MusicSearchFilter::Songs => SONGS_PARAMS,
+        MusicSearchFilter::Albums => ALBUMS_PARAMS,
+        MusicSearchFilter::Artists => ARTISTS_PARAMS,
+        other => other.to_param_str(),
+    }
+}
+
+/// A search response: as innertube-rs parsed it, and the raw JSON for what it doesn't parse
+/// (kind of upload, plays, top result).
+struct SearchPage {
+    parsed: MusicSearchResults,
+    raw: Value,
+}
 const MAX_EMPTY_SEARCH_PAGES: usize = 8;
 const POT_ENDPOINT: &str = "http://127.0.0.1:4416/get_pot";
 
@@ -39,13 +64,24 @@ trait LiveBackend: Send + Sync {
         filter: MusicSearchFilter,
         continuation: Option<String>,
         cancel: &CancellationToken,
-    ) -> Result<MusicSearchResults, AccessError>;
+    ) -> Result<SearchPage, AccessError>;
+
+    /// The first page of Songs and the unfiltered search, asked for at the same time. The
+    /// unfiltered one may fail on its own; the songs still come back.
+    fn search_songs_with_mix(
+        &self,
+        query: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError>;
 
     fn album(
         &self,
         album_id: &str,
         cancel: &CancellationToken,
     ) -> Result<MusicAlbumView, AccessError>;
+
+    /// A catalog page as it comes (an artist, an artist's song list).
+    fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError>;
 
     fn resolve(
         &self,
@@ -119,6 +155,53 @@ fn run_api_actor(runtime: Arc<Runtime>, receiver: Receiver<ApiJob>) {
     }
 }
 
+/// One /search request; `params` None is the unfiltered search.
+async fn post_search(
+    client: &Innertube,
+    query: &str,
+    params: Option<&str>,
+    continuation: Option<String>,
+) -> Result<Value, AccessError> {
+    let mut payload = json!({ "query": query });
+    if let Some(params) = params {
+        payload["params"] = json!(params);
+    }
+    if let Some(continuation) = continuation {
+        payload["continuation"] = json!(continuation);
+    }
+    let response = client
+        .session
+        .post_innertube_client("YTMUSIC", "/search", payload)
+        .await
+        .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog search failed"))?;
+    if !response.status().is_success() {
+        return Err(AccessError::new(
+            AccessErrorKind::Transport,
+            "catalog search returned an unsuccessful response",
+        ));
+    }
+    response.json().await.map_err(|_| {
+        AccessError::new(
+            AccessErrorKind::MalformedResponse,
+            "catalog returned invalid search data",
+        )
+    })
+}
+
+fn parse_search(
+    query: &str,
+    filter: MusicSearchFilter,
+    raw: Value,
+) -> Result<SearchPage, AccessError> {
+    let parsed = parse_music_search_response(query, Some(filter), &raw).map_err(|_| {
+        AccessError::new(
+            AccessErrorKind::MalformedResponse,
+            "catalog search data could not be parsed",
+        )
+    })?;
+    Ok(SearchPage { parsed, raw })
+}
+
 impl LiveBackend for InnertubeBackend {
     fn search(
         &self,
@@ -126,7 +209,7 @@ impl LiveBackend for InnertubeBackend {
         filter: MusicSearchFilter,
         continuation: Option<String>,
         cancel: &CancellationToken,
-    ) -> Result<MusicSearchResults, AccessError> {
+    ) -> Result<SearchPage, AccessError> {
         let query = query.to_owned();
         let cancel = cancel.clone();
         self.call(move |runtime, client| {
@@ -136,40 +219,35 @@ impl LiveBackend for InnertubeBackend {
                     "could not initialize the live catalog client",
                 )
             })?;
-            runtime.block_on(cancellable(cancel, async move {
-                let mut payload = json!({
-                    "query": query.clone(),
-                    "params": filter.to_param_str(),
-                });
-                if let Some(continuation) = continuation {
-                    payload["continuation"] = json!(continuation);
-                }
-                let response = client
-                    .session
-                    .post_innertube_client("YTMUSIC", "/search", payload)
-                    .await
-                    .map_err(|_| {
-                        AccessError::new(AccessErrorKind::Transport, "catalog search failed")
-                    })?;
-                if !response.status().is_success() {
-                    return Err(AccessError::new(
-                        AccessErrorKind::Transport,
-                        "catalog search returned an unsuccessful response",
-                    ));
-                }
-                let raw: Value = response.json().await.map_err(|_| {
-                    AccessError::new(
-                        AccessErrorKind::MalformedResponse,
-                        "catalog returned invalid search data",
-                    )
-                })?;
-                parse_music_search_response(&query, Some(filter), &raw).map_err(|_| {
-                    AccessError::new(
-                        AccessErrorKind::MalformedResponse,
-                        "catalog search data could not be parsed",
-                    )
-                })
-            }))
+            let raw = runtime.block_on(cancellable(cancel, async {
+                post_search(&client, &query, Some(search_params(filter)), continuation).await
+            }))?;
+            parse_search(&query, filter, raw)
+        })
+    }
+
+    fn search_songs_with_mix(
+        &self,
+        query: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError> {
+        let query = query.to_owned();
+        let cancel = cancel.clone();
+        self.call(move |runtime, client| {
+            let client = client.map_err(|_| {
+                AccessError::new(
+                    AccessErrorKind::Transport,
+                    "could not initialize the live catalog client",
+                )
+            })?;
+            let (songs, mix) = runtime.block_on(cancellable(cancel, async {
+                let (songs, mix) = tokio::join!(
+                    post_search(&client, &query, Some(SONGS_PARAMS), None),
+                    post_search(&client, &query, None, None),
+                );
+                Ok((songs?, mix))
+            }))?;
+            Ok((parse_search(&query, MusicSearchFilter::Songs, songs)?, mix))
         })
     }
 
@@ -190,6 +268,40 @@ impl LiveBackend for InnertubeBackend {
             runtime.block_on(cancellable(cancel, async move {
                 client.get_music_album(&album_id).await.map_err(|_| {
                     AccessError::new(AccessErrorKind::Transport, "catalog album lookup failed")
+                })
+            }))
+        })
+    }
+
+    fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError> {
+        let browse_id = browse_id.to_owned();
+        let cancel = cancel.clone();
+        self.call(move |runtime, client| {
+            let client = client.map_err(|_| {
+                AccessError::new(
+                    AccessErrorKind::Transport,
+                    "could not initialize the live catalog client",
+                )
+            })?;
+            runtime.block_on(cancellable(cancel, async move {
+                let response = client
+                    .session
+                    .post_innertube_client("YTMUSIC", "/browse", json!({ "browseId": browse_id }))
+                    .await
+                    .map_err(|_| {
+                        AccessError::new(AccessErrorKind::Transport, "catalog page failed")
+                    })?;
+                if !response.status().is_success() {
+                    return Err(AccessError::new(
+                        AccessErrorKind::Transport,
+                        "catalog page returned an unsuccessful response",
+                    ));
+                }
+                response.json().await.map_err(|_| {
+                    AccessError::new(
+                        AccessErrorKind::MalformedResponse,
+                        "catalog returned an unreadable page",
+                    )
                 })
             }))
         })
@@ -498,14 +610,48 @@ impl MediaAccess for LiveCatalogAccess {
         let mut cursor = decode_cursor(page.cursor.as_deref(), CursorKind::Tracks)?;
         let mut skipped_empty_pages = 0;
         loop {
-            let result = self.backend.search(
-                query,
-                MusicSearchFilter::Songs,
-                cursor.continuation.clone(),
-                cancel,
-            )?;
-            let continuation = result.continuation_token;
-            let (tracks, skipped_tracks) = normalize_tracks(result.songs, None)?;
+            // The first page also asks the unfiltered search, for the catalog's top result and
+            // each song's place there. If that one fails, the songs alone are still the answer.
+            let (result, mix) = if cursor.continuation.is_none() {
+                let (songs, mix) = self.backend.search_songs_with_mix(query, cancel)?;
+                (songs, mix.ok())
+            } else {
+                let songs = self.backend.search(
+                    query,
+                    MusicSearchFilter::Songs,
+                    cursor.continuation.clone(),
+                    cancel,
+                )?;
+                (songs, None)
+            };
+            // innertube-rs reads no continuation from a Songs shelf: it's read from the response.
+            let continuation = result
+                .parsed
+                .continuation_token
+                .or_else(|| catalog_json::read_continuation(&result.raw));
+            let (mut tracks, skipped_tracks) = normalize_tracks(result.parsed.songs, None)?;
+            let song_hits = catalog_json::read_hits(&result.raw);
+            // A page innertube-rs couldn't read (a continuation page): its rows, read here.
+            if tracks.is_empty() && !song_hits.is_empty() {
+                tracks = catalog_json::tracks_from_hits(&song_hits, PROVIDER);
+            }
+            let mix_hits = mix
+                .as_ref()
+                .map(|raw| (catalog_json::read_hits(raw), catalog_json::read_top(raw)));
+            catalog_json::enrich(
+                &mut tracks,
+                &song_hits,
+                mix_hits
+                    .as_ref()
+                    .map(|(hits, top)| (hits.as_slice(), top.as_ref())),
+                PROVIDER,
+            );
+            for t in &mut tracks {
+                t.artwork_url = clean_artwork_url(t.artwork_url.take());
+            }
+            if cursor.offset == 0 {
+                catalog_json::keep_top_in_page(&mut tracks, page.limit);
+            }
 
             if tracks.is_empty() {
                 let continuation_advances = continuation
@@ -549,31 +695,52 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         let cursor = decode_cursor(page.cursor.as_deref(), CursorKind::Albums)?;
-        let result = self.backend.search(
+        let page_result = self.backend.search(
             query,
             MusicSearchFilter::Albums,
             cursor.continuation.clone(),
             cancel,
         )?;
-        let albums = result
-            .albums
-            .into_iter()
-            .filter_map(|album| {
-                let id = album.browse_id.trim();
-                if id.is_empty() {
-                    return None;
-                }
-                Some(RemoteAlbum {
-                    provider: PROVIDER.into(),
-                    album_id: id.to_owned(),
-                    title: album.title,
-                    artists: album.artist.into_iter().collect(),
-                    track_count: album.track_count,
-                    release_date: album.year,
-                    artwork_url: clean_artwork_url(album.thumbnail),
+        // innertube-rs reads no album rows of a real Albums shelf (rows without a video id),
+        // so they're read from the response itself; its own parse stays a fallback.
+        let raw_albums = catalog_json::read_albums(&page_result.raw);
+        let result = page_result.parsed;
+        let albums: Vec<RemoteAlbum> = if raw_albums.is_empty() {
+            result
+                .albums
+                .into_iter()
+                .filter_map(|album| {
+                    let id = album.browse_id.trim();
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some(RemoteAlbum {
+                        provider: PROVIDER.into(),
+                        album_id: id.to_owned(),
+                        title: album.title,
+                        artists: album.artist.into_iter().collect(),
+                        track_count: album.track_count,
+                        release_date: album.year,
+                        artwork_url: clean_artwork_url(album.thumbnail),
+                        ..Default::default()
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            raw_albums
+                .into_iter()
+                .map(|a| RemoteAlbum {
+                    provider: PROVIDER.into(),
+                    album_id: a.browse_id,
+                    title: a.title,
+                    artists: a.artists,
+                    track_count: None,
+                    release_date: a.year,
+                    artwork_url: clean_artwork_url(a.thumbnail),
+                    kind: a.kind,
+                })
+                .collect()
+        };
         page_batch(
             albums,
             result.continuation_token,
@@ -597,28 +764,45 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         let cursor = decode_cursor(page.cursor.as_deref(), CursorKind::Artists)?;
-        let result = self.backend.search(
+        let page_result = self.backend.search(
             query,
             MusicSearchFilter::Artists,
             cursor.continuation.clone(),
             cancel,
         )?;
-        let artists = result
-            .artists
-            .into_iter()
-            .filter_map(|artist| {
-                let id = artist.browse_id.trim();
-                if id.is_empty() {
-                    return None;
-                }
-                Some(RemoteArtist {
-                    provider: PROVIDER.into(),
-                    artist_id: id.to_owned(),
-                    name: artist.name,
-                    artwork_url: clean_artwork_url(artist.thumbnail),
+        // As for albums: the response's own artist rows, innertube-rs's parse as a fallback.
+        let raw_artists = catalog_json::read_artists(&page_result.raw);
+        let result = page_result.parsed;
+        let artists: Vec<RemoteArtist> = if raw_artists.is_empty() {
+            result
+                .artists
+                .into_iter()
+                .filter_map(|artist| {
+                    let id = artist.browse_id.trim();
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some(RemoteArtist {
+                        provider: PROVIDER.into(),
+                        artist_id: id.to_owned(),
+                        name: artist.name,
+                        artwork_url: clean_artwork_url(artist.thumbnail),
+                        ..Default::default()
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            raw_artists
+                .into_iter()
+                .map(|a| RemoteArtist {
+                    provider: PROVIDER.into(),
+                    artist_id: a.browse_id,
+                    name: a.name,
+                    artwork_url: clean_artwork_url(a.thumbnail),
+                    audience: a.audience,
+                })
+                .collect()
+        };
         page_batch(
             artists,
             result.continuation_token,
@@ -658,6 +842,83 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         page_batch(tracks, None, cursor, CursorKind::AlbumTracks, page.limit)
+    }
+
+    fn artist_page(
+        &self,
+        artist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteArtistPage, AccessError> {
+        let id = artist_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "artist id must not be empty",
+            ));
+        }
+        let raw = self.backend.browse(id, cancel)?;
+        let page = catalog_json::read_artist_page(&raw);
+        if page.name.trim().is_empty() && page.top_songs.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::NotFound,
+                "that artist isn't in the online catalog",
+            ));
+        }
+        let top_songs: Vec<RemoteTrack> = catalog_json::tracks_from_hits(&page.top_songs, PROVIDER)
+            .into_iter()
+            .map(|mut t| {
+                t.artwork_url = clean_artwork_url(t.artwork_url.take());
+                t
+            })
+            .collect();
+        // More of their songs, from their full song list (a second page; skipped if it fails).
+        let songs = page
+            .songs_list_id
+            .as_deref()
+            .and_then(|list| self.backend.browse(list, cancel).ok())
+            .map(|raw| catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| !top_songs.iter().any(|top| top.track_id == t.track_id))
+            .take(100)
+            .map(|mut t| {
+                t.artwork_url = clean_artwork_url(t.artwork_url.take());
+                t
+            })
+            .collect();
+        let album = |c: catalog_json::RawCard| RemoteAlbum {
+            provider: PROVIDER.into(),
+            release_date: c.year(),
+            kind: c.kind(),
+            album_id: c.browse_id,
+            title: c.title,
+            artists: vec![page.name.clone()],
+            track_count: None,
+            artwork_url: clean_artwork_url(c.thumbnail),
+        };
+        Ok(RemoteArtistPage {
+            provider: PROVIDER.into(),
+            artist_id: id.to_owned(),
+            name: page.name.clone(),
+            artwork_url: clean_artwork_url(page.thumbnail.clone()),
+            audience: page.audience,
+            top_songs,
+            songs,
+            albums: page.albums.clone().into_iter().map(album).collect(),
+            singles: page.singles.clone().into_iter().map(album).collect(),
+            similar: page
+                .similar
+                .clone()
+                .into_iter()
+                .map(|c| RemoteArtist {
+                    provider: PROVIDER.into(),
+                    audience: c.audience(),
+                    artist_id: c.browse_id,
+                    name: c.title,
+                    artwork_url: clean_artwork_url(c.thumbnail),
+                })
+                .collect(),
+        })
     }
 
     fn playlist_tracks(
@@ -724,6 +985,7 @@ fn normalize_track(
         duration_ms: track.duration_ms,
         artwork_url,
         isrc: None,
+        ..Default::default()
     }))
 }
 

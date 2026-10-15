@@ -8,30 +8,90 @@ use media_access::{
     RemoteTrack,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::State;
 
-/// The search running now: a newer one stops it (you typed on).
+/// What a search that a newer one (from the same search box) replaced answers with: an error
+/// the window recognises and ignores, never an empty result that reads as "nothing online".
+pub const SEARCH_CANCELLED: &str = "online-search-cancelled";
+
+/// Identical searches within this long reuse the answer (typing back, switching boxes).
+const CACHE_FOR: Duration = Duration::from_secs(90);
+const CACHE_SIZE: usize = 32;
+
+/// The search running in each search box (Music, Ctrl+K, Add songs, the online picker,
+/// "more by"…): a newer search stops only the one before it in the same box. Plus a short
+/// memory of recent answers; only ids and what to show are kept, never stream addresses.
 #[derive(Default)]
-pub struct OnlineSearch(Mutex<CancellationToken>);
+pub struct OnlineSearch {
+    running: Mutex<HashMap<String, CancellationToken>>,
+    recent: Mutex<HashMap<String, (Instant, OnlineResults)>>,
+}
 
 impl OnlineSearch {
-    fn fresh(&self) -> CancellationToken {
+    fn fresh(&self, search_box: &str) -> CancellationToken {
         let token = CancellationToken::default();
-        if let Ok(mut last) = self.0.lock() {
+        if let Ok(mut running) = self.running.lock()
+            && let Some(last) = running.insert(search_box.to_owned(), token.clone())
+        {
             last.cancel();
-            *last = token.clone();
         }
         token
     }
+
+    fn cached(&self, query: &str) -> Option<OnlineResults> {
+        let recent = self.recent.lock().ok()?;
+        recent
+            .get(query)
+            .filter(|(at, _)| at.elapsed() < CACHE_FOR)
+            .map(|(_, r)| r.clone())
+    }
+
+    fn remember(&self, query: String, results: &OnlineResults) {
+        if let Ok(mut recent) = self.recent.lock() {
+            recent.retain(|_, (at, _)| at.elapsed() < CACHE_FOR);
+            if recent.len() >= CACHE_SIZE
+                && let Some(oldest) = recent
+                    .iter()
+                    .min_by_key(|(_, (at, _))| *at)
+                    .map(|(k, _)| k.clone())
+            {
+                recent.remove(&oldest);
+            }
+            recent.insert(query, (Instant::now(), results.clone()));
+        }
+    }
 }
 
-#[derive(Debug, Default, Serialize)]
+/// Which search box asked: a short name from the window, "music" when none is given.
+fn box_name(search_box: Option<String>) -> String {
+    search_box
+        .map(|b| b.trim().to_owned())
+        .filter(|b| !b.is_empty() && b.len() <= 32)
+        .unwrap_or_else(|| "music".into())
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OnlineResults {
     pub tracks: Vec<RemoteTrack>,
     pub albums: Vec<RemoteAlbum>,
     pub artists: Vec<RemoteArtist>,
+    /// Where more songs for these words start (`online_search_tracks`); None when that's all.
+    /// A catalog paging token, never a stream address.
+    pub tracks_cursor: Option<String>,
 }
+
+/// More songs for the same words: the next page, and where the one after it starts.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OnlineTrackPage {
+    pub tracks: Vec<RemoteTrack>,
+    pub next_cursor: Option<String>,
+}
+
+/// Songs asked for per page (the first answer, and each "More").
+const TRACKS_PER_PAGE: usize = 20;
 
 fn words(e: AccessError) -> String {
     match e.kind {
@@ -100,11 +160,15 @@ pub fn online_catalog_status() -> OnlineCatalogStatus {
     }
 }
 
-/// Songs, albums and artists for these words. One kind failing doesn't cost the others;
-/// a search overtaken by a newer one comes back empty.
+/// Songs, albums and artists for these words. One kind failing doesn't cost the others.
+///
+/// `search_box` names the box that asked ("music", "palette", "add-songs", "pick",
+/// "more-by"…; "music" when left out): a newer search from the same box stops this one, which
+/// then fails with [`SEARCH_CANCELLED`] for the window to ignore. Other boxes are untouched.
 #[tauri::command]
 pub async fn online_search(
     query: String,
+    search_box: Option<String>,
     pb: State<'_, Playback>,
     running: State<'_, OnlineSearch>,
 ) -> Result<OnlineResults, String> {
@@ -112,24 +176,91 @@ pub async fn online_search(
     if query.is_empty() {
         return Ok(OnlineResults::default());
     }
+    let key = query.to_lowercase();
+    if let Some(hit) = running.cached(&key) {
+        return Ok(hit);
+    }
     let access = pb.catalog();
-    let cancel = running.fresh();
-    tauri::async_runtime::spawn_blocking(move || {
-        let page = PageRequest::new(20, None);
+    let cancel = running.fresh(&box_name(search_box));
+    let results = tauri::async_runtime::spawn_blocking(move || {
+        let page = PageRequest::new(TRACKS_PER_PAGE, None);
         let tracks = access.search_tracks(&query, &page, &cancel);
         let albums = access.search_albums(&query, &PageRequest::new(12, None), &cancel);
         let artists = access.search_artists(&query, &PageRequest::new(12, None), &cancel);
         if cancel.is_cancelled() {
-            return Ok(OnlineResults::default());
+            return Err(SEARCH_CANCELLED.to_owned());
         }
         if let (Err(e), Err(_), Err(_)) = (&tracks, &albums, &artists) {
             return Err(words(e.clone()));
         }
-        Ok(OnlineResults {
-            tracks: tracks.map(|p| p.items).unwrap_or_default(),
-            albums: albums.map(|p| p.items).unwrap_or_default(),
-            artists: artists.map(|p| p.items).unwrap_or_default(),
+        // Remembered only when every part answered (a part that failed is asked again).
+        let whole = tracks.is_ok() && albums.is_ok() && artists.is_ok();
+        let (tracks, tracks_cursor) = tracks.map(|p| (p.items, p.next_cursor)).unwrap_or_default();
+        Ok((
+            OnlineResults {
+                tracks,
+                albums: albums.map(|p| p.items).unwrap_or_default(),
+                artists: artists.map(|p| p.items).unwrap_or_default(),
+                tracks_cursor,
+            },
+            whole,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if results.1 {
+        running.remember(key, &results.0);
+    }
+    Ok(results.0)
+}
+
+/// More songs for the same words, from `cursor` (an answer's `tracks_cursor`, or a page's
+/// `next_cursor`). Same search boxes and cancelling as [`online_search`]; not remembered.
+#[tauri::command]
+pub async fn online_search_tracks(
+    query: String,
+    cursor: String,
+    search_box: Option<String>,
+    pb: State<'_, Playback>,
+    running: State<'_, OnlineSearch>,
+) -> Result<OnlineTrackPage, String> {
+    let query = query.trim().to_owned();
+    if query.is_empty() || cursor.trim().is_empty() {
+        return Ok(OnlineTrackPage::default());
+    }
+    let access = pb.catalog();
+    let cancel = running.fresh(&box_name(search_box));
+    tauri::async_runtime::spawn_blocking(move || {
+        let page = access.search_tracks(
+            &query,
+            &PageRequest::new(TRACKS_PER_PAGE, Some(cursor)),
+            &cancel,
+        );
+        if cancel.is_cancelled() {
+            return Err(SEARCH_CANCELLED.to_owned());
+        }
+        let page = page.map_err(words)?;
+        Ok(OnlineTrackPage {
+            tracks: page.items,
+            next_cursor: page.next_cursor,
         })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// An online artist's page: top songs, more songs, albums, singles and similar artists.
+/// Ids and what to show only; songs play through the catalog like any online song.
+#[tauri::command]
+pub async fn online_artist(
+    artist_id: String,
+    pb: State<'_, Playback>,
+) -> Result<media_access::RemoteArtistPage, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .artist_page(&artist_id, &CancellationToken::default())
+            .map_err(words)
     })
     .await
     .map_err(|e| e.to_string())?

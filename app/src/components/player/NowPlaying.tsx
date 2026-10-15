@@ -130,6 +130,7 @@ export function NowPlaying(props: {
   onClose: () => void
   onAlbum: (dir: string) => void
   onArtist: (name: string) => void
+  onOnlineArtist: (artist: { artist_id: string; name: string; artwork_url?: string | null }) => void
 }) {
   const s = usePlayer()
   const song = current(s)
@@ -235,6 +236,7 @@ export function NowPlaying(props: {
                   lyrics={lyrics}
                   onAlbum={(dir) => void leaving(() => props.onAlbum(dir))}
                   onArtist={(name) => void leaving(() => props.onArtist(name))}
+                  onOnlineArtist={(artist) => void leaving(() => props.onOnlineArtist(artist))}
                   onTiming={onTiming}
                   stars={<Stars path={song.path} stars={song.stars} size={18} />}
                   from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} />}

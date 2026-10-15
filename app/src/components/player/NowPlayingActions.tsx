@@ -6,8 +6,10 @@ import { useEscape } from '../../lib/layers'
 import type { Lyrics } from '../../lib/lyrics'
 import { monitors, openBigScreen, toggleDesktopLyrics, useDesktopLyricsShown, type Monitor } from '../../lib/lyricWindows'
 import { notify } from '../../lib/notify'
-import { onlineSearch } from '../../lib/engine'
+import { isSearchCancelled, onlineSearch } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
+import { rankOnlineTracks } from '../../lib/searchRank'
+import { searchKey } from '../../lib/textsearch'
 import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
 import { goToEach, menuFor, showInFolder } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
@@ -209,6 +211,8 @@ export function SongActions(props: {
   lyrics: Lyrics | null
   onAlbum: (dir: string) => void
   onArtist: (name: string) => void
+  /** Open an online artist's page (Music, over what's there). */
+  onOnlineArtist: (artist: { artist_id: string; name: string; artwork_url?: string | null }) => void
   onTiming: () => void
   stars: ReactNode
   /** "Playing from …", under the album. */
@@ -217,13 +221,18 @@ export function SongActions(props: {
   const { song } = props
   const remote = isOnline(song)
   const artists = song.artists.length ? song.artists : song.album_artist ? [song.album_artist] : []
+  /** Their online artist page, found by name; without one, their songs (ranked) play instead. */
   const moreBy = async (name: string) => {
     try {
-      const found = await onlineSearch(name)
+      const found = await onlineSearch(name, 'more-by')
+      const key = searchKey(name)
+      const artist = found.artists.find((a) => searchKey(a.name) === key) ?? found.artists.find((a) => searchKey(a.name).startsWith(key))
+      if (artist?.artist_id) return props.onOnlineArtist(artist)
       if (!found.tracks.length) return notify(`No online songs for ${name}.`)
-      void playItems(props.root, found.tracks.map(toRemoteItem), 0, { kind: 'search', ref: name, label: `Online: ${name}` })
+      notify(`No artist page for ${name} in the online catalog; playing their songs.`)
+      void playItems(props.root, rankOnlineTracks(name, found.tracks).map(toRemoteItem), 0, { kind: 'search', ref: name, label: `Online: ${name}` })
     } catch (e) {
-      notify(onlineProblem(e))
+      if (!isSearchCancelled(e)) notify(onlineProblem(e))
     }
   }
   // "More": what lib/actionModel.ts says a playing song can do.

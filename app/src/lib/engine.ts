@@ -758,6 +758,16 @@ export interface OnlineTrack {
   duration_ms: number | null
   artwork_url: string | null
   isrc: string | null
+  // Ranking hints from the catalog (search results only; may be missing on older rows).
+  /** "ATV" (the artist's own audio), "OMV" (official music video), "UGC" (someone's upload),
+   *  "PODCAST_EPISODE", or another catalog word. */
+  video_type?: string | null
+  /** Plays (songs) or views (videos). */
+  plays?: number | null
+  /** The catalog's own top result for this search. */
+  is_top?: boolean
+  /** Its place among the unfiltered search's songs and videos (0 = first). */
+  shelf_rank?: number | null
 }
 
 export interface OnlineAlbum {
@@ -768,6 +778,8 @@ export interface OnlineAlbum {
   track_count: number | null
   release_date: string | null
   artwork_url: string | null
+  /** "Album", "Single", "EP"… as the catalog labels it. */
+  kind?: string | null
 }
 
 export interface OnlineArtist {
@@ -775,12 +787,37 @@ export interface OnlineArtist {
   artist_id: string
   name: string
   artwork_url: string | null
+  /** Monthly audience, when the catalog shows it. */
+  audience?: number | null
 }
 
 export interface OnlineResults {
   tracks: OnlineTrack[]
   albums: OnlineAlbum[]
   artists: OnlineArtist[]
+  /** Where more songs start (`onlineSearchTracks`); null when that's all. A paging token only. */
+  tracks_cursor?: string | null
+}
+
+/** An online artist's page (ids and what to show; never a stream address). */
+export interface OnlineArtistPage {
+  provider: string
+  artist_id: string
+  name: string
+  artwork_url: string | null
+  audience: number | null
+  top_songs: OnlineTrack[]
+  /** More of their songs, the top ones left out. */
+  songs: OnlineTrack[]
+  albums: OnlineAlbum[]
+  singles: OnlineAlbum[]
+  similar: OnlineArtist[]
+}
+
+/** A further page of online songs, and where the next one starts. */
+export interface OnlineTrackPage {
+  tracks: OnlineTrack[]
+  next_cursor: string | null
 }
 
 /** An online-catalog song a playlist holds by its stable id (never a stream address).
@@ -985,8 +1022,35 @@ export const playlistAdd = (root: string, name: string, items: PlaylistItem[], a
 export const playlistQueue = (root: string, name: string) => invoke<Playable[]>('playlist_queue', { root, name })
 
 /** Songs, albums and artists in the online catalog for these words (empty outside the app). */
-export const onlineSearch = (query: string) =>
-  inApp() ? invoke<OnlineResults>('online_search', { query }) : Promise.resolve<OnlineResults>({ tracks: [], albums: [], artists: [] })
+/** Which search box asks. A newer search from the same box replaces the one before it (which
+ *  fails with `SearchCancelled`); other boxes' searches carry on. */
+export type SearchBox = 'music' | 'palette' | 'add-songs' | 'pick' | 'more-by'
+
+/** A search replaced by a newer one from the same box: ignore it, it is not "nothing found". */
+export class SearchCancelled extends Error {
+  constructor() {
+    super('Search replaced by a newer one.')
+    this.name = 'SearchCancelled'
+  }
+}
+export const isSearchCancelled = (e: unknown) => e instanceof SearchCancelled
+
+const cancelled = (e: unknown) => {
+  throw String(e) === 'online-search-cancelled' ? new SearchCancelled() : e
+}
+
+export const onlineSearch = (query: string, searchBox: SearchBox = 'music') =>
+  inApp()
+    ? invoke<OnlineResults>('online_search', { query, searchBox }).catch(cancelled)
+    : Promise.resolve<OnlineResults>({ tracks: [], albums: [], artists: [] })
+
+/** More online songs for the same words, from a cursor the last answer gave. */
+export const onlineSearchTracks = (query: string, cursor: string, searchBox: SearchBox = 'music') =>
+  inApp()
+    ? invoke<OnlineTrackPage>('online_search_tracks', { query, cursor, searchBox }).catch(cancelled)
+    : Promise.resolve<OnlineTrackPage>({ tracks: [], next_cursor: null })
+/** An online artist's page. */
+export const onlineArtistPage = (artistId: string) => invoke<OnlineArtistPage>('online_artist', { artistId })
 /** An online album's songs, in order. */
 export const onlineAlbumTracks = (albumId: string) => invoke<OnlineTrack[]>('online_album_tracks', { albumId })
 

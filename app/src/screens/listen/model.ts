@@ -233,6 +233,13 @@ export function scrollerOf(el: HTMLElement | null): HTMLElement | null {
 
 // --- Shared with every part of the screen -----------------------------------------------------
 
+/** An online artist to open: their stable catalog id, and the name to show while it loads. */
+export interface OnlineArtistRef {
+  artist_id: string
+  name: string
+  artwork_url?: string | null
+}
+
 export interface Nav {
   root: string
   /** `origin` names where the cover was, so it can fly from there to the album page. */
@@ -240,6 +247,8 @@ export interface Nav {
   openArtist: (name: string) => void
   /** An online catalog album, as its own page (Back returns to the search). */
   openOnlineAlbum: (album: OnlineAlbum) => void
+  /** An online catalog artist, as its own page (Back returns to where it was opened). */
+  openOnlineArtist: (artist: OnlineArtistRef) => void
   editDetails: (dir: string) => void
 }
 export const NavContext = createContext<Nav>({
@@ -247,6 +256,7 @@ export const NavContext = createContext<Nav>({
   openAlbum: () => {},
   openArtist: () => {},
   openOnlineAlbum: () => {},
+  openOnlineArtist: () => {},
   editDetails: () => {},
 })
 export const useNav = () => useContext(NavContext)

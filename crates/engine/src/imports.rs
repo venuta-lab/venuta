@@ -2160,6 +2160,7 @@ mod tests {
                     duration_ms: Some(268_000),
                     artwork_url: None,
                     isrc: None,
+                    ..Default::default()
                 };
                 Ok(Page {
                     items: vec![track].into_iter().take(page.limit).collect(),

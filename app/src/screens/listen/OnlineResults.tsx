@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconMore, IconPlay, IconPlaylistAdd } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
-import { onlineAlbumTracks, onlineSearch, type OnlineAlbum, type OnlineArtist, type OnlineResults as Results, type OnlineTrack } from '../../lib/engine'
-import { notify } from '../../lib/notify'
-import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
-import { songLength, enqueueItems, onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/player'
+import { Segmented } from '../../components/ui'
+import type { OnlineAlbum, OnlineTrack } from '../../lib/engine'
+import { OFFLINE } from '../../lib/online'
+import { songLength, enqueueItems, playItems, toRemoteItem } from '../../lib/player'
 import { useNav } from './model'
 import { menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
+import { fromOnline, onlineSongs, splitOnlineSongs, withOnlineAlbum, type OnlineSearch } from './onlineSearch'
 
 /*
   The online catalog under your library's search results: songs, albums and artists for the
@@ -19,61 +20,25 @@ import { dragSource } from '../../lib/drag'
   never flashes empty for a few seconds.
 */
 
-const fromOnline = (query: string): From => ({ kind: 'search', ref: query, label: `Online: ${query}` })
 const items = (tracks: OnlineTrack[]) => tracks.map(toRemoteItem)
-const songs = (tracks: OnlineTrack[]) => tracks.map((t) => ({ online: onlineEntryFrom(t) }))
-const say = onlineProblem
+const songs = onlineSongs
+
+/** Which online songs show: the recordings people mean, or the covers and other uploads. */
+type SongView = 'best' | 'covers'
+
+/** The Online catalog's label, the same as "In your library" above it, with how it's doing. */
+function SectionLabel({ status }: { status: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink/45">Online catalog</span>
+      <span className="text-[12.5px] text-ink/50">{status}</span>
+    </div>
+  )
+}
 
 /** Same column rhythm as `SongList` so online and local search feel like one list. */
 const COLS = 'grid-cols-[36px_minmax(0,1.7fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_52px_96px_32px]'
 
-export type OnlineSearchState = {
-  /** Words currently requested (the search box). */
-  query: string
-  /** Which query `results` answered; may lag while loading. */
-  resultsFor: string
-  results: Results | null
-  error: string
-  /** True while a request for the current query is outstanding (including debounce). */
-  loading: boolean
-  /** The computer is offline: nothing was asked, and `error` says so. */
-  offline: boolean
-}
-
-/** The online search for `query` (asked a moment after typing stops). Keeps prior hits while loading. */
-export function useOnlineSearch(query: string): OnlineSearchState {
-  const connected = useNetworkOnline()
-  const [state, setState] = useState<OnlineSearchState>({
-    query: '',
-    resultsFor: '',
-    results: null,
-    error: '',
-    loading: false,
-    offline: false,
-  })
-  useEffect(() => {
-    const q = query.trim()
-    // Nothing typed; or offline, when nothing is asked (asked again by itself once connected).
-    if (!q || !connected) {
-      const offline = !!q && !connected
-      setState({ query: q, resultsFor: q, results: null, error: offline ? OFFLINE : '', loading: false, offline })
-      return
-    }
-    // Mark loading immediately; keep last results (resultsFor) until the new ones land.
-    setState((s) => ({ ...s, query: q, loading: true, error: '', offline: false }))
-    let live = true
-    const t = window.setTimeout(() => {
-      onlineSearch(q)
-        .then((results) => live && setState({ query: q, resultsFor: q, results, error: '', loading: false, offline: false }))
-        .catch((e) => live && setState({ query: q, resultsFor: q, results: null, error: say(e), loading: false, offline: false }))
-    }, 350)
-    return () => {
-      live = false
-      window.clearTimeout(t)
-    }
-  }, [query, connected])
-  return state
-}
 
 function OnlineSkeleton({ rows = 5 }: { rows?: number }) {
   return (
@@ -95,20 +60,58 @@ function OnlineSkeleton({ rows = 5 }: { rows?: number }) {
 }
 
 /**
- * `libraryEmpty`: nothing in the library matched, so this section also says that, in one line
- * that agrees with what the online search is doing (searching, found, found nothing, offline).
+ * The online catalog's part of a search, from the search state the page holds (one search for
+ * the Top result, the chips and this section).
+ *
+ * - `libraryEmpty`: nothing in the library matched, so this section also says that, in one
+ *   line that agrees with what the online search is doing (searching, found, nothing, offline).
+ * - `parts`: which of songs, albums and artists show (all by default).
+ * - `covers`: "tabs" (Best | Covers & other, for the Songs chip) or "fold" (Best rows, then a
+ *   folded "Covers & versions" row, for All).
+ * - `songLimit` / `onSeeAllSongs`: Best rows shown before "See all".
  */
-export function OnlineResults(props: { query: string; spaced: boolean; libraryEmpty?: boolean }) {
-  const { root, openOnlineAlbum } = useNav()
-  const { results, error, loading, resultsFor, offline } = useOnlineSearch(props.query)
+export function OnlineResults(props: {
+  query: string
+  online: OnlineSearch
+  spaced: boolean
+  libraryEmpty?: boolean
+  parts?: { songs?: boolean; albums?: boolean; artists?: boolean }
+  covers?: 'tabs' | 'fold'
+  songLimit?: number
+  onSeeAllSongs?: () => void
+}) {
+  const { root, openOnlineAlbum, openOnlineArtist } = useNav()
+  const { results, error, loading, resultsFor, offline, loadingMore, moreError, canLoadMore, loadMore } = props.online
+  // Best | Covers & other (or the fold open), for the words it was chosen for: new words start
+  // at Best again, folded.
+  const [picked, setPicked] = useState<{ q: string; view: SongView }>({ q: '', view: 'best' })
   const q = props.query.trim()
   if (!q) return null
+  const show = { songs: props.parts?.songs ?? true, albums: props.parts?.albums ?? true, artists: props.parts?.artists ?? true }
+  const fold = props.covers === 'fold'
 
   const fresh = resultsFor === q
   const stale = loading && !!results && !fresh
   const showResults = !!results && (fresh || loading)
-  const empty = fresh && !loading && results && !results.tracks.length && !results.albums.length && !results.artists.length
+  const empty =
+    fresh &&
+    !loading &&
+    results &&
+    !(show.songs && results.tracks.length) &&
+    !(show.albums && results.albums.length) &&
+    !(show.artists && results.artists.length)
   const from = fromOnline(q)
+
+  // The ranked songs, split: the recordings people mean (Best), and covers, karaoke, slowed,
+  // loops and uploads (Covers & other). Words that ask for covers keep them all in Best.
+  const splitFor = resultsFor || q
+  const { best, covers } = splitOnlineSongs(results?.tracks ?? [], splitFor)
+  const asked = picked.q === q ? picked.view : 'best'
+  // Nothing but covers: show them rather than an empty Best (tabs), or open the fold.
+  const view: SongView = asked === 'covers' || !best.length ? 'covers' : 'best'
+  const shown = fold ? best : view === 'covers' ? covers : best
+  const capped = props.songLimit && shown.length > props.songLimit + 2 ? shown.slice(0, props.songLimit) : shown
+  const foldOpen = fold && covers.length > 0 && view === 'covers'
 
   if (props.libraryEmpty && empty)
     return <p className="py-20 text-center text-[14px] text-ink/55">Nothing matches “{q}” in your library or the online catalog.</p>
@@ -118,36 +121,14 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
     </p>
   )
 
-  /** An album's songs, then play them or add them. */
-  const withAlbum = async (a: OnlineAlbum, then: (tracks: OnlineTrack[]) => void) => {
-    try {
-      const tracks = await onlineAlbumTracks(a.album_id)
-      if (!tracks.length) return notify(`“${a.title}” has no songs online.`)
-      then(tracks)
-    } catch (e) {
-      notify(`Couldn't open “${a.title}”: ${say(e)}`)
-    }
-  }
-  /** An artist's songs (a search by their name), played. */
-  const playArtist = async (ar: OnlineArtist) => {
-    try {
-      const found = await onlineSearch(ar.name)
-      if (!found.tracks.length) return notify(`No songs by ${ar.name} online.`)
-      void playItems(root, items(found.tracks), 0, fromOnline(ar.name))
-    } catch (e) {
-      notify(`Couldn't play ${ar.name}: ${say(e)}`)
-    }
-  }
+  const withAlbum = withOnlineAlbum
 
   if (offline)
     return (
       <>
         {headline}
         <section className={`${props.spaced ? 'mt-12' : ''} opacity-70`} aria-label="Online">
-          <div className="mb-2 flex items-baseline gap-3">
-            <h2 className="text-[19px] font-semibold tracking-[-0.02em] text-ink/60">Online</h2>
-            <span className="text-[12.5px] text-ink/50">{OFFLINE}</span>
-          </div>
+          <SectionLabel status={OFFLINE} />
           <p className="text-[13px] leading-relaxed text-ink/55">
             Songs in your library play as always. Online results come back by themselves when you’re connected.
           </p>
@@ -159,19 +140,18 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
     <>
       {headline}
       <section className={props.spaced ? 'mt-12' : ''} aria-label="Online">
-        <div className="mb-3 flex items-baseline gap-3">
-          <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Online</h2>
-          <span className="text-[12.5px] text-ink/50">
-            {loading ? (
+        <SectionLabel
+          status={
+            loading ? (
               <span className="inline-flex items-center gap-2">
                 <span className="spin inline-block h-3 w-3 rounded-full border-2 border-ink/20 border-t-ink/60" aria-hidden />
-                Searching online…
+                Searching…
               </span>
             ) : (
-              'Plays online until you have the file'
-            )}
-          </span>
-        </div>
+              'Plays without the file; yours always plays first'
+            )
+          }
+        />
         {error && !loading ? (
           <p role="status" className="py-3 text-[13px] text-ink/55">
             {error}
@@ -187,20 +167,93 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
           <p className="py-3 text-[13px] text-ink/55">Nothing in the online catalog for “{q}”.</p>
         ) : showResults && results ? (
           <div className={`grid gap-8 transition-opacity duration-200 ${stale || loading ? 'opacity-55' : 'opacity-100'}`}>
-            {results.tracks.length > 0 && (
+            {show.songs && results.tracks.length > 0 && (
               <div>
-                <OnlineTrackHeader />
+                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
+                  {!fold && covers.length > 0 && (
+                    <>
+                      <Segmented
+                        tabs
+                        size="sm"
+                        label="Which online songs"
+                        value={view}
+                        onChange={(v) => setPicked({ q, view: v })}
+                        options={[
+                          { value: 'best', label: `Best ${best.length}`, disabled: !best.length },
+                          { value: 'covers', label: `Covers & other ${covers.length}` },
+                        ]}
+                      />
+                      <span className="text-[12.5px] text-ink/50">
+                        {view === 'best' ? 'The recordings, first.' : 'Covers, karaoke, slowed and other uploads.'}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {capped.length > 0 && <OnlineTrackHeader />}
                 <div className="mt-1 grid gap-0.5">
-                  {results.tracks.map((t, i) => (
+                  {/* Play goes through the list as shown: its order, from this row (on, past a
+                      "See all" cut, through the same list). */}
+                  {capped.map((t, i) => (
                     <OnlineTrackRow
-                    key={`${t.provider}:${t.track_id}`}
+                      key={`${t.provider}:${t.track_id}`}
                       track={t}
-                      onPlay={() => void playItems(root, items(results.tracks), i, from)}
+                      onPlay={() => void playItems(root, items(shown), i, from)}
                       onQueue={(next) => void enqueueItems(root, items([t]), next)}
                       onAdd={() => askAddSongs(songs([t]), t.title)}
                     />
                   ))}
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {capped.length < shown.length && props.onSeeAllSongs ? (
+                    <button onClick={props.onSeeAllSongs} className="btn-ghost btn-sm">
+                      See all {shown.length} online songs
+                    </button>
+                  ) : canLoadMore ? (
+                    // The rows shown stay while more come; the list is ranked again with them.
+                    <button onClick={loadMore} disabled={loadingMore} aria-busy={loadingMore} className="btn-ghost btn-sm">
+                      {loadingMore && <span className="spin inline-block h-3 w-3 rounded-full border-2 border-ink/20 border-t-ink/60" aria-hidden />}
+                      {loadingMore ? 'Loading more…' : 'More online songs'}
+                    </button>
+                  ) : (
+                    !fold &&
+                    fresh &&
+                    !loading && <span className="text-[12.5px] text-ink/45">That’s everything the online catalog found for these words.</span>
+                  )}
+                  {moreError && (
+                    <span role="status" className="text-[12.5px] text-ink/55">
+                      {moreError}
+                    </span>
+                  )}
+                </div>
+                {fold && covers.length > 0 && (
+                  <div className={best.length ? 'mt-3' : ''}>
+                    <button
+                      onClick={() => setPicked({ q, view: foldOpen ? 'best' : 'covers' })}
+                      aria-expanded={foldOpen}
+                      className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-[13px] text-ink/60 transition-colors hover:bg-ink/[0.05] hover:text-ink"
+                    >
+                      <span aria-hidden className={`inline-block transition-transform ${foldOpen ? 'rotate-90' : ''}`}>
+                        ›
+                      </span>
+                      <span className="font-medium">Covers & versions · {covers.length}</span>
+                      <span className="text-ink/45">karaoke, slowed, lofi and other uploads</span>
+                    </button>
+                    {foldOpen && (
+                      <div className="mt-1 grid gap-0.5">
+                        {covers.map((t, i) => (
+                          <OnlineTrackRow
+                            key={`${t.provider}:${t.track_id}`}
+                            track={t}
+                            onPlay={() => void playItems(root, items(covers), i, from)}
+                            onQueue={(next) => void enqueueItems(root, items([t]), next)}
+                            onAdd={() => askAddSongs(songs([t]), t.title)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {loading && (
                   <div className="mt-1">
                     <OnlineSkeleton rows={2} />
@@ -208,12 +261,12 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
                 )}
               </div>
             )}
-            {results.albums.length > 0 && (
+            {show.albums && results.albums.length > 0 && (
               <div>
-                <h3 className="mb-2.5 text-[14.5px] font-semibold">Albums</h3>
+                <h2 className="mb-3 text-[19px] font-semibold tracking-[-0.02em]">Albums</h2>
                 <div className="no-scrollbar -mx-3 -my-2 flex gap-4 overflow-x-auto px-3 py-2">
                   {results.albums.map((a) => (
-                    <AlbumCard
+                    <OnlineAlbumCard
                     key={`${a.provider}:${a.album_id}`}
                     album={a}
                     onOpen={() => openOnlineAlbum(a)}
@@ -225,15 +278,15 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
                 </div>
               </div>
             )}
-            {results.artists.length > 0 && (
+            {show.artists && results.artists.length > 0 && (
               <div>
-                <h3 className="mb-2.5 text-[14.5px] font-semibold">Artists</h3>
+                <h2 className="mb-3 text-[19px] font-semibold tracking-[-0.02em]">Artists</h2>
                 <div className="flex flex-wrap gap-2">
                   {results.artists.map((ar) => (
                     <button
                       key={`${ar.provider}:${ar.artist_id}`}
-                      onClick={() => void playArtist(ar)}
-                      title={`Play songs by ${ar.name}`}
+                      onClick={() => openOnlineArtist(ar)}
+                      title={`Open ${ar.name}`}
                       className="flex items-center gap-2 rounded-full bg-ink/[0.06] py-1 pl-1 pr-3.5 text-[13px] transition-colors hover:bg-ink/[0.1] active:bg-ink/[0.14]"
                     >
                       <span className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-ink/[0.08] text-[12px] text-ink/50">
@@ -329,7 +382,8 @@ export function OnlineTrackRow(props: {
   )
 }
 
-function AlbumCard(props: { album: OnlineAlbum; onOpen: () => void; onPlay: () => void; onQueue: (next: boolean) => void; onAdd: () => void }) {
+/** An online album card: the card opens its page; its round button plays it. */
+export function OnlineAlbumCard(props: { album: OnlineAlbum; onOpen: () => void; onPlay: () => void; onQueue: (next: boolean) => void; onAdd: () => void }) {
   const a = props.album
   const menu = () =>
     menuFor(

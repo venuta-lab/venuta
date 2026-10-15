@@ -27,3 +27,7 @@ tempfile.workspace = true
 name = "live_smoke"
 required-features = ["live-provider"]
 
+
+[[example]]
+name = "search_hints"
+required-features = ["live-provider"]

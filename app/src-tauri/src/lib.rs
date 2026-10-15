@@ -2987,6 +2987,8 @@ pub fn run() {
             playlist_add,
             playlist_queue,
             online::online_search,
+            online::online_search_tracks,
+            online::online_artist,
             online::online_album_tracks,
             online::online_catalog_status,
             online::online_ensure_stream_tool,

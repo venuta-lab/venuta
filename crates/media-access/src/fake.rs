@@ -2,7 +2,8 @@
 
 use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::types::{
-    CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist, RemoteTrack,
+    CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist,
+    RemoteArtistPage, RemoteTrack,
 };
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -55,10 +56,24 @@ impl MediaAccess for FakeMediaAccess {
                 "search query must not be empty",
             ));
         }
-        let track = sample_track("track-1", &format!("{query} (fixture)"));
+        // Pages of at most 4 songs (the live catalog pages too), so "More" can be tried offline.
+        let start = match page.cursor.as_deref() {
+            None => 0,
+            Some(c) => c
+                .strip_prefix("fake:")
+                .and_then(|n| n.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    AccessError::new(AccessErrorKind::InvalidInput, "catalog cursor is invalid")
+                })?,
+        };
+        let all = search_hits(query);
+        let end = (start + page.limit.min(FAKE_PAGE)).min(all.len());
         Ok(Page {
-            items: vec![track].into_iter().take(page.limit).collect(),
-            next_cursor: None,
+            items: all
+                .get(start..end)
+                .map(<[RemoteTrack]>::to_vec)
+                .unwrap_or_default(),
+            next_cursor: (end < all.len()).then(|| format!("fake:{end}")),
         })
     }
 
@@ -85,6 +100,7 @@ impl MediaAccess for FakeMediaAccess {
                 track_count: Some(2),
                 release_date: Some("2026".into()),
                 artwork_url: None,
+                kind: Some("Album".into()),
             }]
             .into_iter()
             .take(page.limit)
@@ -113,6 +129,7 @@ impl MediaAccess for FakeMediaAccess {
                 artist_id: "artist-1".into(),
                 name: format!("{query} Artist"),
                 artwork_url: None,
+                audience: Some(1_200_000),
             }]
             .into_iter()
             .take(page.limit)
@@ -143,6 +160,51 @@ impl MediaAccess for FakeMediaAccess {
             .take(page.limit)
             .collect(),
             next_cursor: None,
+        })
+    }
+
+    fn artist_page(
+        &self,
+        artist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteArtistPage, AccessError> {
+        ensure_active(cancel)?;
+        let id = artist_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "artist id must not be empty",
+            ));
+        }
+        // The fixture artist: its own songs (and a cover by someone else, to rank down), an
+        // album, a single and one artist like it.
+        let hits = search_hits("Fixture");
+        let album = |album_id: &str, title: &str, kind: &str| RemoteAlbum {
+            provider: "remote_catalog".into(),
+            album_id: album_id.into(),
+            title: title.into(),
+            artists: vec!["Fixture Artist".into()],
+            release_date: Some("2026".into()),
+            kind: Some(kind.into()),
+            ..Default::default()
+        };
+        Ok(RemoteArtistPage {
+            provider: "remote_catalog".into(),
+            artist_id: id.into(),
+            name: "Fixture Artist".into(),
+            audience: Some(1_200_000),
+            top_songs: hits[..3].to_vec(),
+            songs: hits[3..].to_vec(),
+            albums: vec![album("album-1", "Fixture Album", "Album")],
+            singles: vec![album("album-single", "Fixture Single", "Single")],
+            similar: vec![RemoteArtist {
+                provider: "remote_catalog".into(),
+                artist_id: "artist-2".into(),
+                name: "Another Fixture".into(),
+                audience: Some(300_000),
+                ..Default::default()
+            }],
+            ..Default::default()
         })
     }
 
@@ -206,9 +268,81 @@ fn sample_track(id: &str, title: &str) -> RemoteTrack {
         album: Some("Fixture Album".into()),
         album_id: Some("album-1".into()),
         duration_ms: Some(200),
-        artwork_url: None,
-        isrc: None,
+        ..Default::default()
     }
+}
+
+/// Songs per page of fake search results.
+const FAKE_PAGE: usize = 4;
+
+/// What a search finds, shaped like the live catalog's mix so ranking can be tried offline:
+/// the artist's own audio on an album (most plays), its official video, someone's cover (the
+/// catalog's "top result", as happens live), and a karaoke upload with no album or count.
+fn search_hits(query: &str) -> Vec<RemoteTrack> {
+    vec![
+        RemoteTrack {
+            duration_ms: Some(215_000),
+            video_type: Some("ATV".into()),
+            plays: Some(12_000_000),
+            shelf_rank: Some(1),
+            ..sample_track("track-1", &format!("{query} (fixture)"))
+        },
+        RemoteTrack {
+            album: None,
+            album_id: None,
+            duration_ms: Some(221_000),
+            video_type: Some("OMV".into()),
+            plays: Some(3_400_000),
+            shelf_rank: Some(2),
+            ..sample_track(
+                "track-video",
+                &format!("{query} (fixture) (Official Video)"),
+            )
+        },
+        RemoteTrack {
+            artists: vec!["A Fan".into()],
+            album: None,
+            album_id: None,
+            duration_ms: Some(230_000),
+            video_type: Some("UGC".into()),
+            plays: Some(25_000),
+            is_top: true,
+            shelf_rank: Some(0),
+            ..sample_track(
+                "track-cover",
+                &format!("{query} (fixture) (acoustic cover)"),
+            )
+        },
+        RemoteTrack {
+            artists: vec!["Karaoke Hits".into()],
+            album: None,
+            album_id: None,
+            duration_ms: Some(218_000),
+            video_type: Some("UGC".into()),
+            ..sample_track(
+                "track-karaoke",
+                &format!("{query} (fixture) (Karaoke Version)"),
+            )
+        },
+        // The second page: a live recording and a remix.
+        RemoteTrack {
+            album: Some("Fixture Live".into()),
+            album_id: Some("album-live".into()),
+            duration_ms: Some(260_000),
+            video_type: Some("ATV".into()),
+            plays: Some(800_000),
+            ..sample_track("track-live", &format!("{query} (fixture) (Live)"))
+        },
+        RemoteTrack {
+            artists: vec!["DJ Fixture".into()],
+            album: Some("Club Fixtures".into()),
+            album_id: Some("album-club".into()),
+            duration_ms: Some(300_000),
+            video_type: Some("ATV".into()),
+            plays: Some(150_000),
+            ..sample_track("track-remix", &format!("{query} (fixture) (Club Remix)"))
+        },
+    ]
 }
 
 fn wav_bytes() -> Vec<u8> {
@@ -249,6 +383,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fake_artist_page_has_songs_records_and_a_similar_artist() {
+        let access = FakeMediaAccess::with_in_memory_fixture();
+        let page = access
+            .artist_page("artist-1", &CancellationToken::default())
+            .unwrap();
+        assert_eq!(page.name, "Fixture Artist");
+        assert_eq!((page.top_songs.len(), page.songs.len()), (3, 3));
+        assert_eq!(
+            (page.albums.len(), page.singles.len(), page.similar.len()),
+            (1, 1, 1)
+        );
+        assert!(
+            access
+                .artist_page(" ", &CancellationToken::default())
+                .is_err()
+        );
+    }
+
+    #[test]
     fn fake_search_and_resolve_redacts_url() {
         let access = FakeMediaAccess::with_in_memory_fixture();
         let page = access
@@ -258,7 +411,65 @@ mod tests {
                 &CancellationToken::default(),
             )
             .unwrap();
-        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items.len(), 4);
+        // A next page: two more songs, then nothing.
+        let more = access
+            .search_tracks(
+                "hello",
+                &PageRequest::new(20, page.next_cursor.clone()),
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        assert_eq!(more.items.len(), 2);
+        assert!(more.items.iter().any(|t| t.title.contains("Live")));
+        assert_eq!(more.next_cursor, None);
+        assert!(
+            access
+                .search_tracks(
+                    "hello",
+                    &PageRequest::new(5, Some("nonsense".into())),
+                    &CancellationToken::default()
+                )
+                .is_err()
+        );
+        // The artist's own audio on an album comes first; the cover is the catalog's top result.
+        let first = &page.items[0];
+        assert_eq!(first.track_id, "track-1");
+        assert_eq!(
+            (first.video_type.as_deref(), first.plays),
+            (Some("ATV"), Some(12_000_000))
+        );
+        assert!(first.album_id.is_some());
+        let cover = page.items.iter().find(|t| t.is_top).unwrap();
+        assert_eq!(
+            (cover.video_type.as_deref(), cover.album.as_deref()),
+            (Some("UGC"), None)
+        );
+        assert!(cover.title.contains("cover"));
+        assert!(
+            page.items
+                .iter()
+                .any(|t| t.title.contains("Karaoke") && t.plays.is_none())
+        );
+        // A smaller page is the first rows.
+        let two = access
+            .search_tracks(
+                "hello",
+                &PageRequest::new(2, None),
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        assert_eq!(two.items.len(), 2);
+        // A track's own fields round-trip, and old rows without the hints still read.
+        let json = serde_json::to_string(first).unwrap();
+        assert!(json.contains("\"video_type\":\"ATV\""));
+        let old: RemoteTrack =
+            serde_json::from_str(r#"{"provider":"remote_catalog","track_id":"x","title":"T"}"#)
+                .unwrap();
+        assert_eq!(
+            (old.video_type, old.plays, old.is_top, old.shelf_rank),
+            (None, None, false, None)
+        );
         let audio = access
             .resolve_audio("track-1", &CancellationToken::default())
             .unwrap();

@@ -1,13 +1,21 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { IconSearch } from './Icons'
 import { AvailabilityBadge } from './AvailabilityBadge'
-import { onlineSearch, type OnlineTrack } from '../lib/engine'
+import { isSearchCancelled, onlineSearch, type OnlineTrack } from '../lib/engine'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../lib/online'
+import { rankOnlineTracks } from '../lib/searchRank'
 import { enqueueItems, playItems, songItemOf, toRemoteItem } from '../lib/player'
 import { menuFor } from '../lib/actions'
 import { menuFromEvent, openMenu, type MenuGroups } from '../lib/menu'
 import { askAddSongs } from './AddToPlaylist'
+import { recentSearches } from '../lib/recentSearches'
+
+/** Recent searches offered when the palette opens empty; choosing one fills the words. */
+const RECENT_IN_PALETTE = 4
+const RECENT = 'recent:'
+/** Groups of things found by the words typed: running one means the search (remembered). */
+const FOUND = new Set(['Online', 'Albums', 'Artists', 'Songs', 'Playlists'])
 import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
 
 export interface Command {
@@ -62,6 +70,7 @@ export function CommandPalette(props: {
   })
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
+  const recent = useSyncExternalStore(recentSearches.subscribe, recentSearches.list, recentSearches.list)
 
   useEffect(() => {
     if (props.open) {
@@ -85,9 +94,10 @@ export function CommandPalette(props: {
     setOnline((s) => ({ ...s, q: query, loading: true, error: '' }))
     let live = true
     const t = window.setTimeout(() => {
-      onlineSearch(query)
-        .then((r) => live && setOnline({ q: query, tracks: r.tracks.slice(0, 8), error: '', loading: false }))
-        .catch((e) => live && setOnline({ q: query, tracks: [], error: onlineProblem(e), loading: false }))
+      onlineSearch(query, 'palette')
+        // Ranked before the cut, so the 8 shown (and the order they play in) are the best.
+        .then((r) => live && setOnline({ q: query, tracks: rankOnlineTracks(query, r.tracks).slice(0, 8), error: '', loading: false }))
+        .catch((e) => live && !isSearchCancelled(e) && setOnline({ q: query, tracks: [], error: onlineProblem(e), loading: false }))
     }, 320)
     return () => {
       live = false
@@ -146,10 +156,17 @@ export function CommandPalette(props: {
           })
         : []
 
-    const shown = [...local, ...onlineCmds]
+    // Opened empty: your recent searches first (choosing one types it here).
+    const recentCmds: { c: Command; s: number }[] = q.trim()
+      ? []
+      : recent.slice(0, RECENT_IN_PALETTE).map((r) => ({
+          s: 0,
+          c: { id: `${RECENT}${r.q}`, group: 'Recent searches', label: r.q, run: () => {} } satisfies Command,
+        }))
+    const shown = [...recentCmds, ...local, ...onlineCmds]
     // Show a group heading above the first command of each group.
     return shown.map((x, i) => ({ c: x.c, head: i === 0 || shown[i - 1].c.group !== x.c.group ? x.c.group : '' }))
-  }, [props.commands, props.root, q, online])
+  }, [props.commands, props.root, q, online, recent])
 
   useEffect(() => {
     list.current?.querySelector(`[data-i="${sel}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -157,6 +174,15 @@ export function CommandPalette(props: {
 
   function run(c: Command | undefined) {
     if (!c) return
+    // A recent search: its words go in the field (the palette stays open).
+    if (c.id.startsWith(RECENT)) {
+      setQ(c.label)
+      setSel(0)
+      input.current?.focus()
+      return
+    }
+    // Something found by the words (a song online, an album…): the search is remembered.
+    if (q.trim() && FOUND.has(c.group)) recentSearches.push(q)
     props.onClose()
     window.setTimeout(c.run, 0)
   }

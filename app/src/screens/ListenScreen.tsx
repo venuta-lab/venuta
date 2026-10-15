@@ -3,17 +3,19 @@ import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { type HealthReport, type OnlineAlbum } from '../lib/engine'
 import { useCatalog } from '../lib/catalog'
-import { current, isOnline, queueKey, songItemOf, usePlayer } from '../lib/player'
+import { current, isOnline, queueKey, readFrom, songItemOf, usePlayer, usePlayerValue } from '../lib/player'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
-import { IconSearch } from '../components/Icons'
+import { recentSearches } from '../lib/recentSearches'
+import { SearchBox, type Suggestion } from '../components/search/SearchBox'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
 import { OnlineAlbumPage } from './listen/OnlineAlbumPage'
+import { OnlineArtistPage } from './listen/OnlineArtistPage'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
-import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav } from './listen/model'
+import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
 
@@ -44,10 +46,26 @@ const onTabAsked = (l: () => void) => {
   }
 }
 
+/* An online artist's page asked for from outside Music (Now Playing): shown when the screen
+   shows, or at once if it is showing. */
+let askedArtist: OnlineArtistRef | null = null
+const artistListeners = new Set<() => void>()
+export function showOnlineArtist(artist: OnlineArtistRef) {
+  askedArtist = artist
+  artistListeners.forEach((l) => l())
+}
+const onArtistAsked = (l: () => void) => {
+  artistListeners.add(l)
+  return () => {
+    artistListeners.delete(l)
+  }
+}
+
 type Page =
   | { kind: 'album'; dir: string; origin?: string }
   | { kind: 'artist'; name: string }
   | { kind: 'online-album'; album: OnlineAlbum }
+  | { kind: 'online-artist'; artist: OnlineArtistRef }
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
 type Entry = { page: Page; scroll: number }
 
@@ -104,6 +122,9 @@ function Listen(props: Props) {
   const [tab, setTab] = useState<Tab>(kept.tab)
   const [stack, setStack] = useState<Entry[]>([])
   const [query, setQuery] = useState('')
+  // The words now, for remembering a search when something found by it is played or opened.
+  const words = useRef('')
+  words.current = query.trim()
   const [filter, setFilter] = useState(kept.filter)
   useEffect(() => {
     kept.tab = tab
@@ -137,6 +158,8 @@ function Listen(props: Props) {
   }, [tab])
 
   const push = useCallback((page: Page) => {
+    // Opening something found by a search means the search: it's remembered.
+    if (words.current) recentSearches.push(words.current)
     const scroll = scrollerOf(box.current)?.scrollTop ?? 0
     setStack((s) => {
       const last = s.at(-1)?.page
@@ -147,7 +170,9 @@ function Listen(props: Props) {
           ? last.kind === 'album' && last.dir === page.dir
           : page.kind === 'online-album'
             ? last.kind === 'online-album' && last.album.album_id === page.album.album_id
-            : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
+            : page.kind === 'online-artist'
+              ? last.kind === 'online-artist' && last.artist.artist_id === page.artist.artist_id
+              : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
       return same ? s : [...s, { page, scroll }]
     })
   }, [])
@@ -173,6 +198,7 @@ function Listen(props: Props) {
       openAlbum: (dir, origin) => push({ kind: 'album', dir, origin }),
       openArtist: (name) => push({ kind: 'artist', name }),
       openOnlineAlbum: (album) => push({ kind: 'online-album', album }),
+      openOnlineArtist: (artist) => push({ kind: 'online-artist', artist }),
       editDetails: (dir) => edit.current(dir),
     }),
     [root, push],
@@ -219,6 +245,14 @@ function Listen(props: Props) {
     return () => window.removeEventListener('mouseup', onMouse)
   }, [stack, back])
 
+  // Asked from outside for an online artist's page (Now Playing's "More online by…").
+  const artistAsked = useSyncExternalStore(onArtistAsked, () => askedArtist)
+  useEffect(() => {
+    if (!artistAsked) return
+    askedArtist = null
+    push({ kind: 'online-artist', artist: artistAsked })
+  }, [artistAsked, push])
+
   // Asked from outside for a view (Playlists, with a playlist open).
   const tabAsked = useSyncExternalStore(onTabAsked, () => askedTab)
   useEffect(() => {
@@ -263,6 +297,24 @@ function Listen(props: Props) {
   }
 
   const results = useMemo(() => search(lib, typed), [lib, typed])
+  // Playing from the results of these words (a song, an online row, a lyric hit) means them.
+  const playingFrom = usePlayerValue((s) => s.from)
+  useEffect(() => {
+    const f = readFrom(playingFrom)
+    if (f?.kind === 'search' && words.current && f.ref.trim().toLowerCase() === words.current.toLowerCase()) recentSearches.push(words.current)
+  }, [playingFrom])
+  // Quick suggestions under the field, from the library: a couple of artists and albums, a few songs.
+  const suggest = useCallback(
+    (text: string): Suggestion[] => {
+      const r = search(lib, text)
+      return [
+        ...r.artists.slice(0, 2).map((a) => ({ key: `artist:${a.key}`, kind: 'Artist' as const, label: a.name, detail: `${a.albums.length} ${a.albums.length === 1 ? 'album' : 'albums'}`, value: a.name })),
+        ...r.albums.slice(0, 2).map((a) => ({ key: `album:${a.dir}`, kind: 'Album' as const, label: a.title, detail: a.artist, value: a.title })),
+        ...r.tracks.slice(0, 3).map((t) => ({ key: `song:${t.path}`, kind: 'Song' as const, label: t.title, detail: t.artists.join(', '), value: t.title })),
+      ].slice(0, 6)
+    },
+    [lib],
+  )
   const lyricHits = useLyricHits(root, typed)
   // Songs found by their words, apart from the ones already found by name.
   const inLyrics = useMemo(() => {
@@ -294,6 +346,8 @@ function Listen(props: Props) {
     if (!report) return <Reading busy={busy} />
     if (!tracks) return <Loading />
     if (top?.page.kind === 'online-album') return <OnlineAlbumPage key={top.page.album.album_id} album={top.page.album} onBack={back} />
+    if (top?.page.kind === 'online-artist')
+      return <OnlineArtistPage key={top.page.artist.artist_id} artist={top.page.artist} lib={lib} onBack={back} />
     if (!lib.tracks.length && !typed.trim())
       return (
         <p className="py-20 text-center text-[14px] text-ink/55">
@@ -374,30 +428,22 @@ function Listen(props: Props) {
                 options={TABS.map(([value, label]) => ({ value, label, drop: value === 'playlists' ? toPlaylists : null }))}
                 onChange={choose}
               />
-          <div className="ml-auto flex min-w-[240px] max-w-[380px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1] focus-within:shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_60%,transparent)]">
-            <IconSearch className="shrink-0 text-ink/45" />
-            <input
-              ref={searchRef}
-              id="listen-search"
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setFadeIn(true)
-                if (stack.length) leavePages()
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  setQuery('')
-                  e.currentTarget.blur()
-                }
-              }}
-              placeholder="Search albums, artists, songs"
-              aria-label="Search your music"
-              className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45 [&::-webkit-search-cancel-button]:hidden"
-            />
-            <kbd>/</kbd>
-          </div>
+          <SearchBox
+            id="listen-search"
+            inputRef={searchRef}
+            value={query}
+            onChange={(v) => {
+              setQuery(v)
+              setFadeIn(true)
+              if (stack.length) leavePages()
+            }}
+            onEscape={() => setQuery('')}
+            suggest={lib.tracks.length ? suggest : undefined}
+            placeholder="Search albums, artists, songs"
+            label="Search your music"
+            hint={<kbd>/</kbd>}
+            className="ml-auto min-w-[240px] max-w-[380px] flex-1"
+          />
             </>
           }
         >
