@@ -45,8 +45,11 @@ And the CPU, with `pwsh scripts/qa/cpu.ps1 -Seconds 20 -Split` while the copy is
 
 ## 3. Every theme still draws every screen
 
-`node scripts/theme-shots.mjs`, then look through the shots: nothing unreadable, nothing missing,
-the album background where the theme has one.
+In the same test copy (its inspector port as `VENUTA_CDP_PORT`): `node scripts/theme-shots.mjs take
+<after>` on the release, and `take <before>` on the last release, then
+`node scripts/theme-shots.mjs compare <before> <after>`. Every difference it counts is one that was
+meant; look through the shots too: nothing unreadable, nothing missing, the album background where
+the theme has one.
 
 ## 4. FEATURES.md, walked through
 
