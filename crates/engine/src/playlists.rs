@@ -1198,23 +1198,21 @@ pub fn duplicate(
 }
 
 /// Save a playlist for use outside the library (another app, a phone): full paths to the
-/// files, and only songs that are here. Returns how many songs it holds.
+/// files, and only songs that are here. Returns how many songs it holds. Written safely
+/// through [`crate::exports`], which has every other format and path style.
 pub fn export(library_root: &Path, lib: &Library, name: &str, to: &Path) -> Result<usize, String> {
-    let (entries, _) = read(library_root, lib, name)?;
-    let mut out = format!("#EXTM3U\n#PLAYLIST:{name}\n");
-    let mut n = 0;
-    for e in entries.iter().filter(|e| !e.missing) {
-        out.push_str(&format!(
-            "#EXTINF:{},{} - {}\n{}\n",
-            (e.duration_ms + 500) / 1000,
-            e.artist,
-            e.title,
-            library_root.join(&e.path).to_string_lossy()
-        ));
-        n += 1;
-    }
-    std::fs::write(to, out).map_err(|e| e.to_string())?;
-    Ok(n)
+    let songs = crate::exports::songs_of(library_root, lib, name)?;
+    let opts = crate::exports::Options {
+        format: crate::exports::Format::M3u8,
+        style: crate::exports::PathStyle::ThisPc,
+        include_missing: false,
+    };
+    let saved_in = to.parent().unwrap_or(Path::new("."));
+    crate::exports::write(
+        to,
+        &crate::exports::render(name, &songs, &opts, library_root, saved_in),
+    )?;
+    Ok(songs.iter().filter(|s| s.file.is_some()).count())
 }
 
 // --- Matching streaming tracks to local files ----------------------------------------------
@@ -1394,7 +1392,8 @@ pub struct Matcher<'a> {
     /// The same, by the loose spelling: titles spelled differently ("Kesariyaa").
     by_fold: HashMap<String, Vec<&'a Track>>,
     by_loose: HashMap<String, Vec<&'a Track>>,
-    by_isrc: HashMap<String, &'a Track>,
+    /// Recording codes: one recording can be on a single and an album (two files).
+    by_isrc: HashMap<String, Vec<&'a Track>>,
     /// Files by name without extension (a phone's copy may be converted), to find the file a
     /// list from another device names.
     by_file: HashMap<String, Vec<&'a Track>>,
@@ -1433,7 +1432,7 @@ impl<'a> Matcher<'a> {
         let mut by_title: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_fold: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_loose: HashMap<String, Vec<&Track>> = HashMap::new();
-        let mut by_isrc: HashMap<String, &Track> = HashMap::new();
+        let mut by_isrc: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_mbid: HashMap<String, &Track> = HashMap::new();
         let mut by_file: HashMap<String, Vec<&Track>> = HashMap::new();
         for t in lib.tracks.iter() {
@@ -1455,7 +1454,7 @@ impl<'a> Matcher<'a> {
                 .map(|i| i.trim().to_uppercase())
                 .filter(|i| i.len() >= 12)
             {
-                by_isrc.entry(i).or_insert(t);
+                by_isrc.entry(i).or_default().push(t);
             }
         }
         Self {
@@ -1580,11 +1579,36 @@ impl<'a> Matcher<'a> {
 
     /// Find a song from elsewhere in the library, and say how sure the match is.
     pub fn grade(&self, f: &Foreign) -> Option<Found<'a>> {
+        self.grade_as_written(f).or_else(|| {
+            // "Artist - Title" split at the first dash, but the artist's own name has one
+            // ("Avinash - Vishwajeet"): move the title's first part back to the artist.
+            let (head, tail) = f.title.split_once(" - ")?;
+            (!f.artist.is_empty()).then_some(())?;
+            self.grade_as_written(&Foreign {
+                artist: format!("{} - {}", f.artist, head),
+                title: tail.to_owned(),
+                ..f.clone()
+            })
+        })
+    }
+
+    fn grade_as_written(&self, f: &Foreign) -> Option<Found<'a>> {
         // 1. The same recording code is the same recording.
         if let Some(t) = f
             .isrc
             .as_ref()
             .and_then(|i| self.by_isrc.get(&i.trim().to_uppercase()))
+            .map(|twins| {
+                // On a single and an album: the one on the album named, else the nearest length.
+                let album = title_key(&f.album);
+                twins
+                    .iter()
+                    .copied()
+                    .find(|t| {
+                        !album.is_empty() && t.first("ALBUM").is_some_and(|a| title_key(a) == album)
+                    })
+                    .unwrap_or_else(|| Self::nearest(twins, f.duration_ms))
+            })
         {
             return Some(Found {
                 track: t,
@@ -2308,6 +2332,67 @@ mod tests {
             .map(|x| x.1),
             Some(Grade::Close)
         );
+    }
+
+    #[test]
+    fn one_recording_on_a_single_and_an_album_goes_by_the_album() {
+        let mut single = song(
+            1,
+            "S/Yaaron (2025)/01 - Yaaron.flac",
+            "Yaaron",
+            "Duo",
+            "Yaaron",
+            200_000,
+        );
+        let mut album = song(
+            2,
+            "S/Day (2025)/02 - Yaaron.flac",
+            "Yaaron",
+            "Duo",
+            "Day",
+            200_000,
+        );
+        for t in [&mut single, &mut album] {
+            t.tags.insert("ISRC".into(), vec!["INX112500001".into()]);
+        }
+        let lib = library(vec![single, album]);
+        let m = Matcher::new(&lib);
+        let with = |album: &str| Foreign {
+            isrc: Some("INX112500001".into()),
+            ..foreign("Yaaron", "Duo", album, Some(200_000))
+        };
+        assert_eq!(
+            m.grade(&with("Day")).unwrap().track.path,
+            "S/Day (2025)/02 - Yaaron.flac"
+        );
+        assert_eq!(
+            m.grade(&with("Yaaron")).unwrap().track.path,
+            "S/Yaaron (2025)/01 - Yaaron.flac"
+        );
+    }
+
+    #[test]
+    fn an_artist_with_a_dash_in_their_name_is_still_found() {
+        // "Avinash - Vishwajeet" is one name; a list line "A & Avinash - Vishwajeet - Song" splits
+        // at the first dash.
+        let lib = library(vec![song(
+            1,
+            "M/01.flac",
+            "Saad Hi",
+            "Avinash - Vishwajeet",
+            "MPM 2",
+            200_000,
+        )]);
+        let m = Matcher::new(&lib);
+        let f = m
+            .grade(&foreign(
+                "Vishwajeet - Saad Hi",
+                "Bela Shende & Avinash",
+                "",
+                None,
+            ))
+            .unwrap();
+        assert_eq!(f.track.path, "M/01.flac");
     }
 
     #[test]

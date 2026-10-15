@@ -16,6 +16,7 @@ pub mod device;
 pub mod edit;
 pub mod enrich;
 pub mod error;
+pub mod exports;
 pub mod fingerprint;
 pub mod formats;
 pub mod imports;

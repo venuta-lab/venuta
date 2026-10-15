@@ -302,6 +302,12 @@ fn duration_ms(s: &str, millis: bool) -> Option<u64> {
         let parts: Vec<u64> = s.split(':').filter_map(|p| p.trim().parse().ok()).collect();
         return Some(parts.iter().fold(0, |acc, p| acc * 60 + p) * 1000);
     }
+    // "157s" (Soundiiz), "157000ms".
+    let (s, millis) = match (s.strip_suffix("ms"), s.strip_suffix('s')) {
+        (Some(n), _) => (n.trim(), true),
+        (None, Some(n)) => (n.trim(), false),
+        _ => (s, millis),
+    };
     let n: f64 = s.parse().ok()?;
     Some(if millis {
         n as u64
@@ -353,6 +359,9 @@ fn rows_playlists(mut rows: Vec<Vec<String>>, stem: &str) -> Result<Vec<ForeignP
     let secs = col(&["duration", "time", "length"]);
     let list = col(&["playlist name", "playlist"]);
     let video = col(&["video id", "video_id", "videoid"]);
+    // Soundiiz's layout (and Venuta's): a platform and that platform's id.
+    let platform = col(&["platform"]);
+    let track_id = col(&["trackid", "track id"]);
     let source = if video.is_some() {
         "YouTube Music"
     } else if head
@@ -395,7 +404,11 @@ fn rows_playlists(mut rows: Vec<Vec<String>>, stem: &str) -> Result<Vec<ForeignP
                     secs.and_then(|i| r.get(i))
                         .and_then(|s| duration_ms(s, false))
                 }),
-            youtube: Some(get(r, video)).filter(|s| !s.is_empty()),
+            youtube: Some(get(r, video)).filter(|s| !s.is_empty()).or_else(|| {
+                (get(r, platform).eq_ignore_ascii_case("youtube"))
+                    .then(|| get(r, track_id))
+                    .filter(|s| !s.is_empty())
+            }),
             file: None,
             mbid: None,
             spotify: None,
@@ -797,6 +810,31 @@ fn m3u(text: &str, stem: &str, dir: &Path) -> ForeignPlaylist {
     for line in text.lines().map(str::trim) {
         if let Some(n) = line.strip_prefix("#PLAYLIST:") {
             name = n.trim().to_owned();
+        } else if let Some(json) = line.strip_prefix(playlists::WANT_TAG) {
+            // A song you didn't have when it was written: everything known about it.
+            venuta = true;
+            if let Ok(w) = serde_json::from_str::<playlists::WantEntry>(json) {
+                tracks.push(Foreign {
+                    title: w.title,
+                    artist: w.artist,
+                    album: w.album,
+                    duration_ms: Some(w.duration_ms).filter(|d| *d > 0),
+                    isrc: w.isrc,
+                    ..Default::default()
+                });
+            }
+        } else if let Some(o) = playlists::decode_online(line) {
+            // An online song: its stable id (YouTube's), as Takeout's are.
+            venuta = true;
+            tracks.push(Foreign {
+                title: o.title,
+                artist: o.artists.join(", "),
+                album: o.album.unwrap_or_default(),
+                duration_ms: o.duration_ms,
+                isrc: o.isrc,
+                youtube: (o.provider == "remote_catalog").then_some(o.track_id),
+                ..Default::default()
+            });
         } else if line.starts_with("#VENUTA") {
             venuta = true;
         } else if let Some(info) = line.strip_prefix("#EXTINF:") {

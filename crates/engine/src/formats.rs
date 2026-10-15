@@ -234,6 +234,7 @@ pub fn jspf(text: &str) -> (Option<String>, Vec<Listed>) {
         .into_iter()
         .flatten()
         .map(|t| {
+            let venuta = &t["extension"][crate::exports::JSPF_EXTENSION];
             let ids: Vec<String> = match &t["identifier"] {
                 serde_json::Value::String(one) => vec![one.clone()],
                 serde_json::Value::Array(many) => many.iter().map(s).collect(),
@@ -252,6 +253,12 @@ pub fn jspf(text: &str) -> (Option<String>, Vec<Listed>) {
                     album: s(&t["album"]),
                     duration_ms: t["duration"].as_u64().filter(|d| *d > 0),
                     mbid: ids.iter().find_map(|i| recording_id(i)),
+                    // Venuta's own extension: the recording code, an online song.
+                    isrc: venuta["isrc"].as_str().map(str::to_owned),
+                    youtube: venuta["online"]["track_id"]
+                        .as_str()
+                        .filter(|_| venuta["online"]["provider"] == "remote_catalog")
+                        .map(str::to_owned),
                     ..Default::default()
                 },
             }
