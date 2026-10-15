@@ -221,14 +221,18 @@ const SongRow = memo(function SongRow(props: {
       <span className="truncate text-[13.5px] font-medium">{t.title}</span>
       <span className={`truncate text-[13px] ${isNow ? '' : 'text-ink/60'}`}>{artistsOf(t)}</span>
       <span className="min-w-0 truncate">
-        <button
-          tabIndex={-1}
-          onClick={() => openAlbum(t.dir)}
-          onDoubleClick={(e) => e.stopPropagation()}
-          className={`max-w-full truncate text-left text-[13px] hover:underline ${isNow ? '' : 'text-ink/60'}`}
-        >
-          {t.album}
-        </button>
+        {/* Only a song with an album has one to go to (an empty button had no name). */}
+        {t.album && (
+          <button
+            tabIndex={-1}
+            aria-label={`Go to the album ${t.album}`}
+            onClick={() => openAlbum(t.dir)}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className={`max-w-full truncate text-left text-[13px] hover:underline ${isNow ? '' : 'text-ink/60'}`}
+          >
+            {t.album}
+          </button>
+        )}
       </span>
       <span className={`text-right text-[12.5px] ${isNow ? '' : 'text-ink/55'}`}>{clock(t.duration_ms)}</span>
       <span className="min-w-0">

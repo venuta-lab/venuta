@@ -168,7 +168,7 @@ export function OnlineResults(props: { query: string; spaced: boolean; libraryEm
                 Searching online…
               </span>
             ) : (
-              'Same list as your library — plays without the file'
+              'Plays online until you have the file'
             )}
           </span>
         </div>
@@ -276,7 +276,7 @@ export function OnlineTrackRow(props: {
   onAdd: () => void
 }) {
   const t = props.track
-  const artists = t.artists.join(', ') || '—'
+  const artists = t.artists.join(', ') || 'Unknown artist'
   const menu = () =>
     menuFor(
       'song',

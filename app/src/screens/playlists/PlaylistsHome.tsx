@@ -12,6 +12,27 @@ import { addSongsTo } from './ops'
 import { playlistSongs, playPlaylist, plural, sourceName } from './common'
 import { keyFor, matcher } from '../../lib/textsearch'
 
+/** A playlist with no songs yet, small: opens it, has its menu, takes songs dropped on it. */
+function EmptyPlaylist(props: { root: string; p: PlaylistSummary; onOpen: () => void }) {
+  const { root, p } = props
+  const drop = useDropTarget({
+    label: `Add to ${p.name}`,
+    drop: async (c) => void addSongsTo(root, p.name, (await c.songs()).map(songItemOf), c.label),
+  })
+  return (
+    <button
+      {...drop.props}
+      onClick={props.onOpen}
+      onContextMenu={(e) => menuFromEvent(e, menuFor('playlist', playlistFacts(p), playlistWork(root, p)))}
+      className="flex max-w-[260px] items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1.5 text-[13px] text-ink/80 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink"
+      title={p.source ? `From ${sourceName(p.source)}` : undefined}
+    >
+      <span aria-hidden className="text-ink/40">♪</span>
+      <span className="truncate">{p.name}</span>
+    </button>
+  )
+}
+
 /** A playlist as a card: its mosaic, name and size; hover to play, right-click for the rest. */
 export function PlaylistCard(props: {
   root: string
@@ -117,10 +138,12 @@ export function PlaylistsHome(props: {
   const has = matcher(q)
   const match = (p: PlaylistSummary) => has(keyFor(p, () => p.name))
   const smartNames = new Set(data?.smart.map((r) => r.name) ?? [])
-  const yours = all.filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && match(p))
+  // Empty ones (no songs yet) sit in a compact row under the grid, not as full tiles.
+  const empty = all.filter((p) => !p.smart && !smartNames.has(p.name) && p.tracks === 0 && match(p))
+  const yours = all.filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
   const imported = useMemo(() => {
     const groups = new Map<string, PlaylistSummary[]>()
-    for (const p of all.filter((x) => !x.smart && !smartNames.has(x.name) && x.source && match(x))) {
+    for (const p of all.filter((x) => !x.smart && !smartNames.has(x.name) && x.source && x.tracks > 0 && match(x))) {
       const k = sourceName(p.source) || 'Elsewhere'
       groups.set(k, [...(groups.get(k) ?? []), p])
     }
@@ -235,6 +258,16 @@ export function PlaylistsHome(props: {
               </div>,
             ),
           )}
+          {empty.length > 0 &&
+            section(
+              'Empty',
+              <div className="flex flex-wrap gap-2">
+                {empty.map((p) => (
+                  <EmptyPlaylist key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} />
+                ))}
+              </div>,
+              <span className="text-[12.5px] text-ink/50">No songs yet: open one to add some, or drop songs on it.</span>,
+            )}
           {smart.length > 0 &&
             section(
               'Smart',

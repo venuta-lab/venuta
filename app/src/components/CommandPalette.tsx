@@ -226,7 +226,7 @@ export function CommandPalette(props: {
                   setSel(0)
                 }}
                 onKeyDown={onKey}
-                placeholder={props.root ? 'Type a command, album, artist — or an online song' : 'Type a command, an album or an artist'}
+                placeholder={props.root ? 'Type a command, an album, an artist or an online song' : 'Type a command, an album or an artist'}
                 className="min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink/40"
                 role="combobox"
                 aria-expanded="true"

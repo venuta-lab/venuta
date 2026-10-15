@@ -990,7 +990,7 @@ function PlaylistRow(props: {
           <span className={`truncate text-[14px] font-medium ${get ? 'text-ink/85' : ''}`}>{r.title}</span>
           {props.badge && <AvailabilityBadge availability={entryAvailability(r)} />}
         </span>
-        <span className={`block truncate text-[12.5px] ${isNow ? 'opacity-80' : 'text-ink/55'}`}>{r.artist || '—'}</span>
+        <span className={`block truncate text-[12.5px] ${isNow ? 'opacity-80' : 'text-ink/55'}`}>{r.artist || 'Unknown artist'}</span>
       </span>
       <span className="min-w-0 text-[13px] text-ink/55">
         {get && r.maybe ? (

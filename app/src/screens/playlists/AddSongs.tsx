@@ -263,12 +263,13 @@ function Row(props: {
     <div
       role="option"
       aria-selected={props.on}
+      aria-label={`${title}, ${line.replace(' · ', ', ')}${e.kind === 'online' ? ', online' : ''}${props.inIt ? ', in the playlist' : ''}`}
       data-i={props.n}
       onMouseMove={props.onHover}
       onClick={props.onAdd}
       className={`group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 transition-colors ${props.on ? 'bg-ink/[0.07]' : 'hover:bg-ink/[0.05]'}`}
     >
-      <span className={`grid h-10 w-10 shrink-0 place-items-center overflow-hidden bg-ink/[0.07] text-ink/30 ${e.kind === 'album' ? 'rounded-lg' : 'rounded-md'}`}>
+      <span aria-hidden className={`grid h-10 w-10 shrink-0 place-items-center overflow-hidden bg-ink/[0.07] text-ink/30 ${e.kind === 'album' ? 'rounded-lg' : 'rounded-md'}`}>
         {e.kind === 'online' ? (
           <RemoteArt url={e.t.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
         ) : art ? (
