@@ -50,7 +50,7 @@ import { Mosaic } from '../../components/Mosaic'
 import { RemoteArt } from '../../components/RemoteArt'
 import { Detail, Segmented } from '../../components/ui'
 import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../components/Icons'
-import { useOnlineSearch } from '../listen/OnlineResults'
+import { useOnlineSearch } from '../listen/onlineSearch'
 import { Equalizer, useContextMenu } from '../listen/parts'
 import { entryAvailability, fromWhere, length, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
@@ -1012,7 +1012,7 @@ function SongFinder(props: {
   const [sel, setSel] = useState(0)
   const found = useSongSearch(q, props.catalog)
   const cover = useCovers(320)
-  const { results: online, error: onlineError, loading: onlineLoading, resultsFor } = useOnlineSearch(q)
+  const { results: online, error: onlineError, loading: onlineLoading, resultsFor } = useOnlineSearch(q, 'add-songs')
   const onlineTracks = online?.tracks ?? []
   const onlineFresh = resultsFor === q.trim()
   const listLen = source === 'library' ? found.length : onlineTracks.length

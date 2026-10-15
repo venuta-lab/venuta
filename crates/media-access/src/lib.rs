@@ -7,6 +7,7 @@
 //! saved into playlists or restored queues.
 
 mod access;
+mod catalog_json;
 mod fake;
 #[cfg(feature = "live-provider")]
 mod live_provider;
@@ -27,5 +28,5 @@ pub use online::UnconfiguredOnlineAccess;
 pub use stream_resolve::{ensure_stream_tool, stream_tool_status, StreamToolStatus};
 pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, ONLINE_PLAYLIST_TAG, Page,
-    PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteTrack,
+    PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteTrack,
 };

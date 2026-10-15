@@ -6,7 +6,8 @@ import { RemoteArt } from '../../components/RemoteArt'
 import type { OnlineEntry, OnlineTrack, PlaylistEntry } from '../../lib/engine'
 import { useEscape } from '../../lib/layers'
 import { clock, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
-import { useOnlineSearch } from '../listen/OnlineResults'
+import { useOnlineSearch } from '../listen/onlineSearch'
+import { rankOnlineTracks } from '../../lib/searchRank'
 import { plural } from './common'
 
 /*
@@ -46,8 +47,13 @@ export function OnlinePick<R extends PlaylistEntry & { key: string }>(props: {
   const [chosen, setChosen] = useState<[R, OnlineEntry][]>([])
   const row = props.rows[at]
   const [q, setQ] = useState(() => (row ? wordsOf(row) : ''))
-  const { results, error, loading, resultsFor } = useOnlineSearch(q)
-  const hits = useMemo(() => (resultsFor === q.trim() ? (results?.tracks ?? []).slice(0, TOP) : []), [results, resultsFor, q])
+  const { results, error, loading, resultsFor } = useOnlineSearch(q, 'pick')
+  // Ranked again with the length the playlist remembers: a hit that close is most likely it.
+  const want = row?.duration_ms
+  const hits = useMemo(
+    () => (resultsFor === q.trim() ? rankOnlineTracks(q, results?.tracks ?? [], { wantDurationMs: want }).slice(0, TOP) : []),
+    [results, resultsFor, q, want],
+  )
   const many = props.rows.length > 1
   useEscape(true, props.onClose)
 

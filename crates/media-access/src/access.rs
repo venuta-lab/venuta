@@ -1,5 +1,6 @@
 use crate::types::{
-    CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist, RemoteTrack,
+    CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist,
+    RemoteArtistPage, RemoteTrack,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -81,6 +82,20 @@ pub trait MediaAccess: Send + Sync {
         track_id: &str,
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
+
+    /// An artist's page (top songs, more songs, albums, singles, similar artists). A catalog
+    /// without artist pages answers Unsupported, which is what this default does.
+    fn artist_page(
+        &self,
+        artist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteArtistPage, AccessError> {
+        let _ = (artist_id, cancel);
+        Err(AccessError::new(
+            AccessErrorKind::Unsupported,
+            "artist pages are not available from this catalog",
+        ))
+    }
 }
 
 /// Default factory used by the app and release builds.
@@ -171,6 +186,14 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Page<RemoteTrack>, AccessError> {
         self.inner.album_tracks(album_id, page, cancel)
+    }
+
+    fn artist_page(
+        &self,
+        artist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteArtistPage, AccessError> {
+        self.inner.artist_page(artist_id, cancel)
     }
 
     fn playlist_tracks(

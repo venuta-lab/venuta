@@ -1,0 +1,284 @@
+{
+  "about": "Search quality eval set. Each case: the words typed, candidate online rows shaped like the online catalog's answer (kind of upload, plays, album, length, the catalog's top/position hints), and what a good ranking must do. Rows are synthetic but modelled on live answers (2026-10-15 probes); expectations are classes and rules, never live ids. Row fields: t title, a artists, al album, vt video type (ATV official audio, OMV official video, UGC upload, PODCAST_EPISODE), p plays/views, d length m:ss, top catalog top result, r unfiltered position. Expectation fields: topArtist (first row's artists contain one of these), topTitle (first row's title contains), topClass (first row's version class), notFirst (classes the first row must not be), coversLast (cover-kinds only after every other row), once (title|artist pairs that appear exactly once), wantMs (playlist length the picker knows), pick (Top result: kind/where).",
+  "cases": [
+    {
+      "query": "kesariya",
+      "note": "Film hit; the catalog's top card is a slowed upload; lofi and karaoke around it.",
+      "tracks": [
+        { "t": "Kesariya (Slowed + Reverb)", "a": "Lofi World", "vt": "UGC", "p": 4000000, "d": "4:40", "top": true, "r": 0 },
+        { "t": "Kesariya Lofi", "a": "Daarrrsssshhhhh", "al": "Kesariya Lofi", "vt": "ATV", "p": 1800 },
+        { "t": "Kesariya Balam", "a": "Ali", "al": "Kesariya Balam", "vt": "ATV", "p": 2500 },
+        { "t": "Kesariya Karaoke With Lyrics", "a": "Karaoke Point", "vt": "UGC", "p": 90000 },
+        { "t": "Kesariya (From \"Brahmastra\")", "a": "Arijit Singh", "al": "Kesariya (From \"Brahmastra\")", "vt": "ATV", "p": 966000000, "d": "4:28", "r": 3 }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official", "notFirst": ["cover"], "coversLast": true }
+    },
+    {
+      "query": "kesaria",
+      "note": "Spelled loosely: the same song.",
+      "same": "kesariya",
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "केसरिया",
+      "note": "Typed in Devanagari: read in Roman letters, the same song.",
+      "same": "kesariya",
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official" }
+    },
+    {
+      "query": "kesariya lofi",
+      "note": "Asked for lofi: the lofi kind rises.",
+      "same": "kesariya",
+      "expect": { "topClass": "cover", "topTitle": "lofi" }
+    },
+    {
+      "query": "kesariya karaoke",
+      "same": "kesariya",
+      "expect": { "topClass": "cover", "topTitle": "karaoke" }
+    },
+    {
+      "query": "tum hi ho",
+      "note": "A fan lyric upload and the film video both have huge counts.",
+      "tracks": [
+        { "t": "Tum Hi Ho Lyrics", "a": "Lyrics Hub", "vt": "UGC", "p": 50000000, "r": 0 },
+        { "t": "Tum Hi Ho Full Video Song | Aashiqui 2", "a": "T-Series", "vt": "OMV", "p": 400000000, "r": 1 },
+        { "t": "Tum Hi Ho (Female Version)", "a": "Someone", "al": "Covers", "vt": "ATV", "p": 20000 },
+        { "t": "Tum Hi Ho", "a": "Arijit Singh", "al": "Aashiqui 2", "vt": "ATV", "p": 1200000000, "d": "4:22", "r": 3 }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "tum hi ho arijit",
+      "note": "Title and artist typed together.",
+      "same": "tum hi ho",
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official" }
+    },
+    {
+      "query": "tum hi ho karaoke",
+      "tracks": [
+        { "t": "Tum Hi Ho", "a": "Arijit Singh", "al": "Aashiqui 2", "vt": "ATV", "p": 1200000000 },
+        { "t": "Tum Hi Ho Karaoke | Clean Track", "a": "Sing King India", "vt": "UGC", "p": 3000000 }
+      ],
+      "expect": { "topTitle": "karaoke", "topClass": "cover" }
+    },
+    {
+      "query": "channa mereya",
+      "tracks": [
+        { "t": "Channa Mereya Slowed + Reverb", "a": "Midnight Lofi", "vt": "UGC", "p": 20000000, "top": true, "r": 0 },
+        { "t": "Channa Mereya | Lofi Flip", "a": "Lofi Gang", "vt": "UGC", "p": 900000 },
+        { "t": "Channa Mereya (Unplugged)", "a": "Arijit Singh", "al": "Ae Dil Hai Mushkil (Unplugged)", "vt": "ATV", "p": 30000000 },
+        { "t": "Channa Mereya", "a": "Pritam, Arijit Singh", "al": "Ae Dil Hai Mushkil", "vt": "ATV", "p": 800000000, "d": "4:49", "r": 2 }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "topTitle": "channa mereya", "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "channa mereya unplugged",
+      "same": "channa mereya",
+      "expect": { "topTitle": "unplugged", "topClass": "alternate" }
+    },
+    {
+      "query": "raabta",
+      "note": "The same recording on two albums: kept once.",
+      "tracks": [
+        { "t": "Raabta (From \"Agent Vinod\")", "a": "Arijit Singh", "al": "Best of 2012", "vt": "ATV", "p": 1000, "d": "4:04" },
+        { "t": "Raabta", "a": "Pritam, Arijit Singh", "al": "Agent Vinod", "vt": "ATV", "p": 89000000, "d": "4:03" },
+        { "t": "Raabta (Night in a Motel)", "a": "Pritam, Arijit Singh", "al": "Agent Vinod", "vt": "ATV", "p": 30000000, "d": "4:31" }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official", "once": ["raabta|arijit singh"] }
+    },
+    {
+      "query": "apna bana le",
+      "tracks": [
+        { "t": "Apna Bana Le Piano Cover", "a": "Keys Of Life", "vt": "UGC", "p": 2000000, "r": 0 },
+        { "t": "Apna Bana Le (From \"Bhediya\")", "a": "Sachin-Jigar, Arijit Singh", "al": "Bhediya", "vt": "ATV", "p": 600000000, "r": 1 },
+        { "t": "Apna Bana Le 1 Hour Loop", "a": "Loops", "vt": "UGC", "p": 500000, "d": "60:00" }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "kal ho naa ho",
+      "tracks": [
+        { "t": "Kal Ho Naa Ho (Sad Version)", "a": "Sonu Nigam", "al": "Kal Ho Naa Ho", "vt": "ATV", "p": 40000000 },
+        { "t": "Kal Ho Naa Ho Karaoke", "a": "Karaoke Hits", "vt": "UGC", "p": 100000 },
+        { "t": "Kal Ho Naa Ho", "a": "Sonu Nigam", "al": "Kal Ho Naa Ho", "vt": "ATV", "p": 300000000 }
+      ],
+      "expect": { "topArtist": ["sonu nigam"], "topTitle": "kal ho naa ho", "coversLast": true }
+    },
+    {
+      "query": "wonderwall",
+      "note": "Live answer shape: the Oasis recording twice, covers by name and by album, a slowed upload, and a cover's video as the top card.",
+      "tracks": [
+        { "t": "Oasis - Wonderwall (slowed + reverb)", "a": "everydayslowed", "vt": "UGC", "p": 308000, "d": "4:47", "r": 0 },
+        { "t": "Wonderwall cover", "a": "Guitar Guy", "vt": "UGC", "p": 288000, "r": 1 },
+        { "t": "Wonderwall", "a": "Robyn Adele Anderson", "vt": "OMV", "p": 234000, "top": true, "d": "4:02" },
+        { "t": "Wonderwall", "a": "Robyn Adele Anderson", "al": "Wonderwall", "vt": "ATV", "p": 288000, "r": 4, "d": "4:02" },
+        { "t": "Wonderwall", "a": "Oasis", "al": "(What's The Story) Morning Glory?", "vt": "ATV", "p": 1700000000, "r": 3, "d": "4:18" },
+        { "t": "Wonderwall", "a": "Oasis", "al": "(What's The Story) Morning Glory? (Deluxe Remastered Edition)", "vt": "ATV", "p": 1700000000, "r": 5, "d": "4:18" },
+        { "t": "Wonderwall (Epic Trailer Version) (feat. Miranda Dianne)", "a": "J2", "al": "The Iconic Series, Vol. 7", "vt": "ATV", "p": 14000 },
+        { "t": "Wonderwall (Metal Cover)", "a": "Frog Leap Studios", "al": "Wonderwall (Metal Cover)", "vt": "ATV", "p": 228000 },
+        { "t": "Wonderwall (Unplugged)", "a": "Oasis", "al": "(What's The Story) Morning Glory? (30th Anniversary Deluxe Edition)", "vt": "ATV", "p": 9600000 },
+        { "t": "Wonderwall", "a": "Lofi Fruits Music, Chill Fruits Music", "al": "90s Oldschool Lofi Hip Hop", "vt": "ATV", "p": 626000 },
+        { "t": "Wonderwall", "a": "Twinkle Twinkle Little Rock Star", "al": "Lullaby Versions of Oasis", "vt": "ATV", "p": 14000 },
+        { "t": "Wonderwall", "a": "The Royal Philharmonic Orchestra", "al": "Plays the Music of Oasis", "vt": "ATV", "p": 168000 },
+        { "t": "Wonderwall", "a": "Alex Goot", "al": "Songs I Wish I Wrote: Volume 2", "vt": "ATV", "p": 11000000 },
+        { "t": "Oasis - Wonderwall (Official Video)", "a": "Oasis", "vt": "OMV", "p": 707000000, "r": 2, "d": "4:18" }
+      ],
+      "expect": { "topArtist": ["oasis"], "topClass": "official", "notFirst": ["cover", "video"], "coversLast": true, "once": ["wonderwall|oasis"] }
+    },
+    {
+      "query": "wonderwal",
+      "note": "A letter short.",
+      "same": "wonderwall",
+      "expect": { "topArtist": ["oasis"], "topClass": "official" }
+    },
+    {
+      "query": "wonderwall cover",
+      "same": "wonderwall",
+      "expect": { "topClass": "cover" }
+    },
+    {
+      "query": "wonderwall unplugged",
+      "same": "wonderwall",
+      "expect": { "topArtist": ["oasis"], "topTitle": "unplugged" }
+    },
+    {
+      "query": "blinding lights",
+      "tracks": [
+        { "t": "Blinding Lights (Slowed)", "a": "Slowed Hits", "vt": "UGC", "p": 30000000, "r": 0 },
+        { "t": "Blinding Lights (Piano Version)", "a": "Piano Dreamers", "al": "Piano Covers of Pop Hits", "vt": "ATV", "p": 2000000 },
+        { "t": "Blinding Lights (Chromatics Remix)", "a": "The Weeknd", "al": "After Hours (Remixes)", "vt": "ATV", "p": 40000000 },
+        { "t": "Blinding Lights", "a": "The Weeknd", "al": "After Hours", "vt": "ATV", "p": 4000000000, "d": "3:20", "r": 1 },
+        { "t": "The Weeknd - Blinding Lights (Official Video)", "a": "The Weeknd", "vt": "OMV", "p": 1000000000, "r": 2 }
+      ],
+      "expect": { "topArtist": ["the weeknd"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "blinding light",
+      "note": "Typed short of the title.",
+      "same": "blinding lights",
+      "expect": { "topArtist": ["the weeknd"], "topClass": "official" }
+    },
+    {
+      "query": "blinding lights remix",
+      "same": "blinding lights",
+      "expect": { "topClass": "remix", "topArtist": ["the weeknd"] }
+    },
+    {
+      "query": "bohemian rhapsody",
+      "tracks": [
+        { "t": "Bohemian Rhapsody (Live Aid)", "a": "Queen", "al": "Live Aid", "vt": "ATV", "p": 150000000 },
+        { "t": "Bohemian Rhapsody Karaoke", "a": "Karaoke Hits", "vt": "UGC", "p": 1000000 },
+        { "t": "Bohemian Rhapsody", "a": "Queen", "al": "A Night At The Opera", "vt": "ATV", "p": 2500000000, "d": "5:55" },
+        { "t": "Bohemian Rhapsody 10 Hours", "a": "Loops Forever", "vt": "UGC", "p": 2000000, "d": "600:00" }
+      ],
+      "expect": { "topArtist": ["queen"], "topTitle": "bohemian rhapsody", "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "bohemian rapsody",
+      "note": "Spelled without the h.",
+      "same": "bohemian rhapsody",
+      "expect": { "topArtist": ["queen"], "topClass": "official" }
+    },
+    {
+      "query": "bohemian rhapsody live",
+      "same": "bohemian rhapsody",
+      "expect": { "topArtist": ["queen"], "topTitle": "live", "topClass": "alternate" }
+    },
+    {
+      "query": "hallelujah",
+      "note": "Many real versions: an official recording leads, not a viral video.",
+      "tracks": [
+        { "t": "Hallelujah", "a": "Pentatonix", "vt": "OMV", "p": 700000000, "r": 0 },
+        { "t": "Hallelujah", "a": "Jeff Buckley", "al": "Grace", "vt": "ATV", "p": 600000000, "d": "6:53" },
+        { "t": "Hallelujah", "a": "Leonard Cohen", "al": "Various Positions", "vt": "ATV", "p": 300000000, "d": "4:39" },
+        { "t": "Hallelujah (Piano Cover)", "a": "Piano Peace", "vt": "UGC", "p": 5000000 }
+      ],
+      "expect": { "topArtist": ["jeff buckley", "leonard cohen"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "let it be",
+      "tracks": [
+        { "t": "Let It Be (Remastered 2009)", "a": "The Beatles", "al": "Let It Be (Remastered)", "vt": "ATV", "p": 400000000 },
+        { "t": "Let It Be", "a": "The Beatles", "al": "Let It Be", "vt": "ATV", "p": 1000000000, "d": "4:03" },
+        { "t": "Let It Be (Lullaby Version)", "a": "Baby Rockstar", "al": "Lullabies of the Beatles", "vt": "ATV", "p": 300000 }
+      ],
+      "expect": { "topArtist": ["the beatles"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "shape of you",
+      "tracks": [
+        { "t": "Shape of You - Nightcore", "a": "Nightcore Hub", "vt": "UGC", "p": 15000000, "r": 0 },
+        { "t": "Shape of You (Acoustic)", "a": "Ed Sheeran", "al": "Shape of You (Acoustic)", "vt": "ATV", "p": 90000000 },
+        { "t": "Shape of You", "a": "Ed Sheeran", "al": "÷ (Deluxe)", "vt": "ATV", "p": 4000000000, "d": "3:53", "r": 1 }
+      ],
+      "expect": { "topArtist": ["ed sheeran"], "topClass": "official", "coversLast": true }
+    },
+    {
+      "query": "shape of u",
+      "note": "Texting spelling.",
+      "same": "shape of you",
+      "expect": { "topArtist": ["ed sheeran"] }
+    },
+    {
+      "query": "wonderwall oasis",
+      "note": "The online picker for a playlist that remembers the live recording's length.",
+      "wantMs": 289500,
+      "tracks": [
+        { "t": "Wonderwall", "a": "Oasis", "al": "Morning Glory", "vt": "ATV", "p": 1700000000, "d": "4:18" },
+        { "t": "Wonderwall", "a": "Oasis", "al": "Live at Knebworth", "vt": "ATV", "p": 1000000, "d": "4:50" }
+      ],
+      "expect": { "topArtist": ["oasis"], "topTitle": "wonderwall", "topAlbum": "knebworth" }
+    },
+    {
+      "query": "kesariya",
+      "note": "A podcast episode as the catalog's top card never leads.",
+      "tracks": [
+        { "t": "Kesariya (Synthwave)", "a": "VDJ Fly", "vt": "PODCAST_EPISODE", "p": 50000, "top": true, "r": 0 },
+        { "t": "Kesariya (From \"Brahmastra\")", "a": "Arijit Singh", "al": "Brahmastra", "vt": "ATV", "p": 966000000, "r": 1 }
+      ],
+      "expect": { "topArtist": ["arijit singh"], "notFirst": ["cover"] }
+    },
+    {
+      "query": "arijit singh",
+      "note": "An artist's name: the Top result is the artist.",
+      "tracks": [{ "t": "Raabta", "a": "Arijit Singh", "al": "Agent Vinod", "vt": "ATV", "p": 89000000 }],
+      "artists": [{ "name": "Arijit Singh", "audience": 642000000 }, { "name": "Arijit Singh Fan Club", "audience": 1000 }],
+      "expect": { "pick": { "kind": "artist", "where": "online" } }
+    },
+    {
+      "query": "oasis",
+      "note": "A band with a little-played song of the same name: still the band.",
+      "tracks": [{ "t": "Oasis", "a": "Someone", "al": "Oasis", "vt": "ATV", "p": 20000 }],
+      "artists": [{ "name": "Oasis", "audience": 35000000 }],
+      "expect": { "pick": { "kind": "artist", "where": "online" } }
+    },
+    {
+      "query": "wonderwall",
+      "note": "A small band called Wonderwall doesn't beat the song.",
+      "same": "wonderwall",
+      "artists": [{ "name": "Wonderwall", "audience": 5000 }],
+      "expect": { "pick": { "kind": "song", "where": "online" }, "topArtist": ["oasis"] }
+    },
+    {
+      "query": "aashiqui 2",
+      "note": "A film's name: its album.",
+      "tracks": [{ "t": "Tum Hi Ho", "a": "Arijit Singh", "al": "Aashiqui 2", "vt": "ATV", "p": 1200000000 }],
+      "albums": ["Aashiqui 2", "Aashiqui 2 (Karaoke)"],
+      "expect": { "pick": { "kind": "album", "where": "online" } }
+    },
+    {
+      "query": "tum hi ho",
+      "note": "Your own file wins the Top result.",
+      "same": "tum hi ho",
+      "library": { "tracks": [{ "title": "Tum Hi Ho", "artists": ["Arijit Singh"] }] },
+      "expect": { "pick": { "kind": "song", "where": "library" } }
+    },
+    {
+      "query": "pritam",
+      "note": "A composer's name with no song of that title.",
+      "tracks": [{ "t": "Kesariya", "a": "Pritam, Arijit Singh", "al": "Brahmastra", "vt": "ATV", "p": 966000000 }],
+      "artists": [{ "name": "Pritam", "audience": 540000000 }],
+      "expect": { "pick": { "kind": "artist", "where": "online" } }
+    }
+  ]
+}

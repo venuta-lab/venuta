@@ -17,12 +17,15 @@ import {
   type Artist,
   type Library,
 } from './model'
-import { Detail, InBar } from '../../components/ui'
+import { Detail, InBar, Segmented } from '../../components/ui'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
 import { play } from '../../lib/player'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 import { OnlineResults } from './OnlineResults'
+import { splitOnlineSongs, useOnlineSearch } from './onlineSearch'
+import { TopResult, type TopSources } from './TopResult'
+import { pickTop, type TopPick } from '../../lib/searchRank'
 
 export const HI_RES = 'Hi-Res'
 
@@ -324,6 +327,19 @@ export interface LyricResult {
 }
 
 /** Everything that matches, together: albums, artists, songs, then songs by their words. */
+/** Which part of the search results shows. */
+type ResultChip = 'all' | 'songs' | 'albums' | 'artists' | 'lyrics'
+
+/** Library songs on All before "See all" (a few more than that are shown rather than cut). */
+const SONGS_ON_ALL = 10
+const ALBUMS_ON_ALL = 12
+
+/**
+ * Music search: your library first, the online catalog below. Chips narrow it to songs, albums,
+ * artists or lyrics (back to All when the words change). On All, a Top result leads: the one
+ * thing the words most likely mean (see `pickTop`), chosen from the library at once and once
+ * more when the online catalog answers, then held while the words stay the same.
+ */
 export function SearchResults(props: {
   query: string
   albums: Album[]
@@ -331,37 +347,162 @@ export function SearchResults(props: {
   tracks: Library['tracks']
   lyrics: LyricResult[]
 }) {
-  const nothing = !props.albums.length && !props.artists.length && !props.tracks.length && !props.lyrics.length
-  // Library empty: the online section says so, in one line that agrees with its own state.
-  if (nothing)
-    return (
-      <div className="pb-16">
-        <OnlineResults query={props.query} spaced={false} libraryEmpty />
-      </div>
+  const q = props.query.trim()
+  // One online search for the Top result, the chips and the Online catalog section.
+  const online = useOnlineSearch(props.query)
+  const [picked, setPicked] = useState<{ q: string; chip: ResultChip }>({ q: '', chip: 'all' })
+  const chip: ResultChip = picked.q === q ? picked.chip : 'all'
+  const setChip = (c: ResultChip) => setPicked({ q, chip: c })
+
+  const onlineDone = online.offline || (online.resultsFor === q && !online.loading)
+  const answer = online.resultsFor === q && !online.loading ? online.results : null
+  const best = useMemo(() => splitOnlineSongs(answer?.tracks ?? [], q).best, [answer, q])
+
+  // The Top result: from the library now, once more when the online catalog has answered.
+  const phase = `${q}|${onlineDone ? 'online' : 'library'}`
+  const [held, setHeld] = useState<{ phase: string; pick: TopPick | null }>({ phase: '', pick: null })
+  let top = held.pick
+  if (held.phase !== phase) {
+    top = pickTop(q, { tracks: props.tracks, albums: props.albums, artists: props.artists }, answer ? { songs: best, albums: answer.albums, artists: answer.artists } : null)
+    setHeld({ phase, pick: top })
+  }
+  const sources: TopSources = {
+    query: q,
+    tracks: props.tracks,
+    albums: props.albums,
+    artists: props.artists,
+    songs: best,
+    onlineAlbums: answer?.albums ?? [],
+    onlineArtists: answer?.artists ?? [],
+  }
+  // A pick whose row is gone (the library was read again): none rather than a wrong one.
+  const len = { library: { song: props.tracks.length, album: props.albums.length, artist: props.artists.length }, online: { song: best.length, album: sources.onlineAlbums.length, artist: sources.onlineArtists.length } }
+  if (top && top.index >= len[top.where][top.kind]) top = null
+
+  const libraryEmpty = !props.albums.length && !props.artists.length && !props.tracks.length && !props.lyrics.length
+  const from = { kind: 'search' as const, ref: q, label: `Search: ${q}` }
+  const none = (have: number, there: number) => !have && onlineDone && !there
+  const chips: { value: ResultChip; label: string; disabled?: boolean }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'songs', label: 'Songs', disabled: none(props.tracks.length, answer?.tracks.length ?? 0) },
+    { value: 'albums', label: 'Albums', disabled: none(props.albums.length, answer?.albums.length ?? 0) },
+    { value: 'artists', label: 'Artists', disabled: none(props.artists.length, answer?.artists.length ?? 0) },
+    ...(props.lyrics.length ? [{ value: 'lyrics' as const, label: 'Lyrics' }] : []),
+  ]
+  const eyebrow = (text: string, count?: number) => (
+    <div className="mb-4 flex items-baseline gap-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-ink/45">
+      {text}
+      {count != null && <span className="font-normal normal-case tracking-normal">{count.toLocaleString('en-IN')}</span>}
+    </div>
+  )
+  const lyricSection = (spaced: boolean) =>
+    props.lyrics.length > 0 && (
+      <section className={spaced ? 'mt-12' : ''}>
+        <div className="mb-3 flex items-baseline gap-3">
+          <h2 className="text-[19px] font-semibold tracking-[-0.02em]">In the lyrics</h2>
+          <span className="text-[12.5px] text-ink/50">{props.lyrics.length.toLocaleString('en-IN')}</span>
+        </div>
+        <LyricResults hits={props.lyrics} query={q} />
+      </section>
     )
+
+  let body: React.ReactNode
+  if (chip === 'songs')
+    body = (
+      <>
+        {props.tracks.length > 0 && (
+          <section>
+            {eyebrow('In your library', props.tracks.length)}
+            <SongList tracks={props.tracks} from={from} pin />
+          </section>
+        )}
+        <OnlineResults query={props.query} online={online} spaced={props.tracks.length > 0} parts={{ songs: true, albums: false, artists: false }} covers="tabs" />
+      </>
+    )
+  else if (chip === 'albums')
+    body = (
+      <>
+        {props.albums.length > 0 && (
+          <section>
+            {eyebrow('In your library', props.albums.length)}
+            <AlbumGrid albums={props.albums} origin="search" />
+          </section>
+        )}
+        <OnlineResults query={props.query} online={online} spaced={props.albums.length > 0} parts={{ songs: false, albums: true, artists: false }} />
+      </>
+    )
+  else if (chip === 'artists')
+    body = (
+      <>
+        {props.artists.length > 0 && (
+          <section>
+            {eyebrow('In your library', props.artists.length)}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-x-5 gap-y-7">
+              {props.artists.map((ar) => (
+                <ArtistCard key={ar.key} artist={ar} />
+              ))}
+            </div>
+          </section>
+        )}
+        <OnlineResults query={props.query} online={online} spaced={props.artists.length > 0} parts={{ songs: false, albums: false, artists: true }} />
+      </>
+    )
+  else if (chip === 'lyrics') body = lyricSection(false)
+  else {
+    const songsShown = props.tracks.length > SONGS_ON_ALL + 2 ? props.tracks.slice(0, SONGS_ON_ALL) : props.tracks
+    const hasLibrary = props.albums.length > 0 || props.artists.length > 0 || props.tracks.length > 0
+    body = (
+      <>
+        {top && <TopResult pick={top} from={sources} />}
+        {hasLibrary && (
+          <section aria-label="In your library">
+            {eyebrow('In your library')}
+            {props.artists.length > 0 && <ArtistRow artists={props.artists} />}
+            <Shelf
+              title="Albums"
+              albums={props.albums}
+              origin="search"
+              limit={ALBUMS_ON_ALL}
+              onSeeAll={props.albums.length > ALBUMS_ON_ALL ? () => setChip('albums') : undefined}
+              spaced={props.artists.length > 0}
+            />
+            {props.tracks.length > 0 && (
+              <section className={props.albums.length || props.artists.length ? 'mt-10' : ''}>
+                <div className="mb-3 flex items-baseline gap-3">
+                  <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
+                  <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
+                </div>
+                {/* A few songs here; See all opens the Songs chip with every one. */}
+                <SongList tracks={songsShown} from={from} pin />
+                {songsShown.length < props.tracks.length && (
+                  <button onClick={() => setChip('songs')} className="btn-ghost btn-sm mt-2">
+                    See all {props.tracks.length.toLocaleString('en-IN')} songs
+                  </button>
+                )}
+              </section>
+            )}
+          </section>
+        )}
+        <OnlineResults
+          query={props.query}
+          online={online}
+          spaced={hasLibrary}
+          libraryEmpty={libraryEmpty}
+          covers="fold"
+          songLimit={SONGS_ON_ALL}
+          onSeeAllSongs={() => setChip('songs')}
+        />
+        {lyricSection(true)}
+      </>
+    )
+  }
+
   return (
     <div className="pb-16">
-      {props.artists.length > 0 && <ArtistRow artists={props.artists} />}
-      <Shelf title="Albums" albums={props.albums} origin="search" limit={40} spaced={props.artists.length > 0} />
-      {props.tracks.length > 0 && (
-        <section className={props.albums.length || props.artists.length ? 'mt-10' : ''}>
-          <div className="mb-3 flex items-baseline gap-3">
-            <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
-            <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
-          </div>
-          <SongList tracks={props.tracks} from={{ kind: 'search', ref: props.query.trim(), label: `Search: ${props.query.trim()}` }} pin />
-        </section>
-      )}
-      {props.lyrics.length > 0 && (
-        <section className={props.albums.length || props.artists.length || props.tracks.length ? 'mt-10' : ''}>
-          <div className="mb-3 flex items-baseline gap-3">
-            <h2 className="text-[19px] font-semibold tracking-[-0.02em]">In the lyrics</h2>
-            <span className="text-[12.5px] text-ink/50">{props.lyrics.length.toLocaleString('en-IN')}</span>
-          </div>
-          <LyricResults hits={props.lyrics} query={props.query.trim()} />
-        </section>
-      )}
-      <OnlineResults query={props.query} spaced />
+      <div className="mb-8">
+        <Segmented tabs size="sm" label="Search results" value={chip} options={chips} onChange={setChip} />
+      </div>
+      {body}
     </div>
   )
 }
