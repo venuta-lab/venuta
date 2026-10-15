@@ -2077,6 +2077,7 @@ async fn import_preview(
     root: String,
     files: Vec<String>,
     link: Option<String>,
+    text: Option<String>,
     apple: bool,
     pb: tauri::State<'_, playback::Playback>,
 ) -> CmdResult<ImportRead> {
@@ -2090,13 +2091,25 @@ async fn import_preview(
                 Err(e) => problems.push(e),
             }
         }
-        let needs_web = link.is_some()
-            || lists
-                .iter()
-                .any(|l| l.tracks.iter().any(|t| t.youtube.is_some()));
+        // Pasted text: playlist links, songs copied from Spotify's app, or a list of songs.
+        let mut links: Vec<String> = link.into_iter().collect();
+        if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+            let (pasted_links, mut pasted_lists) = engine::links::pasted(text);
+            if pasted_links.is_empty() && pasted_lists.is_empty() {
+                problems.push("No songs or playlist links found in what was pasted.".into());
+            }
+            links.extend(pasted_links);
+            lists.append(&mut pasted_lists);
+        }
+        let needs_web = !links.is_empty()
+            || lists.iter().any(|l| {
+                l.tracks
+                    .iter()
+                    .any(|t| t.youtube.is_some() || t.spotify.is_some())
+            });
         if needs_web {
             let http = engine::net::Http::open()?;
-            if let Some(link) = link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+            for link in links.iter().map(|l| l.trim()).filter(|l| !l.is_empty()) {
                 use engine::links::Link;
                 match engine::links::parse(link) {
                     Some(Link::YouTube(id)) => match youtube_playlist(catalog.as_ref(), &id) {
@@ -2117,6 +2130,7 @@ async fn import_preview(
                 }
             }
             engine::imports::youtube_titles(&http, &mut lists, &mut |_, _| {});
+            engine::links::spotify_names(&http, &mut lists, &mut |_, _| {});
         }
         if apple {
             let (mut l, mut p) = apple_lists()?;

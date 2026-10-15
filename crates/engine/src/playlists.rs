@@ -1309,6 +1309,9 @@ pub struct Foreign {
     /// The MusicBrainz recording (ListenBrainz and XSPF lists carry it): as sure as an ISRC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mbid: Option<String>,
+    /// A Spotify song copied from Spotify's app, still waiting for its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spotify: Option<String>,
 }
 
 impl Foreign {

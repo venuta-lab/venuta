@@ -398,6 +398,7 @@ fn rows_playlists(mut rows: Vec<Vec<String>>, stem: &str) -> Result<Vec<ForeignP
             youtube: Some(get(r, video)).filter(|s| !s.is_empty()),
             file: None,
             mbid: None,
+            spotify: None,
         };
         if f.title.is_empty() && f.youtube.is_none() {
             continue;
@@ -1010,8 +1011,16 @@ pub fn youtube_titles(
             done += 1;
             on_progress(done, total);
         }
-        // Videos that are gone (private, deleted) have no title to match by.
-        l.tracks.retain(|t| !t.title.is_empty());
+    }
+    // Videos that are gone (private, deleted) have no title to match by.
+    drop_unnamed(lists, |t| t.youtube.is_some());
+}
+
+/// Leave out the songs `waiting` picks that still have no name after their lookup; songs that
+/// wait for another lookup (a copied Spotify song while YouTube's are named) stay.
+pub fn drop_unnamed(lists: &mut [ForeignPlaylist], waiting: impl Fn(&Foreign) -> bool) {
+    for l in lists.iter_mut() {
+        l.tracks.retain(|t| !(waiting(t) && t.title.is_empty()));
     }
 }
 
@@ -1711,6 +1720,30 @@ mod tests {
             f.album.clone(),
             f.duration_ms,
         )
+    }
+
+    #[test]
+    fn naming_youtube_songs_leaves_other_waiting_songs_alone() {
+        // Spotify songs copied from its app wait for their names too; the YouTube step must not
+        // drop them.
+        let mut lists = vec![ForeignPlaylist {
+            name: "Songs from Spotify".into(),
+            source: "Spotify".into(),
+            id: None,
+            tracks: vec![Foreign {
+                spotify: Some("3zOYmiNOuyDL0ClxJcEJ0T".into()),
+                ..Default::default()
+            }],
+        }];
+        drop_unnamed(&mut lists, |t| t.youtube.is_some());
+        assert_eq!(lists[0].tracks.len(), 1);
+        // A YouTube song that stayed without a name goes.
+        lists[0].tracks.push(Foreign {
+            youtube: Some("dQw4w9WgXcQ".into()),
+            ..Default::default()
+        });
+        drop_unnamed(&mut lists, |t| t.youtube.is_some());
+        assert_eq!(lists[0].tracks.len(), 1);
     }
 
     #[test]

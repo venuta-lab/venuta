@@ -474,3 +474,168 @@ mod tests {
         assert!(tidal_embed("<html></html>").is_none());
     }
 }
+
+// --- Songs copied from Spotify's app ------------------------------------------------------------
+
+/// The Spotify song ids in copied text: Spotify's app puts one `open.spotify.com/track/<id>` per
+/// line on the clipboard when you select songs (Liked Songs too) and copy them.
+pub fn spotify_track_ids(text: &str) -> Vec<String> {
+    static TRACK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?:open\.spotify\.com/(?:intl-[a-z-]+/)?track/|spotify:track:)([A-Za-z0-9]{22})",
+        )
+        .expect("valid")
+    });
+    TRACK.captures_iter(text).map(|c| c[1].to_owned()).collect()
+}
+
+/// Spotify's page for one song: its title, artists and length.
+pub fn spotify_track_embed(page: &str) -> Option<Foreign> {
+    let v = script_json(page, "__NEXT_DATA__")?;
+    let e = &v["props"]["pageProps"]["state"]["data"]["entity"];
+    let title = s(&e["name"]);
+    let title = if title.is_empty() {
+        s(&e["title"])
+    } else {
+        title
+    };
+    if title.is_empty() {
+        return None;
+    }
+    let artists: Vec<String> = e["artists"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|x| s(&x["name"]))
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Foreign {
+        title,
+        artist: artists.join(", "),
+        duration_ms: e["duration"].as_u64().filter(|d| *d > 0),
+        ..Default::default()
+    })
+}
+
+/// Name every copied Spotify song still waiting for one, one page each (paced, and cached: a
+/// song's page doesn't change). `on_progress(done, total)`.
+pub fn spotify_names(
+    http: &Http,
+    lists: &mut [ForeignPlaylist],
+    on_progress: &mut dyn FnMut(usize, usize),
+) {
+    let waiting = |t: &Foreign| t.spotify.is_some() && t.title.is_empty();
+    let total = lists
+        .iter()
+        .flat_map(|l| &l.tracks)
+        .filter(|t| waiting(t))
+        .count();
+    let mut done = 0;
+    for l in lists.iter_mut() {
+        for t in l.tracks.iter_mut().filter(|t| waiting(t)) {
+            let id = t.spotify.clone().unwrap_or_default();
+            if let Ok(page) = http.get_text(&format!("https://open.spotify.com/embed/track/{id}"))
+                && let Some(named) = spotify_track_embed(&page)
+            {
+                t.title = named.title;
+                t.artist = named.artist;
+                t.duration_ms = named.duration_ms;
+            }
+            done += 1;
+            on_progress(done, total);
+        }
+    }
+    // Songs Spotify no longer shows can't be named; they're left out.
+    crate::imports::drop_unnamed(lists, |t| t.spotify.is_some());
+}
+
+/// What was pasted: the lines that are playlist links (to read with [`read`]), and playlists
+/// made from the text itself (copied Spotify songs, or a list of songs).
+pub fn pasted(text: &str) -> (Vec<String>, Vec<ForeignPlaylist>) {
+    let links: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| parse(l).is_some())
+        .map(str::to_owned)
+        .collect();
+    let ids = spotify_track_ids(text);
+    let mut lists = Vec::new();
+    if !ids.is_empty() {
+        lists.push(ForeignPlaylist {
+            name: "Songs from Spotify".into(),
+            source: "Spotify".into(),
+            id: None,
+            tracks: ids
+                .into_iter()
+                .map(|id| Foreign {
+                    spotify: Some(id),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+    } else if links.is_empty() {
+        let songs = crate::formats::songs(text);
+        if !songs.is_empty() {
+            lists.push(ForeignPlaylist {
+                name: "Pasted songs".into(),
+                source: "A list of songs".into(),
+                id: None,
+                tracks: songs,
+            });
+        }
+    }
+    (links, lists)
+}
+
+#[cfg(test)]
+mod copied {
+    use super::*;
+
+    #[test]
+    fn songs_copied_from_spotify() {
+        let copied = "https://open.spotify.com/track/3zOYmiNOuyDL0ClxJcEJ0T\nhttps://open.spotify.com/track/2oWFJJW9d1bIra3zHjR6GO?si=x\nspotify:track:4uLU6hMCjMI75M1A2tKUQC\n";
+        assert_eq!(
+            spotify_track_ids(copied),
+            [
+                "3zOYmiNOuyDL0ClxJcEJ0T",
+                "2oWFJJW9d1bIra3zHjR6GO",
+                "4uLU6hMCjMI75M1A2tKUQC"
+            ]
+        );
+        let (links, lists) = pasted(copied);
+        assert!(links.is_empty());
+        assert_eq!(lists[0].tracks.len(), 3);
+        assert!(
+            lists[0]
+                .tracks
+                .iter()
+                .all(|t| t.spotify.is_some() && t.title.is_empty())
+        );
+    }
+
+    #[test]
+    fn a_spotify_song_page_names_it() {
+        let page = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/pages/spotify-embed-track.html"),
+        )
+        .unwrap();
+        let f = spotify_track_embed(&page).unwrap();
+        assert_eq!(
+            (f.title.as_str(), f.artist.as_str(), f.duration_ms),
+            ("Stop The Wedding!", "Ashe", Some(198_840))
+        );
+    }
+
+    #[test]
+    fn pasted_links_and_pasted_songs() {
+        let (links, lists) = pasted("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M\n");
+        assert_eq!(links.len(), 1);
+        assert!(lists.is_empty());
+        let (links, lists) = pasted("Arijit Singh - Kesariya\nQueen - Bohemian Rhapsody");
+        assert!(links.is_empty());
+        assert_eq!(lists[0].tracks.len(), 2);
+    }
+}
