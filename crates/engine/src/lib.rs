@@ -33,6 +33,7 @@ pub mod review;
 pub mod rules;
 pub mod scan;
 pub mod settings;
+pub mod songid;
 pub mod spectrogram;
 pub mod sync;
 pub mod text;

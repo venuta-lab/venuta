@@ -1,0 +1,157 @@
+{
+ "about": "A name and the key it is searched and matched by: the same in the app (textsearch.ts searchKey) and the engine (songid.rs search_key). Generated from the app; both test against it.",
+ "cases": [
+  [
+   "Kesariya",
+   "kesaria"
+  ],
+  [
+   "Kesariyaa",
+   "kesaria"
+  ],
+  [
+   "Arijit Singh",
+   "arijit sing"
+  ],
+  [
+   "Arijeet Singh",
+   "arijit sing"
+  ],
+  [
+   "Phir Bhi Tumko Chaahunga",
+   "fir bi tumko cahunga"
+  ],
+  [
+   "Fir Bhi Tumko Chahunga",
+   "fir bi tumko cahunga"
+  ],
+  [
+   "Dil Diyan Gallan",
+   "dil dian galan"
+  ],
+  [
+   "Dil Diya Galla",
+   "dil dia gala"
+  ],
+  [
+   "Khwaab",
+   "kvab"
+  ],
+  [
+   "Kwab",
+   "kvab"
+  ],
+  [
+   "Zindagi",
+   "jindagi"
+  ],
+  [
+   "Jindagi",
+   "jindagi"
+  ],
+  [
+   "Teri Mitti",
+   "teri miti"
+  ],
+  [
+   "Tere Mitti",
+   "tere miti"
+  ],
+  [
+   "Shukran Allah",
+   "sukran alah"
+  ],
+  [
+   "Kun Faya Kun",
+   "kun faya kun"
+  ],
+  [
+   "Kun Faaya Kun",
+   "kun faya kun"
+  ],
+  [
+   "Quick Brown",
+   "kuik brovn"
+  ],
+  [
+   "Xtreme",
+   "kstreme"
+  ],
+  [
+   "Bohemian Rhapsody",
+   "bohemian rapsody"
+  ],
+  [
+   "Café del Mar",
+   "kafe del mar"
+  ],
+  [
+   "Señorita",
+   "senorita"
+  ],
+  [
+   "Hey Jude",
+   "hey jude"
+  ],
+  [
+   "Wow",
+   "vov"
+  ],
+  [
+   "Mitwa",
+   "mitva"
+  ],
+  [
+   "Mitva",
+   "mitva"
+  ],
+  [
+   "Saiyaara",
+   "saiara"
+  ],
+  [
+   "Saiyara",
+   "saiara"
+  ],
+  [
+   "Tum Hi Ho",
+   "tum hi ho"
+  ],
+  [
+   "Tum Hee Ho",
+   "tum hi ho"
+  ],
+  [
+   "Chaiyya Chaiyya",
+   "caiya caiya"
+  ],
+  [
+   "Chhaiya Chhaiya",
+   "chaia chaia"
+  ],
+  [
+   "Bachna Ae Haseeno",
+   "bacna ae hasino"
+  ],
+  [
+   "Kabhi Kabhi Aditi",
+   "kabi kabi aditi"
+  ],
+  [
+   "Rock & Roll",
+   "rok rol"
+  ],
+  [
+   "99 Luftballons",
+   "9 luftbalons"
+  ],
+  [
+   "AC/DC",
+   "ak dk"
+  ],
+  [
+   "Don't Stop Me Now",
+   "don t stop me nov"
+  ]
+ ]
+}

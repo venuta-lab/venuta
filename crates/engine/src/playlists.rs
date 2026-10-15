@@ -1221,6 +1221,17 @@ pub fn export(library_root: &Path, lib: &Library, name: &str, to: &Path) -> Resu
 
 /// Normalise a title for matching: no "(From …)", "(feat …)", remaster notes, punctuation.
 pub fn title_key(s: &str) -> String {
+    crate::audit::name_key(&title_cut(s))
+}
+
+/// [`title_key`] in the loose spelling shared with the search box ("Kesariyaa" = "Kesariya"):
+/// a second way to find a song when its title is spelled differently. Never stored.
+pub fn title_fold_key(s: &str) -> String {
+    crate::songid::fold_key(&title_cut(s))
+}
+
+/// The title, lower case, with "(From …)", "(feat …)" and remaster notes cut off.
+fn title_cut(s: &str) -> String {
     let lower = s.to_lowercase();
     let mut cut = lower.as_str();
     for marker in [
@@ -1237,7 +1248,7 @@ pub fn title_key(s: &str) -> String {
             cut = &cut[..i];
         }
     }
-    crate::audit::name_key(cut)
+    cut.to_owned()
 }
 
 /// A title with every version note taken off ("(Remix)", "- Live", "[Acoustic]"…), to find
@@ -1370,18 +1381,31 @@ pub struct Found<'a> {
 
 pub struct Matcher<'a> {
     by_title: HashMap<String, Vec<&'a Track>>,
+    /// The same, by the loose spelling: titles spelled differently ("Kesariyaa").
+    by_fold: HashMap<String, Vec<&'a Track>>,
     by_loose: HashMap<String, Vec<&'a Track>>,
     by_isrc: HashMap<String, &'a Track>,
+}
+
+/// An artist name as it's compared: as written, and in the loose spelling ("Arijeet" =
+/// "Arijit"), marked apart so the two never mix.
+fn artist_keys(name: &str) -> [String; 2] {
+    [
+        crate::audit::name_key(name),
+        format!("~{}", crate::songid::fold_key(name)),
+    ]
 }
 
 impl<'a> Matcher<'a> {
     pub fn new(lib: &'a Library) -> Self {
         let mut by_title: HashMap<String, Vec<&Track>> = HashMap::new();
+        let mut by_fold: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_loose: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_isrc: HashMap<String, &Track> = HashMap::new();
         for t in lib.tracks.iter() {
             if let Some(title) = t.first("TITLE") {
                 by_title.entry(title_key(title)).or_default().push(t);
+                by_fold.entry(title_fold_key(title)).or_default().push(t);
                 by_loose.entry(loose_key(title)).or_default().push(t);
             }
             if let Some(i) = t
@@ -1394,11 +1418,13 @@ impl<'a> Matcher<'a> {
         }
         Self {
             by_title,
+            by_fold,
             by_loose,
             by_isrc,
         }
     }
 
+    /// `artists` holds [`artist_keys`] of every name the song from elsewhere credits.
     fn shares_artist(t: &Track, artists: &HashSet<String>) -> bool {
         t.first("ARTIST")
             .map(split_names)
@@ -1410,7 +1436,7 @@ impl<'a> Matcher<'a> {
                     .unwrap_or_default()
                     .iter(),
             )
-            .any(|a| artists.contains(&crate::audit::name_key(a)))
+            .any(|a| artist_keys(a).iter().any(|k| artists.contains(k)))
     }
 
     /// The one nearest in length, if lengths are known (else the first).
@@ -1425,12 +1451,91 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    /// Find a song from elsewhere in the library, and say how sure the match is.
-    pub fn grade(&self, f: &Foreign) -> Option<Found<'a>> {
+    /// Of the songs with the title asked for, which one, and how sure. `spelled`: the title
+    /// matched only in the loose spelling, so without a length to agree it's never "found".
+    fn same_title(
+        &self,
+        cands: &[&'a Track],
+        f: &Foreign,
+        artists: &HashSet<String>,
+        spelled: bool,
+    ) -> Option<Found<'a>> {
         let near = |t: &Track| {
             f.duration_ms
                 .is_none_or(|ms| t.duration_ms.abs_diff(ms) <= 3000)
         };
+        let sure = |t: &Track| near(t) && (!spelled || f.duration_ms.is_some());
+        let spelled_note = if spelled { ", spelled differently" } else { "" };
+        let mine: Vec<&Track> = cands
+            .iter()
+            .copied()
+            .filter(|t| Self::shares_artist(t, artists))
+            .collect();
+        if mine.is_empty() {
+            // The title alone: only one song, and the same length, is worth offering.
+            return (!spelled && cands.len() == 1 && f.duration_ms.is_some() && near(cands[0]))
+                .then(|| Found {
+                    track: cands[0],
+                    grade: Grade::Close,
+                    why: "Same song and length, credited to someone else".into(),
+                });
+        }
+        // The album agrees: when it has the title more than once (an edit and the full song, two
+        // remixes), the length says which.
+        let album = title_key(&f.album);
+        let on_album: Vec<&Track> = mine
+            .iter()
+            .copied()
+            .filter(|t| {
+                !album.is_empty() && t.first("ALBUM").is_some_and(|a| title_key(a) == album)
+            })
+            .collect();
+        if !on_album.is_empty() {
+            let t = Self::nearest(&on_album, f.duration_ms);
+            let exact = sure(t) && (on_album.len() == 1 || f.duration_ms.is_some());
+            let why = if exact {
+                format!("Same song, artist and album{spelled_note}")
+            } else if on_album.len() > 1 {
+                format!(
+                    "The album has it {} times; this is the nearest in length",
+                    on_album.len()
+                )
+            } else {
+                format!("Same song, artist and album{spelled_note}, a different length")
+            };
+            return Some(Found {
+                track: t,
+                grade: if exact { Grade::Exact } else { Grade::Close },
+                why,
+            });
+        }
+        let close: Vec<&Track> = mine.iter().copied().filter(|t| near(t)).collect();
+        if close.len() == 1 || (mine.len() == 1 && close.len() <= 1) {
+            let t = close.first().copied().unwrap_or(mine[0]);
+            let exact = sure(t);
+            return Some(Found {
+                track: t,
+                grade: if exact { Grade::Exact } else { Grade::Close },
+                why: if near(t) {
+                    format!("Same song and artist{spelled_note}")
+                } else {
+                    format!("Same song and artist{spelled_note}, a different length")
+                },
+            });
+        }
+        let t = Self::nearest(&mine, f.duration_ms);
+        Some(Found {
+            track: t,
+            grade: Grade::Close,
+            why: format!(
+                "You have {} versions; this is the nearest in length",
+                mine.len()
+            ),
+        })
+    }
+
+    /// Find a song from elsewhere in the library, and say how sure the match is.
+    pub fn grade(&self, f: &Foreign) -> Option<Found<'a>> {
         // 1. The same recording code is the same recording.
         if let Some(t) = f
             .isrc
@@ -1445,59 +1550,23 @@ impl<'a> Matcher<'a> {
         }
         let artists: HashSet<String> = split_names(&f.artist)
             .iter()
-            .map(|a| crate::audit::name_key(a))
-            .filter(|a| !a.is_empty())
+            .filter(|a| !crate::audit::name_key(a).is_empty())
+            .flat_map(|a| artist_keys(a))
             .collect();
         // 2. The same title by the same artist: the album or the length settles twins.
-        if let Some(cands) = self.by_title.get(&title_key(&f.title)) {
-            let mine: Vec<&Track> = cands
-                .iter()
-                .copied()
-                .filter(|t| Self::shares_artist(t, &artists))
-                .collect();
-            if !mine.is_empty() {
-                let album = title_key(&f.album);
-                if let Some(t) = mine.iter().find(|t| {
-                    !album.is_empty() && t.first("ALBUM").is_some_and(|a| title_key(a) == album)
-                }) {
-                    return Some(Found {
-                        track: t,
-                        grade: Grade::Exact,
-                        why: "Same song, artist and album".into(),
-                    });
-                }
-                let close: Vec<&Track> = mine.iter().copied().filter(|t| near(t)).collect();
-                if close.len() == 1 || (mine.len() == 1 && close.len() <= 1) {
-                    let t = close.first().copied().unwrap_or(mine[0]);
-                    let exact = near(t);
-                    return Some(Found {
-                        track: t,
-                        grade: if exact { Grade::Exact } else { Grade::Close },
-                        why: if exact {
-                            "Same song and artist".into()
-                        } else {
-                            "Same song and artist, a different length".into()
-                        },
-                    });
-                }
-                let t = Self::nearest(&mine, f.duration_ms);
-                return Some(Found {
-                    track: t,
-                    grade: Grade::Close,
-                    why: format!(
-                        "You have {} versions; this is the nearest in length",
-                        mine.len()
-                    ),
-                });
-            }
-            // The title alone: only one song, and the same length, is worth offering.
-            if cands.len() == 1 && f.duration_ms.is_some() && near(cands[0]) {
-                return Some(Found {
-                    track: cands[0],
-                    grade: Grade::Close,
-                    why: "Same song and length, credited to someone else".into(),
-                });
-            }
+        if let Some(cands) = self.by_title.get(&title_key(&f.title))
+            && let Some(found) = self.same_title(cands, f, &artists, false)
+        {
+            return Some(found);
+        }
+        // 2b. The same, spelled differently ("Kesariyaa", "Arijeet"): sure only when the length
+        // agrees too.
+        let fold = title_fold_key(&f.title);
+        if !fold.is_empty()
+            && let Some(cands) = self.by_fold.get(&fold)
+            && let Some(found) = self.same_title(cands, f, &artists, true)
+        {
+            return Some(found);
         }
         // 3. Another version of the song by the same artist.
         let loose = loose_key(&f.title);
@@ -2114,6 +2183,104 @@ mod tests {
         );
         // Nothing like it.
         assert_eq!(g(foreign("Kun Faya Kun", "A.R. Rahman", "", None)), None);
+    }
+
+    #[test]
+    fn an_album_with_two_versions_of_a_title_is_settled_by_length() {
+        // Special 26 has "Mujh Mein Tu" twice: 3:19 and 4:23.
+        let lib = library(vec![
+            song(
+                1,
+                "S/04.flac",
+                "Mujh Mein Tu",
+                "M.M. Kareem",
+                "Special 26",
+                263_000,
+            ),
+            song(
+                2,
+                "S/08.flac",
+                "Mujh Mein Tu",
+                "M.M. Kareem",
+                "Special 26",
+                199_000,
+            ),
+        ]);
+        let m = Matcher::new(&lib);
+        let g = |f: Foreign| m.grade(&f).map(|h| (h.track.path.clone(), h.grade));
+        assert_eq!(
+            g(foreign(
+                "Mujh Mein Tu",
+                "M.M. Kareem",
+                "Special 26",
+                Some(199_400)
+            )),
+            Some(("S/08.flac".into(), Grade::Exact))
+        );
+        assert_eq!(
+            g(foreign(
+                "Mujh Mein Tu",
+                "M.M. Kareem",
+                "Special 26",
+                Some(262_000)
+            )),
+            Some(("S/04.flac".into(), Grade::Exact))
+        );
+        // No length to tell them apart: one of them, for you to check.
+        assert_eq!(
+            g(foreign("Mujh Mein Tu", "M.M. Kareem", "Special 26", None)).map(|x| x.1),
+            Some(Grade::Close)
+        );
+        // The album agrees but neither length does: for you to check.
+        assert_eq!(
+            g(foreign(
+                "Mujh Mein Tu",
+                "M.M. Kareem",
+                "Special 26",
+                Some(230_000)
+            ))
+            .map(|x| x.1),
+            Some(Grade::Close)
+        );
+    }
+
+    #[test]
+    fn titles_and_names_spelled_differently_still_match() {
+        let lib = library(vec![
+            song(
+                1,
+                "B/04.flac",
+                "Kesariya",
+                "Arijit Singh",
+                "Brahmastra",
+                268_000,
+            ),
+            song(2, "K/01.flac", "Khwaab", "Someone", "Dreams", 200_000),
+        ]);
+        let m = Matcher::new(&lib);
+        let g = |f: Foreign| m.grade(&f).map(|h| (h.track.path.clone(), h.grade));
+        // Spelled differently, same artist and length: found.
+        assert_eq!(
+            g(foreign("Kesariyaa", "Arijit Singh", "", Some(268_200))),
+            Some(("B/04.flac".into(), Grade::Exact))
+        );
+        // The artist spelled differently too.
+        assert_eq!(
+            g(foreign(
+                "Kesariyaa",
+                "Arijeet Singh",
+                "Brahmastra",
+                Some(268_200)
+            )),
+            Some(("B/04.flac".into(), Grade::Exact))
+        );
+        // A pasted list (no length): offered, for you to check.
+        assert_eq!(
+            g(foreign("Kesariyaa", "Arijit Singh", "", None)),
+            Some(("B/04.flac".into(), Grade::Close))
+        );
+        // A different artist and length: not offered.
+        assert_eq!(g(foreign("Kwab", "Another", "", Some(100_000))), None);
     }
 
     #[test]

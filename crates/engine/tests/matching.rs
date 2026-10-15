@@ -33,7 +33,7 @@ const KINDS: [(Kind, &str); 4] = [
     (Kind::Service, "service (title, artist, album, length)"),
     (Kind::Text, "text (artist and title only)"),
     (Kind::Noisy, "noisy (feat., remaster, length off)"),
-    (Kind::Spelling, "spelling (a vowel doubled)"),
+    (Kind::Spelling, "spelling (a/aa, i/ee, u/oo)"),
 ];
 
 fn artists(t: &Track) -> Vec<String> {
@@ -44,15 +44,24 @@ fn artists(t: &Track) -> Vec<String> {
     a
 }
 
-/// Double the last vowel of the first word that ends in one: Kesariya → Kesariyaa.
+/// Spell the first word that allows it the other common way, as Indian titles vary: a final
+/// a/i/u long (Kesariya → Kesariyaa, Zindagi → Zindagee, Tu → Too), or a long one short.
 fn respell(title: &str) -> Option<String> {
     let mut words: Vec<String> = title.split(' ').map(str::to_owned).collect();
     for w in words.iter_mut() {
-        if let Some(last) = w.chars().last()
-            && "aeiou".contains(last.to_ascii_lowercase())
-            && w.chars().count() >= 4
-        {
-            w.push(last);
+        let lower = w.to_lowercase();
+        let swap = [("aa", "a"), ("ee", "i"), ("oo", "u")]
+            .into_iter()
+            .find(|(long, _)| lower.ends_with(long))
+            .map(|(long, short)| format!("{}{short}", &w[..w.len() - long.len()]))
+            .or_else(|| match lower.chars().last()? {
+                'a' => Some(format!("{w}a")),
+                'i' => Some(format!("{}ee", &w[..w.len() - 1])),
+                'u' => Some(format!("{}oo", &w[..w.len() - 1])),
+                _ => None,
+            });
+        if let Some(other) = swap.filter(|_| w.chars().count() >= 2 && w.is_ascii()) {
+            *w = other;
             return Some(words.join(" "));
         }
     }
@@ -64,7 +73,7 @@ fn describe(t: &Track, kind: Kind) -> Option<Foreign> {
     let all = artists(t);
     let artist = all.first()?.clone();
     let album = t.first("ALBUM").unwrap_or_default().to_owned();
-    let length = t.duration_ms as u64;
+    let length = t.duration_ms;
     Some(match kind {
         Kind::Service => Foreign {
             title,

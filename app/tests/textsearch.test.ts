@@ -120,3 +120,9 @@ test('every typed word must still be there, and the review\'s searches still fin
   assert.ok(finds('tum ho', 'Tum Hi Ho'))
   assert.ok(finds('rahmna', 'A.R. Rahman'))
 })
+
+test('one spelling table for the search box and for matching playlists (shared with the engine)', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { cases } = JSON.parse(readFileSync(new URL('./fixtures/spelling-keys.json', import.meta.url), 'utf8')) as { cases: [string, string][] }
+  for (const [name, key] of cases) assert.equal(searchKey(name), key, name)
+})
