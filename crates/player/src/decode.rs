@@ -604,7 +604,9 @@ impl Source {
             .as_mut()
             .and_then(|r| r.pending_open.take())
             .expect("pending_open");
-        self.remote.as_mut().map(|r| r.retry_after = None);
+        if let Some(r) = self.remote.as_mut() {
+            r.retry_after = None;
+        }
         self.finish_open(pending, out).map(Some)
     }
 

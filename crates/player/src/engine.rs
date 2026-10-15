@@ -680,21 +680,17 @@ impl<T: Item + Serialize> Engine<T> {
             }
         }
         // 2) Open / warm the following song once the current one is healthy.
-        if self.segs.len() < 2 {
-            if self
+        if self.segs.len() < 2
+            && self
                 .segs
                 .front()
                 .is_some_and(|f| f.ended || f.frames() >= front_target / 2)
-            {
-                self.prefetch_next();
-            }
+        {
+            self.prefetch_next();
         }
         if self.segs.len() >= 2 {
             let next_target = (rate as f32 * 0.35) as usize; // light warmup only
-            loop {
-                let Some(next) = self.segs.get_mut(1) else {
-                    break;
-                };
+            while let Some(next) = self.segs.get_mut(1) {
                 if next.ended || next.frames() >= next_target || !next.source.is_ready() {
                     // Not ready yet: still poll so progressive open can complete off-thread.
                     if !next.ended && !next.source.is_ready() {

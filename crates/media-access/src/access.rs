@@ -194,12 +194,11 @@ impl MediaAccess for CachedAccess {
                 "track id must not be empty",
             ));
         }
-        if let Ok(cache) = self.cache.lock() {
-            if let Some((at, audio)) = cache.get(id) {
-                if at.elapsed() < self.ttl {
-                    return Ok(audio.clone());
-                }
-            }
+        if let Ok(cache) = self.cache.lock()
+            && let Some((at, audio)) = cache.get(id)
+            && at.elapsed() < self.ttl
+        {
+            return Ok(audio.clone());
         }
         let audio = self.inner.resolve_audio(id, cancel)?;
         if let Ok(mut cache) = self.cache.lock() {
@@ -217,6 +216,7 @@ impl MediaAccess for CachedAccess {
     }
 }
 
+#[cfg(feature = "live-provider")]
 fn env_truthy(name: &str) -> Option<bool> {
     let v = std::env::var(name).ok()?;
     let v = v.trim();

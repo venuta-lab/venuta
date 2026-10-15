@@ -332,25 +332,23 @@ impl Playback {
                         );
                     }
                     // While this song plays, warm the next online id (in-memory resolve cache).
-                    if s.playing && !s.buffering {
-                        if let Some(next) = s.index.and_then(|i| queue.get(i + 1)) {
-                            if next.is_remote()
-                                && let Some(PlayableId::Online { track_id, .. }) = &next.online
-                            {
-                                if warmed.as_deref() != Some(track_id.as_str()) {
-                                    warmed = Some(track_id.clone());
-                                    let cat = catalog.clone();
-                                    let id = track_id.clone();
-                                    std::thread::Builder::new()
-                                        .name("venuta-warm-next".into())
-                                        .spawn(move || {
-                                            let cancel = media_access::CancellationToken::default();
-                                            let _ = cat.resolve_audio(&id, &cancel);
-                                        })
-                                        .ok();
-                                }
-                            }
-                        }
+                    if s.playing
+                        && !s.buffering
+                        && let Some(next) = s.index.and_then(|i| queue.get(i + 1))
+                        && next.is_remote()
+                        && let Some(PlayableId::Online { track_id, .. }) = &next.online
+                        && warmed.as_deref() != Some(track_id.as_str())
+                    {
+                        warmed = Some(track_id.clone());
+                        let cat = catalog.clone();
+                        let id = track_id.clone();
+                        std::thread::Builder::new()
+                            .name("venuta-warm-next".into())
+                            .spawn(move || {
+                                let cancel = media_access::CancellationToken::default();
+                                let _ = cat.resolve_audio(&id, &cancel);
+                            })
+                            .ok();
                     }
                     if let Ok(mut w) = window.lock()
                         && !w.is_empty()

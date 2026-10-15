@@ -239,10 +239,9 @@ fn binary_tool_kind(path: &Path) -> String {
     }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
+        && path.starts_with(dir)
     {
-        if path.starts_with(dir) {
-            return "bundled yt-dlp".into();
-        }
+        return "bundled yt-dlp".into();
     }
     "yt-dlp".into()
 }
