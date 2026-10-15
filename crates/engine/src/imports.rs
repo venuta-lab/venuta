@@ -888,6 +888,35 @@ fn deezer_tracks(page: &serde_json::Value) -> Vec<Foreign> {
         .collect()
 }
 
+/// A Deezer profile's favourite songs (public profiles), as one playlist.
+pub fn deezer_favourites(http: &crate::net::Http, user: &str) -> Result<ForeignPlaylist, String> {
+    let fresh = |url: &str| -> Result<serde_json::Value, String> {
+        let text = http
+            .get_text_fresh(url)
+            .map_err(|e| format!("Deezer: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| format!("Deezer: {e}"))
+    };
+    let mut url = format!("https://api.deezer.com/user/{user}/tracks?limit=100");
+    let mut tracks = Vec::new();
+    for _ in 0..100 {
+        let page = fresh(&url)?;
+        if page.get("error").is_some() {
+            return Err("Deezer didn't show those favourites. Is the profile public?".into());
+        }
+        tracks.extend(deezer_tracks(&page));
+        match page.get("next").and_then(|n| n.as_str()) {
+            Some(next) => url = next.to_owned(),
+            None => break,
+        }
+    }
+    Ok(ForeignPlaylist {
+        name: "Favourites on Deezer".into(),
+        source: "Deezer".into(),
+        id: Some(format!("deezer-favourites:{user}")),
+        tracks,
+    })
+}
+
 pub fn deezer(http: &crate::net::Http, id: &str) -> Result<ForeignPlaylist, String> {
     let v = http
         .get_json(&format!("https://api.deezer.com/playlist/{id}"))

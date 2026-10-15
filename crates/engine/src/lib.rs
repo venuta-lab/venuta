@@ -22,6 +22,7 @@ pub mod imports;
 pub mod index;
 pub mod intake;
 pub mod library;
+pub mod links;
 pub mod lrc;
 pub mod media;
 pub mod net;

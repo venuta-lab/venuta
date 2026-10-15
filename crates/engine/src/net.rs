@@ -104,6 +104,17 @@ impl Http {
                 s => Err(NetError::Failed(format!("HTTP {s}"))),
             };
         }
+        self.fetch(url, "application/json")
+    }
+
+    /// GET a page as it is now, never from the cache: a shared playlist, which changes. Paced
+    /// and retried like any other request.
+    pub fn get_text_fresh(&self, url: &str) -> Result<String, NetError> {
+        let bytes = self.fetch(url, "text/html,application/json;q=0.9,*/*;q=0.8")?;
+        Ok(crate::text::decode(&bytes))
+    }
+
+    fn fetch(&self, url: &str, accept: &str) -> Result<Vec<u8>, NetError> {
         let host = url
             .split("://")
             .nth(1)
@@ -113,11 +124,7 @@ impl Http {
         let mut attempt = 0u32;
         loop {
             self.wait_turn(&host);
-            let result = self
-                .agent
-                .get(url)
-                .header("Accept", "application/json")
-                .call();
+            let result = self.agent.get(url).header("Accept", accept).call();
             match result {
                 Ok(mut resp) => {
                     let status = resp.status().as_u16();

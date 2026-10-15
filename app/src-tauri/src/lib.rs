@@ -2069,15 +2069,18 @@ struct ImportRead {
     problems: Vec<String>,
 }
 
-/// Read playlists from files other apps made, a Deezer link, or the Apple Music library, and
-/// match every song. Nothing is written yet.
+/// Read playlists from files other apps made (any format, folders and zips too), a share link
+/// (Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer, ListenBrainz), or the Apple
+/// Music library, and match every song. Nothing is written yet.
 #[tauri::command]
 async fn import_preview(
     root: String,
     files: Vec<String>,
     link: Option<String>,
     apple: bool,
+    pb: tauri::State<'_, playback::Playback>,
 ) -> CmdResult<ImportRead> {
+    let catalog = pb.catalog();
     blocking(move || {
         let mut lists: Vec<engine::imports::ForeignPlaylist> = Vec::new();
         let mut problems: Vec<String> = Vec::new();
@@ -2094,13 +2097,21 @@ async fn import_preview(
         if needs_web {
             let http = engine::net::Http::open()?;
             if let Some(link) = link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-                match engine::imports::deezer_id(link) {
-                    Some(id) => match engine::imports::deezer(&http, &id) {
+                use engine::links::Link;
+                match engine::links::parse(link) {
+                    Some(Link::YouTube(id)) => match youtube_playlist(catalog.as_ref(), &id) {
                         Ok(p) => lists.push(p),
                         Err(e) => problems.push(e),
                     },
+                    Some(l) => match engine::links::read(&http, &l) {
+                        Ok((p, note)) => {
+                            lists.push(p);
+                            problems.extend(note);
+                        }
+                        Err(e) => problems.push(e),
+                    },
                     None => problems.push(
-                        "That link isn't a Deezer playlist. Spotify, YouTube and Apple links need an export file instead (see the steps for each)."
+                        "That isn't a playlist link Venuta can read. It reads links from Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer and ListenBrainz."
                             .into(),
                     ),
                 }
@@ -2137,6 +2148,39 @@ struct ImportDone {
 }
 
 /// Write the playlists you confirmed; the albums they still want go on the want-list.
+/// A YouTube or YouTube Music playlist, through Venuta's catalogue (free, no sign-in).
+fn youtube_playlist(
+    catalog: &dyn media_access::MediaAccess,
+    id: &str,
+) -> Result<engine::imports::ForeignPlaylist, String> {
+    let page = catalog
+        .playlist_tracks(
+            id,
+            &media_access::PageRequest::new(500, None),
+            &media_access::CancellationToken::default(),
+        )
+        .map_err(|e| {
+            format!("YouTube didn't show that playlist ({e}). Is it public or unlisted?")
+        })?;
+    Ok(engine::imports::ForeignPlaylist {
+        name: "YouTube Music playlist".into(),
+        source: "YouTube Music".into(),
+        id: Some(format!("youtube:{id}")),
+        tracks: page
+            .items
+            .into_iter()
+            .map(|t| engine::playlists::Foreign {
+                title: t.title,
+                artist: t.artists.join(", "),
+                album: t.album.unwrap_or_default(),
+                duration_ms: t.duration_ms,
+                youtube: Some(t.track_id),
+                ..Default::default()
+            })
+            .collect(),
+    })
+}
+
 #[tauri::command]
 async fn import_apply(
     root: String,
