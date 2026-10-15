@@ -1,12 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { tracksFor } from '../../lib/catalog'
 import { useCovers } from '../../lib/covers'
 import {
   confirmBackup,
   playlistDuplicate,
-  playlistExport,
   playlistQueue,
   playlistRefind,
   playlistRename,
@@ -57,7 +55,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
 import { AddSongs } from './AddSongs'
 import { DragHandle, MOVE_KEYS } from '../../components/DragHandle'
-import { addSongsTo, deletePlaylist } from './ops'
+import { addSongsTo, deletePlaylist, goToPlaylists } from './ops'
 import { nameNote, savedName } from '../../lib/playlistName'
 import { useNav } from '../listen/model'
 import { entryAvailability, fromWhere, length, onlineId, playlistFrom, plural, queueOf, sourceDate } from './common'
@@ -343,16 +341,11 @@ export function PlaylistPage(props: {
     }
   }
 
-  async function exportFile() {
-    const to = await saveDialog({ defaultPath: `${name}.m3u8`, filters: [{ name: 'Playlist', extensions: ['m3u8'] }] })
-    if (!to) return
-    try {
-      const n = await playlistExport(root, name, to)
-      notify(`Saved ${plural(n, 'song')} to ${to}. It points at your files, for other apps on this computer.`)
-    } catch (e) {
-      notify(`Couldn't export: ${e instanceof Error ? e.message : String(e)}`)
-    }
+  // Export opens Send out with this playlist chosen (every format, services, a backup).
+  function exportFile() {
+    goToPlaylists({ kind: 'import', start: { kind: 'send', names: [name] } })
   }
+
 
   // The same as deleting it from its card (screens/playlists/ops.ts): it asks first, and the
   // notice after has Undo.

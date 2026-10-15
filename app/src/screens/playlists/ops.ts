@@ -1,9 +1,8 @@
-import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { confirmAsk } from '../../components/Confirm'
 import { playlistsChanged } from '../../components/AddToPlaylist'
-import { playlistAdd, playlistDelete, playlistUndelete, playlistDuplicate, playlistExport, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
+import { playlistAdd, playlistDelete, playlistUndelete, playlistDuplicate, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
 import { notify } from '../../lib/notify'
-import { playlistSongs, plural } from './common'
+import { playlistSongs } from './common'
 import type { PlaylistsPlace } from '../PlaylistsScreen'
 
 /*
@@ -48,13 +47,11 @@ export async function duplicatePlaylist(root: string, p: PlaylistSummary, rule?:
   }
 }
 
+/** Export opens Send out with this playlist chosen: any format, a service, or a backup. */
 export async function exportPlaylist(root: string, p: PlaylistSummary, rule?: SmartRule) {
-  const to = await saveDialog({ defaultPath: `${p.name}.m3u8`, filters: [{ name: 'Playlist', extensions: ['m3u8'] }] })
-  if (!to) return
   try {
     await ready(root, p, rule)
-    const n = await playlistExport(root, p.name, to)
-    notify(`Saved ${plural(n, 'song')} to ${to}.`)
+    goToPlaylists({ kind: 'import', start: { kind: 'send', names: [p.name] } })
   } catch (e) {
     notify(`Couldn't export ${p.name}: ${why(e)}`)
   }

@@ -199,6 +199,7 @@ export function PlaylistsScreen(props: { root: string; report: HealthReport | nu
               <ImportSheet
                 root={root}
                 appleReady={!!data?.apple_ready}
+                playlists={data?.playlists ?? []}
                 start={view.start}
                 onBack={home}
                 onOpen={(name) => setView(at({ kind: 'playlist', name }))}

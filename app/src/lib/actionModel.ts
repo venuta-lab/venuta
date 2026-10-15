@@ -81,7 +81,7 @@ export const LABELS: Record<ActionId, string> = {
   refind: 'Look for missing songs again',
   fillOnline: 'Fill missing online…',
   rate: 'Give unrated songs four stars',
-  export: 'Export as a file…',
+  export: 'Export…',
   use: 'Use the song from your library',
   playOnline: 'Play online…',
   useOnline: 'Use online in this playlist…',

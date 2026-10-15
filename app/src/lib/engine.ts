@@ -1041,8 +1041,71 @@ export const onlineCatalogStatus = () =>
 export const playlistDuplicate = (root: string, name: string) => invoke<string>('playlist_duplicate', { root, name })
 export const playlistExport = (root: string, name: string, to: string) => invoke<number>('playlist_export', { root, name, to })
 export const playlistRefind = (root: string, name: string) => invoke<number>('playlist_refind', { root, name })
-export const importPreview = (root: string, files: string[], link: string | null, apple: boolean) =>
-  invoke<ImportRead>('import_preview', { root, files, link, apple })
+/** Read playlists to bring in: files (any format, folders, zips), a share link, pasted text (links,
+ *  songs copied from Spotify's app, a list of songs, or the Copy for Venuta bookmark's list), or the
+ *  Apple Music library. `onProgress` hears the slow part (naming songs that came as ids). */
+export const importPreview = (
+  root: string,
+  files: string[],
+  link: string | null,
+  apple: boolean,
+  text: string | null = null,
+  onProgress: (d: number, t: number, note?: string) => void = () => {},
+) => withProgress<ImportRead>('import_preview', { root, files, link, apple, text }, onProgress)
+/** Every playlist that came from somewhere readable, read again: the ones that changed there. */
+export const playlistsCheck = (root: string, onProgress: (d: number, t: number, note?: string) => void) =>
+  withProgress<ImportRead>('playlists_check', { root }, onProgress)
+
+// --- Playlists out ---------------------------------------------------------------------------
+
+export type ExportFormat = 'm3u8' | 'm3u' | 'pls' | 'xspf' | 'jspf' | 'wpl' | 'csv' | 'txt' | 'itunes_xml'
+export type PathStyle = { kind: 'this_pc' } | { kind: 'next_to_playlist' } | { kind: 'in_music_folder' } | { kind: 'starts_with'; prefix: string }
+export interface ExportOptions {
+  format: ExportFormat
+  style: PathStyle
+  include_missing: boolean
+}
+export type SendService = 'spotify' | 'apple_music' | 'deezer'
+export interface OnServiceOut {
+  total: number
+  found: number
+  missing: number[]
+  /** Spotify: one link a line, to paste into a playlist in Spotify's app. */
+  paste: string
+  /** A page listing every song with its link there (saved; open it in the browser). */
+  page: string
+}
+export interface YouTubeLinks {
+  links: string[]
+  found: number
+  total: number
+}
+/** Export playlists: one to a file, several into a folder. Returns the files written. */
+export const playlistsExport = (root: string, names: string[], to: string, options: ExportOptions) =>
+  invoke<string[]>('playlists_export', { root, names, to, options })
+/** A playlist as text in a format (a plain list of songs to copy, or any other). */
+export const playlistText = (root: string, name: string, format: ExportFormat) => invoke<string>('playlist_text', { root, name, format })
+/** Every playlist, To get and the smart playlists' rules in one zip. */
+export const playlistsBackup = (root: string, to: string) => invoke<number>('playlists_backup', { root, to })
+/** A playlist's songs found on a service, free (Apple Music looks in this computer's region's store). */
+export const playlistOnService = (
+  root: string,
+  name: string,
+  service: SendService,
+  onProgress: (d: number, t: number, note?: string) => void,
+) => withProgress<OnServiceOut>('playlist_on_service', { root, name, service, country: regionCode() }, onProgress)
+/** A playlist as YouTube links of up to 50 songs each. */
+export const playlistYoutubeLinks = (root: string, name: string, onProgress: (d: number, t: number, note?: string) => void) =>
+  withProgress<YouTubeLinks>('playlist_youtube_links', { root, name }, onProgress)
+/** This computer's region, as two letters ("IN"), from its language settings; null when unknown. */
+export function regionCode(): string | null {
+  try {
+    const loc = new Intl.Locale(navigator.language || Intl.DateTimeFormat().resolvedOptions().locale)
+    return loc.maximize().region ?? null
+  } catch {
+    return null
+  }
+}
 /** Read a playlist's source again, for an update reviewed like an import. */
 export const playlistUpdateRead = (root: string, name: string) => invoke<ImportRead>('playlist_update_read', { root, name })
 export const playlistSourcesCheck = (root: string) =>
@@ -1187,3 +1250,7 @@ export const listeningSummary = (root: string) =>
   inApp()
     ? invoke<ListeningSummary>('listening_summary', { root })
     : Promise.resolve<ListeningSummary>({ recent: [], top: [], counts: {}, last_played: {}, recent_playlists: [] })
+/** Open a link Import & export made, in your browser (music services and transfer tools only). */
+export const openSendLink = (url: string) => invoke<void>('open_send_link', { url })
+/** Open a page of links Import & export saved, in your browser. */
+export const openSavedPage = (path: string) => invoke<void>('open_saved_page', { path })

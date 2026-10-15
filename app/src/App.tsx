@@ -539,8 +539,22 @@ export default function App() {
         id: 'playlist-import',
         group: 'Actions',
         label: 'Import playlists',
-        keywords: 'spotify apple music youtube deezer tidal amazon m3u bring over transfer update',
+        keywords: 'spotify apple music youtube deezer tidal jiosaavn amazon m3u link paste bring in over transfer update import export',
         run: () => openPlaylists({ kind: 'import' }),
+      },
+      {
+        id: 'playlist-export',
+        group: 'Actions',
+        label: 'Export playlists',
+        keywords: 'send out save m3u8 csv backup spotify youtube apple music deezer phone file transfer',
+        run: () => openPlaylists({ kind: 'import', start: { kind: 'send', names: [] } }),
+      },
+      {
+        id: 'playlist-check',
+        group: 'Actions',
+        label: 'Check playlists for new songs',
+        keywords: 'update sync source changes refresh import',
+        run: () => openPlaylists({ kind: 'import', start: { kind: 'check' } }),
       },
       {
         id: 'playlist-wanted',

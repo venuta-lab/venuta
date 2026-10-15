@@ -186,7 +186,7 @@ export function PlaylistsHome(props: {
           New playlist
         </button>
         <button onClick={props.onImport} className="btn-primary btn-lg">
-          Import playlists
+          Import & export
         </button>
       </>
     )
@@ -234,7 +234,7 @@ export function PlaylistsHome(props: {
                   New playlist
                 </button>
                 <button onClick={props.onImport} className="btn-primary btn-lg">
-                  Import playlists
+                  Import & export
                 </button>
               </div>
             </div>

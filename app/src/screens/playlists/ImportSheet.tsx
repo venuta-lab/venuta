@@ -2,10 +2,12 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { invoke } from '@tauri-apps/api/core'
 import {
   importApply,
   importPreview,
   playlistRestore,
+  playlistsCheck,
   playlistUpdateRead,
   spotifyPlaylists,
   spotifyRead,
@@ -14,11 +16,14 @@ import {
   type ImportRead,
   type ImportWritten,
   type PlaylistItem,
+  type PlaylistSummary,
   type PreviewItem,
   type PreviewPlaylist,
   type SpotifyPlaylist,
   type UpdateTarget,
 } from '../../lib/engine'
+import { BOOKMARK_URL } from '../../lib/bookmarklet'
+import { SendOut } from './SendOut'
 import { SpotifyAccount, useSpotifyStatus } from '../../components/SpotifyAccount'
 import { clock } from '../../lib/player'
 import { Detail, Segmented, Switch } from '../../components/ui'
@@ -26,79 +31,196 @@ import { playlistsChanged } from '../../components/AddToPlaylist'
 import { notify } from '../../lib/notify'
 import { plural } from './common'
 
-type SourceId = 'spotify' | 'apple' | 'youtube' | 'deezer' | 'others' | 'player'
+type SourceId = 'spotify' | 'apple' | 'youtube' | 'deezer' | 'jiosaavn' | 'tidal' | 'others' | 'player' | 'backup'
 // What Venuta reads (by what's inside; the name is only a hint). A folder (no extension) is read whole.
 const ALL = ['json', 'jspf', 'csv', 'xlsx', 'xml', 'txt', 'm3u', 'm3u8', 'pls', 'xspf', 'wpl', 'zpl', 'asx', 'zip']
 
-const SOURCES: { id: SourceId; name: string; need: string; steps: React.ReactNode[]; accept?: string[] }[] = [
+/** One way to bring a service's playlists in, and what to press for it. */
+interface Way {
+  title: string
+  /** What arrives, in a few words ("Any playlist or Liked Songs, any length"). */
+  line: string
+  steps?: React.ReactNode[]
+  /** paste: what you copied (a link, songs, a list); files: choose files; spotify / apple: their own panel; bookmark: the Copy for Venuta bookmark. */
+  action: 'paste' | 'files' | 'spotify' | 'apple' | 'bookmark'
+  accept?: string[]
+}
+
+const BOOKMARK_WAY = (site: string, what: string): Way => ({
+  title: 'The Copy for Venuta bookmark',
+  line: `${what}, on ${site} in your browser, signed in`,
+  action: 'bookmark',
+})
+
+const SOURCES: { id: SourceId; name: string; need: string; ways: Way[] }[] = [
   {
     id: 'spotify',
     name: 'Spotify',
-    need: 'Sign in, or an export file',
-    accept: ['json', 'csv'],
-    steps: [
-      <>
-        Quickest: open <b>exportify.app</b>, sign in with Spotify and export the playlists you want. Each comes as a .csv file with every song's
-        ISRC, so matches are exact.
-      </>,
-      <>
-        Or from Spotify itself: Account, Privacy settings, <b>Download your data</b>, Account data. A few days later you get a zip; choose{' '}
-        <b>Playlist1.json</b> from it, and <b>YourLibrary.json</b> for your liked songs.
-      </>,
+    need: 'Copy from the app, a link, or an export',
+    ways: [
+      {
+        title: "Copy from Spotify's app",
+        line: 'Any playlist or Liked Songs, any length',
+        steps: [
+          <>In Spotify's desktop app, open the playlist, or Liked Songs.</>,
+          <>
+            Click a song, press <b>Ctrl+A</b> to select them all, then <b>Ctrl+C</b>.
+          </>,
+          <>Come back here and paste.</>,
+        ],
+        action: 'paste',
+      },
+      {
+        title: 'A share link',
+        line: 'Public playlists, the first 100 songs',
+        steps: [<>In Spotify, the playlist's menu, Share, Copy link to playlist. Then paste it here.</>],
+        action: 'paste',
+      },
+      {
+        title: 'An export file',
+        line: 'Exportify (with recording codes), or Spotify’s own data download',
+        steps: [
+          <>
+            <b>exportify.app</b>: sign in with Spotify and export the playlists you want, as CSV files.
+          </>,
+          <>
+            Or Spotify's Account, Privacy settings, <b>Download your data</b>: a few days later a zip arrives; choose the zip itself.
+          </>,
+        ],
+        action: 'files',
+      },
+      { title: 'Your Spotify account', line: 'Needs Spotify Premium and your own free developer app', action: 'spotify' },
     ],
   },
   {
     id: 'apple',
     name: 'Apple Music',
-    need: 'The library on this computer, or an export',
-    accept: ['xml', 'txt'],
-    steps: [
-      <>If Apple Music or iTunes is on this computer, Venuta can read every playlist in it directly. It needs your library key, entered once in Settings, Online sources.</>,
-      <>
-        Or export a playlist: select it in iTunes or Apple Music, then File, Library, <b>Export Playlist…</b>, as XML or text. Export Library gives
-        you all of them at once.
-      </>,
+    need: 'A link, the bookmark, or this computer’s library',
+    ways: [
+      {
+        title: 'A share link',
+        line: 'A playlist you made public',
+        steps: [<>In Apple Music, the playlist's menu, Share, Copy Link. Then paste it here.</>],
+        action: 'paste',
+      },
+      BOOKMARK_WAY('music.apple.com', 'Your playlists and Favourite Songs'),
+      { title: 'The library on this computer', line: 'Every playlist in Apple Music or iTunes here', action: 'apple' },
+      {
+        title: 'An export file',
+        line: 'From iTunes, or Music on a Mac',
+        steps: [<>Select the playlist, then File, Library, <b>Export Playlist…</b> (XML or text). Export Library gives you all of them.</>],
+        action: 'files',
+      },
     ],
   },
   {
     id: 'youtube',
     name: 'YouTube Music',
-    need: 'A Google Takeout export',
-    accept: ['csv'],
-    steps: [
-      <>
-        Go to <b>takeout.google.com</b>, deselect all, then choose <b>YouTube and YouTube Music</b> with only “playlists” included. Unzip what
-        arrives and choose the .csv files in its playlists folder.
-      </>,
-      <>Takeout lists videos, not songs, so Venuta asks YouTube for each one's title. That needs the internet, and takes a moment for long playlists.</>,
+    need: 'A link, the bookmark, or Google Takeout',
+    ways: [
+      {
+        title: 'A share link',
+        line: 'Public or unlisted playlists, any length',
+        steps: [<>On the playlist, Share, Copy link. Then paste it here.</>],
+        action: 'paste',
+      },
+      BOOKMARK_WAY('music.youtube.com', 'Liked Music and your playlists'),
+      {
+        title: 'Google Takeout',
+        line: 'Every playlist, Liked Music too; takes a while to arrive',
+        steps: [
+          <>
+            <b>takeout.google.com</b>: deselect all, choose <b>YouTube and YouTube Music</b> with only playlists.
+          </>,
+          <>Choose the zip that arrives. Venuta asks YouTube for each song's name.</>,
+        ],
+        action: 'files',
+      },
+    ],
+  },
+  {
+    id: 'jiosaavn',
+    name: 'JioSaavn',
+    need: 'A link, or the bookmark',
+    ways: [
+      { title: 'A share link', line: 'A public playlist', steps: [<>On the playlist, Share, Copy link. Then paste it here.</>], action: 'paste' },
+      BOOKMARK_WAY('jiosaavn.com', 'Your playlists and liked songs'),
     ],
   },
   {
     id: 'deezer',
     name: 'Deezer',
-    need: 'A link to a public playlist',
-    steps: [<>In Deezer, open the playlist, choose Share, and copy its link. The playlist has to be public for this to work.</>],
+    need: 'A link to a playlist or your profile',
+    ways: [
+      {
+        title: 'A share link',
+        line: 'A public playlist, or a public profile’s favourites',
+        steps: [<>In Deezer, Share, Copy link (a playlist, or your profile for your favourites). Then paste it here.</>],
+        action: 'paste',
+      },
+    ],
+  },
+  {
+    id: 'tidal',
+    name: 'TIDAL',
+    need: 'A link, or the bookmark',
+    ways: [
+      { title: 'A share link', line: 'A public playlist', steps: [<>In TIDAL, Share, Copy playlist link. Then paste it here.</>], action: 'paste' },
+      BOOKMARK_WAY('listen.tidal.com', 'Your playlists and favourites'),
+    ],
   },
   {
     id: 'others',
-    name: 'TIDAL, Amazon Music and others',
-    need: 'A CSV from TuneMyMusic or Soundiiz',
-    accept: ['csv'],
-    steps: [
-      <>
-        Open <b>tunemymusic.com</b> or <b>soundiiz.com</b>, connect your service, pick the playlists and choose “Export to file” as CSV. One file
-        can hold many playlists; each becomes its own here.
-      </>,
+    name: 'Amazon Music and others',
+    need: 'The bookmark, or a transfer tool’s file',
+    ways: [
+      BOOKMARK_WAY('their web player', 'Any playlist the page shows'),
+      {
+        title: 'A file from TuneMyMusic or Soundiiz',
+        line: 'Any service they connect to',
+        steps: [<>Open <b>tunemymusic.com</b> or <b>soundiiz.com</b>, connect your service, pick the playlists and export them as a CSV file.</>],
+        action: 'files',
+      },
     ],
   },
   {
     id: 'player',
-    name: 'Another player',
-    need: 'Playlist files (M3U, PLS, XSPF, WPL, ASX)',
-    accept: ['m3u', 'm3u8', 'pls', 'xspf', 'wpl', 'zpl', 'asx'],
-    steps: [<>foobar2000, MusicBee, VLC, Winamp, Poweramp and most players save playlists this way. Songs are matched by their tags when the files are still there, by name when they're not.</>],
+    name: 'Another player or a phone',
+    need: 'Playlist files, or a whole folder',
+    ways: [
+      {
+        title: 'Playlist files',
+        line: 'M3U, M3U8, PLS, XSPF, WPL, ASX, from any player or phone',
+        steps: [<>foobar2000, MusicBee, VLC, Winamp, Poweramp and most players save playlists this way. Songs from another computer or a phone find the same files here.</>],
+        action: 'files',
+      },
+    ],
+  },
+  {
+    id: 'backup',
+    name: 'A Venuta backup',
+    need: 'Put your playlists back',
+    ways: [{ title: 'The backup file', line: 'Every playlist as it was, empty ones too', action: 'files', accept: ['zip'] }],
   },
 ]
+
+/** A short name for what's in the box, before it's read ("120 songs copied from Spotify"). */
+function whatsPasted(text: string): string {
+  const t = text.trim()
+  if (!t) return ''
+  const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const head = lines[0].match(/^#VENUTA-PLAYLIST:(.*?)\|(.*)$/)
+  if (head) return `“${head[1].trim() || 'Copied songs'}” from ${head[2].trim()}, ${plural(lines.length - 1, 'song')}`
+  const spotifySongs = lines.filter((l) => /open\.spotify\.com\/(?:intl-[a-z-]+\/)?track\/|spotify:track:/.test(l)).length
+  if (spotifySongs) return `${plural(spotifySongs, 'song')} copied from Spotify`
+  const links = lines.filter((l) => /^https?:\/\//.test(l))
+  if (links.length === lines.length) {
+    const site = (l: string) =>
+      /spotify/.test(l) ? 'Spotify' : /music\.apple/.test(l) ? 'Apple Music' : /youtu/.test(l) ? 'YouTube Music' : /tidal/.test(l) ? 'TIDAL' : /jiosaavn/.test(l) ? 'JioSaavn' : /deezer/.test(l) ? 'Deezer' : /listenbrainz/.test(l) ? 'ListenBrainz' : 'a website'
+    return links.length === 1 ? `A link to ${site(links[0])}` : `${links.length} links`
+  }
+  return `A list of ${plural(lines.length, 'song')}`
+}
 
 /** What an incoming playlist does to one you have: fills it in, sits beside it, or replaces it. */
 type Mode = 'update' | 'both' | 'replace'
@@ -134,19 +256,28 @@ function updateLine(t: UpdateTarget, source: string) {
   return `${t.songs} → ${plural(t.after, 'song')}: ${parts.join(', ')}. ${t.after_here} of them in your library, the rest wait in their places.`
 }
 
-/** Opened to do one thing at once: complete playlists from Apple Music, or update one from its source. */
-export type ImportStart = { kind: 'apple'; only: string[] } | { kind: 'update'; name: string }
+/** Opened to do one thing at once: complete playlists from Apple Music, update one from its
+ *  source, check every playlist's source for changes, or send playlists out. */
+export type ImportStart =
+  | { kind: 'apple'; only: string[] }
+  | { kind: 'update'; name: string }
+  | { kind: 'check' }
+  | { kind: 'send'; names: string[] }
 
-const pickFor = (l: PreviewPlaylist, include = l.items.length > 0): Pick => ({
+const pickFor = (l: PreviewPlaylist, include = l.items.length > 0 || l.source === 'Venuta backup'): Pick => ({
   include,
   name: l.target?.name ?? l.name,
   mode: l.target ? 'update' : 'both',
   rejected: new Set(),
 })
 
+type Side = 'in' | 'out'
+
 export function ImportSheet(props: {
   root: string
   appleReady: boolean
+  /** Your playlists, to send out. */
+  playlists: PlaylistSummary[]
   start?: ImportStart
   onBack: () => void
   onOpen: (name: string) => void
@@ -154,17 +285,25 @@ export function ImportSheet(props: {
   onChanged: () => void
 }) {
   const { root } = props
+  const [side, setSide] = useState<Side>(props.start?.kind === 'send' ? 'out' : 'in')
   const [step, setStep] = useState<Step>({ at: 'pick' })
   const [source, setSource] = useState<SourceId | null>(null)
-  const [link, setLink] = useState('')
+  const [text, setText] = useState('')
+  const [progress, setProgress] = useState<{ done: number; total: number; note: string } | null>(null)
   const [lists, setLists] = useState<PreviewPlaylist[]>([])
   const [picks, setPicks] = useState<Pick[]>([])
   const [problems, setProblems] = useState<string[]>([])
   const [dropping, setDropping] = useState(false)
+  const [upToDate, setUpToDate] = useState(false)
+  const box = useRef<HTMLTextAreaElement>(null)
+  const shownFor = useRef<SourceId | null>(null)
+  const onProgress = (done: number, total: number, note?: string) => setProgress({ done, total, note: note ?? '' })
 
   /** Read, then show the review: `only` keeps just those playlists (by the source's names). */
   async function review(what: string, get: () => Promise<ImportRead>, only?: string[]) {
     setProblems([])
+    setUpToDate(false)
+    setProgress(null)
     setStep({ at: 'reading', what })
     try {
       const r = await get()
@@ -173,23 +312,57 @@ export function ImportSheet(props: {
       setProblems(r.problems)
       setPicks(lists.map((l) => pickFor(l)))
       setStep({ at: 'review' })
+      return lists.length
     } catch (e) {
       setProblems([e instanceof Error ? e.message : String(e)])
       setStep({ at: 'pick' })
+      return -1
+    } finally {
+      setProgress(null)
     }
   }
 
-  function read(files: string[], deezer: string | null, apple: boolean, only?: string[]) {
-    const youtube = source === 'youtube'
+  function read(files: string[], link: string | null, apple: boolean, only?: string[], pasted: string | null = null) {
     return review(
       apple
         ? 'Reading your Apple Music library and matching every song to yours…'
-        : deezer
-          ? 'Fetching the playlist from Deezer and matching every song…'
-          : `Reading ${files.length === 1 ? 'the file' : `${files.length} files`}${youtube ? ', asking YouTube for song names,' : ''} and matching every song to your library…`,
-      () => importPreview(root, files, deezer, apple),
+        : pasted !== null
+          ? `Reading ${whatsPasted(pasted).replace(/^A /, 'a ') || 'what you pasted'} and matching every song to your library…`
+          : link
+            ? 'Fetching the playlist and matching every song…'
+            : `Reading ${files.length === 1 ? 'the file' : `${files.length} files`} and matching every song to your library…`,
+      () => importPreview(root, files, link, apple, pasted, onProgress),
       only,
     )
+  }
+
+  /** What's in the box, brought in. */
+  function bringText(t = text) {
+    if (t.trim()) void read([], null, false, undefined, t)
+  }
+
+  /** What you copied (a link, songs, a list), brought in at once. */
+  async function pasteCopied() {
+    try {
+      const t = await invoke<string>('clipboard_text')
+      if (!t.trim()) {
+        setProblems(['Nothing is copied yet. Copy a link, songs or a list first.'])
+        return
+      }
+      setText(t)
+      bringText(t)
+    } catch (e) {
+      setProblems([e instanceof Error ? e.message : String(e)])
+    }
+  }
+
+  /** Every playlist that came from somewhere readable, read again. */
+  async function checkAll() {
+    const n = await review('Checking where your playlists came from for new songs…', () => playlistsCheck(root, onProgress))
+    if (n === 0) {
+      setStep({ at: 'pick' })
+      setUpToDate(true)
+    }
   }
 
   // Opened to do one thing: start on it at once.
@@ -201,7 +374,8 @@ export function ImportSheet(props: {
     if (s.kind === 'apple') {
       setSource('apple')
       void read([], null, true, s.only)
-    } else void review(`Reading where “${s.name}” came from and matching every song…`, () => playlistUpdateRead(root, s.name))
+    } else if (s.kind === 'update') void review(`Reading where “${s.name}” came from and matching every song…`, () => playlistUpdateRead(root, s.name))
+    else if (s.kind === 'check') void checkAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.start])
 
@@ -222,14 +396,29 @@ export function ImportSheet(props: {
     }
   }
 
-  async function choose(accept: string[] | undefined) {
-    const picked = await openDialog({
-      multiple: true,
-      filters: [{ name: 'Playlist exports', extensions: accept ?? ALL }],
-    })
+  async function choose(accept: string[] | undefined, folder = false) {
+    const picked = await openDialog(
+      folder ? { directory: true, title: 'Choose a folder of playlists' } : { multiple: true, filters: [{ name: 'Playlists', extensions: accept ?? ALL }] },
+    )
     const files = Array.isArray(picked) ? picked : picked ? [picked] : []
     if (files.length) void read(files, null, false)
   }
+
+  // Ctrl+V anywhere on Bring in (outside another field) puts what you copied in the box.
+  useEffect(() => {
+    if (side !== 'in' || step.at !== 'pick') return
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      const pasted = e.clipboardData?.getData('text') ?? ''
+      if (!pasted.trim()) return
+      e.preventDefault()
+      setText(pasted)
+      box.current?.focus()
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [side, step.at])
 
   // For checking the flow without a file dialog (development only).
   useEffect(() => {
@@ -241,9 +430,9 @@ export function ImportSheet(props: {
     }
   })
 
-  // Export files dropped anywhere on the window while choosing a source.
+  // Playlist files or folders dropped anywhere on the window while bringing in.
   useEffect(() => {
-    if (step.at !== 'pick') return
+    if (step.at !== 'pick' || side !== 'in') return
     let off: (() => void) | undefined
     let live = true
     void getCurrentWebview()
@@ -257,7 +446,7 @@ export function ImportSheet(props: {
             return !name.includes('.') || ALL.includes(name.split('.').pop()?.toLowerCase() ?? '')
           })
           if (files.length) void read(files, null, false)
-          else setProblems(["Those aren't playlist files. Venuta reads .json, .csv, .xml, .txt, .m3u, .m3u8 and .pls exports."])
+          else setProblems(["Those aren't playlists. Venuta reads playlist files (M3U, PLS, XSPF, JSPF, WPL, ASX), CSV and Excel exports, data downloads and backups (zips), and folders of them."])
         }
       })
       .then((u) => (live ? (off = u) : u()))
@@ -267,7 +456,7 @@ export function ImportSheet(props: {
       setDropping(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step.at])
+  }, [step.at, side])
 
   const chosen = picks.map((p, i) => ({ p, l: lists[i] })).filter((x) => x.p.include && x.l)
   const totals = useMemo(() => {
@@ -331,15 +520,33 @@ export function ImportSheet(props: {
     setLists([])
     setPicks([])
     setProblems([])
-    setLink('')
+    setText('')
     setStep({ at: 'pick' })
   }
 
   return (
-    <Detail title="Import playlists" onBack={props.onBack}>
-      <h1 className="title text-[34px] leading-[1.1]">Import playlists</h1>
-      <p className="mt-2 max-w-[68ch] text-[13.5px] leading-relaxed text-ink/60">
-        {step.at === 'review'
+    <Detail title="Import & export" onBack={props.onBack}>
+      <h1 className="title text-[34px] leading-[1.1]">Import & export</h1>
+      {step.at === 'pick' && (
+        <Segmented
+          tabs
+          label="Import or export"
+          className="mt-5"
+          value={side}
+          onChange={(v) => {
+            setSide(v)
+            setProblems([])
+          }}
+          options={[
+            { value: 'in', label: 'Bring in' },
+            { value: 'out', label: 'Send out' },
+          ]}
+        />
+      )}
+      <p className="mt-4 max-w-[68ch] text-[13.5px] leading-relaxed text-ink/60">
+        {side === 'out' && step.at === 'pick'
+          ? 'Send playlists to a file for another player, phone or app, to a backup, or to a streaming service, free. Songs you don’t have keep their places in the files that can hold them.'
+          : step.at === 'review'
           ? 'Here is what Venuta found. Check the close matches, then import. Nothing is written until you do.'
           : step.at === 'done'
             ? 'Done. Your playlists are saved beside your music as .m3u8 files.'
@@ -356,10 +563,65 @@ export function ImportSheet(props: {
         </div>
       )}
 
+      {side === 'out' && step.at === 'pick' ? (
+        <SendOut root={root} playlists={props.playlists} start={props.start?.kind === 'send' ? { names: props.start.names } : undefined} />
+      ) : (
       <AnimatePresence mode="wait" initial={false}>
         {step.at === 'pick' && (
-          <motion.div key="pick" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-            <div role="radiogroup" aria-label="Where from" className="mt-8 grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
+          <motion.div key="pick" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} className="max-w-[860px]">
+            {/* One box for anything: a link, songs copied from an app, a list; files and folders dropped. */}
+            <section
+              aria-label="Bring in"
+              className={`mt-7 rounded-[22px] p-4 transition-[background-color,box-shadow] ${
+                dropping
+                  ? 'bg-[color-mix(in_oklab,var(--accent)_12%,transparent)] shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--accent)_70%,transparent)]'
+                  : 'glass'
+              }`}
+            >
+              <textarea
+                ref={box}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
+                    e.preventDefault()
+                    bringText()
+                  }
+                }}
+                rows={text.includes('\n') ? 4 : 2}
+                placeholder={dropping ? 'Drop to read these files' : 'Paste a playlist link, songs copied from Spotify’s app, or a list of songs. Or drop files or a folder.'}
+                aria-label="A link, copied songs, or a list of songs"
+                className="w-full resize-none rounded-xl bg-transparent px-2 py-1.5 text-[14px] leading-relaxed outline-none placeholder:text-ink/45"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2.5 border-t border-edge pt-3">
+                {text.trim() ? (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/60">{whatsPasted(text)}</span>
+                    <button onClick={() => setText('')} className="btn-ghost btn-sm">
+                      Clear
+                    </button>
+                    <button onClick={() => bringText()} className="btn-primary">
+                      Bring in
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => void pasteCopied()} className="btn-primary btn-sm">
+                      Paste what you copied
+                    </button>
+                    <button onClick={() => void choose(undefined)} className="btn btn-sm">
+                      Choose files…
+                    </button>
+                    <button onClick={() => void choose(undefined, true)} className="btn btn-sm">
+                      Choose a folder…
+                    </button>
+                  </>
+                )}
+              </div>
+            </section>
+
+            <h2 className="mt-9 text-[15px] font-semibold">Where are your playlists?</h2>
+            <div role="radiogroup" aria-label="Where from" className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-2.5">
               {SOURCES.map((s) => {
                 const on = source === s.id
                 return (
@@ -368,14 +630,14 @@ export function ImportSheet(props: {
                     role="radio"
                     aria-checked={on}
                     onClick={() => setSource(on ? null : s.id)}
-                    className={`relative rounded-2xl p-4 text-left transition-[background-color,box-shadow] active:scale-[0.99] ${
+                    className={`relative rounded-2xl p-3.5 text-left transition-[background-color,box-shadow] active:scale-[0.99] ${
                       on
                         ? 'bg-[color-mix(in_oklab,var(--accent)_16%,transparent)] shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--accent)_70%,transparent)]'
                         : 'bg-ink/[0.05] shadow-[inset_0_0_0_1px_var(--edge)] hover:bg-ink/[0.08]'
                     }`}
                   >
-                    <span className="block text-[15px] font-semibold">{s.name}</span>
-                    <span className="mt-0.5 block text-[12.5px] text-ink/55">{s.need}</span>
+                    <span className="block text-[14.5px] font-semibold">{s.name}</span>
+                    <span className="mt-0.5 block text-[12px] leading-snug text-ink/55">{s.need}</span>
                   </button>
                 )
               })}
@@ -389,97 +651,92 @@ export function ImportSheet(props: {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.16 }}
-                  className="glass mt-4 max-w-[760px] rounded-[20px] p-5"
+                  ref={(el) => {
+                    // Brought into view once each time a service is chosen, not on every keystroke.
+                    if (el && shownFor.current !== source) {
+                      shownFor.current = source
+                      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                    }
+                  }}
+                  className="glass mt-4 scroll-mb-28 rounded-[20px] p-2"
+                  aria-label={`Ways in from ${SOURCES.find((x) => x.id === source)!.name}`}
                 >
-                  {(() => {
-                    const s = SOURCES.find((x) => x.id === source)!
-                    return (
-                      <>
-                        {source === 'spotify' && (
-                          <div className="mb-5 border-b border-edge pb-5">
-                            <SpotifyAccount compact />
-                            <SpotifyPicker onRead={(c) => void readSpotify(c)} />
-                            <p className="mt-4 text-[12.5px] font-medium text-ink/55">Or from a file</p>
-                          </div>
-                        )}
-                        <ol className="grid gap-2.5 text-[13.5px] leading-relaxed text-ink/75">
-                          {s.steps.map((t, i) => (
-                            <li key={i} className="flex gap-3">
-                              {s.steps.length > 1 && <span className="mt-[3px] grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">{i + 1}</span>}
+                  {SOURCES.find((x) => x.id === source)!.ways.map((w, i) => (
+                    <div key={w.title} className={`p-4 ${i ? 'border-t border-edge' : ''}`}>
+                      <div className="flex flex-wrap items-baseline gap-x-3">
+                        <h3 className="text-[14.5px] font-semibold">{w.title}</h3>
+                        <span className="text-[12.5px] text-ink/55">{w.line}</span>
+                      </div>
+                      {w.steps && (
+                        <ol className="mt-2.5 grid gap-2 text-[13px] leading-relaxed text-ink/75">
+                          {w.steps.map((t, j) => (
+                            <li key={j} className="flex gap-3">
+                              {w.steps!.length > 1 && <span className="mt-[3px] grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">{j + 1}</span>}
                               <span>{t}</span>
                             </li>
                           ))}
                         </ol>
-                        <div className="mt-5 flex flex-wrap items-center gap-2.5">
-                          {source === 'deezer' ? (
-                            <form
-                              className="flex min-w-[280px] flex-1 gap-2"
-                              onSubmit={(e) => {
-                                e.preventDefault()
-                                if (link.trim()) void read([], link.trim(), false)
-                              }}
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2.5">
+                        {w.action === 'paste' ? (
+                          <button onClick={() => void pasteCopied()} className="btn">
+                            Paste what you copied
+                          </button>
+                        ) : w.action === 'files' ? (
+                          <button onClick={() => void choose(w.accept)} className="btn">
+                            Choose {w.accept?.length === 1 ? `the .${w.accept[0]} file` : 'files'}…
+                          </button>
+                        ) : w.action === 'apple' ? (
+                          <>
+                            <button
+                              onClick={() => void read([], null, true)}
+                              disabled={!props.appleReady}
+                              className="btn"
+                              title={props.appleReady ? undefined : 'Enter your library key in Settings, Online sources, first'}
                             >
-                              <input
-                                autoFocus
-                                value={link}
-                                onChange={(e) => setLink(e.target.value)}
-                                placeholder="https://www.deezer.com/playlist/…"
-                                aria-label="Deezer playlist link"
-                                className="field min-w-0 flex-1"
-                              />
-                              <button disabled={!link.trim()} className="btn-primary">
-                                Read playlist
-                              </button>
-                            </form>
-                          ) : source === 'apple' ? (
-                            <>
-                              <button
-                                onClick={() => void read([], null, true)}
-                                disabled={!props.appleReady}
-                                className="btn-primary"
-                                title={props.appleReady ? undefined : 'Enter your library key in Settings, Online sources, first'}
-                              >
-                                Read my Apple Music library
-                              </button>
-                              <button onClick={() => void choose(s.accept)} className="btn">
-                                Choose an export file…
-                              </button>
-                              {!props.appleReady && <span className="text-[12.5px] text-ink/50">Reading the library needs its key, in Settings, Online sources.</span>}
-                            </>
-                          ) : (
-                            <button onClick={() => void choose(s.accept)} className="btn-primary">
-                              Choose {s.accept?.length === 1 ? `.${s.accept[0]} files` : 'files'}…
+                              Read my Apple Music library
                             </button>
-                          )}
-                        </div>
-                      </>
-                    )
-                  })()}
+                            {!props.appleReady && <span className="text-[12.5px] text-ink/50">It needs the library's key, in Settings, Online sources.</span>}
+                          </>
+                        ) : w.action === 'spotify' ? (
+                          <div className="w-full">
+                            <SpotifyAccount compact />
+                            <SpotifyPicker onRead={(c) => void readSpotify(c)} />
+                          </div>
+                        ) : (
+                          <Bookmark onPaste={() => void pasteCopied()} />
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </motion.section>
               )}
             </AnimatePresence>
 
-            <div
-              className={`mt-6 grid max-w-[760px] place-items-center rounded-[20px] border border-dashed px-6 py-7 text-center transition-colors ${
-                dropping ? 'border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]' : 'border-edge'
-              }`}
-            >
-              <p className="text-[13.5px] text-ink/70">{dropping ? 'Drop to read these files' : 'Already have export files? Drop them here, from any service.'}</p>
-              {!dropping && (
-                <button onClick={() => void choose(undefined)} className="btn-ghost btn-sm mt-2">
-                  Choose files…
-                </button>
-              )}
-            </div>
+            <p className="mt-8 text-[13px] text-ink/60">
+              {upToDate ? 'Every playlist is up to date with where it came from. ' : 'Brought playlists in before? '}
+              <button onClick={() => void checkAll()} className="font-medium text-accent-ink underline-offset-4 hover:underline">
+                {upToDate ? 'Check again' : 'Check them for new songs'}
+              </button>
+            </p>
           </motion.div>
         )}
 
         {(step.at === 'reading' || step.at === 'saving') && (
           <motion.div key="busy" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-16 max-w-[520px]" role="status">
             <div className="relative h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
-              <div className="bar-sweep absolute inset-y-0 w-1/3 rounded-full bg-accent" />
+              {progress && progress.total > 0 ? (
+                <div className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width]" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+              ) : (
+                <div className="bar-sweep absolute inset-y-0 w-1/3 rounded-full bg-accent" />
+              )}
             </div>
             <p className="mt-4 text-[14px] text-ink/70">{step.at === 'reading' ? step.what : 'Writing your playlists…'}</p>
+            {step.at === 'reading' && progress && progress.total > 0 && (
+              <p className="mt-1 text-[12.5px] tabular-nums text-ink/50">
+                {progress.note || 'Working'}: {progress.done.toLocaleString('en-IN')} of {progress.total.toLocaleString('en-IN')}
+              </p>
+            )}
           </motion.div>
         )}
 
@@ -569,7 +826,57 @@ export function ImportSheet(props: {
           </motion.div>
         )}
       </AnimatePresence>
+      )}
     </Detail>
+  )
+}
+
+/**
+ * The Copy for Venuta bookmark: dragged to your browser's bookmarks bar (or copied and saved as a
+ * bookmark's address), then clicked on a music website where you're signed in.
+ */
+function Bookmark(props: { onPaste: () => void }) {
+  // React won't render a javascript: address, so it's set on the element itself.
+  const link = useRef<HTMLAnchorElement>(null)
+  useEffect(() => link.current?.setAttribute('href', BOOKMARK_URL), [])
+  const copy = async () => {
+    await navigator.clipboard.writeText(BOOKMARK_URL)
+    notify('Copied. In your browser, add a bookmark and paste this as its address (URL).')
+  }
+  return (
+    <div className="grid w-full gap-3 text-[13px] leading-relaxed text-ink/75">
+      <ol className="grid gap-2">
+        <li className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">1</span>
+          <span>Drag this to your browser's bookmarks bar:</span>
+          <a
+            ref={link}
+            onClick={(e) => e.preventDefault()}
+            draggable
+            title="Drag me to your browser's bookmarks bar"
+            className="cursor-grab rounded-full bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] px-3 py-1 font-semibold text-accent-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_45%,transparent)] active:cursor-grabbing"
+          >
+            Copy for Venuta
+          </a>
+          <button onClick={() => void copy()} className="btn-ghost btn-sm">
+            or copy it
+          </button>
+        </li>
+        <li className="flex gap-3">
+          <span className="mt-[3px] grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">2</span>
+          <span>On the music website, signed in, open the playlist or your liked songs and click the bookmark. It loads the whole list and copies it.</span>
+        </li>
+        <li className="flex gap-3">
+          <span className="mt-[3px] grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">3</span>
+          <span>When it says Copied, come back and paste.</span>
+        </li>
+      </ol>
+      <div>
+        <button onClick={props.onPaste} className="btn">
+          Paste what you copied
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -704,7 +1011,11 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
           </svg>
         </button>
       </div>
-      {!l.items.length && <p className="px-4 pb-4 text-[12.5px] text-ink/50">This playlist is empty, so there is nothing to import.</p>}
+      {!l.items.length && (
+        <p className="px-4 pb-4 text-[12.5px] text-ink/50">
+          {l.source === 'Venuta backup' ? 'An empty playlist: it comes back empty.' : 'This playlist is empty, so there is nothing to import.'}
+        </p>
+      )}
       {t && pick.include && (
         <div className="border-t border-edge px-4 py-3 text-[13px] text-ink/75">
           <div className="flex flex-wrap items-center gap-3">
