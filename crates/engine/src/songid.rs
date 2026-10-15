@@ -7,6 +7,9 @@
 //! Names in Indian scripts are read in Roman letters by the app only (not here yet): tags and
 //! playlists from services come in Roman letters.
 
+use crate::audit::name_key;
+use crate::plan::split_names;
+use crate::playlists::{Foreign, title_fold_key, title_key};
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
@@ -81,6 +84,57 @@ fn fold_word(w: &str) -> String {
     out
 }
 
+/// How sure a song found somewhere else is the one asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Sureness {
+    /// Worth showing, for you to check.
+    Likely,
+    /// The same song.
+    Sure,
+}
+
+/// Is `have` (a song as another service lists it) the song `want` describes, and how sure?
+///
+/// The title has to agree (as written or in the loose spelling; version words like Remix or
+/// Lofi Flip must agree too), and a length known on both sides within 3 s. A shared artist, or
+/// the same recording code, makes it sure. Without a shared artist an agreeing length still
+/// makes it likely: services credit Indian film songs to the composer, not the singer.
+pub fn same_song(want: &Foreign, have: &Foreign) -> Option<(Sureness, &'static str)> {
+    let isrc = |f: &Foreign| f.isrc.as_ref().map(|i| i.trim().to_uppercase());
+    if isrc(want).is_some() && isrc(want) == isrc(have) {
+        return Some((Sureness::Sure, "Same recording code (ISRC)"));
+    }
+    let titles = title_key(&want.title) == title_key(&have.title)
+        || title_fold_key(&want.title) == title_fold_key(&have.title);
+    if !titles || title_key(&want.title).is_empty() {
+        return None;
+    }
+    let near = match (want.duration_ms, have.duration_ms) {
+        (Some(a), Some(b)) if a.abs_diff(b) <= 3_000 => Some(true),
+        (Some(_), Some(_)) => Some(false),
+        _ => None,
+    };
+    let keys = |s: &str| -> Vec<String> {
+        split_names(s)
+            .iter()
+            .flat_map(|n| [name_key(n), format!("~{}", fold_key(n))])
+            .filter(|k| k.len() > 1)
+            .collect()
+    };
+    let theirs = keys(&have.artist);
+    let shared = keys(&want.artist).iter().any(|k| theirs.contains(k));
+    match (near, shared) {
+        (Some(false), _) => None,
+        (Some(true), true) => Some((Sureness::Sure, "Same song, artist and length")),
+        (Some(true), false) => Some((
+            Sureness::Likely,
+            "Same song and length, credited differently",
+        )),
+        (None, true) => Some((Sureness::Likely, "Same song and artist")),
+        (None, false) => None,
+    }
+}
+
 fn char_str(c: char) -> &'static str {
     // Only ever called with ASCII consonants.
     const ALL: &str = "bcdfgjklmnprstv";
@@ -126,6 +180,49 @@ mod tests {
             let key = case[1].as_str().unwrap();
             assert_eq!(search_key(name), key, "{name:?}");
         }
+    }
+
+    fn song(title: &str, artist: &str, ms: Option<u64>) -> Foreign {
+        Foreign {
+            title: title.into(),
+            artist: artist.into(),
+            duration_ms: ms,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_same_song_elsewhere() {
+        let want = song("Kesariya", "Arijit Singh", Some(268_000));
+        // As Apple lists it: every name credited, the film note in the title.
+        let apple = song(
+            "Kesariya (From \"Brahmastra\")",
+            "Pritam, Arijit Singh & Amitabh Bhattacharya",
+            Some(268_165),
+        );
+        assert_eq!(same_song(&want, &apple).map(|x| x.0), Some(Sureness::Sure));
+        // As Deezer's search lists it: the composer only.
+        let deezer = song("Kesariya (From \"Brahmastra\")", "Pritam", Some(268_000));
+        assert_eq!(
+            same_song(&want, &deezer).map(|x| x.0),
+            Some(Sureness::Likely)
+        );
+        // Another version: not this song.
+        let lofi = song(
+            "Kesariya (Lofi Flip)",
+            "VIBIE, Arijit Singh & Pritam",
+            Some(240_158),
+        );
+        assert_eq!(same_song(&want, &lofi), None);
+        // A different length: not this song.
+        let edit = song("Kesariya", "Arijit Singh", Some(197_000));
+        assert_eq!(same_song(&want, &edit), None);
+        // Spelled differently, same artist and length.
+        let spelled = song("Kesariyaa", "Arijeet Singh", Some(268_500));
+        assert_eq!(
+            same_song(&want, &spelled).map(|x| x.0),
+            Some(Sureness::Sure)
+        );
     }
 
     #[test]

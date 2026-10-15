@@ -9,6 +9,7 @@ pub mod apple;
 pub mod apply;
 pub mod art;
 pub mod audit;
+pub mod bridges;
 pub mod compare;
 pub mod convert;
 pub mod device;
