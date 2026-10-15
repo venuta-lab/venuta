@@ -1312,6 +1312,10 @@ pub struct Foreign {
     /// A Spotify song copied from Spotify's app, still waiting for its name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spotify: Option<String>,
+    /// Where another device's list said the file was (a phone, another computer): its name and
+    /// folder find the same file here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub was_at: Option<String>,
 }
 
 impl Foreign {
@@ -1391,8 +1395,28 @@ pub struct Matcher<'a> {
     by_fold: HashMap<String, Vec<&'a Track>>,
     by_loose: HashMap<String, Vec<&'a Track>>,
     by_isrc: HashMap<String, &'a Track>,
+    /// Files by name without extension (a phone's copy may be converted), to find the file a
+    /// list from another device names.
+    by_file: HashMap<String, Vec<&'a Track>>,
     /// MusicBrainz recording ids (the `MUSICBRAINZ_TRACKID` tag Picard writes).
     by_mbid: HashMap<String, &'a Track>,
+}
+
+/// A file's name without its extension, lower case: "04 - kesariya".
+fn file_stem_key(path: &str) -> String {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name.rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(name)
+        .trim()
+        .to_lowercase()
+}
+
+/// The folder a file is in, lower case: "brahmastra (2022)".
+fn parent_key(path: &str) -> String {
+    let mut parts = path.rsplit(['/', '\\']);
+    parts.next();
+    parts.next().unwrap_or_default().trim().to_lowercase()
 }
 
 /// An artist name as it's compared: as written, and in the loose spelling ("Arijeet" =
@@ -1411,7 +1435,9 @@ impl<'a> Matcher<'a> {
         let mut by_loose: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_isrc: HashMap<String, &Track> = HashMap::new();
         let mut by_mbid: HashMap<String, &Track> = HashMap::new();
+        let mut by_file: HashMap<String, Vec<&Track>> = HashMap::new();
         for t in lib.tracks.iter() {
+            by_file.entry(file_stem_key(&t.path)).or_default().push(t);
             if let Some(m) = t
                 .first("MUSICBRAINZ_TRACKID")
                 .map(|m| m.trim().to_lowercase())
@@ -1438,6 +1464,7 @@ impl<'a> Matcher<'a> {
             by_loose,
             by_isrc,
             by_mbid,
+            by_file,
         }
     }
 
@@ -1574,6 +1601,17 @@ impl<'a> Matcher<'a> {
                 track: t,
                 grade: Grade::Exact,
                 why: "Same MusicBrainz recording".into(),
+            });
+        }
+        // 1b. A list from another device: the same file name in the same folder is the same file.
+        if let Some(at) = f.was_at.as_deref()
+            && let Some(cands) = self.by_file.get(&file_stem_key(at))
+            && let Some(t) = cands.iter().find(|t| parent_key(&t.path) == parent_key(at))
+        {
+            return Some(Found {
+                track: t,
+                grade: Grade::Exact,
+                why: "The same file name and folder".into(),
             });
         }
         let artists: HashSet<String> = split_names(&f.artist)
@@ -2270,6 +2308,63 @@ mod tests {
             .map(|x| x.1),
             Some(Grade::Close)
         );
+    }
+
+    #[test]
+    fn a_playlist_from_a_phone_finds_the_same_files_here() {
+        let lib = library(vec![
+            song(
+                1,
+                "Film/Brahmastra (2022)/04 - Kesariya.flac",
+                "Kesariya",
+                "Arijit Singh",
+                "Brahmastra",
+                268_000,
+            ),
+            song(
+                2,
+                "Film/Other (2020)/01 - Intro.flac",
+                "Intro",
+                "Someone",
+                "Other",
+                60_000,
+            ),
+            song(
+                3,
+                "Film/Another (2021)/01 - Intro.flac",
+                "Intro",
+                "Else",
+                "Another",
+                70_000,
+            ),
+        ]);
+        let m = Matcher::new(&lib);
+        let phone = |at: &str, title: &str| Foreign {
+            title: title.into(),
+            was_at: Some(at.into()),
+            ..Default::default()
+        };
+        // Same file name and folder (converted to MP3 for the phone): the same file.
+        let f = m
+            .grade(&phone(
+                "/storage/emulated/0/Music/Brahmastra (2022)/04 - Kesariya.mp3",
+                "Kesariya",
+            ))
+            .unwrap();
+        assert_eq!(
+            (f.track.path.as_str(), f.grade),
+            ("Film/Brahmastra (2022)/04 - Kesariya.flac", Grade::Exact)
+        );
+        // A common file name in a folder you don't have: not guessed from the name.
+        assert!(
+            m.grade(&phone("/sdcard/Music/Unknown/01 - Intro.mp3", "Intro"))
+                .is_none_or(|f| f.grade == Grade::Close)
+        );
+        // The folder settles which of two files named alike.
+        let f = m
+            .grade(&phone(r"E:\Music\Another (2021)\01 - Intro.mp3", "Intro"))
+            .unwrap();
+        assert_eq!(f.track.path, "Film/Another (2021)/01 - Intro.flac");
     }
 
     #[test]

@@ -399,6 +399,7 @@ fn rows_playlists(mut rows: Vec<Vec<String>>, stem: &str) -> Result<Vec<ForeignP
             file: None,
             mbid: None,
             spotify: None,
+            was_at: None,
         };
         if f.title.is_empty() && f.youtube.is_none() {
             continue;
@@ -777,11 +778,13 @@ fn entry(location: &str, extinf: Option<(Option<u64>, String)>, dir: &Path) -> F
         Some((a, t)) => (a.trim().to_owned(), t.trim().to_owned()),
         None => (String::new(), label.trim().to_owned()),
     };
+    let here = path.is_file();
     Foreign {
         title,
         artist,
         duration_ms: dur,
-        file: path.is_file().then(|| path.to_string_lossy().into_owned()),
+        file: here.then(|| path.to_string_lossy().into_owned()),
+        was_at: (!here).then(|| loc.to_owned()),
         ..Default::default()
     }
 }
