@@ -8,7 +8,7 @@ import { IconClose, IconSearch } from '../../components/Icons'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { RemoteArt } from '../../components/RemoteArt'
 import { indexTracks, search, type Album } from '../listen/model'
-import { useOnlineSearch } from '../listen/OnlineResults'
+import { useOnlineSearch } from '../listen/onlineSearch'
 import { QualityBadge } from '../listen/parts'
 import { onlineId, plural } from './common'
 
