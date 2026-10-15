@@ -631,6 +631,7 @@ pub fn on_service(
     http: &crate::net::Http,
     service: crate::bridges::Service,
     songs: &[Song],
+    country: &str,
     on_progress: &mut dyn FnMut(usize, usize),
 ) -> OnService {
     let mut out = OnService::default();
@@ -644,7 +645,7 @@ pub fn on_service(
             mbid: s.mbid.clone(),
             ..Default::default()
         };
-        match crate::bridges::find(http, service, &want) {
+        match crate::bridges::find(http, service, &want, country) {
             Ok(Some(e)) => out.found.push((i, e)),
             _ => out.missing.push(i),
         }

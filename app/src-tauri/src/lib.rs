@@ -1972,6 +1972,7 @@ async fn playlist_on_service(
     root: String,
     name: String,
     service: engine::bridges::Service,
+    country: Option<String>,
     on_progress: Channel<DeepProgress>,
 ) -> CmdResult<OnServiceOut> {
     blocking(move || {
@@ -1979,13 +1980,15 @@ async fn playlist_on_service(
         let (_, lib) = load_lib(&rootp)?;
         let songs = engine::exports::songs_of(&rootp, &lib, &name)?;
         let http = engine::net::Http::open()?;
-        let found = engine::exports::on_service(&http, service, &songs, &mut |done, total| {
-            let _ = on_progress.send(DeepProgress {
-                done,
-                total,
-                note: String::new(),
+        let country = country.unwrap_or_default();
+        let found =
+            engine::exports::on_service(&http, service, &songs, &country, &mut |done, total| {
+                let _ = on_progress.send(DeepProgress {
+                    done,
+                    total,
+                    note: String::new(),
+                });
             });
-        });
         let label = match service {
             engine::bridges::Service::Spotify => "Spotify",
             engine::bridges::Service::AppleMusic => "Apple Music",
@@ -2160,48 +2163,159 @@ async fn playlist_update_read(
     root: String,
     name: String,
     acc: State<'_, accounts::Accounts>,
+    pb: State<'_, playback::Playback>,
 ) -> CmdResult<ImportRead> {
     let acc = acc.inner().clone();
+    let catalog = pb.catalog();
     blocking(move || {
         let rootp = PathBuf::from(&root);
         let header = engine::playlists::header_of(&rootp, &name);
         let id = header.source_id.ok_or_else(|| {
             format!("Venuta doesn't know where “{name}” came from. Import it again, and choose to update this playlist in the review.")
         })?;
-        let (kind, rest) = id.split_once(':').unwrap_or(("", ""));
-        let mut problems = Vec::new();
-        let lists: Vec<engine::imports::ForeignPlaylist> = match kind {
-            "spotify" => accounts::read_one(&acc, rest, &name)?,
-            "deezer" => {
-                let http = engine::net::Http::open()?;
-                vec![engine::imports::deezer(&http, rest)?]
-            }
-            "apple" => {
-                let (all, p) = apple_lists()?;
-                problems = p;
-                all.into_iter().filter(|l| l.id.as_deref() == Some(id.as_str())).collect()
-            }
-            "file" => {
-                let (path, list) = rest.rsplit_once('|').unwrap_or((rest, ""));
-                if !Path::new(path).is_file() {
-                    return Err(format!(
-                        "The file “{name}” came from is gone ({path}). Export it again and import that file; the review offers to update this playlist."
-                    ));
-                }
-                let mut all = engine::imports::read_file(Path::new(path))?;
-                if all.len() > 1 {
-                    all.retain(|l| l.name == list);
-                }
-                all
-            }
-            _ => return Err(format!("Venuta can't read “{name}”'s source again.")),
-        };
-        if lists.is_empty() {
-            return Err(format!("“{name}” isn't at its source any more."));
-        }
+        let (lists, problems) = read_source(&acc, catalog.as_ref(), &name, &id)?;
         let (_, lib) = load_lib(&rootp)?;
         Ok(ImportRead {
             lists: engine::imports::preview(&rootp, &lib, &lists),
+            problems,
+        })
+    })
+    .await
+}
+
+/// Read a playlist again from where it came from (`source_id`): an account, a share link, the
+/// Apple Music library or a file. Songs copied from an app or a page can't be read again.
+fn read_source(
+    acc: &accounts::Accounts,
+    catalog: &dyn media_access::MediaAccess,
+    name: &str,
+    id: &str,
+) -> Result<(Vec<engine::imports::ForeignPlaylist>, Vec<String>), String> {
+    use engine::links::Link;
+    let (kind, rest) = id.split_once(':').unwrap_or(("", ""));
+    let link = |l: Link| -> Result<(Vec<engine::imports::ForeignPlaylist>, Vec<String>), String> {
+        let http = engine::net::Http::open()?;
+        let (p, note) = engine::links::read(&http, &l)?;
+        Ok((vec![p], note.into_iter().collect()))
+    };
+    let (lists, problems) = match kind {
+        // Signed in to Spotify: its account; otherwise its share page (public playlists).
+        "spotify" => match accounts::read_one(acc, rest, name) {
+            Ok(l) => (l, vec![]),
+            Err(_) => link(Link::Spotify(rest.to_owned()))?,
+        },
+        "applemusic" => {
+            let url = format!("https://music.apple.com/us/playlist/x/{rest}");
+            link(Link::AppleMusic(url))?
+        }
+        "tidal" => link(Link::Tidal(rest.to_owned()))?,
+        "jiosaavn" => link(Link::JioSaavn(rest.to_owned()))?,
+        "deezer" => link(Link::Deezer(rest.to_owned()))?,
+        "deezer-favourites" => link(Link::DeezerFavourites(rest.to_owned()))?,
+        "listenbrainz" => link(Link::ListenBrainz(rest.to_owned()))?,
+        "youtube" => (vec![youtube_playlist(catalog, rest)?], vec![]),
+        "apple" => {
+            let (all, p) = apple_lists()?;
+            (
+                all.into_iter()
+                    .filter(|l| l.id.as_deref() == Some(id))
+                    .collect(),
+                p,
+            )
+        }
+        "file" => {
+            let (path, list) = rest.rsplit_once('|').unwrap_or((rest, ""));
+            if !Path::new(path).is_file() {
+                return Err(format!(
+                    "The file “{name}” came from is gone ({path}). Export it again and import that file; the review offers to update this playlist."
+                ));
+            }
+            let mut all = engine::imports::read_file(Path::new(path))?;
+            if all.len() > 1 {
+                all.retain(|l| l.name == list);
+            }
+            (all, vec![])
+        }
+        _ => {
+            return Err(format!(
+                "“{name}” came from songs you copied, so there's nothing to read again. Copy them again and paste them in Import & export to update it."
+            ));
+        }
+    };
+    if lists.is_empty() {
+        return Err(format!("“{name}” isn't at its source any more."));
+    }
+    Ok((lists, problems))
+}
+
+/// Every playlist that came from somewhere Venuta can read again, read again: the ones whose
+/// source has new songs or dropped some, ready to review and update together.
+#[tauri::command]
+async fn playlists_check(
+    root: String,
+    on_progress: Channel<DeepProgress>,
+    acc: State<'_, accounts::Accounts>,
+    pb: State<'_, playback::Playback>,
+) -> CmdResult<ImportRead> {
+    let acc = acc.inner().clone();
+    let catalog = pb.catalog();
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        let sources: Vec<(String, String)> = engine::playlists::list(&rootp, &lib)
+            .into_iter()
+            .filter(|p| !p.smart)
+            .filter_map(|p| {
+                let id = engine::playlists::header_of(&rootp, &p.name).source_id?;
+                Some((p.name, id))
+            })
+            .collect();
+        let mut lists = Vec::new();
+        let mut problems = Vec::new();
+        for (i, (name, id)) in sources.iter().enumerate() {
+            let _ = on_progress.send(DeepProgress {
+                done: i,
+                total: sources.len(),
+                note: format!("Checking “{name}”"),
+            });
+            match read_source(&acc, catalog.as_ref(), name, id) {
+                Ok((found, mut p)) => {
+                    lists.extend(found);
+                    problems.append(&mut p);
+                }
+                Err(e) => problems.push(e),
+            }
+        }
+        let _ = on_progress.send(DeepProgress {
+            done: sources.len(),
+            total: sources.len(),
+            note: String::new(),
+        });
+        // The same note for several playlists ("enter your Apple Music key") said once.
+        let mut said: Vec<(String, usize)> = Vec::new();
+        for p in problems {
+            match said.iter_mut().find(|(m, _)| *m == p) {
+                Some((_, n)) => *n += 1,
+                None => said.push((p, 1)),
+            }
+        }
+        let problems: Vec<String> = said
+            .into_iter()
+            .map(|(m, n)| {
+                if n > 1 {
+                    format!("{m} ({n} playlists)")
+                } else {
+                    m
+                }
+            })
+            .collect();
+        // Only the ones with something new or gone at the source.
+        let preview: Vec<_> = engine::imports::preview(&rootp, &lib, &lists)
+            .into_iter()
+            .filter(|l| l.target.as_ref().is_some_and(|t| t.added + t.removed > 0))
+            .collect();
+        Ok(ImportRead {
+            lists: preview,
             problems,
         })
     })
@@ -2227,6 +2341,59 @@ fn search_web(app: AppHandle, words: String) -> CmdResult<()> {
     );
     app.opener()
         .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Sites Import & export sends you to: services' own pages and the free transfer tools. Nothing
+/// else is ever opened from here.
+const SEND_HOSTS: &[&str] = &[
+    "www.youtube.com",
+    "music.youtube.com",
+    "open.spotify.com",
+    "www.spotify.com",
+    "music.apple.com",
+    "www.deezer.com",
+    "www.tunemymusic.com",
+    "soundiiz.com",
+    "freeyourmusic.com",
+    "takeout.google.com",
+    "exportify.app",
+    "privacy.apple.com",
+    "listen.tidal.com",
+    "www.jiosaavn.com",
+];
+
+/// Open a link Import & export made (a YouTube list of songs, a service's page, a free transfer
+/// tool), in your browser. Only https, only those sites.
+#[tauri::command]
+fn open_send_link(app: AppHandle, url: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let host = url
+        .strip_prefix("https://")
+        .and_then(|r| r.split(['/', '?', '#']).next())
+        .unwrap_or_default();
+    if !SEND_HOSTS.contains(&host) {
+        return Err("Venuta only opens music services' pages from here.".into());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Open a page of links Import & export saved (in Venuta's own exports folder), in your browser.
+#[tauri::command]
+fn open_saved_page(app: AppHandle, path: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = paths::app_data_dir().join("exports");
+    let file = PathBuf::from(&path);
+    let (Ok(d), Ok(f)) = (dir.canonicalize(), file.canonicalize()) else {
+        return Err("That page isn't there any more.".into());
+    };
+    if !f.starts_with(&d) || f.extension().is_none_or(|e| e != "html") {
+        return Err("Venuta only opens its own pages from here.".into());
+    }
+    app.opener()
+        .open_path(f.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -2270,6 +2437,7 @@ async fn import_preview(
     link: Option<String>,
     text: Option<String>,
     apple: bool,
+    on_progress: Channel<DeepProgress>,
     pb: tauri::State<'_, playback::Playback>,
 ) -> CmdResult<ImportRead> {
     let catalog = pb.catalog();
@@ -2320,8 +2488,20 @@ async fn import_preview(
                     ),
                 }
             }
-            engine::imports::youtube_titles(&http, &mut lists, &mut |_, _| {});
-            engine::links::spotify_names(&http, &mut lists, &mut |_, _| {});
+            // Naming songs that came as ids is the slow part: said as it goes.
+            let progress = &on_progress;
+            let tell = |what: &str| {
+                let what = what.to_owned();
+                move |done: usize, total: usize| {
+                    let _ = progress.send(DeepProgress {
+                        done,
+                        total,
+                        note: what.clone(),
+                    });
+                }
+            };
+            engine::imports::youtube_titles(&http, &mut lists, &mut tell("Asking YouTube for song names"));
+            engine::links::spotify_names(&http, &mut lists, &mut tell("Asking Spotify for song names"));
         }
         if apple {
             let (mut l, mut p) = apple_lists()?;
@@ -2813,6 +2993,9 @@ pub fn run() {
             online::online_lyrics,
             playlist_duplicate,
             playlist_export,
+            playlists_check,
+            open_send_link,
+            open_saved_page,
             playlists_export,
             playlist_text,
             playlists_backup,

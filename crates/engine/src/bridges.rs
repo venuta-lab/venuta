@@ -43,7 +43,14 @@ pub struct Elsewhere {
 }
 
 /// Find `want` on `service`. `Ok(None)`: not there (or not found well enough to offer).
-pub fn find(http: &Http, service: Service, want: &Foreign) -> Result<Option<Elsewhere>, String> {
+/// `country`: the two-letter store to look in (Apple Music has one per country; India's holds
+/// more Hindi music than the US one).
+pub fn find(
+    http: &Http,
+    service: Service,
+    want: &Foreign,
+    country: &str,
+) -> Result<Option<Elsewhere>, String> {
     let err = |e: NetError| e.to_string();
     match service {
         Service::Deezer => {
@@ -72,8 +79,9 @@ pub fn find(http: &Http, service: Service, want: &Foreign) -> Result<Option<Else
         Service::AppleMusic => {
             let v = http
                 .get_json(&format!(
-                    "https://itunes.apple.com/search?term={}&media=music&entity=song&limit=10",
-                    enc(&query(want))
+                    "https://itunes.apple.com/search?term={}&media=music&entity=song&limit=10&country={}",
+                    enc(&query(want)),
+                    store(country)
                 ))
                 .map_err(err)?;
             Ok(itunes_search(&v, want))
@@ -106,6 +114,16 @@ pub fn find(http: &Http, service: Service, want: &Foreign) -> Result<Option<Else
                     why: "ListenBrainz knows this song on Spotify".into(),
                 }))
         }
+    }
+}
+
+/// A two-letter store code, US when unknown.
+fn store(country: &str) -> String {
+    let c = country.trim();
+    if c.len() == 2 && c.chars().all(|x| x.is_ascii_alphabetic()) {
+        c.to_ascii_lowercase()
+    } else {
+        "us".into()
     }
 }
 

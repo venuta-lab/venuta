@@ -34,6 +34,15 @@ pub fn file_id(path: &Path, name: &str) -> String {
     format!("file:{}|{name}", path.to_string_lossy())
 }
 
+/// Where a playlist from a Venuta backup says it came from.
+pub const BACKUP: &str = "Venuta backup";
+
+/// A JSPF list Venuta wrote (a backup or an export).
+fn is_backup(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}'))
+        .is_ok_and(|v| v["playlist"]["creator"] == "Venuta")
+}
+
 /// Read every playlist in a file another app made, or in every such file in a folder or zip.
 /// What a file is comes from what's in it (a CSV saved as .txt, a data download's zip), its
 /// name only as a hint.
@@ -137,7 +146,14 @@ pub fn read_bytes(bytes: &[u8], stem: &str, dir: &Path) -> Result<Vec<ForeignPla
                 .collect();
             vec![ForeignPlaylist {
                 name: name.unwrap_or_else(|| stem.to_owned()),
-                source: if kind == Kind::Jspf { "JSPF" } else { "XSPF" }.into(),
+                source: if kind == Kind::Xspf {
+                    "XSPF"
+                } else if is_backup(&text) {
+                    BACKUP
+                } else {
+                    "JSPF"
+                }
+                .into(),
                 id: None,
                 tracks,
             }]
@@ -186,7 +202,11 @@ pub fn read_bytes(bytes: &[u8], stem: &str, dir: &Path) -> Result<Vec<ForeignPla
             return Err("{file} isn't a playlist Venuta can read. It reads playlist files (M3U, PLS, XSPF, JSPF, WPL, ASX), CSV and Excel exports, Spotify, Apple and Google data downloads, and lists of songs.".into());
         }
     };
-    let found: Vec<ForeignPlaylist> = found.into_iter().filter(|p| !p.tracks.is_empty()).collect();
+    // Empty playlists come back only from a Venuta backup (where you kept them empty).
+    let found: Vec<ForeignPlaylist> = found
+        .into_iter()
+        .filter(|p| !p.tracks.is_empty() || p.source == BACKUP)
+        .collect();
     if found.is_empty() {
         return Err("No songs found in {file}.".into());
     }
@@ -2020,6 +2040,39 @@ mod tests {
         assert!(e[1].want.is_some());
         assert_eq!(wanted.len(), 1);
         assert_eq!(wanted[0].album, "Gone");
+    }
+
+    #[test]
+    fn an_empty_playlist_from_a_backup_comes_back_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library {
+            tracks: vec![],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+        };
+        let backup = r#"{"playlist": {"title": "Road", "creator": "Venuta", "track": []}}"#;
+        let lists = read_bytes(backup.as_bytes(), "Road", root.path()).unwrap();
+        assert_eq!(
+            (lists[0].name.as_str(), lists[0].source.as_str()),
+            ("Road", BACKUP)
+        );
+        let choice = Choice {
+            name: "Road".into(),
+            source: BACKUP.into(),
+            ..Default::default()
+        };
+        apply(root.path(), &lib, &[choice], "2026-10-15").unwrap();
+        let (songs, _) = playlists::read(root.path(), &lib, "Road").unwrap();
+        assert!(songs.is_empty());
+        // Another app's empty list still says there's nothing in it.
+        let other = r#"{"playlist": {"title": "X", "track": []}}"#;
+        assert!(read_bytes(other.as_bytes(), "X", root.path()).is_err());
     }
 
     #[test]

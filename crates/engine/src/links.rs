@@ -575,6 +575,17 @@ pub fn pasted(text: &str) -> (Vec<String>, Vec<ForeignPlaylist>) {
                 })
                 .collect(),
         });
+    } else if let Some((name, site, rest)) = copied_list(text) {
+        // From the Copy for Venuta bookmark: its first line names the playlist and the site.
+        let songs = crate::formats::songs(rest);
+        if !songs.is_empty() {
+            lists.push(ForeignPlaylist {
+                name,
+                source: site,
+                id: None,
+                tracks: songs,
+            });
+        }
     } else if links.is_empty() {
         let songs = crate::formats::songs(text);
         if !songs.is_empty() {
@@ -587,6 +598,26 @@ pub fn pasted(text: &str) -> (Vec<String>, Vec<ForeignPlaylist>) {
         }
     }
     (links, lists)
+}
+
+/// The first line the Copy for Venuta bookmark writes: .
+pub const COPIED_HEADER: &str = "#VENUTA-PLAYLIST:";
+
+/// A list the bookmark copied: (playlist name, site, the songs' lines).
+fn copied_list(text: &str) -> Option<(String, String, &str)> {
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    let rest = text.strip_prefix(COPIED_HEADER)?;
+    let (first, songs) = rest.split_once('\n').unwrap_or((rest, ""));
+    let (name, site) = first
+        .trim()
+        .split_once('|')
+        .unwrap_or((first.trim(), "A web page"));
+    let name = if name.trim().is_empty() {
+        "Copied songs"
+    } else {
+        name.trim()
+    };
+    Some((name.to_owned(), site.trim().to_owned(), songs))
 }
 
 #[cfg(test)]
@@ -627,6 +658,18 @@ mod copied {
             (f.title.as_str(), f.artist.as_str(), f.duration_ms),
             ("Stop The Wedding!", "Ashe", Some(198_840))
         );
+    }
+
+    #[test]
+    fn a_list_from_the_bookmark_keeps_its_name() {
+        let (_, lists) = pasted(
+            "#VENUTA-PLAYLIST:Liked Songs|Apple Music\nKesariya\tArijit Singh\tBrahmastra\t4:28\nTum Hi Ho\tArijit Singh\tAashiqui 2\t4:22\n",
+        );
+        assert_eq!(lists[0].name, "Liked Songs");
+        assert_eq!(lists[0].source, "Apple Music");
+        assert_eq!(lists[0].tracks.len(), 2);
+        assert_eq!(lists[0].tracks[0].album, "Brahmastra");
+        assert_eq!(lists[0].tracks[0].duration_ms, Some(268_000));
     }
 
     #[test]
