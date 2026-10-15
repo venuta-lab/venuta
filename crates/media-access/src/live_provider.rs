@@ -254,10 +254,30 @@ async fn resolve_playable_audio(
 
     // IOS/WEB_EMBEDDED tend to expose AAC; ANDROID_VR is a reliable no-token fallback.
     let attempts: Vec<(Option<&str>, Option<String>, &'static str, &'static str)> = vec![
-        (Some("IOS"), None, "https://www.youtube.com", "https://www.youtube.com/"),
-        (Some("WEB_EMBEDDED"), None, "https://www.youtube.com", "https://www.youtube.com/"),
-        (Some("ANDROID_VR"), None, "https://www.youtube.com", "https://www.youtube.com/"),
-        (Some("ANDROID"), None, "https://www.youtube.com", "https://www.youtube.com/"),
+        (
+            Some("IOS"),
+            None,
+            "https://www.youtube.com",
+            "https://www.youtube.com/",
+        ),
+        (
+            Some("WEB_EMBEDDED"),
+            None,
+            "https://www.youtube.com",
+            "https://www.youtube.com/",
+        ),
+        (
+            Some("ANDROID_VR"),
+            None,
+            "https://www.youtube.com",
+            "https://www.youtube.com/",
+        ),
+        (
+            Some("ANDROID"),
+            None,
+            "https://www.youtube.com",
+            "https://www.youtube.com/",
+        ),
         (
             Some("WEB"),
             pot_visitor.clone().or_else(|| pot_video.clone()),
@@ -270,13 +290,25 @@ async fn resolve_playable_audio(
             "https://music.youtube.com",
             "https://music.youtube.com/",
         ),
-        (None, None, "https://www.youtube.com", "https://www.youtube.com/"),
+        (
+            None,
+            None,
+            "https://www.youtube.com",
+            "https://www.youtube.com/",
+        ),
     ];
 
     let mut last_err: Option<AccessError> = None;
     for (client_name, pot, origin, referer) in attempts {
-        match try_resolve_with_client(client, video_id, client_name, pot.as_deref(), origin, referer)
-            .await
+        match try_resolve_with_client(
+            client,
+            video_id,
+            client_name,
+            pot.as_deref(),
+            origin,
+            referer,
+        )
+        .await
         {
             Ok(audio) => {
                 // Prefer a candidate that the media host accepts when we can cheaply check.
@@ -353,12 +385,13 @@ async fn try_resolve_with_client(
             )
         })?;
 
-    let url = resolve_stream_url_full(format, &client.player.decipherer, pot, None).map_err(|_| {
-        AccessError::new(
-            AccessErrorKind::Unsupported,
-            "catalog audio stream could not be resolved",
-        )
-    })?;
+    let url =
+        resolve_stream_url_full(format, &client.player.decipherer, pot, None).map_err(|_| {
+            AccessError::new(
+                AccessErrorKind::Unsupported,
+                "catalog audio stream could not be resolved",
+            )
+        })?;
 
     let mut headers = vec![
         MediaHeader {

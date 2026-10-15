@@ -324,7 +324,10 @@ impl Playback {
                     last = (key, s.playing, tick);
                     if !s.error.is_empty() {
                         note_play(
-                            &format!("error playing={} buffering={} pos_ms={}", s.playing, s.buffering, s.position_ms),
+                            &format!(
+                                "error playing={} buffering={} pos_ms={}",
+                                s.playing, s.buffering, s.position_ms
+                            ),
                             &s.error,
                         );
                     }

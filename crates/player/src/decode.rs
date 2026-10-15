@@ -39,8 +39,7 @@ fn open_after_bytes(mime_type: Option<&str>, url: &str) -> usize {
 }
 
 fn is_starved(err: &io::Error) -> bool {
-    err.kind() == io::ErrorKind::WouldBlock
-        || err.raw_os_error() == Some(35) // EAGAIN on some platforms
+    err.kind() == io::ErrorKind::WouldBlock || err.raw_os_error() == Some(35) // EAGAIN on some platforms
 }
 
 /// What a song is: its rate, channels and bit depth, and whether those are its true values.
@@ -332,7 +331,11 @@ impl Source {
             .name("venuta-stream-decoder".into())
             .spawn(move || decode_remote(audio, sender, worker_cancelled))
             .map_err(|_| "Could not start the remote stream decoder.")?;
-        Ok(Self::remote_placeholder(receiver, cancelled, duration_hint_ms))
+        Ok(Self::remote_placeholder(
+            receiver,
+            cancelled,
+            duration_hint_ms,
+        ))
     }
 
     /// Resolve through MediaAccess on a worker thread, then download — never on the audio thread.
@@ -366,7 +369,11 @@ impl Source {
                 decode_remote(audio, sender, worker_cancelled);
             })
             .map_err(|_| "Could not start the remote stream resolver.")?;
-        Ok(Self::remote_placeholder(receiver, cancelled, duration_hint_ms))
+        Ok(Self::remote_placeholder(
+            receiver,
+            cancelled,
+            duration_hint_ms,
+        ))
     }
 
     fn remote_placeholder(
@@ -567,7 +574,10 @@ impl Source {
             Err(TryRecvError::Disconnected) => {
                 let remote = self.remote.as_mut().expect("remote source");
                 if remote.pending_open.is_some() {
-                    return self.try_pending_open(out)?.map(Ok).unwrap_or(Ok(DecodeState::Pending));
+                    return self
+                        .try_pending_open(out)?
+                        .map(Ok)
+                        .unwrap_or(Ok(DecodeState::Pending));
                 }
                 remote.finished = true;
                 Err("The remote stream ended before audio could be decoded.".into())
@@ -598,7 +608,11 @@ impl Source {
         self.finish_open(pending, out).map(Some)
     }
 
-    fn finish_open(&mut self, pending: PendingOpen, out: &mut Vec<i32>) -> Result<DecodeState, String> {
+    fn finish_open(
+        &mut self,
+        pending: PendingOpen,
+        out: &mut Vec<i32>,
+    ) -> Result<DecodeState, String> {
         let pending_seek = self.remote.as_ref().and_then(|r| r.pending_seek_ms);
         let size_bytes = pending
             .size_hint
@@ -909,7 +923,9 @@ fn fill_grow_body(
         let first_need = open_after_bytes(mime_type.as_deref(), &audio.url) as u64;
         let end = if start == 0 {
             match known_total {
-                Some(total) => Some((total - 1).min(first_need.saturating_sub(1).max(16 * 1024 - 1))),
+                Some(total) => {
+                    Some((total - 1).min(first_need.saturating_sub(1).max(16 * 1024 - 1)))
+                }
                 None => Some(first_need.saturating_sub(1).max(16 * 1024 - 1)),
             }
         } else {

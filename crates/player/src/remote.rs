@@ -77,7 +77,6 @@ impl RemoteItem {
             album,
         }
     }
-
 }
 
 impl Item for RemoteItem {

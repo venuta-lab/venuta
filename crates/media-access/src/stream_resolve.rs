@@ -266,8 +266,7 @@ fn managed_tool_path() -> Option<PathBuf> {
 const YT_DLP_DOWNLOAD: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 #[cfg(not(windows))]
-const YT_DLP_DOWNLOAD: &str =
-    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+const YT_DLP_DOWNLOAD: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
 
 /// If no stream tool is found, download the official standalone binary into the user data dir.
 /// Safe to call from a background thread; used automatically on first online play.
@@ -343,10 +342,7 @@ fn download_stream_tool(dest: &Path) -> Result<(), AccessError> {
     }
     let tmp = dest.with_extension("download");
     fs::write(&tmp, &bytes).map_err(|_| {
-        AccessError::new(
-            AccessErrorKind::Transport,
-            "could not save the stream tool",
-        )
+        AccessError::new(AccessErrorKind::Transport, "could not save the stream tool")
     })?;
     fs::rename(&tmp, dest).map_err(|_| {
         AccessError::new(

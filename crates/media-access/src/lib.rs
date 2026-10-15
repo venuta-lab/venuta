@@ -24,7 +24,7 @@ pub use fake::FakeMediaAccess;
 pub use live_provider::LiveCatalogAccess;
 pub use online::UnconfiguredOnlineAccess;
 #[cfg(feature = "live-provider")]
-pub use stream_resolve::{ensure_stream_tool, stream_tool_status, StreamToolStatus};
+pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, ONLINE_PLAYLIST_TAG, Page,
     PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteTrack,

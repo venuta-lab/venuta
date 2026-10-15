@@ -1030,10 +1030,7 @@ impl<T: Item + Serialize> Engine<T> {
             .front()
             .and_then(|s| s.source.duration_ms())
             .unwrap_or(0);
-        let buffering = self
-            .segs
-            .front()
-            .is_some_and(|s| !s.source.is_ready());
+        let buffering = self.segs.front().is_some_and(|s| !s.source.is_ready());
         let status = Status {
             queue: self.queue_changed.then(|| self.queue.items().to_vec()),
             index: self.queue.index,

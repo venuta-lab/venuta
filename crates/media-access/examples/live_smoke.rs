@@ -4,9 +4,9 @@
 //! Prints search hits and attempts resolve. Never prints full stream URLs.
 //! Set `VENUTA_LIVE_SMOKE_DIAG=1` for per-client player/media probes.
 
+use innertube_rs::Innertube;
 use innertube_rs::endpoints::player::resolve_stream_url_full;
 use innertube_rs::models::video::GetVideoInfoOptions;
-use innertube_rs::Innertube;
 use media_access::{CancellationToken, LiveCatalogAccess, MediaAccess, PageRequest};
 use std::time::Duration;
 
@@ -73,14 +73,10 @@ async fn main() {
                 if mode == "range" {
                     req = req.header("Range", "bytes=0-2047");
                 }
-match req.call() {
+                match req.call() {
                     Ok(mut resp) => {
                         let status = resp.status().as_u16();
-                        let len = resp
-                            .body_mut()
-                            .read_to_vec()
-                            .map(|b| b.len())
-                            .unwrap_or(0);
+                        let len = resp.body_mut().read_to_vec().map(|b| b.len()).unwrap_or(0);
                         println!("media_http_{mode}={status} bytes_read={len}");
                     }
                     Err(e) => println!("media_transport_error_{mode}={e}"),
@@ -112,7 +108,10 @@ async fn run_diag(video_id: &str) -> Result<(), String> {
     );
 
     let pot = fetch_pot(video_id);
-    println!("diag pot_video_len={}", pot.as_ref().map(|s| s.len()).unwrap_or(0));
+    println!(
+        "diag pot_video_len={}",
+        pot.as_ref().map(|s| s.len()).unwrap_or(0)
+    );
     let pot_v = if visitor.is_empty() {
         None
     } else {
@@ -145,9 +144,7 @@ async fn run_diag(video_id: &str) -> Result<(), String> {
                 let sd = info.player_response.streaming_data.as_ref();
                 let adaptive = sd.map(|s| s.adaptive_formats.len()).unwrap_or(0);
                 let progressive = sd.map(|s| s.formats.len()).unwrap_or(0);
-                let hls = sd
-                    .and_then(|s| s.hls_manifest_url.as_ref())
-                    .is_some();
+                let hls = sd.and_then(|s| s.hls_manifest_url.as_ref()).is_some();
                 println!(
                     "diag client={name} playability={status} adaptive={adaptive} progressive={progressive} hls={hls} pot={}",
                     pot_token.is_some()
@@ -168,11 +165,7 @@ async fn run_diag(video_id: &str) -> Result<(), String> {
                         ) {
                             Ok(url) => {
                                 let has_pot = url.contains("pot=");
-                                let host = url
-                                    .split('/')
-                                    .nth(2)
-                                    .unwrap_or("?")
-                                    .to_string();
+                                let host = url.split('/').nth(2).unwrap_or("?").to_string();
                                 // Session client GET (cookies/UA preserved).
                                 let sess = client
                                     .session
@@ -184,11 +177,11 @@ async fn run_diag(video_id: &str) -> Result<(), String> {
                                 match sess {
                                     Ok(resp) => {
                                         let code = resp.status().as_u16();
-                                        let bytes = resp.bytes().await.map(|b| b.len()).unwrap_or(0);
+                                        let bytes =
+                                            resp.bytes().await.map(|b| b.len()).unwrap_or(0);
                                         println!(
                                             "diag client={name} itag={} mime={} host={host} has_pot={has_pot} session_http={code} bytes={bytes}",
-                                            format.itag,
-                                            format.mime_type
+                                            format.itag, format.mime_type
                                         );
                                     }
                                     Err(e) => println!(
