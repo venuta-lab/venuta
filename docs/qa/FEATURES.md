@@ -30,7 +30,11 @@ and before every release. Each line is something a person does; ✓ when checked
 - Add songs (page picker, menus, from the queue), remove, reorder, Undo on remove
 - Smart playlists: rules, live results
 - Imported playlists: songs to get kept in place, Find this song, Update from the source, Complete your Apple Music playlists
-- Import: Spotify (sign-in and files), Apple Music (library, XML/TXT), YouTube (Takeout), Deezer (link), CSV, M3U/M3U8/PLS; review, Update/Keep both/Replace, Undo
+- Import & export (Playlists, and a playlist's Export): Bring in and Send out
+- Bring in: one box for a link, songs copied from Spotify's app, or a list of songs (Ctrl+V anywhere); files, zips and folders dropped or chosen, read by what's inside (M3U/M3U8, PLS, XSPF, JSPF, WPL, ASX, CSV, Excel, data downloads, backups); share links from Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer (and a profile's favourites), ListenBrainz; Spotify sign-in; the Apple Music library; Google Takeout; playlists from a phone find the same files here
+- Where are your playlists?: every way per service with its steps; the Copy for Venuta bookmark (drag or copy, then click on a music website)
+- Review (close matches, Not it remembered), Update/Keep both/Replace, Done with Undo and To get; Check them for new songs
+- Send out: a file in any format with paths for this PC, next to the playlist, a phone or player, or a server; songs you don't have kept where the format can; a backup of everything (brought back, empty playlists too); YouTube Music links of 50; Spotify links to paste; Apple Music and Deezer pages of links; a CSV for TuneMyMusic or Soundiiz; copy as text
 
 ## Library
 - Metadata: what's missing, filters, editing an album
