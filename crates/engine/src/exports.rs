@@ -577,6 +577,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Windows paths: a backslash is no separator elsewhere"
+    )]
     fn paths_for_where_the_playlist_goes() {
         let f = music().join(r"Film\Brahmastra (2022)\04 - Kesariya.flac");
         let saved = PathBuf::from(r"D:\Library\Playlists");

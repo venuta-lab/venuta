@@ -110,10 +110,15 @@ pub fn save_in(
         },
     };
     std::fs::create_dir_all(journals).map_err(|e| e.to_string())?;
-    let millis = std::time::SystemTime::now()
+    let mut millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
+    // Two saves in one millisecond would share a journal, and the first could no longer be
+    // undone on its own: the next free millisecond instead.
+    while journals.join(format!("{millis}-lyrics.jsonl")).exists() {
+        millis += 1;
+    }
     let journal = journals.join(format!("{millis}-lyrics.jsonl"));
     // The journal first: if writing the lyrics then fails, undo finds nothing changed.
     let entry = LyricsEntry {
