@@ -34,41 +34,156 @@ pub fn file_id(path: &Path, name: &str) -> String {
     format!("file:{}|{name}", path.to_string_lossy())
 }
 
-/// Read every playlist in a file another app made.
+/// Read every playlist in a file another app made, or in every such file in a folder or zip.
+/// What a file is comes from what's in it (a CSV saved as .txt, a data download's zip), its
+/// name only as a hint.
 pub fn read_file(path: &Path) -> Result<Vec<ForeignPlaylist>, String> {
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
+    if path.is_dir() {
+        return read_folder(path);
+    }
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Imported".into());
-    let text = crate::text::read_text(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let found = match ext.as_str() {
-        "json" => spotify_json(&text)?,
-        "csv" => csv_playlists(&text, &stem)?,
-        "xml" => itunes_xml(&text)?,
-        "txt" => vec![itunes_txt(&text, &stem)?],
-        "m3u" | "m3u8" => vec![m3u(&text, &stem, path.parent().unwrap_or(Path::new(".")))],
-        "pls" => vec![pls(&text, &stem, path.parent().unwrap_or(Path::new(".")))],
-        _ => {
-            return Err(format!(
-                "{} isn't a playlist file Venuta can read.",
-                path.display()
-            ));
-        }
-    };
-    let found: Vec<ForeignPlaylist> = found
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let found = read_bytes(&bytes, &stem, path.parent().unwrap_or(Path::new(".")))
+        .map_err(|e| e.replace("{file}", &path.display().to_string()))?;
+    Ok(found
         .into_iter()
-        .filter(|p| !p.tracks.is_empty())
         .map(|mut p| {
             p.id = Some(file_id(path, &p.name));
             p
         })
-        .collect();
+        .collect())
+}
+
+/// Every playlist file in a folder (and its folders), as one import.
+fn read_folder(dir: &Path) -> Result<Vec<ForeignPlaylist>, String> {
+    let mut found = Vec::new();
+    for e in walkdir::WalkDir::new(dir)
+        .max_depth(4)
+        .sort_by_file_name()
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Ok(mut lists) = read_file(e.path()) {
+            found.append(&mut lists);
+        }
+    }
     if found.is_empty() {
-        return Err(format!("No songs found in {}.", path.display()));
+        return Err(format!("No playlists found in {}.", dir.display()));
+    }
+    Ok(found)
+}
+
+/// Read playlists from a file's bytes. `stem` names a playlist that doesn't name itself;
+/// `dir` is where its relative paths start. Errors say `{file}` for the caller to fill in.
+pub fn read_bytes(bytes: &[u8], stem: &str, dir: &Path) -> Result<Vec<ForeignPlaylist>, String> {
+    use crate::formats::{self, Kind};
+    let text = crate::text::decode(bytes);
+    let kind = formats::detect(bytes, &text);
+    let found = match kind {
+        Kind::Zip => {
+            let entries = formats::zip_entries(bytes)?;
+            if let Some(rows) = formats::xlsx_rows(&entries) {
+                rows_playlists(rows, stem)?
+            } else {
+                // A data download: every playlist file inside, the rest left alone.
+                let mut all = Vec::new();
+                for (name, body) in &entries {
+                    let inner = Path::new(name)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| stem.to_owned());
+                    if let Ok(mut lists) = read_bytes(body, &inner, dir) {
+                        all.append(&mut lists);
+                    }
+                }
+                all
+            }
+        }
+        Kind::SpotifyJson => spotify_json(&text)?,
+        Kind::Csv => csv_playlists(&text, stem)?,
+        Kind::ItunesXml => itunes_xml(&text)?,
+        Kind::ItunesTxt => vec![itunes_txt(&text, stem)?],
+        Kind::M3u => vec![m3u(&text, stem, dir)],
+        Kind::Pls => vec![pls(&text, stem, dir)],
+        Kind::Xspf | Kind::Jspf => {
+            let (name, listed) = if kind == Kind::Xspf {
+                formats::xspf(&text)
+            } else {
+                formats::jspf(&text)
+            };
+            let tracks = listed
+                .into_iter()
+                .map(|l| match l.location {
+                    // A file here, or a list that names no song: the file says.
+                    Some(loc) if l.song.title.is_empty() || Path::new(&loc).is_file() => {
+                        let f = entry(&loc, None, dir);
+                        Foreign {
+                            mbid: l.song.mbid.clone(),
+                            ..f
+                        }
+                    }
+                    _ => l.song,
+                })
+                .filter(|f| !f.title.is_empty())
+                .collect();
+            vec![ForeignPlaylist {
+                name: name.unwrap_or_else(|| stem.to_owned()),
+                source: if kind == Kind::Jspf { "JSPF" } else { "XSPF" }.into(),
+                id: None,
+                tracks,
+            }]
+        }
+        Kind::Wpl => {
+            let (name, files) = formats::wpl(&text);
+            vec![ForeignPlaylist {
+                name: name.unwrap_or_else(|| stem.to_owned()),
+                source: "Windows Media Player".into(),
+                id: None,
+                tracks: files.iter().map(|f| entry(f, None, dir)).collect(),
+            }]
+        }
+        Kind::Asx => {
+            let (name, entries) = formats::asx(&text);
+            let tracks = entries
+                .into_iter()
+                .filter_map(|(title, author, href)| match (title, href) {
+                    (Some(title), href)
+                        if !href.as_deref().is_some_and(|h| dir.join(h).is_file()) =>
+                    {
+                        Some(Foreign {
+                            title,
+                            artist: author.unwrap_or_default(),
+                            ..Default::default()
+                        })
+                    }
+                    (_, Some(href)) => Some(entry(&href, None, dir)),
+                    _ => None,
+                })
+                .collect();
+            vec![ForeignPlaylist {
+                name: name.unwrap_or_else(|| stem.to_owned()),
+                source: "ASX".into(),
+                id: None,
+                tracks,
+            }]
+        }
+        Kind::Songs => vec![ForeignPlaylist {
+            name: stem.to_owned(),
+            source: "A list of songs".into(),
+            id: None,
+            tracks: formats::songs(&text),
+        }],
+        Kind::Unknown => {
+            return Err("{file} isn't a playlist Venuta can read. It reads playlist files (M3U, PLS, XSPF, JSPF, WPL, ASX), CSV and Excel exports, Spotify, Apple and Google data downloads, and lists of songs.".into());
+        }
+    };
+    let found: Vec<ForeignPlaylist> = found.into_iter().filter(|p| !p.tracks.is_empty()).collect();
+    if found.is_empty() {
+        return Err("No songs found in {file}.".into());
     }
     Ok(found)
 }
@@ -196,7 +311,11 @@ fn duration_ms(s: &str, millis: bool) -> Option<u64> {
 }
 
 fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String> {
-    let mut rows = csv_rows(text);
+    rows_playlists(csv_rows(text), stem)
+}
+
+/// Rows with a header (a CSV, or an Excel sheet): the playlists in them.
+fn rows_playlists(mut rows: Vec<Vec<String>>, stem: &str) -> Result<Vec<ForeignPlaylist>, String> {
     // Google Takeout's older playlist files open with a block about the playlist itself.
     if let Some(at) = rows
         .iter()
@@ -278,6 +397,7 @@ fn csv_playlists(text: &str, stem: &str) -> Result<Vec<ForeignPlaylist>, String>
                 }),
             youtube: Some(get(r, video)).filter(|s| !s.is_empty()),
             file: None,
+            mbid: None,
         };
         if f.title.is_empty() && f.youtube.is_none() {
             continue;
@@ -646,10 +766,15 @@ fn entry(location: &str, extinf: Option<(Option<u64>, String)>, dir: &Path) -> F
         return f;
     }
     let (dur, label) = extinf.unwrap_or((None, String::new()));
+    // Nothing in the list line: the file's name, which often says "Artist - Title" too.
+    let label = if label.trim().is_empty() {
+        playlists::title_from_file(loc)
+    } else {
+        label
+    };
     let (artist, title) = match label.split_once(" - ") {
-        Some((a, t)) if !label.is_empty() => (a.trim().to_owned(), t.trim().to_owned()),
-        _ if !label.is_empty() => (String::new(), label.trim().to_owned()),
-        _ => (String::new(), playlists::title_from_file(loc)),
+        Some((a, t)) => (a.trim().to_owned(), t.trim().to_owned()),
+        None => (String::new(), label.trim().to_owned()),
     };
     Foreign {
         title,
@@ -1540,6 +1665,121 @@ fn refind_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample(name: &str) -> Vec<ForeignPlaylist> {
+        read_file(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/files")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    fn line(f: &Foreign) -> (String, String, String, Option<u64>) {
+        (
+            f.title.clone(),
+            f.artist.clone(),
+            f.album.clone(),
+            f.duration_ms,
+        )
+    }
+
+    #[test]
+    fn xspf_from_any_player() {
+        let p = sample("road-trip.xspf");
+        assert_eq!(p[0].name, "Road Trip");
+        assert_eq!(p[0].tracks.len(), 3);
+        assert_eq!(
+            line(&p[0].tracks[0]),
+            (
+                "Kesariya".into(),
+                "Arijit Singh".into(),
+                "Brahmastra".into(),
+                Some(268_000)
+            )
+        );
+        assert_eq!(
+            p[0].tracks[1].mbid.as_deref(),
+            Some("1f0d8a6f-0000-4000-8000-000000000001")
+        );
+        assert_eq!(p[0].tracks[2].title, "Bohemian Rhapsody & More");
+    }
+
+    #[test]
+    fn jspf_from_listenbrainz() {
+        let p = sample("listenbrainz.jspf");
+        assert_eq!(p[0].name, "Weekly Exploration");
+        assert_eq!(p[0].tracks.len(), 2);
+        assert_eq!(p[0].tracks[0].duration_ms, Some(268_000));
+        // One identifier or a list of them.
+        assert_eq!(
+            p[0].tracks[0].mbid.as_deref(),
+            Some("393ad701-a13d-4f1c-9e3f-65dfd7cac167")
+        );
+        assert_eq!(
+            p[0].tracks[1].mbid.as_deref(),
+            Some("ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d")
+        );
+    }
+
+    #[test]
+    fn wpl_from_windows_media_player() {
+        let p = sample("evening.wpl");
+        assert_eq!(p[0].name, "Evening");
+        let titles: Vec<&str> = p[0].tracks.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, ["Tum Hi Ho", "Bohemian Rhapsody"]);
+    }
+
+    #[test]
+    fn asx_and_file_names_that_say_who() {
+        let p = sample("party.asx");
+        assert_eq!(p[0].name, "Party");
+        assert_eq!(
+            (
+                p[0].tracks[0].title.as_str(),
+                p[0].tracks[0].artist.as_str()
+            ),
+            ("Kesariya", "Arijit Singh")
+        );
+        // No title in the list and no file here: "Artist - Title" read from the file name.
+        assert_eq!(
+            (
+                p[0].tracks[1].title.as_str(),
+                p[0].tracks[1].artist.as_str()
+            ),
+            ("Bohemian Rhapsody", "Queen")
+        );
+    }
+
+    #[test]
+    fn a_list_of_songs_in_any_of_the_usual_ways() {
+        let p = sample("pasted.txt");
+        let got: Vec<(String, String, String, Option<u64>)> =
+            p[0].tracks.iter().map(line).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Kesariya".into(), "Arijit Singh".into(), "".into(), None),
+                ("Bohemian Rhapsody".into(), "Queen".into(), "".into(), None),
+                ("Tum Hi Ho".into(), "Arijit Singh".into(), "".into(), None),
+                (
+                    "Kun Faya Kun".into(),
+                    "A.R. Rahman".into(),
+                    "Rockstar".into(),
+                    Some(473_000)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_is_read_by_what_is_in_it_not_its_name() {
+        // A TuneMyMusic CSV saved as .txt.
+        let p = sample("tunemymusic-saved-as.txt");
+        assert_eq!(p[0].name, "Road");
+        assert_eq!(p[0].tracks.len(), 2);
+        assert_eq!(p[0].tracks[0].isrc.as_deref(), Some("INS172203702"));
+    }
 
     #[test]
     fn csv_handles_quotes_and_line_breaks() {

@@ -1,0 +1,20 @@
+{
+  "playlist": {
+    "title": "Weekly Exploration",
+    "creator": "listenbrainz",
+    "track": [
+      {
+        "title": "Kesariya",
+        "creator": "Arijit Singh",
+        "album": "Brahmastra",
+        "duration": 268000,
+        "identifier": ["https://musicbrainz.org/recording/393ad701-a13d-4f1c-9e3f-65dfd7cac167"]
+      },
+      {
+        "title": "Bohemian Rhapsody",
+        "creator": "Queen",
+        "identifier": "https://musicbrainz.org/recording/ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d"
+      }
+    ]
+  }
+}

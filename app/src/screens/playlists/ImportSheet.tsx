@@ -27,7 +27,8 @@ import { notify } from '../../lib/notify'
 import { plural } from './common'
 
 type SourceId = 'spotify' | 'apple' | 'youtube' | 'deezer' | 'others' | 'player'
-const ALL = ['json', 'csv', 'xml', 'txt', 'm3u', 'm3u8', 'pls']
+// What Venuta reads (by what's inside; the name is only a hint). A folder (no extension) is read whole.
+const ALL = ['json', 'jspf', 'csv', 'xlsx', 'xml', 'txt', 'm3u', 'm3u8', 'pls', 'xspf', 'wpl', 'zpl', 'asx', 'zip']
 
 const SOURCES: { id: SourceId; name: string; need: string; steps: React.ReactNode[]; accept?: string[] }[] = [
   {
@@ -93,8 +94,8 @@ const SOURCES: { id: SourceId; name: string; need: string; steps: React.ReactNod
   {
     id: 'player',
     name: 'Another player',
-    need: '.m3u, .m3u8 or .pls files',
-    accept: ['m3u', 'm3u8', 'pls'],
+    need: 'Playlist files (M3U, PLS, XSPF, WPL, ASX)',
+    accept: ['m3u', 'm3u8', 'pls', 'xspf', 'wpl', 'zpl', 'asx'],
     steps: [<>foobar2000, MusicBee, VLC, Winamp, Poweramp and most players save playlists this way. Songs are matched by their tags when the files are still there, by name when they're not.</>],
   },
 ]
@@ -251,7 +252,10 @@ export function ImportSheet(props: {
         else if (e.payload.type === 'leave') setDropping(false)
         else if (e.payload.type === 'drop') {
           setDropping(false)
-          const files = e.payload.paths.filter((p) => ALL.includes(p.split('.').pop()?.toLowerCase() ?? ''))
+          const files = e.payload.paths.filter((p) => {
+            const name = p.split(/[\\/]/).pop() ?? ''
+            return !name.includes('.') || ALL.includes(name.split('.').pop()?.toLowerCase() ?? '')
+          })
           if (files.length) void read(files, null, false)
           else setProblems(["Those aren't playlist files. Venuta reads .json, .csv, .xml, .txt, .m3u, .m3u8 and .pls exports."])
         }

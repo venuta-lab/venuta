@@ -17,6 +17,7 @@ pub mod edit;
 pub mod enrich;
 pub mod error;
 pub mod fingerprint;
+pub mod formats;
 pub mod imports;
 pub mod index;
 pub mod intake;

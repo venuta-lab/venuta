@@ -1306,6 +1306,9 @@ pub struct Foreign {
     /// A YouTube video still waiting for its title (Google Takeout lists only IDs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub youtube: Option<String>,
+    /// The MusicBrainz recording (ListenBrainz and XSPF lists carry it): as sure as an ISRC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbid: Option<String>,
 }
 
 impl Foreign {
@@ -1385,6 +1388,8 @@ pub struct Matcher<'a> {
     by_fold: HashMap<String, Vec<&'a Track>>,
     by_loose: HashMap<String, Vec<&'a Track>>,
     by_isrc: HashMap<String, &'a Track>,
+    /// MusicBrainz recording ids (the `MUSICBRAINZ_TRACKID` tag Picard writes).
+    by_mbid: HashMap<String, &'a Track>,
 }
 
 /// An artist name as it's compared: as written, and in the loose spelling ("Arijeet" =
@@ -1402,7 +1407,15 @@ impl<'a> Matcher<'a> {
         let mut by_fold: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_loose: HashMap<String, Vec<&Track>> = HashMap::new();
         let mut by_isrc: HashMap<String, &Track> = HashMap::new();
+        let mut by_mbid: HashMap<String, &Track> = HashMap::new();
         for t in lib.tracks.iter() {
+            if let Some(m) = t
+                .first("MUSICBRAINZ_TRACKID")
+                .map(|m| m.trim().to_lowercase())
+                .filter(|m| m.len() == 36)
+            {
+                by_mbid.entry(m).or_insert(t);
+            }
             if let Some(title) = t.first("TITLE") {
                 by_title.entry(title_key(title)).or_default().push(t);
                 by_fold.entry(title_fold_key(title)).or_default().push(t);
@@ -1421,6 +1434,7 @@ impl<'a> Matcher<'a> {
             by_fold,
             by_loose,
             by_isrc,
+            by_mbid,
         }
     }
 
@@ -1546,6 +1560,17 @@ impl<'a> Matcher<'a> {
                 track: t,
                 grade: Grade::Exact,
                 why: "Same recording code (ISRC)".into(),
+            });
+        }
+        if let Some(t) = f
+            .mbid
+            .as_ref()
+            .and_then(|m| self.by_mbid.get(&m.trim().to_lowercase()))
+        {
+            return Some(Found {
+                track: t,
+                grade: Grade::Exact,
+                why: "Same MusicBrainz recording".into(),
             });
         }
         let artists: HashSet<String> = split_names(&f.artist)

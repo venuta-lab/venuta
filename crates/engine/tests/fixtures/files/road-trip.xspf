@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<playlist version="1" xmlns="http://xspf.org/ns/0/">
+  <title>Road Trip</title>
+  <trackList>
+    <track>
+      <location>file:///D:/Music/Arijit%20Singh/Brahmastra/04%20-%20Kesariya.flac</location>
+      <title>Kesariya</title>
+      <creator>Arijit Singh</creator>
+      <album>Brahmastra</album>
+      <duration>268000</duration>
+    </track>
+    <track>
+      <title>Tum Hi Ho</title>
+      <creator>Arijit Singh</creator>
+      <album>Aashiqui 2</album>
+      <duration>262000</duration>
+      <identifier>https://musicbrainz.org/recording/1f0d8a6f-0000-4000-8000-000000000001</identifier>
+    </track>
+    <track>
+      <title>Bohemian Rhapsody &amp; More</title>
+      <creator>Queen</creator>
+    </track>
+  </trackList>
+</playlist>
