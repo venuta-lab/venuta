@@ -22,6 +22,7 @@ import { getPrefs, resolvedTheme, setPrefs, themeInfo, usePrefs } from '../../li
 import { recentThemes, themeKey } from '../../lib/recentThemes'
 import { STYLES, styleInfo, type Style } from '../../lib/themes'
 import { confirmAsk } from '../Confirm'
+import { keyFor, matcher, ranked } from '../../lib/textsearch'
 import { Chip, Segmented } from '../ui'
 import { useContextMenu } from '../../screens/listen/parts'
 import { CardWith, ThemeArt, ThemeCard, ThemeSwatch } from './ThemeCard'
@@ -311,24 +312,24 @@ const GROUPS: { kind: Entry['kind']; title: string; hint: string }[] = [
 /** A group shows one row until it is opened. */
 const ROW = 4
 
-const fold = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
 function Browser({ entries, current }: { entries: Entry[]; current: string }) {
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [opened, setOpened] = useState<Record<string, boolean>>({})
-  const query = fold(q.trim())
-  const matches = entries.filter((e) => {
-    if (filter === 'yours' || filter === 'built' || filter === 'venuta') {
-      if (e.kind !== filter) return false
-    } else if (filter === 'dark' || filter === 'light') {
-      if (!e.modes.includes(filter)) return false
-    }
-    return !query || fold(`${e.name} ${e.line} ${styleInfo(e.preview).name}`).includes(query)
-  })
+  // The same search as every other box (lib/textsearch.ts): word starts first, then the rest.
+  const has = useMemo(() => matcher(q), [q])
+  const matches = ranked(
+    entries.filter((e) => {
+      if (filter === 'yours' || filter === 'built' || filter === 'venuta') return e.kind === filter
+      if (filter === 'dark' || filter === 'light') return e.modes.includes(filter)
+      return true
+    }),
+    (e) => has(keyFor(e, () => `${e.name} ${e.line} ${styleInfo(e.preview).name}`)),
+  )
   const count = (f: Filter) =>
     f === 'all' ? entries.length : f === 'dark' || f === 'light' ? entries.filter((e) => e.modes.includes(f)).length : entries.filter((e) => e.kind === f).length
-  const grouped = !query && filter === 'all'
+  const grouped = !q.trim() && filter === 'all'
 
   async function importFile() {
     const path = await openDialog({ multiple: false, filters: [{ name: 'Venuta theme', extensions: ['venuta-theme', 'json', 'zip'] }] })

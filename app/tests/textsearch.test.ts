@@ -83,3 +83,40 @@ test('an empty query matches everything', () => {
   assert.ok(finds('', 'anything'))
   assert.ok(finds('   ', 'anything'))
 })
+
+// The 14 October review (W7): the same rule for every search box, its forgiveness scaled to the query.
+const how = (query: string, text: string) => matcher(query)(searchKey(text))
+
+test('a short word matches the start of a word, never the middle of one', () => {
+  assert.ok(!finds('qa', 'Escape_point'), 'qa is not inside Escape')
+  assert.ok(!finds('ar', 'Kesariya'))
+  assert.ok(!finds('ar', 'Sharma Ji'))
+  assert.ok(finds('ar', 'Arijit Singh'))
+  assert.ok(finds('sh', 'Shilpa Rao'))
+})
+
+test('one letter over and over finds nothing', () => {
+  assert.ok(!finds('a'.repeat(200), 'A.R. Rahman'))
+  assert.ok(!finds('aaaa', 'Kesariya'))
+  assert.ok(!finds('zzz', 'Zzz Lullaby'), 'not even a word like it')
+})
+
+test('initials find the words they begin', () => {
+  assert.ok(finds('kkhh', 'Kuch Kuch Hota Hai'))
+  assert.ok(finds('ar rahman', 'A.R. Rahman'))
+  assert.ok(!finds('kkhh', 'Kal Ho Naa Ho'))
+})
+
+test('a longer word inside another still matches, after the words that begin with it', () => {
+  assert.ok(finds('hman', 'A.R. Rahman'))
+  assert.ok(how('rahm', 'A.R. Rahman') > how('hman', 'A.R. Rahman'), 'the start of a word ranks first')
+  assert.ok(how('kesariya', 'Kesariya') > how('kesarya', 'Kesariya'), 'exact before a slip')
+})
+
+test('every typed word must still be there, and the review\'s searches still find their songs', () => {
+  assert.ok(finds('kesariya', 'Kesariya'))
+  assert.ok(finds('kesariyaa', 'Kesariya'))
+  assert.ok(finds('केसरिया', 'Kesariya'))
+  assert.ok(finds('tum ho', 'Tum Hi Ho'))
+  assert.ok(finds('rahmna', 'A.R. Rahman'))
+})

@@ -225,19 +225,72 @@ export const NO = 0
 export const NEARLY = 1
 export const EXACTLY = 2
 
+/** A word this long may also be found inside another word ("hman" in Rahman), ranked after. */
+const INSIDE = 4
+
+// The first letter of each word of a key ("kuch kuch hota hai" → "kkhh"), kept like the words.
+const firsts = new Map<string, string>()
+function initialsOf(key: string): string {
+  let i = firsts.get(key)
+  if (i === undefined) {
+    if (firsts.size > 50_000) firsts.clear()
+    i = wordsOf(key)
+      .map((w) => w[0] ?? '')
+      .join('')
+    firsts.set(key, i)
+  }
+  return i
+}
+
+/** Initials typed, spelled the way a key's words begin (c and q as k, w as v, z as j). */
+const asInitials = (word: string) =>
+  word
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[cq]/g, 'k')
+    .replace(/w/g, 'v')
+    .replace(/z/g, 'j')
+
+/** One letter over and over ("aaaa"): no song is found by that. */
+const repeated = (word: string) => word.length >= 3 && /^(.)\1+$/u.test(word)
+
 /**
- * A test for a typed query: for a search key (from `searchKey`) that holds every word typed,
- * in any order, anywhere in it, EXACTLY (truthy); NEARLY when a longer word is off by one
- * letter; otherwise NO. Exact results go first where results are ranked. With `exact`, no
- * slips (for long texts such as lyrics, where a slip finds too much and costs too much).
+ * A test for a typed query, the same for every search box. For a search key (from
+ * `searchKey`) it says how well the key holds every word typed, in any order:
+ *
+ * - EXACTLY when each word begins a word of the key ("rahm" in "a r rahman"), or is a run of
+ *   initials ("kkhh" for Kuch Kuch Hota Hai, "ar" for A.R.);
+ * - NEARLY when a word of four letters or more is inside a word ("hman"), or a word of five or
+ *   more is one letter off ("rahmna"): found, but ranked after;
+ * - NO otherwise, and always for a word that is one letter over and over.
+ *
+ * With `exact`, no slips (for long texts such as lyrics, where a slip finds too much and costs
+ * too much).
  */
 export function matcher(query: string, opts: { exact?: boolean } = {}): (key: string) => number {
+  const typed = query
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+  if (typed.some(repeated)) return () => NO
   const tokens = searchKey(query).split(' ').filter(Boolean)
   if (!tokens.length) return () => EXACTLY
+  // A typed word as initials, when it is written in Roman letters (others have no initials here).
+  const initials = typed.map((w) => (/^[a-z]+$/.test(w) && w.length >= 2 ? asInitials(w) : ''))
   return (key) => {
     let how = EXACTLY
-    for (const t of tokens) {
-      if (key.includes(t)) continue
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]
+      if (key.startsWith(t) || key.includes(' ' + t)) continue
+      const ini = initials[i]
+      if (ini && tokens.length === typed.length && initialsOf(key).includes(ini)) continue
+      if (t.length >= INSIDE && key.includes(t)) {
+        how = NEARLY
+        continue
+      }
       if (opts.exact || t.length < FORGIVING || !nearly(t, wordsOf(key))) return NO
       how = NEARLY
     }
