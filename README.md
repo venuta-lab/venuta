@@ -56,6 +56,7 @@ Free and open source. No account, no ads, no tracking, and no AI at runtime.
 | | |
 |---|---|
 | ![An album, hi-res](docs/screenshots/album.jpg) | ![The sound tools, all off until you want them](docs/screenshots/sound.jpg) |
+| ![The lyric styles, for the big screen and the desktop](docs/screenshots/lyric-style.jpg) | ![The mini player](docs/screenshots/mini-player.jpg) |
 
 ## Playlists, in and out
 
