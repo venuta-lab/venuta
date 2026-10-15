@@ -67,3 +67,7 @@ export async function playPlaylist(root: string, p: Pick<PlaylistSummary, 'name'
   else await enqueueItems(root, songs, how === 'next')
   return songs.length
 }
+
+/** An online song's id, the same wherever it is (a search result, a playlist entry): provider:track. */
+export const onlineId = (t: { provider: string; track_id: string }) => `${t.provider}:${t.track_id}`
+ 

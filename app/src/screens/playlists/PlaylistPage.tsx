@@ -18,7 +18,6 @@ import {
   smartSave,
   type CatalogTrack,
   type OnlineEntry,
-  type OnlineTrack,
   type PlaylistEntry,
   type PlaylistItem,
   type PlaylistSummary,
@@ -50,16 +49,16 @@ import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { Mosaic } from '../../components/Mosaic'
 import { RemoteArt } from '../../components/RemoteArt'
 import { Detail, Segmented } from '../../components/ui'
-import { IconMore, IconPause, IconPlay, IconSearch, IconShuffle } from '../../components/Icons'
-import { useOnlineSearch } from '../listen/OnlineResults'
+import { IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { Equalizer } from '../listen/parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
+import { AddSongs } from './AddSongs'
 import { DragHandle, MOVE_KEYS } from '../../components/DragHandle'
 import { addSongsTo } from './ops'
 import { useNav } from '../listen/model'
-import { entryAvailability, fromWhere, length, playlistFrom, plural, queueOf, sourceDate } from './common'
+import { entryAvailability, fromWhere, length, onlineId, playlistFrom, plural, queueOf, sourceDate } from './common'
 import { OnlinePick } from './OnlinePick'
 import { describeRule, SmartRules } from './SmartRules'
 import { WindowedList, type Grab, type Line } from '../../components/WindowedList'
@@ -596,19 +595,21 @@ export function PlaylistPage(props: {
           />
         )}
         {adding && !smart && (
-          <SongFinder
+          <AddSongs
             key="add"
-            title="Add songs"
-            hint="Find songs in your library or online; each one you pick goes to the end."
+            root={root}
             catalog={props.catalog}
-            excludeLocal={new Set(have.map((r) => r.path))}
-            excludeOnline={new Set(online.map((r) => (r.online ? `${r.online.provider}:${r.online.track_id}` : '')).filter(Boolean))}
-            onPickLocal={(t) => {
+            has={{
+              local: new Set(have.map((r) => r.path)),
+              online: new Set(online.flatMap((r) => (r.online ? [onlineId(r.online)] : []))),
+            }}
+            onAddLocal={(tracks) => {
+              if (!tracks.length) return
               const before = latest.current
               void persist([
                 ...before,
-                ...withKeys([
-                  {
+                ...withKeys(
+                  tracks.map((t) => ({
                     path: t.path,
                     title: t.title,
                     artist: t.artists.join(', '),
@@ -616,11 +617,11 @@ export function PlaylistPage(props: {
                     duration_ms: t.duration_ms,
                     audio_md5: null,
                     missing: false,
-                  },
-                ]),
+                  })),
+                ),
               ])
             }}
-            onPickOnline={(t) => {
+            onAddOnline={(t) => {
               const before = latest.current
               const o = onlineEntryFrom(t)
               void persist([
@@ -1027,187 +1028,6 @@ function useSongSearch(q: string, catalog: CatalogTrack[] | null, limit = 40): C
     }
     return out
   }, [q, catalog, limit])
-}
-
-type FinderSource = 'library' | 'online'
-
-/** Add songs from your library or the online catalog (same picker, two sources). */
-function SongFinder(props: {
-  title: string
-  hint: string
-  catalog: CatalogTrack[] | null
-  excludeLocal: Set<string>
-  excludeOnline: Set<string>
-  onPickLocal: (t: CatalogTrack) => void
-  onPickOnline: (t: OnlineTrack) => void
-  onClose: () => void
-}) {
-  const [q, setQ] = useState('')
-  const [source, setSource] = useState<FinderSource>('library')
-  const [sel, setSel] = useState(0)
-  const found = useSongSearch(q, props.catalog)
-  const cover = useCovers(320)
-  const { results: online, error: onlineError, loading: onlineLoading, resultsFor } = useOnlineSearch(q)
-  const onlineTracks = online?.tracks ?? []
-  const onlineFresh = resultsFor === q.trim()
-  const listLen = source === 'library' ? found.length : onlineTracks.length
-  useEffect(() => setSel(0), [q, source, listLen])
-  useEscape(true, props.onClose)
-  const pickSel = () => {
-    if (source === 'library') {
-      const t = found[sel]
-      if (t && !props.excludeLocal.has(t.path)) props.onPickLocal(t)
-    } else {
-      const t = onlineTracks[sel]
-      if (!t) return
-      const id = `${t.provider}:${t.track_id}`
-      if (!props.excludeOnline.has(id)) props.onPickOnline(t)
-    }
-  }
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -6 }}
-      className="glass mt-8 rounded-[20px] p-4"
-      aria-label={props.title}
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <Segmented
-          size="sm"
-          label="Where to find songs"
-          value={source}
-          onChange={setSource}
-          options={[
-            { value: 'library', label: 'In your library' },
-            { value: 'online', label: 'Online' },
-          ]}
-        />
-        <span className="text-[12.5px] text-ink/50">
-          {source === 'library' ? 'Your files' : 'Plays online until you have the file'}
-        </span>
-      </div>
-      <div className="flex items-center gap-3 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
-        <IconSearch className="shrink-0 text-ink/45" />
-        <input
-          autoFocus
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && q) {
-              e.preventDefault()
-              setQ('')
-              return
-            }
-            if (e.key === 'ArrowDown') {
-              e.preventDefault()
-              setSel((i) => Math.min(i + 1, Math.max(0, listLen - 1)))
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault()
-              setSel((i) => Math.max(i - 1, 0))
-            } else if (e.key === 'Enter') {
-              e.preventDefault()
-              pickSel()
-            }
-          }}
-          placeholder={source === 'library' ? 'Find a song, an artist or an album' : 'Search online songs'}
-          aria-label={props.title}
-          className="min-w-0 flex-1 bg-transparent py-2.5 text-[14px] outline-none placeholder:text-ink/45"
-        />
-        {source === 'online' && onlineLoading && (
-          <span className="spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-ink/20 border-t-ink/60" aria-label="Searching online" />
-        )}
-      </div>
-      {!q && (
-        <p className="px-2 pt-3 text-[12.5px] text-ink/50">
-          {source === 'library' ? (props.catalog ? props.hint : 'Reading your library…') : 'Type a few words to search the online catalog.'}
-        </p>
-      )}
-      {source === 'library' && q && !found.length && (
-        <p className="px-2 pt-3 text-[12.5px] text-ink/50">
-          Nothing in your library matches “{q}”. Try the Online tab to add it without the file.
-        </p>
-      )}
-      {source === 'online' && q && onlineError && onlineFresh && !onlineLoading && (
-        <p className="px-2 pt-3 text-[12.5px] text-ink/55">{onlineError}</p>
-      )}
-      {source === 'online' && q && onlineFresh && !onlineLoading && !onlineError && !onlineTracks.length && (
-        <p className="px-2 pt-3 text-[12.5px] text-ink/50">Nothing online matches “{q}”.</p>
-      )}
-      <div className="fade-y mt-2 grid max-h-[340px] gap-0.5 overflow-y-auto">
-        {source === 'library' &&
-          found.map((t, i) => {
-            const inIt = props.excludeLocal.has(t.path)
-            return (
-              <button
-                key={t.path}
-                disabled={inIt}
-                onMouseMove={() => setSel(i)}
-                onClick={() => props.onPickLocal(t)}
-                className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors enabled:hover:bg-ink/[0.06] enabled:active:bg-ink/[0.1] disabled:opacity-50 ${
-                  i === sel ? 'bg-ink/[0.07]' : ''
-                }`}
-              >
-                <span className="h-9 w-9 shrink-0 overflow-hidden rounded-md bg-ink/[0.07]">
-                  {cover(t.dir) && <img src={cover(t.dir)!.src} alt="" className="h-full w-full object-cover" />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px]">{t.title}</span>
-                  <span className="block truncate text-[12px] text-ink/55">
-                    {t.artists.join(', ')} · {t.album}
-                  </span>
-                </span>
-                <span className="shrink-0 text-[12px] text-ink/55">{inIt ? 'In the playlist' : '+ Add'}</span>
-              </button>
-            )
-          })}
-        {source === 'online' && onlineLoading && !onlineTracks.length && (
-          <div className="grid gap-1.5 px-1 py-2" aria-busy="true">
-            {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="flex items-center gap-3 px-1">
-                <span className="shimmer h-9 w-9 rounded-md" />
-                <span className="min-w-0 flex-1 grid gap-1.5">
-                  <span className="shimmer h-3 w-2/3 rounded-full" />
-                  <span className="shimmer h-2.5 w-1/2 rounded-full" />
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-        {source === 'online' &&
-          onlineTracks.map((t, i) => {
-            const id = `${t.provider}:${t.track_id}`
-            const inIt = props.excludeOnline.has(id)
-            return (
-              <button
-                key={id}
-                disabled={inIt}
-                onMouseMove={() => setSel(i)}
-                onClick={() => props.onPickOnline(t)}
-                className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors enabled:hover:bg-ink/[0.06] enabled:active:bg-ink/[0.1] disabled:opacity-50 ${
-                  i === sel ? 'bg-ink/[0.07]' : ''
-                }`}
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-md bg-ink/[0.07] text-ink/30">
-                  <RemoteArt url={t.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-[13.5px]">{t.title}</span>
-                    <AvailabilityBadge availability="online" />
-                  </span>
-                  <span className="block truncate text-[12px] text-ink/55">
-                    {t.artists.join(', ') || '—'}
-                    {t.album ? ` · ${t.album}` : ''}
-                  </span>
-                </span>
-                <span className="shrink-0 text-[12px] text-ink/55">{inIt ? 'In the playlist' : '+ Add'}</span>
-              </button>
-            )
-          })}
-      </div>
-    </motion.section>
-  )
 }
 
 /** Pick the library song a missing entry should be. Starts with what the playlist knew. */
