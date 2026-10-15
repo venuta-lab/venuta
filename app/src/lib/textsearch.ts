@@ -265,8 +265,8 @@ const repeated = (word: string) => word.length >= 3 && /^(.)\1+$/u.test(word)
  *   more is one letter off ("rahmna"): found, but ranked after;
  * - NO otherwise, and always for a word that is one letter over and over.
  *
- * With `exact`, no slips (for long texts such as lyrics, where a slip finds too much and costs
- * too much).
+ * With `exact`, no slips and no initials: for long texts such as lyrics, where both find too
+ * much, and initials would mean reading every word of tens of thousands of lines.
  */
 export function matcher(query: string, opts: { exact?: boolean } = {}): (key: string) => number {
   const typed = query
@@ -286,7 +286,7 @@ export function matcher(query: string, opts: { exact?: boolean } = {}): (key: st
       const t = tokens[i]
       if (key.startsWith(t) || key.includes(' ' + t)) continue
       const ini = initials[i]
-      if (ini && tokens.length === typed.length && initialsOf(key).includes(ini)) continue
+      if (ini && !opts.exact && tokens.length === typed.length && initialsOf(key).includes(ini)) continue
       if (t.length >= INSIDE && key.includes(t)) {
         how = NEARLY
         continue

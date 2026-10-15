@@ -166,6 +166,10 @@ export function AlbumGrid({ albums, origin, subtitle }: { albums: Album[]; origi
   )
 }
 
+/** How many cards a shelf draws at first; one card and the gap after it (168 + 20 px). */
+const FIRST_CARDS = 8
+const CARD_STEP = 188
+
 /** A row of albums that scrolls sideways, with arrows on hover and a way to see them all. */
 export function Shelf(props: {
   title: string
@@ -192,6 +196,15 @@ export function Shelf(props: {
   ]
     .sort((x, y) => (props.more?.length ? y.at - x.at : 0))
     .slice(0, props.limit ?? 24)
+  // The cards that fit and a few more are drawn; the rest of the row holds their room and they
+  // come in a few at a time as it is scrolled toward them. A shelf of forty (search results,
+  // Home) never mounts forty cards at once.
+  const [upto, setUpto] = useState(FIRST_CARDS)
+  const reach = (el: HTMLElement) => {
+    const want = Math.ceil((el.scrollLeft + el.clientWidth) / CARD_STEP) + 4
+    setUpto((n) => (want > n ? Math.min(shown.length, want) : n))
+  }
+  const drawn = shown.slice(0, upto)
 
   const measure = () => {
     const el = row.current
@@ -246,15 +259,22 @@ export function Shelf(props: {
         {!ends.start && arrow(-1)}
         <div
           ref={row}
-          onScroll={measure}
+          onScroll={(e) => {
+            reach(e.currentTarget)
+            measure()
+          }}
           className="no-scrollbar -mx-3 -my-3 flex snap-x gap-5 overflow-x-auto px-3 py-3"
           style={{ scrollPaddingInline: 12 }}
         >
-          {shown.map(({ key, album: a, node }) => (
+          {drawn.map(({ key, album: a, node }) => (
             <div key={key} className="w-[168px] shrink-0 snap-start">
               {a ? <AlbumCard album={a} cover={cover(a.dir)} origin={props.origin} now={state(a.dir)} /> : node}
             </div>
           ))}
+          {/* The room of the cards not drawn yet, so the row scrolls (and says there is more) as if they were. */}
+          {shown.length > drawn.length && (
+            <div aria-hidden className="shrink-0" style={{ width: (shown.length - drawn.length) * CARD_STEP - 20 }} />
+          )}
         </div>
         {!ends.end && arrow(1)}
       </div>
@@ -293,12 +313,13 @@ export function useContextMenu(items: () => MenuGroups | [string, () => void][])
 /** "…" on a song: the same menu as right-clicking it. `play`: play it within its list. */
 export function TrackMenu({ track, label, play }: { track: CatalogTrack; label: string; play?: () => void }) {
   const nav = useNav()
-  const button = useRef<HTMLButtonElement>(null)
+  // The button itself (state, not a ref: whether its menu is open is read while drawing).
+  const [button, setButton] = useState<HTMLButtonElement | null>(null)
   const open = useMenuOpen()
-  const shown = !!open && open.back === button.current
+  const shown = !!open && !!button && open.back === button
   return (
     <button
-      ref={button}
+      ref={setButton}
       aria-label={`More for ${label}`}
       aria-haspopup="menu"
       aria-expanded={shown}
