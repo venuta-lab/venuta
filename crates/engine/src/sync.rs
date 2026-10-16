@@ -1087,17 +1087,37 @@ fn wanted_files(
             )
         })
         .collect();
+    // A library keeps its albums in its own Music folder, and the card has a music folder of its
+    // own: the albums go straight into the card's, not into a Music folder inside it.
+    let nested = library_root.join(crate::paths::MUSIC_DIR_NAME).is_dir();
+    let shown = |rel: &str| -> String {
+        let cut = crate::paths::MUSIC_DIR_NAME.len() + 1;
+        match rel.get(..cut) {
+            Some(head)
+                if nested
+                    && head.eq_ignore_ascii_case(&format!("{}/", crate::paths::MUSIC_DIR_NAME)) =>
+            {
+                rel[cut..].to_owned()
+            }
+            _ => rel.to_owned(),
+        }
+    };
     let files: Vec<(String, Option<&str>)> = songs
         .iter()
-        .map(|r| (r.rel.clone(), targets[r.rel.as_str()].map(Target::ext)))
-        .chain(images.iter().map(|r| (r.rel.clone(), None)))
+        .map(|r| (shown(&r.rel), targets[r.rel.as_str()].map(Target::ext)))
+        .chain(images.iter().map(|r| (shown(&r.rel), None)))
         .collect();
-    let paths = card_paths(folder, &files);
+    let by_shown = card_paths(folder, &files);
+    let paths: HashMap<&str, &String> = songs
+        .iter()
+        .chain(images.iter())
+        .map(|r| (r.rel.as_str(), &by_shown[&shown(&r.rel)]))
+        .collect();
 
     let mut out = Vec::new();
     for r in &songs {
         out.push(Wanted {
-            rel: paths[&r.rel].clone(),
+            rel: paths[r.rel.as_str()].to_string(),
             src: r.rel.clone(),
             size: r.size,
             mtime_ns: r.mtime_ns,
@@ -1111,7 +1131,7 @@ fn wanted_files(
     }
     for r in &images {
         out.push(Wanted {
-            rel: paths[&r.rel].clone(),
+            rel: paths[r.rel.as_str()].to_string(),
             src: r.rel.clone(),
             size: r.size,
             mtime_ns: r.mtime_ns,
@@ -1128,7 +1148,7 @@ fn wanted_files(
         let Some(song) = song_stems.get(&lower_stem(&r.rel)) else {
             continue;
         };
-        let card = &paths[*song];
+        let card = paths[*song].as_str();
         let stem = card.rsplit_once('.').map(|x| x.0).unwrap_or(card);
         out.push(Wanted {
             rel: format!("{stem}.lrc"),
@@ -1147,7 +1167,7 @@ fn wanted_files(
     // Playlists, written for this card: every one (whole library) or the chosen ones.
     let on_card: HashMap<String, String> = songs
         .iter()
-        .map(|r| (r.rel.to_lowercase(), paths[&r.rel].clone()))
+        .map(|r| (r.rel.to_lowercase(), paths[r.rel.as_str()].to_string()))
         .collect();
     let gift = cfg.kind == CardKind::Gift;
     let mut lists: Vec<(String, Vec<PlaylistEntry>)> = Vec::new();
@@ -2654,6 +2674,43 @@ mod tests {
         let report = run(root, card, &plan, &SyncProgress::default(), &|_, _, _| {}).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         (plan, report)
+    }
+
+    #[test]
+    fn a_library_kept_in_its_music_folder_isnt_nested_on_the_card() {
+        // As the app opens a library: the index is the library's, songs under its Music folder.
+        let (home, _music, _) = library();
+        let mut index = crate::Index::open_in_memory(&home.path().to_string_lossy()).unwrap();
+        crate::scan(&mut index, home.path()).unwrap();
+        let card = tempfile::tempdir().unwrap();
+        setup_card(
+            card.path(),
+            CardSettings {
+                name: "Disc".into(),
+                pick: Some(Pick {
+                    playlists: vec!["Road".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        sync(&index, home.path(), card.path());
+        let music = card.path().join("Music");
+        assert!(
+            music
+                .join("Film/Aladin (2009)/01 - Genie Rap.flac")
+                .is_file()
+        );
+        assert!(
+            !music.join("Music").exists(),
+            "no Music folder inside Music"
+        );
+        let road = std::fs::read_to_string(card.path().join("Playlists/Road.m3u8")).unwrap();
+        assert!(
+            road.contains("\n../Music/Film/Aladin (2009)/01 - Genie Rap.flac\n"),
+            "{road}"
+        );
     }
 
     #[test]
