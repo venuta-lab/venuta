@@ -1116,6 +1116,10 @@ export const importPreview = (
   text: string | null = null,
   onProgress: (d: number, t: number, note?: string) => void = () => {},
 ) => withProgress<ImportRead>('import_preview', { root, files, link, apple, text }, onProgress)
+/** The online catalog's song for each of these, or null where it isn't sure: so a playlist's
+ *  songs you don't have play online. */
+export const playlistFindOnline = (songs: ForeignSong[], onProgress: (d: number, t: number) => void = () => {}) =>
+  withProgress<(OnlineEntry | null)[]>('playlist_find_online', { songs }, onProgress)
 /** Every playlist that came from somewhere readable, read again: the ones that changed there. */
 export const playlistsCheck = (root: string, onProgress: (d: number, t: number, note?: string) => void) =>
   withProgress<ImportRead>('playlists_check', { root }, onProgress)

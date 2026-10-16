@@ -24,8 +24,8 @@ side.
 
 **Playlists** (in Music) are ordinary `.m3u8` files in your library, so any player can read
 them. Make them, drag to reorder, import them from elsewhere, or let smart playlists fill
-themselves from rules. A playlist keeps every song, here or not: the ones you don't have wait
-in their places, marked, until you do. Importing a playlist you already have fills it in and
+themselves from rules. A playlist keeps every song, here or not: the ones you don't have play
+from the online catalog in their places, so it plays straight through. Importing a playlist you already have fills it in and
 keeps your own changes, and **Update from…** brings it up to date with its source. **To get**
 lists the albums your playlists want and your library doesn't have.
 

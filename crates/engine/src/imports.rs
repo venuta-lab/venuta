@@ -1358,16 +1358,18 @@ pub fn preview(
     lib: &Library,
     lists: &[ForeignPlaylist],
 ) -> Vec<PreviewPlaylist> {
-    preview_with(library_root, lib, lists, None)
+    preview_with(library_root, lib, lists, None, &|_, _| {})
 }
 
-/// Like [`preview`], and for songs still missing after the library match, try a catalog hit
-/// (stable id only). `catalog` is optional so dry imports stay offline.
+/// Like [`preview`], and every song still missing after the library match is looked for in the
+/// catalog (stable id only), so it plays online. `catalog` is optional so dry imports stay
+/// offline; `progress` hears (done, total) for each playlist's lookups.
 pub fn preview_with(
     library_root: &Path,
     lib: &Library,
     lists: &[ForeignPlaylist],
     catalog: Option<&dyn MediaAccess>,
+    progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Vec<PreviewPlaylist> {
     let matcher = Matcher::new(lib);
     let have = playlists::list(library_root, lib);
@@ -1381,11 +1383,10 @@ pub fn preview_with(
         .iter()
         .map(|t| (t.path.to_lowercase(), t))
         .collect();
-    let cancel = CancellationToken::default();
     lists
         .iter()
         .map(|l| {
-            let items: Vec<PreviewItem> = l
+            let mut items: Vec<PreviewItem> = l
                 .tracks
                 .iter()
                 .map(|f| {
@@ -1416,26 +1417,33 @@ pub fn preview_with(
                             why: h.why,
                             online: None,
                         },
-                        None => {
-                            let online = f.online().or_else(|| {
-                                catalog.and_then(|a| catalog_online_for(a, f, &cancel))
-                            });
-                            let why = if online.is_some() {
-                                "Not in your library; plays from the online catalog".into()
-                            } else {
-                                "Not in your library".into()
-                            };
-                            PreviewItem {
-                                foreign: f.clone(),
-                                found: None,
-                                grade: None,
-                                why,
-                                online,
-                            }
-                        }
+                        None => PreviewItem {
+                            foreign: f.clone(),
+                            found: None,
+                            grade: None,
+                            why: String::new(),
+                            online: f.online(),
+                        },
                     }
                 })
                 .collect();
+            // Songs you don't have play online: each one found in the catalog, a few at a time.
+            if let Some(access) = catalog {
+                let ask: Vec<usize> = (0..items.len())
+                    .filter(|&i| items[i].found.is_none() && items[i].online.is_none())
+                    .collect();
+                let songs: Vec<Foreign> = ask.iter().map(|&i| items[i].foreign.clone()).collect();
+                for (i, hit) in ask.into_iter().zip(find_online(access, &songs, progress)) {
+                    items[i].online = hit;
+                }
+            }
+            for i in items.iter_mut().filter(|i| i.found.is_none()) {
+                i.why = if i.online.is_some() {
+                    "Not in your library; plays from the online catalog".into()
+                } else {
+                    "Not in your library".into()
+                };
+            }
             let count = |g: Option<Grade>| items.iter().filter(|i| i.grade == g).count();
             let online_n = items
                 .iter()
@@ -1515,8 +1523,9 @@ pub fn catalog_online_for(
         .map(|a| crate::audit::name_key(a))
         .filter(|a| !a.is_empty())
         .collect();
+    let want_loose = loose_title(title);
     page.items.into_iter().find_map(|t| {
-        if playlists::title_key(&t.title) != want_title {
+        if playlists::title_key(&t.title) != want_title && loose_title(&t.title) != want_loose {
             return None;
         }
         if !want_artists.is_empty() {
@@ -1539,6 +1548,47 @@ pub fn catalog_online_for(
             !t.track_id.contains("://") && !t.provider.contains("://")
         })
     })
+}
+
+/// A title with the word "version" left out: Apple says "(Female Version)" where YouTube Music
+/// says "(Female)", and "Film Version" where it says "Film". Which version stays in the key.
+fn loose_title(s: &str) -> String {
+    playlists::title_key(&s.to_lowercase().replace(" version", ""))
+}
+
+/// Songs looked for in the catalog at once: quick for a long playlist, gentle on the catalog.
+const ONLINE_WORKERS: usize = 4;
+
+/// [`catalog_online_for`] for many songs, a few at a time, in their order. `progress` hears
+/// (done, total) as each one is answered.
+pub fn find_online(
+    access: &dyn MediaAccess,
+    songs: &[Foreign],
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Vec<Option<OnlineEntry>> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let out: Vec<Mutex<Option<OnlineEntry>>> = songs.iter().map(|_| Mutex::new(None)).collect();
+    let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let cancel = CancellationToken::default();
+    std::thread::scope(|scope| {
+        for _ in 0..ONLINE_WORKERS.min(songs.len()) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(f) = songs.get(i) else { break };
+                    let hit = catalog_online_for(access, f, &cancel);
+                    if let Ok(mut slot) = out[i].lock() {
+                        *slot = hit;
+                    }
+                    progress(done.fetch_add(1, Ordering::Relaxed) + 1, songs.len());
+                }
+            });
+        }
+    });
+    out.into_iter()
+        .map(|m| m.into_inner().unwrap_or_default())
+        .collect()
 }
 
 impl PreviewItem {
@@ -2114,6 +2164,191 @@ mod tests {
             e[0].want.as_ref().map(|w| w.not.clone()),
             Some(vec!["A/02 - Tum Hi Ho (Remix).flac".to_owned()])
         );
+    }
+
+    /// A catalog that answers every search with the same songs.
+    struct ListCatalog(Vec<media_access::RemoteTrack>);
+    impl MediaAccess for ListCatalog {
+        fn search_tracks(
+            &self,
+            _: &str,
+            page: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError>
+        {
+            Ok(media_access::Page {
+                items: self.0.iter().take(page.limit).cloned().collect(),
+                next_cursor: None,
+            })
+        }
+        fn search_albums(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<media_access::Page<media_access::RemoteAlbum>, media_access::AccessError>
+        {
+            Ok(media_access::Page {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
+        fn search_artists(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<media_access::Page<media_access::RemoteArtist>, media_access::AccessError>
+        {
+            Ok(media_access::Page {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
+        fn album_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError>
+        {
+            Ok(media_access::Page {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
+        fn playlist_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError>
+        {
+            Ok(media_access::Page {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
+        fn resolve_audio(
+            &self,
+            _: &str,
+            _: &CancellationToken,
+        ) -> Result<media_access::EphemeralAudio, media_access::AccessError> {
+            Err(media_access::AccessError::new(
+                media_access::AccessErrorKind::Unsupported,
+                "n/a",
+            ))
+        }
+    }
+
+    fn remote(id: &str, title: &str, artist: &str) -> media_access::RemoteTrack {
+        media_access::RemoteTrack {
+            provider: "remote_catalog".into(),
+            track_id: id.into(),
+            title: title.into(),
+            artists: vec![artist.into()],
+            duration_ms: Some(323_000),
+            ..Default::default()
+        }
+    }
+
+    fn song(title: &str, artist: &str) -> Foreign {
+        Foreign {
+            title: title.into(),
+            artist: artist.into(),
+            duration_ms: Some(325_000),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_version_word_doesnt_keep_a_song_offline_but_the_version_still_counts() {
+        // As YouTube Music names them; Apple says "(Female Version)" and "(Male Version)".
+        let cat = ListCatalog(vec![
+            remote("male", "Moh Moh Ke Dhaage (Male)", "Papon"),
+            remote("female", "Moh Moh Ke Dhaage (Female)", "Monali Thakur"),
+            remote("film", "Qayde Se - Film", "Pritam"),
+        ]);
+        let cancel = CancellationToken::default();
+        let hit =
+            |t: &str, a: &str| catalog_online_for(&cat, &song(t, a), &cancel).map(|o| o.track_id);
+        assert_eq!(
+            hit("Moh Moh Ke Dhaage (Female Version)", "Monali Thakur").as_deref(),
+            Some("female")
+        );
+        assert_eq!(
+            hit("Moh Moh Ke Dhaage (Male Version)", "Papon").as_deref(),
+            Some("male")
+        );
+        assert_eq!(
+            hit("Qayde Se - Film Version", "Pritam").as_deref(),
+            Some("film")
+        );
+        // Another version is another song.
+        assert_eq!(hit("Moh Moh Ke Dhaage (Unplugged Version)", "Papon"), None);
+    }
+
+    #[test]
+    fn find_online_answers_every_song_in_its_place_and_says_how_far_it_got() {
+        let cat = ListCatalog(vec![
+            remote("a", "Song A", "Band"),
+            remote("c", "Song C", "Band"),
+        ]);
+        let songs: Vec<Foreign> = ["Song A", "Song B", "Song C", "Song A"]
+            .iter()
+            .map(|t| song(t, "Band"))
+            .collect();
+        let heard = std::sync::Mutex::new(Vec::new());
+        let found = find_online(&cat, &songs, &|done, total| {
+            heard.lock().unwrap().push((done, total))
+        });
+        let ids: Vec<Option<&str>> = found
+            .iter()
+            .map(|o| o.as_ref().map(|o| o.track_id.as_str()))
+            .collect();
+        assert_eq!(ids, [Some("a"), None, Some("c"), Some("a")]);
+        let mut heard = heard.into_inner().unwrap();
+        heard.sort();
+        assert_eq!(heard, [(1, 4), (2, 4), (3, 4), (4, 4)]);
+        assert!(find_online(&cat, &[], &|_, _| {}).is_empty());
+    }
+
+    #[test]
+    fn preview_with_a_catalog_plays_every_missing_song_it_can_find_online() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library {
+            tracks: vec![],
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+            match_index: Default::default(),
+        };
+        let cat = ListCatalog(vec![remote("a", "Song A", "Band")]);
+        let lists = [ForeignPlaylist {
+            name: "Mix".into(),
+            source: "Apple Music".into(),
+            id: None,
+            tracks: vec![song("Song A", "Band"), song("Song B", "Band")],
+        }];
+        let p = &preview_with(root.path(), &lib, &lists, Some(&cat), &|_, _| {})[0];
+        assert_eq!((p.online, p.missing), (1, 1));
+        assert_eq!(
+            p.items[0].online.as_ref().map(|o| o.track_id.as_str()),
+            Some("a")
+        );
+        assert_eq!(
+            p.items[0].why,
+            "Not in your library; plays from the online catalog"
+        );
+        assert_eq!(p.items[1].why, "Not in your library");
+        // Without a catalog nothing is looked up.
+        let p = &preview(root.path(), &lib, &lists)[0];
+        assert_eq!((p.online, p.missing), (0, 2));
     }
 
     #[test]

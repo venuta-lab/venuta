@@ -11,6 +11,8 @@ import {
   playlistCreate,
   playlistSaveItems,
   playlistTracks,
+  playlistFindOnline,
+  type ForeignSong,
   ratePlaylist,
   searchWeb,
   smartSave,
@@ -81,6 +83,32 @@ const toGet = (r: PlaylistEntry) => r.missing && !r.online
 const rowKey = (r: PlaylistEntry) => (isRemote(r) && r.online ? `online:${r.online.provider}:${r.online.track_id}` : r.path)
 /** A row as a line for another playlist: the online song by its id, else the file. */
 const songOf = (r: PlaylistEntry): PlaylistItem => (r.online ? { online: r.online } : { path: r.path })
+
+/** A song to get as the online catalog is asked for it: the words the playlist first had. */
+const foreignOf = (r: PlaylistEntry): ForeignSong => {
+  const w = r.want ?? r
+  return { title: w.title, artist: w.artist, album: w.album, duration_ms: w.duration_ms || null, isrc: null }
+}
+/** Songs to get already looked for online while the app runs, by playlist and song: a song
+ *  the catalog doesn't have, or one you put back with Undo, isn't asked for again. */
+const askedOnline = new Set<string>()
+const askKey = (playlist: string, r: PlaylistEntry) => {
+  const w = r.want ?? r
+  return [playlist, w.title, w.artist, w.album].join('\u0000').toLowerCase()
+}
+/** The row as the online song that plays in its place. */
+const asOnline = (r: Row, o: OnlineEntry): Row => ({
+  ...r,
+  path: '',
+  title: o.title,
+  artist: (o.artists ?? []).join(', '),
+  album: o.album ?? '',
+  duration_ms: o.duration_ms ?? 0,
+  missing: true,
+  want: undefined,
+  maybe: undefined,
+  online: o,
+})
 
 /** Which songs the page shows: all, local files, online-only, or still to get. */
 type Show = 'all' | 'here' | 'online' | 'get'
@@ -214,6 +242,47 @@ export function PlaylistPage(props: {
     },
     [root, name, props, load, exists],
   )
+
+  // Songs you don't have play online, so the playlist plays through: each one is looked for in
+  // the online catalog by itself, once, and put in its place when the catalog is sure.
+  const [lookingOnline, setLookingOnline] = useState(0)
+  const persistNow = useRef(persist)
+  persistNow.current = persist
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (!rows || smart || !exists) return
+    const ask = rows.filter((r) => toGet(r) && !askedOnline.has(askKey(name, r)))
+    if (!ask.length) return
+    const keys = ask.map((r) => askKey(name, r))
+    keys.forEach((k) => askedOnline.add(k))
+    setLookingOnline((n) => n + ask.length)
+    void playlistFindOnline(ask.map(foreignOf))
+      .then((found) => {
+        if (!mounted.current) {
+          // Gone before the answer came: asked again next time it opens.
+          keys.forEach((k) => askedOnline.delete(k))
+          return
+        }
+        const hits = new Map(keys.flatMap((k, i) => (found[i] ? [[k, found[i]] as const] : [])))
+        const before = latest.current
+        let n = 0
+        const next = before.map((x) => {
+          const o = toGet(x) ? hits.get(askKey(name, x)) : undefined
+          if (!o) return x
+          n++
+          return asOnline(x, o)
+        })
+        if (n) void persistNow.current(next, n === 1 ? `A song you don't have plays online now.` : `${n} songs you don't have play online now.`, before)
+      })
+      .catch(() => keys.forEach((k) => askedOnline.delete(k)))
+      .finally(() => mounted.current && setLookingOnline((n) => Math.max(0, n - ask.length)))
+  }, [rows, smart, exists, name])
 
   const have = useMemo(() => (rows ?? []).filter((r) => !r.missing), [rows])
   const online = useMemo(() => (rows ?? []).filter(isRemote), [rows])
@@ -443,20 +512,7 @@ export function PlaylistPage(props: {
     const before = latest.current
     const next = before.map((x) => {
       const o = pick.get(x.key)
-      return o
-        ? {
-            ...x,
-            path: '',
-            title: o.title,
-            artist: (o.artists ?? []).join(', '),
-            album: o.album ?? '',
-            duration_ms: o.duration_ms ?? 0,
-            missing: true,
-            want: undefined,
-            maybe: undefined,
-            online: o,
-          }
-        : x
+      return o ? asOnline(x, o) : x
     })
     const one = chosen.length === 1 ? chosen[0][1] : null
     void persist(next, one ? `“${one.title}” plays online from ${name} now.` : `${plural(chosen.length, 'song')} play online from ${name} now.`, before)
@@ -698,7 +754,12 @@ export function PlaylistPage(props: {
                 : []),
             ]}
           />
-          {view === 'get' && (
+          {lookingOnline > 0 && (
+            <span className="text-[12.5px] text-ink/50" role="status">
+              Finding {plural(lookingOnline, 'song')} online…
+            </span>
+          )}
+          {view === 'get' && !lookingOnline && (
             <span className="text-[12.5px] text-ink/50">
               From {plural(groups.length, 'album')}, the ones with most songs first. Venuta never downloads music.
             </span>

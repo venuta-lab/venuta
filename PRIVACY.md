@@ -13,7 +13,7 @@ Only for something you asked for, or the update check you can switch off:
 | What | Where it connects | When |
 |---|---|---|
 | Looking up details (years, composers, lyricists, covers, synced lyrics) | MusicBrainz, the iTunes Search API, the Deezer API, LRCLIB; Discogs and AcoustID only if you add your own keys | When you run **Look up details online** or bring in new music |
-| The online catalog | YouTube Music (and YouTube's servers to play a song) | When you search (online results appear below your library) or play an online song |
+| The online catalog | YouTube Music (and YouTube's servers to play a song) | When you search (online results appear below your library), play an online song, or bring in or open a playlist with songs you don't have (to play them online in their places) |
 | Signing in to Spotify (optional) | Spotify's sign-in and API | Only if you sign in, in **Settings › Online sources**, to bring in your own playlists |
 | Bringing in a playlist from a link | The site of that link: Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer, ListenBrainz | When you paste the link and bring it in |
 | Finding your songs on a service (Send out) | Deezer, iTunes, ListenBrainz, MusicBrainz | When you send a playlist out to a service |

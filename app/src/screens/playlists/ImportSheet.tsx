@@ -962,7 +962,7 @@ function SpotifyPicker(props: { onRead: (chosen: SpotifyPlaylist[]) => void }) {
   )
 }
 
-type Show = 'check' | 'found' | 'get'
+type Show = 'check' | 'found' | 'online' | 'get'
 
 function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onChange: (p: Partial<Pick>) => void }) {
   const { list: l, pick } = props
@@ -972,7 +972,9 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
   if (!pick) return null
   const rows = l.items
     .map((it, i) => ({ it, i }))
-    .filter(({ it }) => (show === 'check' ? it.grade === 'close' : show === 'found' ? it.grade === 'exact' : !it.found))
+    .filter(({ it }) =>
+      show === 'check' ? it.grade === 'close' : show === 'found' ? it.grade === 'exact' : show === 'online' ? !it.found && !!it.online : !it.found && !it.online,
+    )
   const shown = more ? rows : rows.slice(0, 150)
   const accepted = l.close - [...pick.rejected].filter((i) => l.items[i]?.grade === 'close').length
   const onlineN = l.online ?? l.items.filter((it) => !it.found && it.online).length
@@ -1074,13 +1076,16 @@ function ReviewCard(props: { list: PreviewPlaylist; pick: Pick | undefined; onCh
                 options={[
                   { value: 'check', label: `Close matches ${l.close}`, disabled: !l.close },
                   { value: 'found', label: `Found ${l.exact}`, disabled: !l.exact },
-                  {
-                    value: 'get',
-                    label: `Not in your library ${l.missing + onlineN}`,
-                    disabled: !(l.missing + onlineN),
-                  },
+                  ...(onlineN ? [{ value: 'online' as const, label: `Online ${onlineN}` }] : []),
+                  ...(l.missing ? [{ value: 'get' as const, label: `To get ${l.missing}` }] : []),
                 ]}
               />
+              {show === 'online' && (
+                <p className="mt-2.5 text-[12.5px] text-ink/50">Songs you don't have play from the online catalog, in their places, until you have the file.</p>
+              )}
+              {show === 'get' && (
+                <p className="mt-2.5 text-[12.5px] text-ink/50">The online catalog wasn't sure about these. They keep their places and wait on To get; you can pick an online song for each in the playlist.</p>
+              )}
               {show === 'check' && l.close > 0 && (
                 <p className="mt-2.5 text-[12.5px] text-ink/50">Close matches are used unless you say otherwise: a different version, length or spelling. Say “Not it” and the song waits on To get instead.</p>
               )}
@@ -1134,10 +1139,17 @@ function SongRow(props: { item: PreviewItem; n: number; rejected: boolean; onTog
             {grade === 'close' && why && <span className="block truncate text-[12px] text-accent-ink">{why}</span>}
           </>
         ) : props.item.online ? (
-          <span className="text-[12.5px] text-ink/55">
-            Online catalog
-            {props.item.online.title ? ` · ${props.item.online.title}` : ''}
-          </span>
+          <>
+            <span className="block truncate">
+              <span className="text-ink/40" aria-hidden>
+                →{' '}
+              </span>
+              {props.item.online.title}
+            </span>
+            <span className="block truncate text-[12px] text-ink/50">
+              {[(props.item.online.artists ?? []).join(', '), 'plays online'].filter(Boolean).join(', ')}
+            </span>
+          </>
         ) : (
           <span className="text-[12.5px] text-ink/45">Not in your library; waits on To get</span>
         )}

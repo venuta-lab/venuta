@@ -2176,7 +2176,7 @@ async fn playlist_update_read(
         let (lists, problems) = read_source(&acc, catalog.as_ref(), &name, &id)?;
         let (_, lib) = load_lib(&rootp)?;
         Ok(ImportRead {
-            lists: engine::imports::preview(&rootp, &lib, &lists),
+            lists: preview_online(&rootp, &lib, &lists, catalog.as_ref(), None),
             problems,
         })
     })
@@ -2309,11 +2309,15 @@ async fn playlists_check(
                 }
             })
             .collect();
-        // Only the ones with something new or gone at the source.
-        let preview: Vec<_> = engine::imports::preview(&rootp, &lib, &lists)
+        // Only the ones with something new or gone at the source; then their songs you don't
+        // have are looked for online (not every playlist's, every time).
+        let changed: Vec<_> = engine::imports::preview(&rootp, &lib, &lists)
             .into_iter()
             .filter(|l| l.target.as_ref().is_some_and(|t| t.added + t.removed > 0))
+            .map(|l| (l.name, l.source_id))
             .collect();
+        lists.retain(|l| changed.iter().any(|(n, id)| *n == l.name && *id == l.id));
+        let preview = preview_online(&rootp, &lib, &lists, catalog.as_ref(), Some(&on_progress));
         Ok(ImportRead {
             lists: preview,
             problems,
@@ -2518,9 +2522,54 @@ async fn import_preview(
         let rootp = PathBuf::from(&root);
         let (_, lib) = load_lib(&rootp)?;
         Ok(ImportRead {
-            lists: engine::imports::preview(&rootp, &lib, &lists),
+            lists: preview_online(&rootp, &lib, &lists, catalog.as_ref(), Some(&on_progress)),
             problems,
         })
+    })
+    .await
+}
+
+/// [`engine::imports::preview`], with every song you don't have looked for in the online
+/// catalog, so the playlist plays through without a gap. Said as it goes, when asked.
+fn preview_online(
+    root: &Path,
+    lib: &engine::library::Library,
+    lists: &[engine::imports::ForeignPlaylist],
+    catalog: &dyn media_access::MediaAccess,
+    progress: Option<&Channel<DeepProgress>>,
+) -> Vec<engine::imports::PreviewPlaylist> {
+    engine::imports::preview_with(root, lib, lists, Some(catalog), &|done, total| {
+        if let Some(p) = progress {
+            let _ = p.send(DeepProgress {
+                done,
+                total,
+                note: "Finding the songs you don't have online".into(),
+            });
+        }
+    })
+}
+
+/// The online catalog's song for each of these (or none when it isn't sure): for a playlist's
+/// songs you don't have, so they play online. Ids and what to show only, never a stream address.
+#[tauri::command]
+async fn playlist_find_online(
+    songs: Vec<engine::playlists::Foreign>,
+    on_progress: Channel<DeepProgress>,
+    pb: tauri::State<'_, playback::Playback>,
+) -> CmdResult<Vec<Option<engine::playlists::OnlineEntry>>> {
+    let catalog = pb.catalog();
+    blocking(move || {
+        Ok(engine::imports::find_online(
+            catalog.as_ref(),
+            &songs,
+            &|done, total| {
+                let _ = on_progress.send(DeepProgress {
+                    done,
+                    total,
+                    note: String::new(),
+                });
+            },
+        ))
     })
     .await
 }
@@ -3014,6 +3063,7 @@ pub fn run() {
             is_test_copy,
             search_web,
             import_preview,
+            playlist_find_online,
             import_apply,
             set_apple,
             rate_playlist
