@@ -374,8 +374,20 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// A console tool started without a window of its own. Venuta has no console to lend it, so
+/// without this Windows opens a terminal window every time an online song starts.
+fn quiet(mut cmd: Command) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn python_module_available(python: &Path, module: &str) -> bool {
-    Command::new(python)
+    quiet(Command::new(python))
         .args(["-c", &format!("import {module}")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -388,7 +400,7 @@ fn python_module_available(python: &Path, module: &str) -> bool {
 fn run_dump_json(tool: &StreamTool, watch_url: &str, format: &str) -> Result<Vec<u8>, AccessError> {
     let mut cmd = match tool {
         StreamTool::Binary(path) => {
-            let mut c = Command::new(path);
+            let mut c = quiet(Command::new(path));
             c.args([
                 "-f",
                 format,
@@ -400,7 +412,7 @@ fn run_dump_json(tool: &StreamTool, watch_url: &str, format: &str) -> Result<Vec
             c
         }
         StreamTool::PythonModule { python } => {
-            let mut c = Command::new(python);
+            let mut c = quiet(Command::new(python));
             c.args([
                 "-m",
                 "yt_dlp",

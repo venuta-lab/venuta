@@ -133,8 +133,14 @@ pub fn eject(root: &Path) -> Result<(), String> {
         let script = format!(
             "$d = (New-Object -ComObject Shell.Application).Namespace(17).ParseName('{root_s}'); if ($d) {{ $d.InvokeVerb('Eject') }} else {{ exit 2 }}"
         );
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        let mut ps = std::process::Command::new("powershell");
+        // No console window flashing up while the card is ejected.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            ps.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        ps.args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .status()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("diskutil").args(["eject", &root_s]).status()
