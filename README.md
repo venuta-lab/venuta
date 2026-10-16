@@ -175,7 +175,7 @@ to send a change. Security problems: [SECURITY.md](SECURITY.md).
 | [`crates/media-access`](crates/media-access) | The online catalog |
 | [`crates/cli`](crates/cli) | `venuta`, the engine from the command line |
 | [`app/`](app) | The desktop app (Tauri) and its interface (React) |
-| [`docs/`](docs) | [Decisions](docs/decisions), [research](docs/research), [plans](docs/plans) |
+| [`docs/`](docs) | [Decisions](docs/decisions), [research](docs/research) |
 
 ## Licence
 

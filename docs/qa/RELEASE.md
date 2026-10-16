@@ -1,8 +1,7 @@
 # Before a release
 
-Every release, in this order. Each step says how to check it and what passing means. The gates
-come from [the review fixes](../plans/PLAN-REVIEW-FIXES.md); [FEATURES.md](FEATURES.md) is the
-list of what must keep working.
+Every release, in this order. Each step says how to check it and what passing means. [FEATURES.md](FEATURES.md)
+is the list of what must keep working.
 
 ## 1. CI is green
 

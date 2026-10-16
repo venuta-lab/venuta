@@ -1,7 +1,6 @@
 # What must keep working
 
-Walked through at the end of every workstream of [PLAN-REVIEW-FIXES](../plans/PLAN-REVIEW-FIXES.md)
-and before every release. Each line is something a person does; ✓ when checked in the test copy.
+Walked through at the end of every piece of work and before every release. Each line is something a person does; ✓ when checked in the test copy.
 
 ## Music
 - Home: the top card (playing, paused, picked for today) with Resume/Play and Shuffle; Jump back in; Your playlists; shelves by category, with See all

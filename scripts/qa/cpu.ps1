@@ -1,5 +1,5 @@
 # CPU of a test copy (the app and every WebView2 process under it), as % of one core, over N s.
-# The W2 gates (docs/plans/PLAN-REVIEW-FIXES.md): idle with the window shown under 3%, playing
+# The CPU gates (docs/qa/RELEASE.md): idle with the window shown under 3%, playing
 # shown under 10%, minimised under 1% (playing minimised: the page's own part under 1%; the rest
 # is the engine decoding). -Split also shows each process.
 #   pwsh scripts/qa/cpu.ps1 -Seconds 20 -Exe '*\venuta-qa-target\debug\app.exe' -Split

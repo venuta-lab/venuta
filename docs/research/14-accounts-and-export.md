@@ -1,6 +1,6 @@
 # 14: Signing in to every service, and sending playlists out
 
-Researched 2026-10-14 for [PLAN-PLAYLISTS-IN-AND-OUT](../plans/PLAN-PLAYLISTS-IN-AND-OUT.md),
+Researched 2026-10-14,
 after [13-playlist-import](13-playlist-import.md). Asked: "we can login to account for any
 accounts and fetch any playlists from account apple music yt music and all. also other all options
 that this kind of tools usually provide", "give all easy options for import export so user can

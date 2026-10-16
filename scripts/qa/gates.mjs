@@ -1,4 +1,4 @@
-// The release gates (docs/plans/PLAN-REVIEW-FIXES.md), checked in a running test copy as a
+// The release gates (docs/qa/RELEASE.md), checked in a running test copy as a
 // person would use it. Each prints PASS or FAIL with its numbers; the run fails if any fails.
 //
 //   QA_PORT=9334 node scripts/qa/gates.mjs

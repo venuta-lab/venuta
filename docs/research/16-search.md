@@ -1,6 +1,6 @@
 # 16: Search, local and online, at its best
 
-Researched 2026-10-15 for [PLAN-SEARCH](../plans/PLAN-SEARCH.md). Asked: "When we search in any
+Researched 2026-10-15. Asked: "When we search in any
 search bar in Venuta we should get the best results: first local and below that online. Tags or
 filters: all, songs, albums, artists, covers, others. Right now if I search something it gives me
 anything. I should get popular songs first, not random covers, mixes or other ones. Like Apple

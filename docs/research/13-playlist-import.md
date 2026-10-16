@@ -1,6 +1,6 @@
 # Bringing playlists in: what each service allows, and how the best importers feel
 
-Researched 2026-10-14 for [PLAN-PLAYLIST-IMPORT](../plans/PLAN-PLAYLIST-IMPORT.md). Sources are
+Researched 2026-10-14. Sources are
 linked; "(inference)" marks what wasn't confirmed at a source.
 
 ## What each service lets a free desktop app do (2026)
