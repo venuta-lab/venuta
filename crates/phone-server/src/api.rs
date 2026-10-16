@@ -302,6 +302,20 @@ fn answer(app: &App, lib: &Library, c: &Catalog, method: &str, p: &Params, user:
                 None => not_found("Cover art"),
             },
         },
+        // What apps ask for beside the library: notes from the web, similar and top songs,
+        // podcasts, radio, bookmarks, shares. Venuta has none of these, so each is answered
+        // empty, never with an error that would fail the screen asking.
+        "getAlbumInfo" | "getAlbumInfo2" => Out::Ok(json!({ "albumInfo": {} })),
+        "getArtistInfo" => Out::Ok(json!({ "artistInfo": {} })),
+        "getArtistInfo2" => Out::Ok(json!({ "artistInfo2": {} })),
+        "getSimilarSongs" => Out::Ok(json!({ "similarSongs": {} })),
+        "getSimilarSongs2" => Out::Ok(json!({ "similarSongs2": {} })),
+        "getTopSongs" => Out::Ok(json!({ "topSongs": {} })),
+        "getPodcasts" => Out::Ok(json!({ "podcasts": {} })),
+        "getNewestPodcasts" => Out::Ok(json!({ "newestPodcasts": {} })),
+        "getInternetRadioStations" => Out::Ok(json!({ "internetRadioStations": {} })),
+        "getBookmarks" => Out::Ok(json!({ "bookmarks": {} })),
+        "getShares" => Out::Ok(json!({ "shares": {} })),
         other => Out::Err(Code::Generic, format!("Venuta doesn't answer {other} yet.")),
     }
 }

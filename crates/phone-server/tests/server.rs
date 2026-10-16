@@ -171,6 +171,26 @@ async fn a_phone_signs_in_browses_streams_and_scrobbles() {
     assert_eq!(l["line"][1]["start"], 3500);
     assert_eq!(l["line"][1]["value"], "Indeed");
 
+    // What apps ask for beside the library (notes, similar songs, podcasts...): answered, empty,
+    // so a screen that asks never fails on it.
+    for (method, key) in [
+        ("getAlbumInfo2", "albumInfo"),
+        ("getAlbumInfo", "albumInfo"),
+        ("getArtistInfo2", "artistInfo2"),
+        ("getArtistInfo", "artistInfo"),
+        ("getSimilarSongs2", "similarSongs2"),
+        ("getTopSongs", "topSongs"),
+        ("getPodcasts", "podcasts"),
+        ("getInternetRadioStations", "internetRadioStations"),
+        ("getBookmarks", "bookmarks"),
+        ("getShares", "shares"),
+    ] {
+        let (_, _, body) = get(port, &format!("/rest/{method}?id={album_id}&{auth}"), "").await;
+        let r = json(&body);
+        assert_eq!(r["status"], "ok", "{method}: {r}");
+        assert!(r[key].is_object(), "{method} answers {key}: {r}");
+    }
+
     // XML for the apps that ask for it.
     let (_, headers, body) = get(port, "/rest/ping?u=phone&p=sesame", "").await;
     assert!(headers.contains("text/xml"), "{headers}");
