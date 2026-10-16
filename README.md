@@ -145,7 +145,8 @@ playing, and shares it as one file. Pick the app icon too, in 33 materials.
   write is checked: if the audio isn't identical afterwards, the file is left as it was.
 - **Nothing is deleted.** Replaced files and removed playlists go to **Set aside**, and everything
   can be undone in **Activity**.
-- **No account, no ads, no tracking.** Your library stays on your PC.
+- **No account, no ads, no tracking.** Your library stays on your PC; [here is everything Venuta's
+  internet use is for](PRIVACY.md).
 - **Free, forever.** Open source under the MIT licence.
 
 ## FAQ

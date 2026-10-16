@@ -1,0 +1,128 @@
+name: release
+
+# Builds the Windows installer on GitHub's servers from this repository, signs it with the
+# SignPath Foundation certificate (once the SignPath project is set up), signs it again for
+# Venuta's own updater, records build provenance, and can open a draft release to publish.
+# Started by hand: Actions › release › Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (x.y.z), as in app/src-tauri/tauri.conf.json'
+        required: true
+      draft_release:
+        description: 'Open a draft GitHub release with the installer'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm --dir app install --frozen-lockfile
+
+      - name: The version matches the repository
+        shell: pwsh
+        run: |
+          $conf = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($conf.version -ne $env:VERSION) { throw "tauri.conf.json says $($conf.version), not $env:VERSION" }
+
+      - name: Release notes from the changelog
+        run: node scripts/ci-release.mjs notes ${{ env.VERSION }} > "${{ runner.temp }}/notes.md"
+
+      # The updater key never leaves GitHub's secret store except into this runner's temp folder.
+      - name: Updater key
+        shell: pwsh
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:KEY) { throw 'Add the TAURI_SIGNING_PRIVATE_KEY secret first' }
+          Set-Content -Path "$env:RUNNER_TEMP/updater.key" -Value $env:KEY -NoNewline
+
+      - name: Build the installer
+        env:
+          VENUTA_SIGNING_KEY: ${{ runner.temp }}/updater.key
+        run: node scripts/release.mjs ${{ env.VERSION }} --local --notes "${{ runner.temp }}/notes.md"
+
+      - name: Keep the unsigned installer
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: target/release/bundle/nsis/Venuta_${{ env.VERSION }}_x64-setup.exe
+          if-no-files-found: error
+
+      # Skipped until the SignPath project exists (the SIGNPATH_ORGANIZATION_ID variable is set).
+      - name: Sign with SignPath
+        id: signpath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: venuta
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signed
+
+      - name: Sign again for the updater
+        if: ${{ steps.signpath.outcome == 'success' }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ runner.temp }}/updater.key
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: node scripts/ci-release.mjs resign ${{ env.VERSION }} "${{ runner.temp }}/signed"
+
+      - name: Build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/release/bundle/nsis/Venuta_${{ env.VERSION }}_x64-setup.exe
+
+      - name: SHA-256
+        shell: pwsh
+        run: |
+          $f = "target/release/bundle/nsis/Venuta_$($env:VERSION)_x64-setup.exe"
+          (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() + "  Venuta_$($env:VERSION)_x64-setup.exe" | Set-Content "target/release/bundle/nsis/Venuta_$($env:VERSION)_x64-setup.exe.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: venuta-${{ env.VERSION }}
+          path: |
+            target/release/bundle/nsis/Venuta_${{ env.VERSION }}_x64-setup.exe
+            target/release/bundle/nsis/Venuta_${{ env.VERSION }}_x64-setup.exe.sha256
+            target/release/bundle/nsis/latest.json
+          if-no-files-found: error
+
+      - name: Draft release
+        if: ${{ inputs.draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $d = "target/release/bundle/nsis"
+          gh release create "v$env:VERSION" --target $env:GITHUB_SHA --draft --title "Venuta $env:VERSION" --notes-file "$env:RUNNER_TEMP/notes.md" "$d/Venuta_$($env:VERSION)_x64-setup.exe" "$d/Venuta_$($env:VERSION)_x64-setup.exe.sha256" "$d/latest.json"
