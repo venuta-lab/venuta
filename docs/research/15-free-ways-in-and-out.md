@@ -1,8 +1,7 @@
 # 15: Completely free ways in and out
 
-Researched 2026-10-14, after [14](14-accounts-and-export.md). Asked: "we don't need anything,
-we need to keep this completely free. Think of some better ways. I see some websites that offer
-these kinds of services, explore some options as well. But completely free is important."
+Researched 2026-10-14, after [14](14-accounts-and-export.md). The goal: every way in and
+out completely free, including what free websites already offer.
 Endpoints were tried live on 2026-10-14 without signing in or any key; "(unconfirmed)" marks what
 wasn't. Free means: no paid account, no developer app, no key, for the project or the person.
 

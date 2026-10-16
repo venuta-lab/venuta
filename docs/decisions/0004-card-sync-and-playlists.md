@@ -5,7 +5,7 @@
 
 ## Card sync
 
-**Context.** Cards are the owner's main way to listen, at 128 GB, 256 GB and 1.5 TB. Some cards already hold a copy of the collection in the old folder layout. A sync must never cost a full rewrite, and must never lose files that another tool put there.
+**Context.** Cards are my main way to listen, at 128 GB, 256 GB and 1.5 TB. Some cards already hold a copy of the collection in the old folder layout. A sync must never cost a full rewrite, and must never lose files that another tool put there.
 
 **Decision.**
 - **Identity.** Each card is identified by `/.music-librarian/card.toml` (id, name, folder, which library folders to include, auto-sync). The volume serial is only a secondary check.
@@ -25,7 +25,7 @@
 
 **Consequences.**
 - Auto-sync runs while the app is open (the Cards screen checks for cards every 5 s). A tray watcher is deferred.
-- Spike S3 (write strategy on real cards) still needs the owner's cards. One writer with a 4 MiB buffer is the default until then.
+- Spike S3 (write strategy on real cards) still needs my cards. One writer with a 4 MiB buffer is the default until then.
 
 ## Playlists
 

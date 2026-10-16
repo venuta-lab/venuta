@@ -1,11 +1,9 @@
 # 14: Signing in to every service, and sending playlists out
 
 Researched 2026-10-14,
-after [13-playlist-import](13-playlist-import.md). Asked: "we can login to account for any
-accounts and fetch any playlists from account apple music yt music and all. also other all options
-that this kind of tools usually provide", "give all easy options for import export so user can
-choose whatever user like", and "keep this light weight and fast, so we can use external browsers
-for logins". "(unconfirmed)" marks what wasn't confirmed at a source.
+after [13-playlist-import](13-playlist-import.md). The question: can Venuta sign in to every
+service to fetch playlists, offer every easy way in and out, and stay light by using the browser
+for sign-ins? "(unconfirmed)" marks what wasn't confirmed at a source.
 
 ## The short answer
 

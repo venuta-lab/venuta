@@ -1,10 +1,8 @@
 # 16: Search, local and online, at its best
 
-Researched 2026-10-15. Asked: "When we search in any
-search bar in Venuta we should get the best results: first local and below that online. Tags or
-filters: all, songs, albums, artists, covers, others. Right now if I search something it gives me
-anything. I should get popular songs first, not random covers, mixes or other ones. Like Apple
-Music, YouTube Music or Spotify; for us it's local + online both." Research only; nothing changed.
+Researched 2026-10-15. The goal: every search bar gives the best results, your library first and
+the online catalog below, with filters (all, songs, albums, artists, covers, others) and the
+popular recording ahead of covers and mixes, as Apple Music, YouTube Music and Spotify do.
 Live checks were signed out, no key; "(unconfirmed)" marks what wasn't confirmed.
 
 ## 1. Why results feel random today (the root cause)

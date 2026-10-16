@@ -11,7 +11,7 @@ Every change the app makes to the library is a tag write. The research ([01](../
 
 The test lives in `crates/engine/examples/s1_write_safety.rs`.
 
-- **Sample.** 200 FLAC files spread evenly across the owner's library (`D:\Collection`), copied to a scratch folder. The originals were only read. The sample covers 16/44.1, 24/48 and 24/96 files, MD5-less files, and files with MusicBrainz, Tidal and ffmpeg tags.
+- **Sample.** 200 FLAC files spread evenly across my library, copied to a scratch folder. The originals were only read. The sample covers 16/44.1, 24/48 and 24/96 files, MD5-less files, and files with MusicBrainz, Tidal and ffmpeg tags.
 - **Edits.** Six edits per file, each saved with `FlacFile::save_to`, 1,200 writes in total:
   - modify a title
   - add multi-value ARTIST, LYRICIST and ORIGINALDATE

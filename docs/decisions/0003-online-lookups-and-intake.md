@@ -5,7 +5,7 @@
 
 ## Sources and their jobs
 
-These were confirmed live on the owner's albums (Rockstar, UPC 8902894697408) before any code was written.
+These were confirmed live on my albums (Rockstar, UPC 8902894697408) before any code was written.
 
 | Field | Source | Why this one |
 |---|---|---|

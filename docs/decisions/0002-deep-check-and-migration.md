@@ -33,16 +33,16 @@ We run one decode per album (symphonia 0.6 FLAC with `verify`). That single pass
 
 ## Planner decisions made while testing on the real library
 
-1. **The composer comes from the owner's folders for soundtracks.** For example, `…/A_R_Rahman/2004_Swades` gives "A.R. Rahman", with spelling canonicalised through the aliases.
+1. **The composer comes from my folders for soundtracks.** For example, `…/A_R_Rahman/2004_Swades` gives "A.R. Rahman", with spelling canonicalised through the aliases.
 2. **Album artist, album and year are per track for non-soundtrack folders.** A folder of loose singles (e.g. `Anuv_Jain`) holds many releases. Without this, every single was filed under the folder's most common album.
 3. **Extra names in the old album artist go into `CREDITS`, not `LYRICIST`.** They mix lyricists, remix composers and cast (e.g. "Vishal-Shekhar, Zeus, Manj Musik, John Stewart Eduri"), so guessing roles would mislabel people. Milestone 3's credit sources will sort them.
 4. **`ARTIST` holds the readable singer string; `ARTISTS` holds one value per singer** (the Picard convention). This shows correctly in every player while keeping structured data. Spike S2 will confirm per player.
 5. **A folder year that differs from DATE is medium confidence.** It is right for some albums (Gangster 2006 vs DATE 2024) and wrong for others (the My Name Is Khan folder says 2017; the film is from 2010). Milestone 3 will settle it with MusicBrainz first-release dates.
 6. **`UNSYNCEDLYRICS` is only removed when it has the same words as `LYRICS`.** The first version removed it whenever `LYRICS` existed. That would have deleted Devanagari lyrics sitting beside romanized synced lyrics (Roja).
 7. **Soundtrack labels are removed anywhere in the album title,** not only at the end: "Interstellar (Original Motion Picture Soundtrack) [Expanded Edition]" becomes "Interstellar [Expanded Edition]".
-8. **Exact duplicate albums (identical MD5 sets, or a subset) are set aside.** The owner's composer folder is preferred over Collections, and underscore naming over spaces.
+8. **Exact duplicate albums (identical MD5 sets, or a subset) are set aside.** My composer folder is preferred over Collections, and underscore naming over spaces.
 
-Result on the owner's library: **330 albums planned in about 0.3 s.**
+Result on my library: **330 albums planned in about 0.3 s.**
 
 | Outcome | Albums |
 |---|---|
