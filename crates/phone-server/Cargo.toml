@@ -1,0 +1,24 @@
+[package]
+name = "phone-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Venuta's phone server: your library to phones on the same Wi-Fi, through the OpenSubsonic API and the browser"
+
+[dependencies]
+engine.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "query", "form", "tokio"] }
+tokio = { version = "1", features = ["net", "rt", "macros", "sync"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+md-5 = "0.10"
+getrandom = "0.3"
+serde_urlencoded = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync"] }

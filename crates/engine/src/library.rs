@@ -133,6 +133,22 @@ pub(crate) fn hex_upper(b: &[u8]) -> String {
 }
 
 impl Library {
+    /// A library of just these songs, with nothing else known (for tests and tools).
+    pub fn of_tracks(tracks: Vec<Track>) -> Self {
+        Self {
+            tracks,
+            lyrics_files: Default::default(),
+            images: Default::default(),
+            meta: Default::default(),
+            fetched_lyrics: Default::default(),
+            pairs: Default::default(),
+            identities: Default::default(),
+            in_library: false,
+            lookup: Default::default(),
+            match_index: Default::default(),
+        }
+    }
+
     pub(crate) fn lookup(&self) -> &Lookup {
         self.lookup.get_or_init(|| {
             let mut look = Lookup::default();
