@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   cancelSync,
   ejectCard,
@@ -64,6 +64,19 @@ export function CardsScreen({ root, library }: { root: string; library: string }
 
   const set = (card: string, b: Busy | undefined) => setState((s) => ({ ...s, [card]: b }))
 
+  // A card that appears says at once whether it's up to date (nothing is written until Sync).
+  const checked = useRef(new Set<string>())
+  useEffect(() => {
+    const here = new Set(cards.filter((c) => c.card).map((c) => c.volume.root))
+    for (const card of here)
+      if (!checked.current.has(card)) {
+        checked.current.add(card)
+        void preview(card)
+      }
+    for (const card of [...checked.current]) if (!here.has(card)) checked.current.delete(card)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards])
+
   async function preview(card: string) {
     set(card, { kind: 'planning' })
     try {
@@ -109,70 +122,90 @@ export function CardsScreen({ root, library }: { root: string; library: string }
   const blank = cards.filter((c) => !c.card)
 
   return (
-    <Page
-      title="Devices"
-      line="A card carries your whole library or a selection of it, laid out as your library is, for your player, a car, or someone else. Only changes are written, and files Venuta didn’t put on a card are never touched."
-    >
+    <Page title="Devices" line="Take your music with you: on a player’s SD card, or on your phone over Wi-Fi.">
       {message && (
         <p className="mt-4 cursor-pointer text-[13.5px] text-ink/80" onClick={() => setMessage('')}>
           {message}
         </p>
       )}
 
-      {!inApp() && <p className="mt-8 text-[14px] text-ink/55">Cards are detected by the desktop app.</p>}
-      {inApp() && cards.length === 0 && (
-        <div className="glass grid place-items-center rounded-3xl px-6 py-12 text-center">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl" style={{ background: 'color-mix(in oklab, var(--accent) 28%, transparent)' }}>
-            <IconCards />
+      <section className="mt-8" aria-labelledby="cards-heading">
+        <h2 id="cards-heading" className="text-[17px] font-semibold tracking-[-0.01em]">
+          SD cards and USB drives
+        </h2>
+        <p className="mt-1 max-w-[66ch] text-[12.5px] text-ink/55">
+          Your whole library or a selection, written the way your player reads it. Only changes are copied, and nothing Venuta didn’t put on a card is touched.
+        </p>
+
+        {!inApp() && <p className="mt-4 text-[14px] text-ink/55">Cards are detected by the desktop app.</p>}
+        {inApp() && cards.length === 0 && (
+          <div className="glass mt-4 flex items-center gap-4 rounded-[22px] px-5 py-4">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: 'color-mix(in oklab, var(--accent) 28%, transparent)' }}>
+              <IconCards />
+            </div>
+            <div>
+              <p className="text-[14.5px] font-medium">Insert an SD card or USB drive</p>
+              <p className="text-[12.5px] text-ink/50">It shows up here within a few seconds.</p>
+            </div>
           </div>
-          <p className="mt-3 text-[15px] font-medium">Insert an SD card</p>
-          <p className="mt-1 text-[12.5px] text-ink/50">It appears here within a few seconds.</p>
-        </div>
-      )}
+        )}
 
-      <div className="mt-8 grid gap-3">
-        {known.map((c) => (
-          <CardTile
-            key={c.volume.root}
-            status={c}
-            busy={state[c.volume.root]}
-            folders={folders}
-            onPreview={() => preview(c.volume.root)}
-            onSync={() => sync(c.volume.root)}
-            onCancel={() => void cancelSync(c.volume.root)}
-            onEject={() => eject(c.volume.root)}
-            onDismiss={() => set(c.volume.root, undefined)}
-            onSaved={refresh}
-            root={root}
-          />
-        ))}
-      </div>
+        {known.length > 0 && (
+          <div className="mt-4 grid gap-3">
+            {known.map((c) => (
+              <CardTile
+                key={c.volume.root}
+                status={c}
+                busy={state[c.volume.root]}
+                folders={folders}
+                onSync={() => sync(c.volume.root)}
+                onCancel={() => void cancelSync(c.volume.root)}
+                onEject={() => eject(c.volume.root)}
+                onRecheck={() => preview(c.volume.root)}
+                onSaved={() => {
+                  void refresh()
+                  void preview(c.volume.root)
+                }}
+                root={root}
+              />
+            ))}
+          </div>
+        )}
 
-      {blank.length > 0 && (
-        <section className="mt-10">
-          <h2 className="mb-3 text-[15px] font-medium text-ink/80">Not set up yet</h2>
-          <div className="grid gap-3">
+        {blank.length > 0 && (
+          <div className="mt-4 grid gap-3">
             {blank.map((c) => (
               <SetupTile key={c.volume.root} root={root} status={c} folders={folders} onDone={refresh} />
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       <PhoneServer root={library} />
     </Page>
   )
 }
 
+/** "just now", "5 minutes ago", "yesterday", "3 days ago", or the date. */
+function since(seconds: number) {
+  const ago = Date.now() / 1000 - seconds
+  const say = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  if (ago < 60) return 'just now'
+  if (ago < 3600) return say.format(-Math.round(ago / 60), 'minute')
+  if (ago < 86_400) return say.format(-Math.round(ago / 3600), 'hour')
+  if (ago < 30 * 86_400) return say.format(-Math.round(ago / 86_400), 'day')
+  return new Date(seconds * 1000).toLocaleDateString()
+}
+
 function CardTile(props: {
   status: CardStatus
   busy?: Busy
   folders: string[]
-  onPreview: () => void
   onSync: () => void
   onCancel: () => void
   onEject: () => void
-  onDismiss: () => void
+  /** Compare the card with the library again (after a sync, or when a check failed). */
+  onRecheck: () => void
   onSaved: () => void
   root: string
 }) {
@@ -182,6 +215,16 @@ function CardTile(props: {
   const used = v.total_bytes - v.free_bytes
   const b = props.busy
   const incoming = b?.kind === 'plan' ? Math.max(0, b.plan.bytes_to_copy - b.plan.bytes_freed) : 0
+  const others = (
+    <>
+      <PillButton onClick={props.onEject}>Eject</PillButton>
+      {card && !testing && (
+        <button onClick={() => setTesting(true)} className="btn-ghost">
+          Test this player
+        </button>
+      )}
+    </>
+  )
   return (
     <motion.div layout transition={spring} className="glass overflow-hidden rounded-[22px] px-6 py-5">
       <div className="flex items-start gap-4">
@@ -196,7 +239,7 @@ function CardTile(props: {
             {card && describeCard(card)}
             <br />
             {files ? `${files.toLocaleString()} files on it from your library` : 'Not synced yet'}
-            {last_sync ? `, last synced ${new Date(last_sync * 1000).toLocaleString()}` : ''}
+            {last_sync ? `, last synced ${since(last_sync)}` : ''}
             {card?.auto_sync ? '. Syncs when inserted.' : '.'}
           </div>
         </div>
@@ -250,18 +293,18 @@ function CardTile(props: {
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {!b && (
           <>
-            <PillButton onClick={props.onPreview} accent>
-              Preview sync
+            <PillButton onClick={props.onRecheck} accent>
+              Check for changes
             </PillButton>
-            <PillButton onClick={props.onEject}>Eject</PillButton>
-            {card && !testing && (
-              <button onClick={() => setTesting(true)} className="btn-ghost">
-                Test this player
-              </button>
-            )}
+            {others}
           </>
         )}
-        {b?.kind === 'planning' && <span className="text-[13px] text-ink/65">Comparing the card with your library…</span>}
+        {b?.kind === 'planning' && (
+          <>
+            <span className="mr-2 text-[13px] text-ink/65">Checking what’s changed…</span>
+            {others}
+          </>
+        )}
         {b?.kind === 'plan' && (
           <>
             {b.plan.warnings.length > 0 && (
@@ -275,7 +318,6 @@ function CardTile(props: {
                         onClick={async () => {
                           await reidentifyCard(v.root)
                           props.onSaved()
-                          props.onPreview()
                         }}
                       >
                         Make it a card of its own
@@ -285,21 +327,30 @@ function CardTile(props: {
                 ))}
               </ul>
             )}
-            <span className="mr-2 text-[13.5px] text-ink/85">
-              {b.plan.songs.toLocaleString('en-IN')} {b.plan.songs === 1 ? 'song' : 'songs'} once synced. {describePlan(b.plan)}
-            </span>
-            {b.plan.fits ? (
-              <PillButton onClick={props.onSync} accent>
-                Sync now
-              </PillButton>
-            ) : (
-              <span className="text-[13px] text-problem">
-                {gb(b.plan.bytes_to_copy + b.plan.reserve_bytes - b.plan.free_bytes - b.plan.bytes_freed)} too much for the card. Choose less in Settings, or turn on smaller files.
+            {upToDate(b.plan) ? (
+              <span className="mr-2 text-[13.5px] text-ink/85">
+                <span className="text-accent-ink" aria-hidden>
+                  ✓{' '}
+                </span>
+                Up to date: {b.plan.songs.toLocaleString('en-IN')} {b.plan.songs === 1 ? 'song' : 'songs'} on the card.
               </span>
+            ) : (
+              <>
+                <span className="mr-2 text-[13.5px] text-ink/85">
+                  {b.plan.songs.toLocaleString('en-IN')} {b.plan.songs === 1 ? 'song' : 'songs'} once synced. {describePlan(b.plan)}
+                </span>
+                {b.plan.fits ? (
+                  <PillButton onClick={props.onSync} accent>
+                    Sync now
+                  </PillButton>
+                ) : (
+                  <span className="text-[13px] text-problem">
+                    {gb(b.plan.bytes_to_copy + b.plan.reserve_bytes - b.plan.free_bytes - b.plan.bytes_freed)} too much for the card. Choose less in Settings, or turn on smaller files.
+                  </span>
+                )}
+              </>
             )}
-            <button onClick={props.onDismiss} className="btn-ghost">
-              Cancel
-            </button>
+            {others}
           </>
         )}
         {b?.kind === 'syncing' && (
@@ -328,7 +379,7 @@ function CardTile(props: {
             <PillButton onClick={props.onEject} accent>
               Eject
             </PillButton>
-            <button onClick={props.onDismiss} className="btn-ghost">
+            <button onClick={props.onRecheck} className="btn-ghost">
               Done
             </button>
           </>
@@ -352,6 +403,9 @@ function describeCard(c: CardConfig) {
   const smaller = c.convert?.aac ? ', as AAC' : c.convert?.hires ? ', hi-res as 16-bit' : ''
   return `${what}, carrying ${carries}${smaller}.`
 }
+
+/** Nothing to copy, change, move or remove. */
+const upToDate = (p: SyncPlan) => !(p.copy || p.patch || p.moves || p.adopt || p.delete)
 
 function describePlan(p: SyncPlan) {
   const parts = [
