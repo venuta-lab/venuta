@@ -1,5 +1,12 @@
 # Changes
 
+## 0.2.3 (2026-10-16)
+
+- **Playlists play straight through.** Songs you don't have play from the online catalog in
+  their places, found for you when you bring a playlist in, update it, or open it (with Undo).
+  Only the songs the catalog isn't sure about wait on To get.
+- **Fixed**: playing an online song no longer opens a console window.
+
 ## 0.2.2 (2026-10-16)
 
 - **A polished installer**: the Venuta icon on the setup file, and branded install screens.
