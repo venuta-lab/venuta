@@ -217,7 +217,7 @@ export function AddSongs(props: {
         {!typed && suggested.lately.length > 0 && heading('From albums you played lately')}
         {!typed && suggested.lately.map((t) => row({ kind: 'song', key: t.path, t }))}
 
-        {typed && heading('In your library', found.tracks.length > 0 && <span className="font-normal">{found.tracks.length.toLocaleString('en-IN')} songs</span>)}
+        {typed && heading('In your library', found.tracks.length > 0 && <span className="font-normal">{found.tracks.length.toLocaleString('en-IN')} {found.tracks.length === 1 ? 'song' : 'songs'}</span>)}
         {typed && !props.catalog && note('Reading your library…')}
         {typed && props.catalog && !songs.length && !albums.length && note(`Nothing in your library matches “${q.trim()}”.`)}
         {songs.map((t) => row({ kind: 'song', key: t.path, t }))}

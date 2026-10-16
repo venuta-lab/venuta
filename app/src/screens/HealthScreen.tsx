@@ -299,7 +299,7 @@ export function HealthScreen(props: {
                   <span className="text-[22px] font-semibold tabular-nums tracking-[-0.02em]">{fmt(x.found!.albums.length)}</span>
                 </div>
                 <div className="mt-1 text-[12px] text-ink/55">
-                  {x.short} {fmt(x.found!.tracks)} songs.
+                  {x.short} {fmt(x.found!.tracks)} {x.found!.tracks === 1 ? 'song' : 'songs'}.
                 </div>
                 <div className="mt-auto pt-3">{stack(x.found!.albums)}</div>
               </button>
