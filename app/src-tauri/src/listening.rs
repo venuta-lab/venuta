@@ -50,6 +50,21 @@ pub struct HowItPlays<'a> {
     pub order: Option<&'a [usize]>,
 }
 
+/// A play heard somewhere else (a phone, through the phone server): counted like one here.
+pub fn record_play(root: &str, file: &str, heard_ms: u64) {
+    let dir = file.rsplit_once('/').map_or("", |x| x.0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default();
+    if let Ok(c) = open() {
+        let _ = c.execute(
+            "INSERT INTO plays (root, file, dir, at, heard_ms, ctx) VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            params![key(root), file, dir, now, heard_ms as i64],
+        );
+    }
+}
+
 /// Counts plays as they happen, from the player's status.
 #[derive(Default)]
 pub struct Tracker {

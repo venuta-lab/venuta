@@ -34,6 +34,7 @@ import {
   libraryHealth,
   scanLibrary,
   playlistShelf,
+  phoneServerResume,
   type HealthReport,
   type PlaylistSummary,
 } from './lib/engine'
@@ -230,6 +231,10 @@ export default function App() {
 
   // The player is app-wide: hear its state from the start, whatever screen is open.
   useEffect(() => connectPlayer(), [])
+  // The phone server, on again if you left it on (it shares your library, never new music).
+  useEffect(() => {
+    if (home && inApp()) void phoneServerResume(home).catch(() => {})
+  }, [home])
   // Once the folder is read, the queue from last time comes back, paused where you stopped.
   useEffect(() => {
     if (report && root) resumePlayer(root)
@@ -924,7 +929,7 @@ export default function App() {
           />
         )
       case 'devices':
-        return <CardsScreen root={root} />
+        return <CardsScreen root={root} library={home ?? root} />
       case 'activity':
         return <ActivityScreen root={root} />
       case 'settings':

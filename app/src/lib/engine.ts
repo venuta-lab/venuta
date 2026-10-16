@@ -690,6 +690,28 @@ export function syncCard(root: string, card: string, onProgress: (d: number, t: 
 export const cancelSync = (card: string) => invoke<void>('cancel_sync', { card })
 export const ejectCard = (card: string) => invoke<void>('eject_card', { card })
 
+// --- Phone server (Wi-Fi) ------------------------------------------------------------------
+
+export interface Phone {
+  name: string
+  user: string
+  password: string
+}
+export interface PhoneServerStatus {
+  on: boolean
+  port: number
+  /** This PC's address on the network (none when it isn't on one). */
+  address: string | null
+  host: string | null
+  phones: Phone[]
+}
+export const phoneServerStatus = () => invoke<PhoneServerStatus>('phone_server_status')
+export const phoneServerStart = (root: string) => invoke<PhoneServerStatus>('phone_server_start', { root })
+export const phoneServerResume = (root: string) => invoke<PhoneServerStatus>('phone_server_resume', { root })
+export const phoneServerStop = () => invoke<PhoneServerStatus>('phone_server_stop')
+export const phoneServerAdd = (name: string) => invoke<PhoneServerStatus>('phone_server_add', { name })
+export const phoneServerRemove = (user: string) => invoke<PhoneServerStatus>('phone_server_remove', { user })
+
 export const gb = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
 

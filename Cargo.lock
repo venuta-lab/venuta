@@ -135,6 +135,7 @@ dependencies = [
  "image",
  "media-access",
  "notify",
+ "phone-server",
  "player",
  "rusqlite",
  "serde",

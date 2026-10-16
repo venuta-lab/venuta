@@ -21,6 +21,7 @@ import {
   type TestItem,
 } from '../lib/engine'
 import { CardEditor } from './cards/CardEditor'
+import { PhoneServer } from './cards/PhoneServer'
 import { PillButton } from './libraryParts'
 import { IconCards } from '../components/Icons'
 import { Page } from '../components/ui'
@@ -43,7 +44,7 @@ type Busy =
   | { kind: 'done'; report: SyncReport }
   | { kind: 'ejecting' }
 
-export function CardsScreen({ root }: { root: string }) {
+export function CardsScreen({ root, library }: { root: string; library: string }) {
   const [cards, setCards] = useState<CardStatus[]>([])
   const [folders, setFolders] = useState<string[]>([])
   const [state, setState] = useState<Record<string, Busy | undefined>>({})
@@ -157,6 +158,8 @@ export function CardsScreen({ root }: { root: string }) {
           </div>
         </section>
       )}
+
+      <PhoneServer root={library} />
     </Page>
   )
 }

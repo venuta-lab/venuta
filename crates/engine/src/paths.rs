@@ -70,8 +70,8 @@ pub const POINTER_FILE: &str = "library.json";
 /// The folder used before the app was named; moved to the new name on first start.
 const OLD_APP_DIR_NAME: &str = "music-librarian";
 
-/// The per-user folder (`%APPDATA%\Venuta` on Windows). Holds only [`POINTER_FILE`] once a
-/// library is chosen.
+/// The per-user folder (`%APPDATA%\Venuta` on Windows). Holds [`POINTER_FILE`] once a library
+/// is chosen, and what must never travel with a library (the phone server's phones).
 pub fn user_dir() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)

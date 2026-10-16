@@ -26,6 +26,7 @@ mod libcache;
 mod listening;
 mod lyric_windows;
 mod online;
+mod phone;
 mod playback;
 mod theme_packs;
 mod updates;
@@ -2842,6 +2843,7 @@ pub fn run() {
         .manage(playback::Playback::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
+        .manage(phone::PhoneServer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -3042,6 +3044,12 @@ pub fn run() {
             online::online_artist,
             online::online_album_tracks,
             online::online_catalog_status,
+            phone::phone_server_status,
+            phone::phone_server_start,
+            phone::phone_server_resume,
+            phone::phone_server_stop,
+            phone::phone_server_add,
+            phone::phone_server_remove,
             online::online_ensure_stream_tool,
             online::online_lyrics,
             playlist_duplicate,
