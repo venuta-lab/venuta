@@ -1,5 +1,9 @@
 # Changes
 
+## 0.2.2 (2026-10-16)
+
+- **A polished installer**: the Venuta icon on the setup file, and branded install screens.
+
 ## 0.2.1 (2026-10-16)
 
 - **Fixed**: two lyric timings saved in the same moment each keep their own Undo in

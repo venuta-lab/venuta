@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Venuta",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "identifier": "app.venuta.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -63,10 +63,14 @@
     "copyright": "© 2026 Venuta contributors. MIT License.",
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp"
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "publisher": "Venuta"
   },
   "plugins": {
     "updater": {
