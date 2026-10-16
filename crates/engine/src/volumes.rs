@@ -2,7 +2,7 @@
 //! them safely. Windows uses the system APIs directly; macOS/Linux use their standard tools.
 
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Volume {
@@ -155,14 +155,47 @@ pub fn eject(root: &Path) -> Result<(), String> {
     }
     // The shell verb returns before the volume is gone; wait briefly to report the truth.
     for _ in 0..20 {
-        if !PathBuf::from(format!("{root_s}\\")).exists() && !root.exists() {
+        if !mounted(root) {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
-    if root.exists() {
+    if mounted(root) {
         Err("The card is still attached. Something may still be using it.".into())
     } else {
         Ok(())
+    }
+}
+
+/// A card is still in. A card reader keeps its drive letter after the card is ejected (an empty
+/// slot), so on Windows the letter alone says nothing: the volume must still be readable.
+fn mounted(root: &Path) -> bool {
+    if cfg!(windows) {
+        let want = root
+            .to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase();
+        list()
+            .iter()
+            .any(|v| v.root.trim_end_matches(['\\', '/']).to_lowercase() == want)
+    } else {
+        root.exists()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_letter_without_a_readable_volume_is_not_mounted() {
+        let windows = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        assert!(super::mounted(std::path::Path::new(&format!(
+            "{windows}\\"
+        ))));
+        let free = (b'D'..=b'Z')
+            .map(|c| format!("{}:\\", c as char))
+            .find(|r| !std::path::Path::new(r).exists())
+            .expect("a free drive letter");
+        assert!(!super::mounted(std::path::Path::new(&free)));
     }
 }
