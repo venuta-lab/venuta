@@ -56,6 +56,8 @@ pub trait Device {
     fn latency_frames(&self) -> usize {
         0
     }
+    /// Let go of what it holds and not played yet (stopped only).
+    fn flush(&mut self) {}
     /// Frames written but not heard yet, by the device's own clock (exact, where it has one).
     fn queued_frames(&self) -> Option<usize> {
         None

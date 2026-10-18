@@ -301,6 +301,14 @@ impl Device for WasapiDevice {
     fn latency_frames(&self) -> usize {
         self.buffer_frames
     }
+    fn flush(&mut self) {
+        if let Some(c) = self.client.as_ref()
+            && c.reset_stream().is_ok()
+        {
+            // The clock starts again from nothing, with what's written.
+            self.written = 0;
+        }
+    }
     fn queued_frames(&self) -> Option<usize> {
         let (clock, freq) = self.clock.as_ref()?;
         let (pos, _) = clock.get_position().ok()?;

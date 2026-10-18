@@ -554,6 +554,13 @@ impl<T: Item + Serialize> Engine<T> {
 
     /// Open the current song (skipping ones that can't be opened), from `start_ms`.
     fn load_current(&mut self, start_ms: u64) {
+        // Stopped, the device may still hold the last song's end: let it go, so the new one
+        // starts clean (and in a room, on time by the device's clock).
+        if !self.started
+            && let Some(d) = self.device.as_mut()
+        {
+            d.flush();
+        }
         self.segs.clear();
         self.seek_waiting = None;
         let mut tries = self.queue.items().len();
@@ -748,6 +755,11 @@ impl<T: Item + Serialize> Engine<T> {
             device.available()?
         };
         if want == 0 {
+            // Stopped with its buffer full (paused mid-song): on again from what it holds.
+            if !self.started {
+                device.start()?;
+                self.started = true;
+            }
             return Ok(());
         }
         self.bytes.clear();
@@ -878,6 +890,11 @@ impl<T: Item + Serialize> Engine<T> {
             dev.available()?
         };
         if want == 0 {
+            // Stopped with its buffer full (paused mid-song): on again from what it holds.
+            if !self.started {
+                dev.start()?;
+                self.started = true;
+            }
             return Ok(());
         }
         // In step with a room: silent until its start, then kept where the room is.
@@ -1101,6 +1118,14 @@ impl<T: Item + Serialize> Engine<T> {
     /// A room's plan: make the song ready where it says, hold silent until its start, or pause
     /// there. `None`: on its own again.
     fn set_sync(&mut self, plan: Option<SyncPlan>) {
+        // The same plan, its start known a little better: kept on, the usual corrections
+        // taking up the difference (no settling again, trimming carries on).
+        if let (Some(old), Some(new)) = (self.sync, plan)
+            && crate::sync::is_nudge(&old, &new, Instant::now())
+        {
+            self.sync = Some(new);
+            return;
+        }
         self.trimmer.reset();
         self.sync_error_ms = None;
         let Some(plan) = plan else {
@@ -1200,9 +1225,13 @@ impl<T: Item + Serialize> Engine<T> {
             return Ok(Some(0));
         }
         let error = heard_ms - expected;
+        let last = self.sync_error_ms.map(f64::from);
         self.sync_error_ms = Some(error as f32);
         let settling = self.settle_until.is_some_and(|t| now < t);
-        if !settling && self.sync_second_look {
+        // The sound jumped (the device or the computer missed a beat): that's been heard
+        // already, so lining up again right now adds nothing anyone hears.
+        let jumped = last.is_some_and(|l| (error - l).abs() > crate::sync::JUMP_MS);
+        if !settling && (self.sync_second_look || jumped) {
             self.sync_second_look = false;
             if error.abs() > crate::sync::SECOND_LOOK_MS {
                 self.seek((expected + delay).max(0.0) as u64);

@@ -53,6 +53,30 @@ pub enum Correction {
     Trim { ppm: f64, ahead: bool },
 }
 
+/// A new plan this close to the old one is the same plan, its start known better.
+pub const NUDGE_MS: f64 = 20.0;
+
+/// The same plan with its start known a little better (the host's clock estimated better), not
+/// a change of plan: the player keeps on, its usual corrections taking up the difference.
+pub fn is_nudge(old: &SyncPlan, new: &SyncPlan, now: Instant) -> bool {
+    old.playing
+        && new.playing
+        && old.same_room == new.same_room
+        && old.extra_latency_ms == new.extra_latency_ms
+        && match (
+            old.anchor,
+            new.anchor,
+            old.expected_ms(now),
+            new.expected_ms(now),
+        ) {
+            (Some(_), Some(_), Some(a), Some(b)) => (a - b).abs() <= NUDGE_MS,
+            _ => false,
+        }
+}
+
+/// The error changing by more than this from one period to the next: the sound jumped.
+pub const JUMP_MS: f64 = 20.0;
+
 /// After lining up, still further off than this: one more seek, closer.
 pub const SECOND_LOOK_MS: f64 = 8.0;
 
@@ -158,6 +182,50 @@ pub fn drop_frames(samples: &mut Vec<i32>, ch: usize, n: usize) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn a_start_known_a_little_better_is_a_nudge_not_a_new_plan() {
+        let t0 = Instant::now();
+        let p = SyncPlan {
+            anchor: Some(t0),
+            position_ms: 10_000,
+            playing: true,
+            same_room: true,
+            extra_latency_ms: 0,
+        };
+        let later = |ms| SyncPlan {
+            anchor: Some(t0 + Duration::from_millis(ms)),
+            ..p
+        };
+        assert!(is_nudge(&p, &later(3), t0), "a clock estimate moving 3 ms");
+        assert!(!is_nudge(&p, &later(500), t0), "a seek in the room");
+        assert!(
+            !is_nudge(
+                &p,
+                &SyncPlan {
+                    playing: false,
+                    ..p
+                },
+                t0
+            ),
+            "a pause"
+        );
+        assert!(
+            !is_nudge(
+                &p,
+                &SyncPlan {
+                    same_room: false,
+                    ..p
+                },
+                t0
+            ),
+            "the way changed"
+        );
+        assert!(
+            !is_nudge(&p, &SyncPlan { anchor: None, ..p }, t0),
+            "a new song getting ready"
+        );
+    }
 
     #[test]
     fn the_expected_place_moves_with_the_clock() {
