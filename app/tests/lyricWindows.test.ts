@@ -1,16 +1,18 @@
 // node --test tests/   (Node runs the TypeScript as is)
-// Each lyrics window keeps its own settings; the desktop lyrics keep where they were and their lock.
+// Each lyrics window keeps its own background, theme and place; what was kept before carries over.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isBackground, readWindow, WINDOW_DEFAULTS } from '../src/lib/lyricWindowSettings.ts'
+import { isBackground, isTheme, readWindow, WINDOW_DEFAULTS } from '../src/lib/lyricWindowSettings.ts'
 
 const from = (kept: Record<string, string>) => (key: string) => kept[key] ?? null
 
-test('nothing kept: each window as it always was', () => {
+test('nothing kept: each window as it always was, in Venuta\'s theme', () => {
   assert.deepEqual(readWindow('stage', from({})), WINDOW_DEFAULTS.stage)
   assert.deepEqual(readWindow('overlay', from({})), WINDOW_DEFAULTS.overlay)
   assert.equal(WINDOW_DEFAULTS.stage.background, 'cover')
   assert.equal(WINDOW_DEFAULTS.overlay.background, 'clear')
+  assert.equal(WINDOW_DEFAULTS.stage.theme, 'venuta')
+  assert.equal(WINDOW_DEFAULTS.overlay.theme, 'venuta')
 })
 
 test('the desktop lyrics keep the place and lock they had before', () => {
@@ -18,36 +20,49 @@ test('the desktop lyrics keep the place and lock they had before', () => {
   const o = readWindow('overlay', kept)
   assert.deepEqual(o.bounds, [100, 800, 900, 160])
   assert.equal(o.locked, false)
-  // Not the big screen's.
-  assert.equal(readWindow('stage', kept).bounds, null)
+  assert.equal(readWindow('stage', kept).bounds, null, 'not the big screen\'s')
 })
 
-test('a window keeps its own settings, over what it had before', () => {
+test('a window keeps its own background, theme and place', () => {
   const kept = from({
-    'desktop-lyrics-bounds': '[1,2,300,100]',
-    'lyric-window-overlay': JSON.stringify({ background: 'style:neo-tokyo', bounds: [5, 6, 700, 200], locked: true, onTop: false }),
-    'lyric-window-stage': JSON.stringify({ background: 'pack:my-theme', full: false, monitor: 'DELL' }),
+    'lyric-window-overlay': JSON.stringify({ background: 'frosted', theme: 'style:neo-tokyo', bounds: [5, 6, 700, 200], locked: true, onTop: false }),
+    'lyric-window-stage': JSON.stringify({ background: 'glass', theme: 'pack:my-theme', monitor: 'DELL' }),
   })
   const o = readWindow('overlay', kept)
-  assert.equal(o.background, 'style:neo-tokyo')
+  assert.equal(o.background, 'frosted')
+  assert.equal(o.theme, 'style:neo-tokyo')
   assert.deepEqual(o.bounds, [5, 6, 700, 200])
   assert.equal(o.onTop, false)
   const s = readWindow('stage', kept)
-  assert.equal(s.background, 'pack:my-theme')
-  assert.equal(s.full, false)
+  assert.equal(s.background, 'glass')
+  assert.equal(s.theme, 'pack:my-theme')
   assert.equal(s.monitor, 'DELL')
 })
 
+test('a theme kept as the background (when they were one choice) becomes that theme\'s scene', () => {
+  const s = readWindow('stage', from({ 'lyric-window-stage': JSON.stringify({ background: 'style:layer-zero' }) }))
+  assert.equal(s.background, 'theme')
+  assert.equal(s.theme, 'style:layer-zero')
+  const v = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ background: 'venuta' }) }))
+  assert.deepEqual([v.background, v.theme], ['theme', 'venuta'])
+})
+
+test('the big screen is never locked', () => {
+  assert.equal(readWindow('stage', from({ 'lyric-window-stage': JSON.stringify({ locked: true }) })).locked, false)
+})
+
 test('what is not of its kind is left out, field by field', () => {
-  const o = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ background: 'style:../x', bounds: [1, 2, 'x', 4], full: 'yes', onTop: false }) }))
+  const o = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ background: 'smoke', theme: 'style:../x', bounds: [1, 2, 'x', 4], onTop: false }) }))
   assert.equal(o.background, 'clear')
+  assert.equal(o.theme, 'venuta')
   assert.equal(o.bounds, null)
-  assert.equal(o.full, false)
   assert.equal(o.onTop, false, 'what was fine is kept')
   assert.deepEqual(readWindow('stage', from({ 'lyric-window-stage': '{not json' })), WINDOW_DEFAULTS.stage)
 })
 
-test('backgrounds: clear, cover, Venuta, a theme or one of yours', () => {
-  for (const b of ['clear', 'cover', 'venuta', 'style:layer-zero', 'pack:Rainy night']) assert.equal(isBackground(b), true, b)
-  for (const b of ['', 'theme', 'style:', 'style:Bad Name', 'pack:', 3, null]) assert.equal(isBackground(b), false, String(b))
+test('backgrounds and themes', () => {
+  for (const b of ['clear', 'glass', 'frosted', 'cover', 'theme']) assert.equal(isBackground(b), true, b)
+  for (const b of ['', 'venuta', 'style:x', 3]) assert.equal(isBackground(b), false, String(b))
+  for (const t of ['venuta', 'style:layer-zero', 'pack:Rainy night']) assert.equal(isTheme(t), true, t)
+  for (const t of ['', 'clear', 'style:', 'style:Bad Name', 'pack:', null]) assert.equal(isTheme(t), false, String(t))
 })

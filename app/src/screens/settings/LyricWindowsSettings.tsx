@@ -1,15 +1,27 @@
 import { Switch } from '../../components/ui'
 import type { LyricWindow } from '../../lib/lyricLook'
-import { closeLyricWindow, openLyricWindow, setLyricWindow, useBackgrounds, useLyricWindow, useLyricWindowShown, type LyricBackground } from '../../lib/lyricWindows'
+import {
+  BACKGROUND_NAMES,
+  BACKGROUNDS,
+  closeLyricWindow,
+  openLyricWindow,
+  setLyricWindow,
+  useLyricWindow,
+  useLyricWindowShown,
+  useThemes,
+  type LyricBackground,
+  type LyricTheme,
+} from '../../lib/lyricWindows'
 
 /*
   Settings > Listening > Lyrics windows: the big screen and the desktop lyrics, each with its own
-  background, place and lock (the same as their own toolbars, for when nothing is playing).
+  background and theme (and the desktop lyrics their place and lock): the same as their own
+  controls, for when nothing is playing.
 */
 
 const WINDOWS: { win: LyricWindow; name: string; line: string }[] = [
-  { win: 'stage', name: 'Big screen', line: 'Lyrics on a whole screen or a window: for a TV, a second monitor, a room.' },
-  { win: 'overlay', name: 'Desktop lyrics', line: 'The lines over every window. Locked, clicks go through them.' },
+  { win: 'stage', name: 'Big screen', line: 'Lyrics filling a screen: for a TV, a second monitor, a room. Esc closes it.' },
+  { win: 'overlay', name: 'Desktop lyrics', line: 'The lines in a strip over every window, moved and sized where you like. Locked, clicks go through them.' },
 ]
 
 function Row(props: { title: string; hint?: string; children: React.ReactNode }) {
@@ -27,7 +39,7 @@ function Row(props: { title: string; hint?: string; children: React.ReactNode })
 function One({ win, name, line }: { win: LyricWindow; name: string; line: string }) {
   const s = useLyricWindow(win)
   const shown = useLyricWindowShown(win)
-  const all = useBackgrounds()
+  const themes = useThemes()
   return (
     <div className="mt-4 rounded-[18px] border border-edge px-4">
       <div className="flex flex-wrap items-center gap-3 border-b border-edge py-3">
@@ -39,24 +51,34 @@ function One({ win, name, line }: { win: LyricWindow; name: string; line: string
           {shown ? 'Hide' : 'Show'}
         </button>
       </div>
-      <Row title="Background" hint={all.find((b) => b.id === s.background)?.line}>
+      <Row title="Background" hint={BACKGROUND_NAMES[s.background].line}>
         <select value={s.background} onChange={(e) => void setLyricWindow(win, { background: e.target.value as LyricBackground })} aria-label={`${name} background`} className="field h-8 rounded-full px-3 text-[13px]">
-          {all.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
+          {BACKGROUNDS.map((b) => (
+            <option key={b} value={b}>
+              {BACKGROUND_NAMES[b].name}
             </option>
           ))}
         </select>
       </Row>
-      <Row title="Fill the screen" hint="Off: a window of its own, moved and sized where you leave it.">
-        <Switch on={s.full} onChange={(on) => void setLyricWindow(win, { full: on })} label={`${name}: fill the screen`} />
+      <Row title="Theme" hint={themes.find((t) => t.id === s.theme)?.line}>
+        <select value={s.theme} onChange={(e) => void setLyricWindow(win, { theme: e.target.value as LyricTheme })} aria-label={`${name} theme`} className="field h-8 rounded-full px-3 text-[13px]">
+          {themes.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
       </Row>
-      <Row title="Over every window">
-        <Switch on={s.onTop} onChange={(on) => void setLyricWindow(win, { onTop: on })} label={`${name}: over every window`} />
-      </Row>
-      <Row title="Locked" hint="Clicks go through it to what is under it. Point at it to find its lock and open it.">
-        <Switch on={s.locked} onChange={(on) => void setLyricWindow(win, { locked: on })} label={`${name}: locked`} />
-      </Row>
+      {win === 'overlay' && (
+        <>
+          <Row title="Over every window">
+            <Switch on={s.onTop} onChange={(on) => void setLyricWindow(win, { onTop: on })} label={`${name}: over every window`} />
+          </Row>
+          <Row title="Locked" hint="Clicks go through them to what is under them. Point at them to find their lock and open it.">
+            <Switch on={s.locked} onChange={(on) => void setLyricWindow(win, { locked: on })} label={`${name}: locked`} />
+          </Row>
+        </>
+      )}
     </div>
   )
 }

@@ -4,22 +4,37 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { inApp } from '../../lib/engine'
-import type { Ground, LyricWindow } from '../../lib/lyricLook'
-import { closeLyricWindow, groundOf, keepWindowSettings, setLyricWindow, themeOf, useBackgrounds, useLyricWindow, type LyricBackground } from '../../lib/lyricWindows'
+import { useLyricLook, type Ground, type LyricWindow } from '../../lib/lyricLook'
+import {
+  BACKGROUND_NAMES,
+  BACKGROUNDS,
+  closeLyricWindow,
+  groundOf,
+  keepWindowSettings,
+  setLyricWindow,
+  themeOf,
+  useLyricWindow,
+  useThemes,
+  type LyricBackground,
+  type LyricTheme,
+} from '../../lib/lyricWindows'
 import { setWindowTheme, usePrefs } from '../../lib/prefs'
 import { Backdrop } from '../Backdrop'
-import { IconBackdrop, IconClose, IconFullScreen, IconLeaveFullScreen, IconLock, IconLyricStyle, IconOnTop, IconUnlock } from '../Icons'
+import { IconBackdrop, IconClose, IconLock, IconLyricStyle, IconOnTop, IconUnlock } from '../Icons'
 import { ThemeFx } from '../ThemeFx'
 import { LookPanel, LookStrip } from './LookPanel'
 import { hasIndic, useLyricColour, useNowLyrics, useWindowCover } from './useNowLyrics'
-import { useLyricLook } from '../../lib/lyricLook'
 
 /*
-  A lyrics window's frame, the same for the big screen and the desktop lyrics: what's behind the
-  words (nothing, the cover's light, or a theme), moving it, sizing it from any edge, full screen
-  or a window, on top or not, and its lock. Locked, clicks go through it: only its lock button,
-  which shows as the pointer comes over the window, takes them (the engine watches the pointer,
-  lyric_windows.rs). Unlocked, its toolbar has the rest.
+  A lyrics window's frame. Each window has one job:
+    the big screen  fills a screen, for a TV, a second monitor, a room: its controls come with
+                    the mouse and go when it rests; Esc closes it.
+    desktop lyrics  a strip over everything while you do something else: moved from anywhere,
+                    sized from every edge, on top or not, and locked so clicks go through it (all
+                    but its lock button, which shows as the pointer comes over it: the engine
+                    watches the pointer, lyric_windows.rs).
+  Both have the same three choices: what's behind the words (Clear, Glass, Frosted, the cover's
+  light, the theme's scene), the theme (Venuta's own unless another is chosen), and the look.
 */
 
 type ResizeDirection = Parameters<ReturnType<typeof getCurrentWindow>['startResizeDragging']>[0]
@@ -34,40 +49,40 @@ export interface Frame {
   ground: Ground
   colour: string
   locked: boolean
-  full: boolean
   /** The controls are showing (the mouse moved lately, or unlocked desktop lyrics). */
   awake: boolean
 }
 
+type Panel = 'style' | 'background' | 'theme'
+
 export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => ReactNode }) {
   const { win } = props
+  const stage = win === 'stage'
   const s = useLyricWindow(win)
   // A theme's light or dark mode follows Venuta's choice, so the prefs are listened to.
   usePrefs()
   const look = useLyricLook(win)
   const { song, root, lyrics } = useNowLyrics()
-  const ground = groundOf(s.background)
+  const ground = groundOf(s)
   const colour = useLyricColour(look.colour, root, song?.dir, ground)
   const cover = useWindowCover()
-  const clear = s.background === 'clear'
-  const themed = s.background !== 'clear' && s.background !== 'cover'
+  const bg = s.background
 
   // The theme on screen here: the one chosen, or Venuta's own.
-  useEffect(() => setWindowTheme(themeOf(s.background)), [s.background])
-
-  // Full screen, as the window really is (F11, a double-click, the button, Esc).
-  const full = s.full
-  const toggleFull = () => void setLyricWindow(win, { full: !full })
-
-  // Where it is as a window, kept for next time (never while it fills a screen).
+  useEffect(() => setWindowTheme(themeOf(s.theme)), [s.theme])
+  // Frosted: Windows blurs what's behind the window (the page then tints it).
   useEffect(() => {
-    if (!inApp()) return
+    if (inApp()) void invoke('lyrics_window_frost', { kind: win, on: bg === 'frosted' }).catch(() => {})
+  }, [win, bg])
+
+  // The desktop lyrics' place, kept for next time.
+  useEffect(() => {
+    if (!inApp() || stage) return
     const w = getCurrentWindow()
     let t = 0
     const keep = () => {
       window.clearTimeout(t)
       t = window.setTimeout(async () => {
-        if (await w.isFullscreen()) return
         const [pos, size, scale] = await Promise.all([w.outerPosition(), w.outerSize(), w.scaleFactor()])
         keepWindowSettings(win, { bounds: [pos.x / scale, pos.y / scale, size.width / scale, size.height / scale] })
       }, 250)
@@ -77,12 +92,12 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
       window.clearTimeout(t)
       off.forEach((p) => void p.then((un) => un()))
     }
-  }, [win])
+  }, [win, stage])
 
   // The controls: always on the unlocked desktop lyrics (they're being arranged); on the big
   // screen, while the mouse moves or a panel is open.
   const [moved, setMoved] = useState(true)
-  const [panel, setPanel] = useState<'style' | 'background' | null>(null)
+  const [panel, setPanel] = useState<Panel | null>(null)
   const idle = useRef(0)
   useEffect(() => {
     const wake = () => {
@@ -97,93 +112,78 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
       window.clearTimeout(idle.current)
     }
   }, [])
-  const awake = !s.locked && (win === 'overlay' || moved || panel !== null)
+  const unlocked = !s.locked
+  const awake = unlocked && (!stage || moved || panel !== null)
 
-  // Keys: Esc closes a panel, then leaves full screen, then closes the big screen; F11 fills or
-  // leaves the screen.
+  // Esc closes a panel, then the big screen.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (panel) setPanel(null)
-        else if (full) toggleFull()
-        else if (win === 'stage') void closeLyricWindow(win)
-      } else if (e.key === 'F11') {
-        e.preventDefault()
-        toggleFull()
-      }
+      if (e.key !== 'Escape') return
+      if (panel) setPanel(null)
+      else if (stage) void closeLyricWindow(win)
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel, full, win])
+  }, [panel, stage, win])
 
-  const unlocked = !s.locked
+  // The frosted blur fills the window's whole rectangle, so it keeps square corners.
+  const radius = stage || bg === 'frosted' ? 0 : 14
   return (
     <div
       className="relative h-full w-full overflow-hidden"
       style={{
-        cursor: win === 'stage' && !awake && !s.locked ? 'none' : unlocked && win === 'overlay' ? 'move' : 'default',
+        cursor: stage && !awake ? 'none' : unlocked && !stage ? 'move' : 'default',
         color: ground === 'dark' ? '#fff' : 'var(--ink)',
-        borderRadius: full ? 0 : 14,
+        borderRadius: radius,
       }}
       onMouseDown={(e) => {
-        // Unlocked: dragged from anywhere but its controls.
-        if (unlocked && !full && e.button === 0 && !(e.target as HTMLElement).closest('button,select,input,[role=slider],[role=radiogroup],[data-edge]'))
+        // The unlocked desktop lyrics: dragged from anywhere but their controls.
+        if (!stage && unlocked && e.button === 0 && !(e.target as HTMLElement).closest('button,select,input,[role=slider],[role=radiogroup],[data-edge]'))
           void getCurrentWindow().startDragging()
       }}
-      onDoubleClick={(e) => {
-        if (unlocked && !(e.target as HTMLElement).closest('button,select,input,[role=slider]')) toggleFull()
-      }}
     >
-      {/* What's behind the words. */}
-      {s.background === 'cover' && <CoverLight src={cover?.src} />}
-      {themed && (
-        <>
-          {/* The theme's own ground, as behind the main window. */}
-          <div aria-hidden className="absolute inset-0" style={{ backgroundColor: 'var(--app-bg)', backgroundImage: 'var(--app-image)', backgroundSize: 'cover' }} />
-          <Backdrop covers={[]} focus={cover?.src ?? null} />
-          <ThemeFx />
-        </>
-      )}
-      {/* Unlocked and see-through, its edge shows, so it can be found, moved and sized. */}
-      {unlocked && !full && (
+      <Behind background={bg} ground={ground} cover={cover?.src} radius={radius} />
+      {/* The unlocked desktop lyrics show their edge, so a clear strip can be found and sized. */}
+      {!stage && unlocked && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 rounded-[14px]"
-          style={{ outline: `2px dashed ${ground === 'dark' ? 'rgb(255 255 255 / 0.55)' : 'rgb(0 0 0 / 0.3)'}`, outlineOffset: -4, background: clear ? 'rgb(0 0 0 / 0.28)' : undefined }}
+          className="pointer-events-none absolute inset-0 z-10"
+          style={{
+            borderRadius: radius,
+            outline: `2px dashed ${ground === 'dark' ? 'rgb(255 255 255 / 0.55)' : 'rgb(0 0 0 / 0.3)'}`,
+            outlineOffset: -4,
+            background: bg === 'clear' ? 'rgb(0 0 0 / 0.28)' : undefined,
+          }}
         />
       )}
 
-      <div className={win === 'overlay' ? 'relative flex h-full w-full flex-col' : 'relative h-full w-full'}>
+      <div className={stage ? 'relative h-full w-full' : 'relative flex h-full w-full flex-col'}>
         {/* The desktop lyrics' controls sit above the words (the words make room). */}
         <AnimatePresence initial={false}>
-          {win === 'overlay' && awake && (
+          {!stage && awake && (
             <motion.div key="bar" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="relative z-20 flex shrink-0 justify-center px-2 pt-2">
-              <Toolbar win={win} full={full} onTop={s.onTop} panel={panel} setPanel={setPanel} background={s.background} toggleFull={toggleFull}>
-                <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
+              <StripBar win={win} onTop={s.onTop} background={bg} theme={s.theme}>
                 <LookStrip win={win} ground={ground} coverColour={colour} indic={hasIndic(lyrics?.lines)} />
-              </Toolbar>
+              </StripBar>
             </motion.div>
           )}
         </AnimatePresence>
-        <div className={win === 'overlay' ? 'relative min-h-0 flex-1' : 'relative h-full w-full'}>{props.children({ clear, ground, colour, locked: s.locked, full, awake })}</div>
+        <div className={stage ? 'relative h-full w-full' : 'relative min-h-0 flex-1'}>{props.children({ clear: bg === 'clear', ground, colour, locked: s.locked, awake })}</div>
       </div>
 
-      {unlocked && !full && <Edges />}
+      {!stage && unlocked && <Edges />}
+      {!stage && s.locked && <LockButton win={win} />}
 
-      {/* Locked: the one thing that takes a click. */}
-      {s.locked && <LockButton win={win} />}
-
-      {/* Unlocked: the toolbar. */}
+      {/* The big screen's controls, in the corner. */}
       <AnimatePresence>
-        {win === 'stage' && awake && (
+        {stage && awake && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             className="absolute right-[3vw] top-[3vh] z-20 flex flex-col items-end gap-3"
           >
-            <Toolbar win={win} full={full} onTop={s.onTop} panel={panel} setPanel={setPanel} background={s.background} toggleFull={toggleFull} />
+            <StageBar win={win} panel={panel} setPanel={setPanel} />
             <AnimatePresence>
               {panel && (
                 <motion.div
@@ -194,11 +194,9 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
                   style={{ transformOrigin: 'top right' }}
                   className="max-h-[80vh] w-[360px] overflow-y-auto rounded-[24px] bg-black/60 p-4 text-white shadow-[0_24px_60px_-20px_rgb(0_0_0/0.9),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-2xl"
                 >
-                  {panel === 'style' ? (
-                    <LookPanel win={win} ground={ground} tone="dark" coverColour={colour} indic={hasIndic(lyrics?.lines)} />
-                  ) : (
-                    <BackgroundGrid win={win} value={s.background} />
-                  )}
+                  {panel === 'style' && <LookPanel win={win} ground={ground} tone="dark" coverColour={colour} indic={hasIndic(lyrics?.lines)} />}
+                  {panel === 'background' && <BackgroundTiles win={win} value={bg} />}
+                  {panel === 'theme' && <ThemeTiles win={win} value={s.theme} />}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -207,6 +205,59 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
       </AnimatePresence>
     </div>
   )
+}
+
+/**
+ * What's behind the words. Clear: nothing. Glass: see-through, a light tint with a glossy edge,
+ * what's behind still sharp. Frosted: Windows blurs what's behind, and this tints it (milky on a
+ * light theme, smoky on a dark one). Cover: the cover's light. Theme: the theme's own ground and
+ * scene, as behind the main window.
+ */
+function Behind(props: { background: LyricBackground; ground: Ground; cover: string | undefined; radius: number }) {
+  const light = props.ground === 'light'
+  switch (props.background) {
+    case 'clear':
+      return null
+    case 'glass':
+      return (
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{
+            borderRadius: props.radius,
+            background: light
+              ? 'linear-gradient(160deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.18) 45%, rgb(255 255 255 / 0.26))'
+              : 'linear-gradient(160deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.03) 45%, rgb(10 12 18 / 0.2))',
+            boxShadow: light
+              ? 'inset 0 1px 0 rgb(255 255 255 / 0.85), inset 0 0 0 1px rgb(255 255 255 / 0.55), inset 0 -18px 30px -24px rgb(0 0 0 / 0.12)'
+              : 'inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 0 0 1px rgb(255 255 255 / 0.14), inset 0 -18px 30px -24px rgb(0 0 0 / 0.4)',
+          }}
+        />
+      )
+    case 'frosted':
+      return (
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{
+            background: light
+              ? 'linear-gradient(180deg, rgb(250 250 252 / 0.62), rgb(244 245 248 / 0.5))'
+              : 'linear-gradient(180deg, rgb(22 24 30 / 0.46), rgb(14 16 22 / 0.56))',
+            boxShadow: light ? 'inset 0 0 0 1px rgb(255 255 255 / 0.5)' : 'inset 0 0 0 1px rgb(255 255 255 / 0.08)',
+          }}
+        />
+      )
+    case 'cover':
+      return <CoverLight src={props.cover} />
+    case 'theme':
+      return (
+        <>
+          <div aria-hidden className="absolute inset-0" style={{ backgroundColor: 'var(--app-bg)', backgroundImage: 'var(--app-image)', backgroundSize: 'cover' }} />
+          <Backdrop covers={[]} focus={props.cover ?? null} />
+          <ThemeFx />
+        </>
+      )
+  }
 }
 
 /** The cover as light behind everything (the big screen's own look). */
@@ -295,8 +346,8 @@ function LockButton({ win }: { win: LyricWindow }) {
     <button
       ref={ref}
       onClick={() => void setLyricWindow(win, { locked: false })}
-      aria-label="Unlock: move, size and change it"
-      title="Unlock: move, size and change it"
+      aria-label="Unlock: move, size and change them"
+      title="Unlock: move, size and change them"
       className="absolute right-3 top-3 z-40 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-white shadow-[0_6px_20px_-6px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.15)] backdrop-blur-xl transition-[opacity,transform] duration-200"
       style={{ opacity: pointer.inside ? 1 : 0, transform: pointer.over ? 'scale(1.08)' : 'scale(1)' }}
     >
@@ -305,53 +356,76 @@ function LockButton({ win }: { win: LyricWindow }) {
   )
 }
 
+const BAR = 'flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[20px] bg-black/65 p-1 text-white shadow-[0_10px_30px_-10px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-xl'
 const BTN = 'grid h-8 w-8 place-items-center rounded-full text-white/80 transition-colors hover:bg-white/15 hover:text-white'
 const ON = 'bg-white/20 text-white'
+const RULE = <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
 
-function Toolbar(props: {
-  win: LyricWindow
-  full: boolean
-  onTop: boolean
-  background: LyricBackground
-  panel: 'style' | 'background' | null
-  setPanel: (p: 'style' | 'background' | null) => void
-  toggleFull: () => void
-  /** More, after the background (the desktop lyrics' look, in their one bar). */
-  children?: ReactNode
-}) {
-  const { win } = props
-  const toggle = (p: 'style' | 'background') => props.setPanel(props.panel === p ? null : p)
+/** The big screen's controls: its style, background and theme, each a panel; and Close. */
+function StageBar(props: { win: LyricWindow; panel: Panel | null; setPanel: (p: Panel | null) => void }) {
+  const toggle = (p: Panel) => props.setPanel(props.panel === p ? null : p)
+  const tab = (p: Panel, label: string, icon: ReactNode) => (
+    <button onClick={() => toggle(p)} aria-expanded={props.panel === p} className={`${BTN} w-auto gap-1.5 px-3 text-[13px] font-medium ${props.panel === p ? ON : ''}`}>
+      {icon}
+      {label}
+    </button>
+  )
   return (
-    // One bar; on a narrow window it wraps into a second row rather than leave anything out.
-    <div className="flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[20px] bg-black/65 p-1 text-white shadow-[0_10px_30px_-10px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-xl">
+    <div className={BAR}>
+      {tab('style', 'Style', <IconLyricStyle width={17} height={17} />)}
+      {tab('background', 'Background', <IconBackdrop width={16} height={16} />)}
+      {tab('theme', 'Theme', <ThemeDot />)}
+      {RULE}
+      <button onClick={() => void closeLyricWindow(props.win)} aria-label="Close the big screen" title="Close (Esc)" className={BTN}>
+        <IconClose width={15} height={15} />
+      </button>
+    </div>
+  )
+}
+
+/** The theme's accent, as a dot (the Theme button's icon). */
+const ThemeDot = () => <span aria-hidden className="h-3.5 w-3.5 rounded-full shadow-[inset_0_0_0_1.5px_rgb(255_255_255/0.5)]" style={{ background: 'var(--accent)' }} />
+
+/** The desktop lyrics' controls, in their one bar: the lock, the background, the theme, the
+ *  look (given), on top, and Hide. On a narrow window it wraps rather than leave anything out. */
+function StripBar(props: { win: LyricWindow; onTop: boolean; background: LyricBackground; theme: LyricTheme; children: ReactNode }) {
+  const { win } = props
+  const themes = useThemes()
+  const select = 'h-7 max-w-[12em] cursor-pointer rounded-full bg-white/10 px-2 text-[12.5px] text-white outline-none hover:bg-white/15'
+  return (
+    <div className={BAR}>
       <button
         onClick={() => void setLyricWindow(win, { locked: true })}
         className="flex h-8 items-center gap-1.5 rounded-full bg-white pl-2.5 pr-3 text-[12.5px] font-semibold text-black transition-transform active:scale-95"
-        title="Clicks go through it. Point at it to find its lock again."
+        title="Clicks go through them. Point at them to find their lock again."
       >
         <IconUnlock width={14} height={14} strokeWidth={2.2} />
         Lock
       </button>
-      <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
-      {win === 'stage' && (
-        <button onClick={() => toggle('style')} aria-expanded={props.panel === 'style'} className={`${BTN} w-auto gap-1.5 px-3 text-[12.5px] font-medium ${props.panel === 'style' ? ON : ''}`}>
-          <IconLyricStyle width={17} height={17} />
-          Style
-        </button>
-      )}
-      {win === 'stage' ? (
-        <button onClick={() => toggle('background')} aria-expanded={props.panel === 'background'} className={`${BTN} w-auto gap-1.5 px-3 text-[12.5px] font-medium ${props.panel === 'background' ? ON : ''}`}>
-          <IconBackdrop width={16} height={16} />
-          Background
-        </button>
-      ) : (
-        <BackgroundSelect win={win} value={props.background} />
-      )}
+      {RULE}
+      <label className="flex items-center gap-1.5 pl-1.5 pr-0.5" title="What's behind the words">
+        <IconBackdrop width={16} height={16} className="text-white/70" />
+        <select value={props.background} onChange={(e) => void setLyricWindow(win, { background: e.target.value as LyricBackground })} aria-label="Background" className={select}>
+          {BACKGROUNDS.map((b) => (
+            <option key={b} value={b} className="bg-neutral-900 text-white">
+              {BACKGROUND_NAMES[b].name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1.5 pl-1.5 pr-0.5" title="The theme: the colours, the type, the tint of glass and frost">
+        <ThemeDot />
+        <select value={props.theme} onChange={(e) => void setLyricWindow(win, { theme: e.target.value as LyricTheme })} aria-label="Theme" className={select}>
+          {themes.map((t) => (
+            <option key={t.id} value={t.id} className="bg-neutral-900 text-white">
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {RULE}
       {props.children}
-      <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
-      <button onClick={props.toggleFull} aria-label={props.full ? 'Back to a window' : 'Fill the screen'} title={props.full ? 'Back to a window (Esc)' : 'Fill the screen (F11)'} className={BTN}>
-        {props.full ? <IconLeaveFullScreen /> : <IconFullScreen />}
-      </button>
+      {RULE}
       <button
         onClick={() => void setLyricWindow(win, { onTop: !props.onTop })}
         aria-pressed={props.onTop}
@@ -361,59 +435,46 @@ function Toolbar(props: {
       >
         <IconOnTop />
       </button>
-      <button onClick={() => void closeLyricWindow(win)} aria-label="Close" title={win === 'stage' ? 'Close (Esc)' : 'Hide (Ctrl+Shift+D)'} className={BTN}>
+      <button onClick={() => void closeLyricWindow(win)} aria-label="Hide the desktop lyrics" title="Hide (Ctrl+Shift+D)" className={BTN}>
         <IconClose width={15} height={15} />
       </button>
     </div>
   )
 }
 
-/** The big screen's background panel: every background, each a tile. */
-function BackgroundGrid({ win, value }: { win: LyricWindow; value: LyricBackground }) {
-  const all = useBackgrounds()
+const TILE = (chosen: boolean) => `rounded-[12px] px-3 py-2 text-left text-[12.5px] transition-colors ${chosen ? 'bg-white text-black' : 'bg-white/[0.08] text-white/85 hover:bg-white/[0.14]'}`
+
+/** The big screen's background panel: the five, each a tile. */
+function BackgroundTiles({ win, value }: { win: LyricWindow; value: LyricBackground }) {
   return (
     <div className="grid gap-3">
       <div className="text-[13px] font-semibold">Background</div>
       <div role="radiogroup" aria-label="Background" className="grid grid-cols-2 gap-2">
-        {all.map((b) => {
-          const chosen = value === b.id
-          return (
-            <button
-              key={b.id}
-              role="radio"
-              aria-checked={chosen}
-              title={b.line}
-              onClick={() => void setLyricWindow(win, { background: b.id })}
-              className={`rounded-[12px] px-3 py-2 text-left text-[12.5px] transition-colors ${chosen ? 'bg-white text-black' : 'bg-white/[0.08] text-white/85 hover:bg-white/[0.14]'}`}
-            >
-              <span className="block truncate font-medium">{b.name}</span>
-              <span className={`block truncate text-[11px] ${chosen ? 'text-black/60' : 'text-white/50'}`}>{b.line}</span>
-            </button>
-          )
-        })}
+        {BACKGROUNDS.map((b) => (
+          <button key={b} role="radio" aria-checked={value === b} onClick={() => void setLyricWindow(win, { background: b })} className={TILE(value === b)}>
+            <span className="block truncate font-medium">{BACKGROUND_NAMES[b].name}</span>
+            <span className={`block truncate text-[11px] ${value === b ? 'text-black/60' : 'text-white/50'}`}>{BACKGROUND_NAMES[b].line}</span>
+          </button>
+        ))}
       </div>
     </div>
   )
 }
 
-/** The desktop lyrics' background, in their one short row: a list (it opens past the window). */
-function BackgroundSelect({ win, value }: { win: LyricWindow; value: LyricBackground }) {
-  const all = useBackgrounds()
+/** The big screen's theme panel: Venuta's own first, then every theme. */
+function ThemeTiles({ win, value }: { win: LyricWindow; value: LyricTheme }) {
+  const themes = useThemes()
   return (
-    <label className="flex items-center gap-1.5 pl-2 pr-1 text-[12.5px] text-white/80" title="What's behind the words">
-      <IconBackdrop width={16} height={16} />
-      <select
-        value={value}
-        onChange={(e) => void setLyricWindow(win, { background: e.target.value as LyricBackground })}
-        aria-label="Background"
-        className="h-7 max-w-[11em] cursor-pointer rounded-full bg-white/10 px-2 text-[12.5px] text-white outline-none hover:bg-white/15"
-      >
-        {all.map((b) => (
-          <option key={b.id} value={b.id} className="bg-neutral-900 text-white">
-            {b.name}
-          </option>
+    <div className="grid gap-3">
+      <div className="text-[13px] font-semibold">Theme</div>
+      <div role="radiogroup" aria-label="Theme" className="grid grid-cols-2 gap-2">
+        {themes.map((t) => (
+          <button key={t.id} role="radio" aria-checked={value === t.id} title={t.line} onClick={() => void setLyricWindow(win, { theme: t.id })} className={`${TILE(value === t.id)} ${t.id === 'venuta' ? 'col-span-2' : ''}`}>
+            <span className="block truncate font-medium">{t.name}</span>
+            <span className={`block truncate text-[11px] ${value === t.id ? 'text-black/60' : 'text-white/50'}`}>{t.line}</span>
+          </button>
         ))}
-      </select>
-    </label>
+      </div>
+    </div>
   )
 }

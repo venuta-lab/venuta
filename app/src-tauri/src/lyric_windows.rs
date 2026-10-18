@@ -1,10 +1,11 @@
-//! Lyrics in windows of their own: the big screen (`stage`: a whole screen for a TV or a second
-//! monitor, or a window) and the desktop lyrics (`overlay`: the lines alone, over everything).
-//! Both are the same app at `#stage` and `#overlay`, hearing the player like the mini player, and
-//! both are the same kind of window: frameless and see-through (what's behind the words is drawn
-//! by the page: nothing, the cover, or a theme), full screen or sized, on top or not, and locked
-//! or not. Locked, clicks go through it to what is under it, all but its lock button: the pointer
-//! is watched here, and over that button the window takes clicks for that moment only.
+//! Lyrics in windows of their own, each with one job: the big screen (`stage`: filling a screen,
+//! for a TV or a second monitor) and the desktop lyrics (`overlay`: the lines in a strip over
+//! everything, moved, sized, on top or not, and locked or not). Both are the same app at `#stage`
+//! and `#overlay`, hearing the player like the mini player, frameless and see-through: what's
+//! behind the words is drawn by the page (nothing, glass, the cover, a theme), or for frosted
+//! glass blurred by Windows itself. Locked, the desktop lyrics let clicks through to what is under
+//! them, all but their lock button: the pointer is watched here, and over that button the window
+//! takes clicks for that moment only.
 //! Async commands: making a window from a synchronous command deadlocks on Windows.
 
 use serde::{Deserialize, Serialize};
@@ -179,13 +180,20 @@ pub async fn lyrics_window(
         }
         return Ok(());
     }
-    let place = place.unwrap_or(Place {
+    let mut place = place.unwrap_or(Place {
         bounds: None,
         full: kind == Kind::Stage,
         on_top: kind == Kind::Overlay,
         locked: kind == Kind::Overlay,
         monitor: None,
     });
+    // Each its own job: the big screen fills a screen, never on top or locked (Esc closes it);
+    // the desktop lyrics are a window of their own.
+    place.full = kind == Kind::Stage;
+    if kind == Kind::Stage {
+        place.on_top = false;
+        place.locked = false;
+    }
     if let Some(w) = app.get_webview_window(kind.label()) {
         apply(&app, kind, &w, &place);
         let _ = w.show();
@@ -293,6 +301,24 @@ pub fn lyrics_window_set(
         }
     }
     Ok(())
+}
+
+/// Frosted glass behind a lyrics window's words: Windows blurs what's behind it (the page tints
+/// it), or not. The same acrylic as the main window.
+#[tauri::command]
+pub fn lyrics_window_frost(kind: String, on: bool, app: AppHandle) -> Result<(), String> {
+    let kind = Kind::of(&kind)?;
+    let Some(w) = app.get_webview_window(kind.label()) else {
+        return Ok(());
+    };
+    let effects = on.then(|| {
+        tauri::window::EffectsBuilder::new()
+            .effect(tauri::window::Effect::Acrylic)
+            // Almost no tint of its own: the page's tint follows the theme.
+            .color(tauri::window::Color(16, 16, 20, 8))
+            .build()
+    });
+    w.set_effects(effects).map_err(|e| e.to_string())
 }
 
 /// Whether a lyrics window is showing.

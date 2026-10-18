@@ -1,20 +1,20 @@
-// The big screen (lyrics on a whole screen, for a TV or a second monitor, or in a window) and
-// the desktop lyrics (the lines alone, floating over everything), each its own window. Both are
-// the same kind of window, each with its own settings, kept on this computer: what's behind the
-// words, full screen or a window and where, on top or not, locked (clicks go through) or not.
+// The big screen (lyrics filling a screen, for a TV or a second monitor) and the desktop lyrics
+// (the lines alone, in a strip over everything, moved, sized and locked), each its own window
+// with its own settings, kept on this computer: what's behind the words, the theme, and (the
+// desktop lyrics) where they are, on top or not, locked or not.
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useState } from 'react'
 import { inApp } from './engine'
 import type { Ground, LyricWindow } from './lyricLook'
-import { keyOf, readWindow, type LyricBackground, type LyricWindowSettings } from './lyricWindowSettings'
+import { keyOf, readWindow, type LyricBackground, type LyricTheme, type LyricWindowSettings } from './lyricWindowSettings'
 import { usePacks } from './packs'
-import { getPrefs, resolvedTheme, themeInfo, usePrefs } from './prefs'
+import { resolvedTheme, themeInfo, usePrefs, venutaPrefs } from './prefs'
 import { STYLES, type Style } from './themes'
 
 export type { LyricWindow } from './lyricLook'
-export { WINDOW_DEFAULTS, isBackground, readWindow, type Bounds, type LyricBackground, type LyricWindowSettings } from './lyricWindowSettings'
+export { BACKGROUNDS, WINDOW_DEFAULTS, isBackground, isTheme, readWindow, type Bounds, type LyricBackground, type LyricTheme, type LyricWindowSettings } from './lyricWindowSettings'
 
 export interface Monitor {
   name: string
@@ -73,21 +73,25 @@ export function useLyricWindow(w: LyricWindow): LyricWindowSettings {
   return current[w]
 }
 
-/** The theme a background shows over Venuta's own (none: Venuta's, or no theme at all). */
-export function themeOf(bg: LyricBackground): { style: Style } | { pack: string } | null {
-  if (bg.startsWith('style:')) return { style: bg.slice('style:'.length) as Style }
-  if (bg.startsWith('pack:')) return { pack: bg.slice('pack:'.length) }
+/** The theme shown over Venuta's own (none: Venuta's). */
+export function themeOf(t: LyricTheme): { style: Style } | { pack: string } | null {
+  if (t.startsWith('style:')) return { style: t.slice('style:'.length) as Style }
+  if (t.startsWith('pack:')) return { pack: t.slice('pack:'.length) }
   return null
 }
 
-/** Whether a background is light behind the words: a theme in its light mode (Venuta's mode
- *  choice decides, as in the app). Clear and the cover's light are always dark. */
-export function groundOf(bg: LyricBackground): Ground {
-  if (bg === 'clear' || bg === 'cover') return 'dark'
-  const t = themeOf(bg)
-  const p = getPrefs()
-  const shown = t === null ? p : 'pack' in t ? { ...p, pack: t.pack } : { ...p, style: t.style, pack: '' }
-  return resolvedTheme(shown)
+/** A theme's light or dark (Venuta's mode choice decides, as in the app). */
+export function modeOf(t: LyricTheme): Ground {
+  const o = themeOf(t)
+  const p = venutaPrefs()
+  return resolvedTheme(o === null ? p : 'pack' in o ? { ...p, pack: o.pack } : { ...p, style: o.style, pack: '' })
+}
+
+/** Whether what's behind the words is light: glass, frost and the theme's scene in a light
+ *  theme. Clear (anything may be behind) and the cover's light are read as dark: the words
+ *  carry their own shadow. */
+export function groundOf(s: Pick<LyricWindowSettings, 'background' | 'theme'>): Ground {
+  return s.background === 'clear' || s.background === 'cover' ? 'dark' : modeOf(s.theme)
 }
 
 // --- Showing them --------------------------------------------------------------------------
@@ -96,32 +100,31 @@ export function groundOf(bg: LyricBackground): Ground {
 const SHOWN = 'venuta:lyrics-window-shown'
 const told = <T,>(p: Promise<T>) => p.finally(() => window.dispatchEvent(new Event(SHOWN)))
 
-const placeOf = (s: LyricWindowSettings) => ({ bounds: s.bounds, full: s.full, onTop: s.onTop, locked: s.locked, monitor: s.monitor })
+// The big screen fills a screen; the desktop lyrics are a window of their own.
+const placeOf = (w: LyricWindow, s: LyricWindowSettings) => ({ bounds: s.bounds, full: w === 'stage', onTop: s.onTop, locked: s.locked, monitor: s.monitor })
 
 /** Show a lyrics window as it was left (or bring it forward). */
-export const openLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: true, place: placeOf(current[w]) }))
+export const openLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: true, place: placeOf(w, current[w]) }))
 export const closeLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: false, place: null }))
 export const lyricWindowOpen = (w: LyricWindow) => (inApp() ? invoke<boolean>('lyrics_window_open', { kind: w }) : Promise.resolve(false))
 
-/** Change a window's settings and, when it's showing, the window: full screen or back to its
- *  place, on top or not, locked or not. */
+/** Change a window's settings and, when it's showing, the window: on top or not, locked or not
+ *  (the rest its page draws). */
 export async function setLyricWindow(w: LyricWindow, change: Partial<LyricWindowSettings>) {
   keepWindowSettings(w, change)
-  const s = current[w]
-  if (!inApp()) return
+  if (!inApp() || (change.onTop === undefined && change.locked === undefined)) return
   await invoke<void>('lyrics_window_set', {
     kind: w,
-    full: change.full ?? null,
+    full: null,
     onTop: change.onTop ?? null,
     locked: change.locked ?? null,
-    bounds: s.bounds,
+    bounds: null,
   })
 }
 
-/** Lyrics on a whole screen (the one Venuta is on, unless another is named). Esc goes back to a
- *  window; Esc again closes it. */
+/** Lyrics filling a screen (the one Venuta is on, unless another is named). Esc closes it. */
 export async function openBigScreen(monitor?: string) {
-  keepWindowSettings('stage', { monitor: monitor ?? null, full: true })
+  keepWindowSettings('stage', { monitor: monitor ?? null })
   await openLyricWindow('stage')
 }
 export const closeBigScreen = () => closeLyricWindow('stage')
@@ -167,17 +170,24 @@ export async function toggleDesktopLyrics() {
  *  drag it, size it, change it. */
 export const lockDesktopLyrics = (lock: boolean) => setLyricWindow('overlay', { locked: lock })
 
-/** Every background there is: only the words, the cover's light, Venuta's theme, each theme,
- *  and each theme of yours. */
-export function useBackgrounds(): { id: LyricBackground; name: string; line: string }[] {
+/** What's behind the words, in words. */
+export const BACKGROUND_NAMES: Record<LyricBackground, { name: string; line: string }> = {
+  clear: { name: 'Clear', line: 'Nothing but the words' },
+  glass: { name: 'Glass', line: 'See-through: what is behind stays sharp' },
+  frosted: { name: 'Frosted', line: 'What is behind, blurred' },
+  cover: { name: 'Cover', line: "The playing cover's light" },
+  theme: { name: 'Theme', line: "The theme's own scene" },
+}
+
+/** Every theme a window can show: Venuta's own (the default, following it), each built-in
+ *  theme, and each theme of yours. */
+export function useThemes(): { id: LyricTheme; name: string; line: string }[] {
   const packs = usePacks()
-  const p = usePrefs()
-  const venuta = themeInfo({ ...p }).name
+  // Listened to, so the name follows when Venuta changes.
+  usePrefs()
   return [
-    { id: 'clear', name: 'Clear', line: 'Only the words: nothing else on screen' },
-    { id: 'cover', name: 'Cover', line: "The playing cover's light" },
-    { id: 'venuta', name: 'Venuta', line: `As Venuta looks now (${venuta})` },
-    ...STYLES.map((t) => ({ id: `style:${t.id}` as LyricBackground, name: t.name, line: t.line })),
-    ...packs.filter((i) => i.pack).map((i) => ({ id: `pack:${i.id}` as LyricBackground, name: i.pack!.name, line: 'A theme of yours' })),
+    { id: 'venuta', name: 'Same as Venuta', line: `Follows Venuta (now ${themeInfo(venutaPrefs()).name})` },
+    ...STYLES.map((t) => ({ id: `style:${t.id}` as LyricTheme, name: t.name, line: t.line })),
+    ...packs.filter((i) => i.pack).map((i) => ({ id: `pack:${i.id}` as LyricTheme, name: i.pack!.name, line: 'A theme of yours' })),
   ]
 }

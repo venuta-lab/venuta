@@ -3149,6 +3149,7 @@ pub fn run() {
             lyric_windows::lyrics_window,
             lyric_windows::lyrics_window_set,
             lyric_windows::lyrics_window_open,
+            lyric_windows::lyrics_window_frost,
             lyric_windows::lyrics_lock_spot,
             clipboard::clipboard_text,
             playback::player_spectrum,

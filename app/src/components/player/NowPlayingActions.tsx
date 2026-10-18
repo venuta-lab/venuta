@@ -110,7 +110,7 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
   const [open, setOpen] = useState<'style' | 'screens' | null>(null)
   // Which window's look the style panel changes (each keeps its own).
   const [which, setWhich] = useState<LyricWindow>('stage')
-  const whichBg = useLyricWindow(which).background
+  const whichWindow = useLyricWindow(which)
   const [screens, setScreens] = useState<Monitor[]>([])
   const desktop = useDesktopLyricsShown()
   const colour = useLyricColour('cover', props.root, props.song.dir)
@@ -189,7 +189,7 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
                 </button>
               ))}
             </div>
-            <LookPanel win={which} ground={groundOf(whichBg)} tone="app" coverColour={colour} indic={hasIndic(props.lyrics?.lines)} lines={which === 'overlay'} />
+            <LookPanel win={which} ground={groundOf(whichWindow)} tone="app" coverColour={colour} indic={hasIndic(props.lyrics?.lines)} lines={which === 'overlay'} />
           </Pop>
         )}
         {open === 'screens' && (

@@ -77,6 +77,10 @@ function upgrade(p: Prefs): Prefs {
 
 export const getPrefs = () => current
 
+/** Venuta's own look, never a window's theme on top of it (a lyrics window showing another
+ *  theme still names Venuta's right). */
+export const venutaPrefs = (): Prefs => (windowTheme ? load() : current)
+
 /**
  * Change the look. It is kept with your library (so it travels with it) and also on this
  * computer, so the very first frame on start already has it.
