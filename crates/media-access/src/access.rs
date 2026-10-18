@@ -109,6 +109,17 @@ pub trait MediaAccess: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
 
+    /// A song's smallest audio stream, to read its shape for the seek bar (never to play). A
+    /// catalog without one answers Unsupported.
+    fn resolve_audio_small(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<EphemeralAudio, AccessError> {
+        let _ = (track_id, cancel);
+        Err(unsupported("a song's smallest stream"))
+    }
+
     /// What the catalog suggests for half-typed words (completions, and a few songs, albums,
     /// artists and playlists). A catalog without suggestions answers Unsupported.
     fn suggest(
@@ -622,6 +633,14 @@ impl MediaAccess for CachedAccess {
 
     fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {
         self.inner.account_liked(cancel)
+    }
+
+    fn resolve_audio_small(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<EphemeralAudio, AccessError> {
+        self.inner.resolve_audio_small(track_id, cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

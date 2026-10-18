@@ -3092,6 +3092,7 @@ pub fn run() {
             playback::player_resume,
             playback::player_verify,
             playback::song_waveform,
+            playback::online_waveform,
             playback::player_sound,
             playback::player_stop_after,
             playback::player_sleep,

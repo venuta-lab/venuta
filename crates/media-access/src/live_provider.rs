@@ -106,6 +106,14 @@ trait LiveBackend: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
 
+    /// The song's smallest audio stream, inside the app only (no stream tool): for reading its
+    /// shape, never for playing.
+    fn resolve_small(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<EphemeralAudio, AccessError>;
+
     fn suggest(
         &self,
         input: &str,
@@ -311,6 +319,16 @@ impl YtmBackend {
     /// The song played inside the app: the catalog's stream identity with a plain address,
     /// checked to play to its end. Fails (to the next way) when that identity is refused.
     async fn resolve_direct(&self, video_id: &str) -> Result<EphemeralAudio, AccessError> {
+        let saver = self.saver.load(std::sync::atomic::Ordering::Relaxed);
+        self.resolve_direct_as(video_id, saver).await
+    }
+
+    /// As `resolve_direct`, the smallest stream when `smallest` (data saver, or a song's shape).
+    async fn resolve_direct_as(
+        &self,
+        video_id: &str,
+        smallest: bool,
+    ) -> Result<EphemeralAudio, AccessError> {
         let client = self.client(STREAM_CLIENT)?;
         self.ensure_visitor().await;
         let response = self
@@ -335,17 +353,14 @@ impl YtmBackend {
                 "catalog returned no stream data",
             )
         })?;
-        let format = crate::stream_pick::pick_audio_for(
-            data,
-            crate::stream_pick::PLAYS_OPUS,
-            self.saver.load(std::sync::atomic::Ordering::Relaxed),
-        )
-        .ok_or_else(|| {
-            AccessError::new(
-                AccessErrorKind::Unsupported,
-                "no playable audio stream offered",
-            )
-        })?;
+        let format =
+            crate::stream_pick::pick_audio_for(data, crate::stream_pick::PLAYS_OPUS, smallest)
+                .ok_or_else(|| {
+                    AccessError::new(
+                        AccessErrorKind::Unsupported,
+                        "no playable audio stream offered",
+                    )
+                })?;
         let url = format.direct_url().unwrap_or_default().to_owned();
         let content_length = format
             .content_length
@@ -494,6 +509,17 @@ impl LiveBackend for YtmBackend {
                 .await
                 .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog page failed"))
         }))
+    }
+
+    fn resolve_small(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<EphemeralAudio, AccessError> {
+        self.run(cancellable(
+            cancel.clone(),
+            self.resolve_direct_as(video_id, true),
+        ))
     }
 
     fn resolve(
@@ -1950,6 +1976,21 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         self.backend.rate(id, rating, cancel)
+    }
+
+    fn resolve_audio_small(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<EphemeralAudio, AccessError> {
+        let id = track_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which song?",
+            ));
+        }
+        self.backend.resolve_small(id, cancel)
     }
 
     fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {

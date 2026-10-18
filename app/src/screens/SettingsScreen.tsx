@@ -402,6 +402,26 @@ function LookAndFeel() {
             )}
           </Drawer>
         )}
+        <Drawer id="seek" title="Seek bar" summary={p.seekBar === 'theme' && info.seekBar !== 'wave' ? "The theme's own" : 'Waveform'}>
+          <Row
+            title="Seek bar"
+            hint={
+              info.seekBar === 'wave'
+                ? 'This theme draws the waveform either way.'
+                : "The song's waveform in this theme's colours, or the seek bar the theme was made with."
+            }
+          >
+            <Segmented
+              id="seek-bar"
+              value={p.seekBar}
+              onChange={(seekBar) => set({ seekBar })}
+              options={[
+                { value: 'wave', label: 'Waveform' },
+                { value: 'theme', label: "The theme's own", disabled: info.seekBar === 'wave' },
+              ]}
+            />
+          </Row>
+        </Drawer>
         <Drawer id="size" title="Size" summary={<SizeSummary />}>
           <InterfaceSize />
         </Drawer>

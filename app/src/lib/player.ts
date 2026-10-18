@@ -667,25 +667,35 @@ export function verifyCurrent(): Promise<Verification> {
 }
 
 const waves = new Map<string, number[]>()
-/** The playing song's shape for the seek bar (600 peaks, 0–255), once it's been read. */
-export function useWaveform(path: string | undefined): number[] | null {
+/** An online song's shape is asked for once it has played this long, so the song comes first. */
+const ONLINE_SHAPE_AFTER_MS = 3000
+/** The playing song's shape for the seek bar (600 levels, 0–255), once it's been read: from your
+ *  file, or for an online song from its smallest stream (kept by its id after the first time). */
+export function useWaveform(song: QueueItem | null | undefined): number[] | null {
   const [, tick] = useState(0)
   // The engine says which folder the queue is in (after a restart nothing was played here yet).
   const root = usePlayerValue((s) => s.root || queueRoot)
+  const path = song?.path || undefined
+  const online = song && isOnline(song) && song.online?.kind === 'online' && song.online.provider === 'remote_catalog' ? song.online.track_id : undefined
+  const key = path ?? (online ? `online:${online}` : undefined)
   useEffect(() => {
-    if (!path || !root || waves.has(path) || !inApp()) return
+    if (!key || waves.has(key) || !inApp()) return
+    if (path && !root) return
     let live = true
-    invoke<number[]>('song_waveform', { root, path })
-      .then((w) => {
-        waves.set(path, w)
-        if (live) tick((n) => n + 1)
-      })
-      .catch(() => {})
+    const read = () =>
+      (path ? invoke<number[]>('song_waveform', { root, path }) : invoke<number[]>('online_waveform', { trackId: online }))
+        .then((w) => {
+          waves.set(key, w)
+          if (live) tick((n) => n + 1)
+        })
+        .catch(() => {})
+    const t = window.setTimeout(read, path ? 0 : ONLINE_SHAPE_AFTER_MS)
     return () => {
       live = false
+      window.clearTimeout(t)
     }
-  }, [path, root])
-  return path ? (waves.get(path) ?? null) : null
+  }, [key, path, online, root])
+  return key ? (waves.get(key) ?? null) : null
 }
 
 export const setSound = (sound: Sound) => {

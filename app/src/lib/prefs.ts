@@ -13,6 +13,8 @@ export type Surface = 'glass' | 'frosted' | 'solid' | 'amoled'
 /** From the music playing (or the album open), one colour you keep, or none at all. */
 export type AccentMode = 'album' | 'fixed' | 'neutral'
 export type Motion = 'full' | 'reduced' | 'system'
+/** The player bar's seek bar: the song's waveform in the theme's colours, or the theme's own. */
+export type SeekChoice = 'wave' | 'theme'
 
 export interface Prefs {
   /** The theme: Venuta (glass, follows the album) or one of the retro looks. With a theme of
@@ -30,6 +32,7 @@ export interface Prefs {
   intensity: Intensity
   backdrop: boolean
   motion: Motion
+  seekBar: SeekChoice
 }
 
 const DEFAULTS: Prefs = {
@@ -42,6 +45,7 @@ const DEFAULTS: Prefs = {
   intensity: 'balanced',
   backdrop: true,
   motion: 'system',
+  seekBar: 'wave',
 }
 
 const KEY = 'appearance'
@@ -62,6 +66,7 @@ function upgrade(p: Prefs): Prefs {
   const style = styleInfo(p.style).id
   if (style !== p.style) p = { ...p, style }
   if (typeof p.pack !== 'string') p = { ...p, pack: '' }
+  if (p.seekBar !== 'wave' && p.seekBar !== 'theme') p = { ...p, seekBar: 'wave' }
   if (p.accent.startsWith('#') || accentByName(p.accent).name === p.accent) return p
   return { ...p, accent: accentByName(p.accent).name }
 }

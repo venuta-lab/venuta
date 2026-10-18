@@ -1156,6 +1156,55 @@ pub async fn player_verify(
         .map_err(|e| e.to_string())?
 }
 
+/// One online song's shape is read at a time, so reading never competes with playing.
+static READING_ONLINE_SHAPE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// An online song's shape for the seek bar (600 loudness levels, 0–255), read once from its
+/// smallest stream and kept by its id in `.venuta/waves-online`. Not with data saver on: it
+/// would fetch the song a second time.
+#[tauri::command]
+pub async fn online_waveform(pb: State<'_, Playback>, track_id: String) -> Result<Vec<u8>, String> {
+    let catalog = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let id = track_id.trim().to_owned();
+        if id.is_empty() {
+            return Err("which song?".to_owned());
+        }
+        let key = blake3::hash(format!("remote_catalog|{id}|600").as_bytes()).to_hex();
+        let dir = engine::paths::app_data_dir().join("waves-online");
+        let cached = dir.join(format!("{}.bin", &key[..24]));
+        if let Ok(b) = std::fs::read(&cached)
+            && b.len() == 600
+        {
+            return Ok(b);
+        }
+        if engine::settings::load().listening.stream_quality == "low" {
+            return Err("data saver is on".to_owned());
+        }
+        let _one = READING_ONLINE_SHAPE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Read while waiting its turn by another call for the same song.
+        if let Ok(b) = std::fs::read(&cached)
+            && b.len() == 600
+        {
+            return Ok(b);
+        }
+        let audio = catalog
+            .resolve_audio_small(&id, &media_access::CancellationToken::default())
+            .map_err(|e| e.to_string())?;
+        let w = player::waveform::waveform_remote(audio, 600)?;
+        // A shape of all silence is a read that went wrong: asked again next time, not kept.
+        if w.iter().any(|&v| v > 0) {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&cached, &w);
+        }
+        Ok(w)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A song's shape for the seek bar (600 loudness levels, 0–255), made once and kept in `.venuta/waves-rms`.
 #[tauri::command]
 pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String> {

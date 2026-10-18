@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { useThemeInfo } from '../../lib/prefs'
+import { usePrefs, useThemeInfo } from '../../lib/prefs'
 import type { SeekBar as BarDesign } from '../../lib/themes'
 import { LcdSpectrum } from './Spectrum'
 import { openBigScreen } from '../../lib/lyricWindows'
@@ -238,7 +238,9 @@ export function SeekBar(props: {
   /** Still opening (an online song): shown, but not draggable until it plays. */
   disabled?: boolean
 }) {
-  const design = useThemeInfo().seekBar
+  // The waveform unless you chose the theme's own seek bar (Look and feel, Seek bar).
+  const own = useThemeInfo().seekBar
+  const design = usePrefs().seekBar === 'theme' ? own : 'wave'
   const bar = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -664,7 +666,7 @@ export function NowPlayingBar(props: {
   const localArt = song && !isOnline(song) ? cover(song.dir) : undefined
   const onlineArt = remoteArtUrl(song)
   const duration = s.duration_ms || song?.duration_ms || 0
-  const wave = useWaveform(song?.path)
+  const wave = useWaveform(song)
   // Music dropped on the bar plays next.
   const drop = useDropTarget(
     song
