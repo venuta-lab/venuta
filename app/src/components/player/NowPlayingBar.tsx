@@ -25,6 +25,7 @@ import {
   sourceLabel,
   toggle,
   usePlayer,
+  usePlayerValue,
   type OutputChoices,
   type PlayerState,
   type Signal,
@@ -135,6 +136,8 @@ function Wave(props: { wave: number[]; pct: number; height: number }) {
 
 /** The retro themes' seek bars (research §3): each its own track and playhead. */
 export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
+  // Layer Zero's cursor is steady while the song plays and blinks while it waits, paused.
+  const playing = usePlayerValue((s) => s.playing)
   // The players people know: a thin line that thickens or lights up under the pointer.
   if (bar === 'pulse')
     return (
@@ -178,7 +181,7 @@ export function ThemedTrack({ bar, pct }: { bar: BarDesign; pct: number }) {
       <>
         <div className="absolute inset-x-0 top-1/2 h-px bg-ink/25" />
         <div className="absolute left-0 top-1/2 h-px bg-accent" style={{ width: `${pct}%` }} />
-        <span className="fx-blink absolute top-1/2 -translate-y-1/2 text-[15px] leading-none text-accent" style={{ left: `${pct}%` }}>
+        <span className={`${playing ? '' : 'fx-blink '}absolute top-1/2 -translate-y-1/2 text-[15px] leading-none text-accent`} style={{ left: `${pct}%` }}>
           ▌
         </span>
       </>
