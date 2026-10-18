@@ -62,3 +62,12 @@ export function saveLayout(l: HomeLayout) {
     // Kept for this visit only.
   }
 }
+
+/** Sections in the order they were dropped (Edit Home's drag); any not named keep their order after. */
+export function reorder(l: HomeLayout, known: string[], ids: string[]): HomeLayout {
+  const dropped = ids.filter((id, i) => known.includes(id) && ids.indexOf(id) === i)
+  const rest = arrange(l, known)
+    .map((s) => s.id)
+    .filter((id) => !dropped.includes(id))
+  return { ...l, order: [...dropped, ...rest] }
+}

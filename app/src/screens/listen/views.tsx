@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, motion, Reorder, useDragControls } from 'motion/react'
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { listeningSummary, playlistShelf, type ListeningSummary, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from '../playlists/PlaylistsHome'
@@ -19,7 +19,7 @@ import {
   type Library,
 } from './model'
 import { Detail, InBar, Segmented, Switch } from '../../components/ui'
-import { arrange, CARD_WIDTHS, move, readLayout, saveLayout, toggle as toggleHome, type CardSize, type HomeLayout } from '../../lib/homeLayout'
+import { arrange, CARD_WIDTHS, move, readLayout, reorder, saveLayout, toggle as toggleHome, type CardSize, type HomeLayout } from '../../lib/homeLayout'
 import { useShortcuts } from '../../lib/shortcuts'
 import { FamiliarArtists, HomeChips, OnlineShelves, QuickPicks, useOnlineHome, useRecentOnline, useRecentPlays } from './HomeOnline'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
@@ -238,6 +238,7 @@ export const HomeView = memo(function HomeView(props: {
             parts={shown.map((s) => ({ ...s, label: parts.find((p) => p.id === s.id)?.label ?? s.id }))}
             onToggle={(id) => change(toggleHome(layout, id))}
             onMove={(id, by) => change(move(layout, known, id, by))}
+            onOrder={(ids) => change(reorder(layout, known, ids))}
             onReset={() => change({ order: [], hidden: [] })}
             size={layout.size ?? 'm'}
             onSize={(size) => change({ ...layout, size })}
@@ -268,6 +269,8 @@ function EditHome(props: {
   parts: { id: string; label: string; on: boolean }[]
   onToggle: (id: string) => void
   onMove: (id: string, by: -1 | 1) => void
+  /** Dragged into this order. */
+  onOrder: (ids: string[]) => void
   onReset: () => void
   size: CardSize
   onSize: (s: CardSize) => void
@@ -299,22 +302,57 @@ function EditHome(props: {
             As it was
           </button>
         </div>
-        <ol className="grid gap-0.5">
+        <Reorder.Group as="ol" axis="y" values={props.parts.map((p) => p.id)} onReorder={props.onOrder} className="grid gap-0.5">
           {props.parts.map((p, i) => (
-            <li key={p.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.04]">
-              <Switch on={p.on} onChange={() => props.onToggle(p.id)} label={p.label} />
-              <span className={`min-w-0 flex-1 truncate text-[13.5px] ${p.on ? '' : 'text-ink/45'}`}>{p.label}</span>
-              <button disabled={i === 0} onClick={() => props.onMove(p.id, -1)} aria-label={`Move ${p.label} up`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
-                ↑
-              </button>
-              <button disabled={i === props.parts.length - 1} onClick={() => props.onMove(p.id, 1)} aria-label={`Move ${p.label} down`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
-                ↓
-              </button>
-            </li>
+            <HomeSectionRow key={p.id} part={p} first={i === 0} last={i === props.parts.length - 1} onToggle={props.onToggle} onMove={props.onMove} />
           ))}
-        </ol>
+        </Reorder.Group>
       </div>
     </motion.section>
+  )
+}
+
+/** One section in Edit Home: dragged by its grip, or moved with the arrows (and the keyboard). */
+function HomeSectionRow(props: {
+  part: { id: string; label: string; on: boolean }
+  first: boolean
+  last: boolean
+  onToggle: (id: string) => void
+  onMove: (id: string, by: -1 | 1) => void
+}) {
+  const { part: p } = props
+  const drag = useDragControls()
+  const [dragging, setDragging] = useState(false)
+  return (
+    <Reorder.Item
+      as="li"
+      value={p.id}
+      dragListener={false}
+      dragControls={drag}
+      onDragStart={() => setDragging(true)}
+      onDragEnd={() => setDragging(false)}
+      whileDrag={{ scale: 1.02, boxShadow: '0 12px 30px rgb(0 0 0 / 0.3)' }}
+      className={`relative flex items-center gap-3 rounded-xl px-2 py-1.5 ${dragging ? 'z-10 bg-[var(--solid)]' : 'hover:bg-ink/[0.04]'}`}
+    >
+      <span
+        onPointerDown={(e) => drag.start(e)}
+        title="Drag to move"
+        aria-hidden
+        className="grid h-7 w-5 cursor-grab touch-none place-items-center text-ink/35 hover:text-ink/70 active:cursor-grabbing"
+      >
+        <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+          {[2, 7, 12].flatMap((y) => [<circle key={`a${y}`} cx="2.5" cy={y} r="1.3" />, <circle key={`b${y}`} cx="7.5" cy={y} r="1.3" />])}
+        </svg>
+      </span>
+      <Switch on={p.on} onChange={() => props.onToggle(p.id)} label={p.label} />
+      <span className={`min-w-0 flex-1 truncate text-[13.5px] ${p.on ? '' : 'text-ink/45'}`}>{p.label}</span>
+      <button disabled={props.first} onClick={() => props.onMove(p.id, -1)} aria-label={`Move ${p.label} up`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
+        ↑
+      </button>
+      <button disabled={props.last} onClick={() => props.onMove(p.id, 1)} aria-label={`Move ${p.label} down`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
+        ↓
+      </button>
+    </Reorder.Item>
   )
 }
 

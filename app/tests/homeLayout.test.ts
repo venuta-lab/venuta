@@ -2,7 +2,7 @@
 // Home's sections in your order, each on or off: what Edit Home keeps.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { arrange, CARD_WIDTHS, move, toggle, type HomeLayout } from '../src/lib/homeLayout.ts'
+import { arrange, CARD_WIDTHS, move, reorder, toggle, type HomeLayout } from '../src/lib/homeLayout.ts'
 
 const known = ['hero', 'jump', 'quick', 'online']
 
@@ -40,4 +40,14 @@ test('the card size stays through moving and switching, and grows from small to 
   assert.equal(toggle(l, 'jump').size, 'l')
   assert.equal(CARD_WIDTHS.m, 168, 'medium is the size cards are everywhere else')
   assert.ok(CARD_WIDTHS.s < CARD_WIDTHS.m && CARD_WIDTHS.m < CARD_WIDTHS.l)
+})
+
+test('dragging puts the sections in the order dropped, keeping the rest', () => {
+  const l: HomeLayout = { order: [], hidden: ['jump'], size: 's' }
+  const dropped = reorder(l, known, ['online', 'hero', 'quick', 'jump'])
+  assert.deepEqual(dropped.order, ['online', 'hero', 'quick', 'jump'])
+  assert.deepEqual(dropped.hidden, ['jump'], 'what was off stays off')
+  assert.equal(dropped.size, 's')
+  // An id Home doesn't know is left out; a section left out of the drop keeps its place after.
+  assert.deepEqual(reorder(l, known, ['gone', 'quick', 'hero']).order, ['quick', 'hero', 'jump', 'online'])
 })
