@@ -1,8 +1,8 @@
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest,
     RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection,
-    RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteRating, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -195,6 +195,23 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         let _ = cancel;
         Err(unsupported("account playlists"))
+    }
+
+    /// Rate a catalog song on the signed-in account (its Liked Music follows a like).
+    fn rate_on_account(
+        &self,
+        track_id: &str,
+        rating: RemoteRating,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (track_id, rating, cancel);
+        Err(unsupported("rating on the account"))
+    }
+
+    /// The signed-in account's Liked Music, newest first (empty when signed out).
+    fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {
+        let _ = cancel;
+        Err(unsupported("the account's likes"))
     }
 
     /// One catalog song by its id: what it is (for a pasted link).
@@ -592,6 +609,19 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         self.inner.account_playlists(cancel)
+    }
+
+    fn rate_on_account(
+        &self,
+        track_id: &str,
+        rating: RemoteRating,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        self.inner.rate_on_account(track_id, rating, cancel)
+    }
+
+    fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {
+        self.inner.account_liked(cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

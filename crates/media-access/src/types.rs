@@ -211,6 +211,15 @@ pub struct RemoteArtistLink {
     pub artist_id: Option<String>,
 }
 
+/// How a catalog song is rated on the signed-in account: liked, disliked, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteRating {
+    Like,
+    Dislike,
+    None,
+}
+
 /// Who is signed in to the catalog (YouTube Music), as its account menu says.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteAccount {

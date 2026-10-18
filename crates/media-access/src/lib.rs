@@ -40,8 +40,8 @@ pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_statu
 pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
     Availability, CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection,
-    MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAccount, RemoteAlbum,
-    RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteChip,
+    MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAccount,
+    RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteChip,
     RemoteCollection, RemoteHome, RemoteHomeShelf, RemoteMore, RemotePlaylist, RemoteRadio,
-    RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRating, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };

@@ -3,6 +3,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { inApp } from './engine'
 import { notify } from './notify'
 import { isOnline, songItemOf, type QueueItem } from './player'
+import { rateOnAccount } from './ytmAccount'
 
 /*
   Liked songs: one playlist in your library, marked as the liked one (crates/engine playlists:
@@ -87,6 +88,7 @@ export async function setLiked(r: string, q: QueueItem, liked: boolean) {
     const now = await invoke<LikedSet>('like_song', { root: r, item: songItemOf(q), liked })
     publish(r, now)
     notify(liked ? `Added to ${now.name ?? 'Liked songs'}.` : `Removed from ${name ?? 'Liked songs'}.`)
+    await rateOnAccount(q, liked ? 'like' : 'none')
   } catch (e) {
     notify(`Couldn't ${liked ? 'like' : 'unlike'} “${q.title}”: ${String(e)}`)
     root = ''
@@ -103,6 +105,7 @@ export async function likeMany(r: string, items: QueueItem[]) {
     for (const q of [...items].reverse()) last = await invoke<LikedSet>('like_song', { root: r, item: songItemOf(q), liked: true })
     if (last) publish(r, last)
     notify(`Added ${items.length === 1 ? `“${items[0].title}”` : `${items.length} songs`} to ${last?.name ?? 'Liked songs'}.`)
+    for (const q of items) await rateOnAccount(q, 'like')
   } catch (e) {
     notify(`Couldn't like them all: ${String(e)}`)
     root = ''

@@ -5,6 +5,7 @@ import { isLiked, setLiked } from './likes'
 import { notify } from './notify'
 import { onlineProblem } from './online'
 import { ownedIndex } from './owned'
+import { rateOnAccount } from './ytmAccount'
 import {
   enqueueItems,
   getPlayerState,
@@ -94,12 +95,16 @@ export async function dislike(root: string, q: QueueItem) {
   await loadListening()
   if (!listening().disliked.includes(key)) await updateListening({ disliked: [...listening().disliked, key] })
   if (isLiked(q)) await setLiked(root, q, false)
+  void rateOnAccount(q, 'dislike')
   const s = getPlayerState()
   const playing = s.queue[s.index]
   if (playing && queueKey(playing) === queueKey(q)) void next()
   notify(`Radio and autoplay won't play “${q.title}” again.`, {
     label: 'Undo',
-    run: () => void updateListening({ disliked: listening().disliked.filter((d) => d !== key) }),
+    run: () => {
+      void updateListening({ disliked: listening().disliked.filter((d) => d !== key) })
+      void rateOnAccount(q, 'none')
+    },
   })
 }
 

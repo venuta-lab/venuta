@@ -229,6 +229,8 @@ export interface Listening {
   lyrics_sources: string[]
   /** Say each new song in a Windows notification while Venuta is in the background. */
   song_notifications: boolean
+  /** Signed in to YouTube Music: liking, unliking or disliking online does the same there. */
+  sync_likes: boolean
   /** What you pinned to the top of Home (lib/shortcuts.ts). */
   shortcuts: unknown[]
 }
@@ -1305,6 +1307,10 @@ export const ytmSignOut = () => invoke<void>('ytm_sign_out')
 export const ytmAccount = () => invoke<YtmAccountInfo | null>('ytm_account')
 /** Your YouTube Music playlists (none when signed out). */
 export const ytmPlaylists = () => invoke<OnlineCollection[]>('ytm_playlists')
+/** Rate an online song on the account; false when no one is signed in. */
+export const ytmRate = (trackId: string, rating: 'like' | 'dislike' | 'none') => invoke<boolean>('ytm_rate', { trackId, rating })
+/** Your YouTube Music likes into Venuta's Liked songs (only when you ask). */
+export const ytmBringInLikes = (root: string) => invoke<{ name: string | null; found: number; added: number }>('ytm_bring_in_likes', { root })
 
 /** Playback catalog health for Settings (never includes stream URLs). */
 export interface OnlineCatalogStatus {

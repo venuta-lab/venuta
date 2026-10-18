@@ -3156,6 +3156,8 @@ pub fn run() {
             ytm_account::ytm_sign_out,
             ytm_account::ytm_account,
             ytm_account::ytm_playlists,
+            ytm_account::ytm_rate,
+            ytm_account::ytm_bring_in_likes,
             diagnostics,
             restart_app,
             desktop::song_notification,

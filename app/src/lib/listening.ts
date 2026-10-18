@@ -17,6 +17,7 @@ const DEFAULTS: Listening = {
   catalog_region: '',
   lyrics_sources: [],
   song_notifications: false,
+  sync_likes: false,
   shortcuts: [],
 }
 

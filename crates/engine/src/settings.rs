@@ -113,6 +113,10 @@ pub struct Listening {
     /// Say each new song in a Windows notification while Venuta is in the background.
     #[serde(default)]
     pub song_notifications: bool,
+    /// Signed in to YouTube Music: liking, unliking or disliking an online song in Venuta does
+    /// the same on the account. Off until you switch it on.
+    #[serde(default)]
+    pub sync_likes: bool,
     /// What you pinned to the top of Home (albums, artists, playlists; yours or online), as the
     /// app keeps them.
     #[serde(default)]
@@ -147,6 +151,7 @@ impl Default for Listening {
             stream_quality: auto(),
             catalog_region: String::new(),
             song_notifications: false,
+            sync_likes: false,
             shortcuts: Vec::new(),
             lyrics_sources: Vec::new(),
         }
@@ -248,6 +253,13 @@ pub fn save_answers(root: &Path, a: &crate::review::Answers) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn likes_go_to_youtube_music_only_once_switched_on() {
+        let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
+        assert!(!old.sync_likes, "settings from before stay as they were");
+        assert!(!Listening::default().sync_likes);
+    }
 
     #[test]
     fn a_proxy_address_is_a_known_scheme_a_host_and_a_port() {

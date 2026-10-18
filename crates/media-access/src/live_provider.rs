@@ -13,7 +13,7 @@ use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
     PageRequest, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink,
     RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio,
-    RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRating, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -153,6 +153,15 @@ trait LiveBackend: Send + Sync {
         &self,
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError>;
+
+    fn rate(
+        &self,
+        video_id: &str,
+        rating: RemoteRating,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError>;
+
+    fn logged_in(&self) -> bool;
 
     /// The home feed (see `MediaAccess::home`).
     fn home(
@@ -780,6 +789,35 @@ impl LiveBackend for YtmBackend {
             .filter(|c| c.kind == "playlist")
             .filter_map(|c| crate::catalog_cards::collection_of(c, "playlist"))
             .collect())
+    }
+
+    fn rate(
+        &self,
+        video_id: &str,
+        rating: RemoteRating,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        if !self.it.is_logged_in() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "sign in to YouTube Music first",
+            ));
+        }
+        let rating = match rating {
+            RemoteRating::Like => ytmusic::Rating::Like,
+            RemoteRating::Dislike => ytmusic::Rating::Dislike,
+            RemoteRating::None => ytmusic::Rating::Indifferent,
+        };
+        let client = self.client(PAGES_CLIENT)?;
+        self.run(cancellable(cancel.clone(), async {
+            self.it.rate(client, video_id, rating).await.map_err(|_| {
+                AccessError::new(AccessErrorKind::Transport, "YouTube Music didn't take it")
+            })
+        }))
+    }
+
+    fn logged_in(&self) -> bool {
+        self.it.is_logged_in()
     }
 
     fn grid(
@@ -1896,6 +1934,30 @@ impl MediaAccess for LiveCatalogAccess {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         self.backend.library_playlists(cancel)
+    }
+
+    fn rate_on_account(
+        &self,
+        track_id: &str,
+        rating: RemoteRating,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let id = track_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which song?",
+            ));
+        }
+        self.backend.rate(id, rating, cancel)
+    }
+
+    fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {
+        if !self.backend.logged_in() {
+            return Ok(Vec::new());
+        }
+        // Liked Music is the account's own playlist "LM".
+        Ok(self.playlist("LM", cancel)?.tracks)
     }
 
     fn shelf_more(

@@ -9,7 +9,7 @@
 
 use crate::playback::Playback;
 use engine::accounts::{SystemVault, Vault};
-use media_access::{CancellationToken, RemoteAccount, RemoteCollection};
+use media_access::{CancellationToken, RemoteAccount, RemoteCollection, RemoteRating};
 use std::time::Duration;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -185,6 +185,79 @@ pub async fn ytm_playlists(pb: State<'_, Playback>) -> Result<Vec<RemoteCollecti
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Rate an online song on the account (Settings: like on YouTube Music too). False when no one
+/// is signed in, so nothing was sent.
+#[tauri::command]
+pub async fn ytm_rate(
+    pb: State<'_, Playback>,
+    track_id: String,
+    rating: RemoteRating,
+) -> Result<bool, String> {
+    let access = pb.catalog();
+    if access.account_cookie().is_none() {
+        return Ok(false);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .rate_on_account(&track_id, rating, &CancellationToken::default())
+            .map(|()| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// What bringing in your YouTube Music likes did.
+#[derive(serde::Serialize)]
+pub struct BroughtIn {
+    /// Your Liked songs list in Venuta.
+    pub name: Option<String>,
+    /// Songs in the account's Liked Music.
+    pub found: usize,
+    /// Of those, the ones Venuta didn't have as liked yet.
+    pub added: usize,
+}
+
+/// Your YouTube Music likes into Venuta's Liked songs, newest first; the ones liked already stay
+/// where they are. Only when you ask (Settings, Accounts).
+#[tauri::command]
+pub async fn ytm_bring_in_likes(
+    pb: State<'_, Playback>,
+    root: String,
+) -> Result<BroughtIn, String> {
+    let access = pb.catalog();
+    if access.account_cookie().is_none() {
+        return Err("Sign in to YouTube Music first.".into());
+    }
+    crate::blocking(move || {
+        let tracks = access
+            .account_liked(&CancellationToken::default())
+            .map_err(|e| e.to_string())?;
+        let rootp = std::path::PathBuf::from(&root);
+        let (_, lib) = crate::load_lib(&rootp)?;
+        let items: Vec<engine::playlists::Item> = tracks
+            .iter()
+            .map(|t| {
+                engine::playlists::Item::online(engine::playlists::OnlineEntry::from_remote(t))
+            })
+            .collect();
+        if items.is_empty() {
+            return Ok(BroughtIn {
+                name: engine::playlists::liked_name(&rootp),
+                found: 0,
+                added: 0,
+            });
+        }
+        let (name, added) = engine::playlists::like_many(&rootp, &lib, &items)?;
+        Ok(BroughtIn {
+            name: Some(name),
+            found: items.len(),
+            added,
+        })
+    })
+    .await
 }
 
 #[cfg(test)]

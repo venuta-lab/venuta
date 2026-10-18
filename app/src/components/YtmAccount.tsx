@@ -1,6 +1,9 @@
 import { listen } from '@tauri-apps/api/event'
-import { useEffect, useState } from 'react'
-import { inApp, ytmSignIn, ytmSignOut } from '../lib/engine'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { inApp, libraryHome, ytmBringInLikes, ytmSignIn, ytmSignOut } from '../lib/engine'
+import { loadLikes } from '../lib/likes'
+import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../lib/listening'
+import { Switch } from './ui'
 import { useYtmAccount } from '../lib/ytmAccount'
 import { confirmAsk } from './Confirm'
 import { notify } from '../lib/notify'
@@ -50,7 +53,8 @@ export function YtmAccount() {
 
   if (account === undefined) return <div className="shimmer mt-3 h-16 rounded-2xl" aria-hidden />
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-4 rounded-2xl bg-ink/[0.04] px-4 py-3 shadow-[inset_0_0_0_1px_var(--edge)]">
+    <div className="mt-3 rounded-2xl bg-ink/[0.04] px-4 py-3 shadow-[inset_0_0_0_1px_var(--edge)]">
+    <div className="flex flex-wrap items-center gap-4">
       <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-ink/[0.08] text-[16px] font-semibold text-ink/60">
         {account?.picture ? <RemoteArt url={account.picture} size={40} fallback={(account.name ?? 'Y').slice(0, 1)} imgClassName="h-full w-full object-cover" /> : account ? (account.name ?? 'Y').slice(0, 1) : 'YT'}
       </span>
@@ -71,6 +75,61 @@ export function YtmAccount() {
           {waiting ? 'Waiting for Google…' : 'Sign in with Google'}
         </button>
       )}
+    </div>
+    {account && <YtmLikes />}
+    </div>
+  )
+}
+
+/** Likes between Venuta and the account: the same likes there from now on (when switched on),
+ *  and the ones already there brought in once, when asked. */
+function YtmLikes() {
+  useSyncExternalStore(subscribeListening, listeningVersion)
+  useEffect(() => {
+    void loadListening()
+  }, [])
+  const l = listening()
+  const [bringing, setBringing] = useState(false)
+  const bringIn = async () => {
+    setBringing(true)
+    try {
+      const root = (await libraryHome()).library
+      if (!root) return notify('Choose your library first.')
+      const r = await ytmBringInLikes(root)
+      await loadLikes(root, true)
+      window.dispatchEvent(new Event('venuta:playlists-changed'))
+      const list = r.name ?? 'Liked songs'
+      notify(
+        !r.found
+          ? 'Your Liked Music on YouTube Music is empty.'
+          : r.added
+            ? `Added ${r.added.toLocaleString('en-IN')} of ${r.found.toLocaleString('en-IN')} songs to ${list}.`
+            : `All ${r.found.toLocaleString('en-IN')} are in ${list} already.`,
+      )
+    } catch (e) {
+      notify(`Couldn't bring in your likes: ${String(e)}`)
+    } finally {
+      setBringing(false)
+    }
+  }
+  return (
+    <div className="mt-3 border-t border-edge pt-3">
+      <div className="flex items-center gap-4">
+        <div className="min-w-[200px] flex-1">
+          <div className="text-[13.5px] font-medium">Like on YouTube Music too</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">Online songs you like, unlike or dislike in Venuta get the same on your account. Your own files stay in Venuta.</div>
+        </div>
+        <Switch on={l.sync_likes} onChange={(on) => void updateListening({ sync_likes: on }).catch((e) => notify(String(e)))} label="Like on YouTube Music too" />
+      </div>
+      <div className="mt-3 flex items-center gap-4">
+        <div className="min-w-[200px] flex-1">
+          <div className="text-[13.5px] font-medium">Your YouTube Music likes</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">Adds the songs in your Liked Music to Liked songs in Venuta. Songs liked already stay where they are.</div>
+        </div>
+        <button onClick={() => void bringIn()} disabled={bringing} className="btn btn-sm">
+          {bringing ? 'Bringing them in…' : 'Bring them in'}
+        </button>
+      </div>
     </div>
   )
 }
