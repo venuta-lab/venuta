@@ -151,12 +151,30 @@ pub struct Captured {
     pub bytes: Vec<u8>,
     /// Frames written while each format was open (same order as `formats`).
     pub frames: Vec<usize>,
+    /// A paced device: when its first frame played (frame k plays k/rate after it).
+    pub started_at: Option<std::time::Instant>,
 }
 
 pub struct MemoryDevice {
     pub captured: Arc<Mutex<Captured>>,
     /// Frames it takes per wait (like a device period).
     pub period: usize,
+    /// Taking frames no faster than real time, holding a device's worth of buffer.
+    pub paced: Option<Pace>,
+}
+
+/// A memory device's clock: when it opened and how many frames it has taken, so a wait lasts
+/// until that many frames would have played (keeping `BUFFER_FRAMES` ahead, like a device).
+#[derive(Debug, Default)]
+pub struct Pace {
+    since: Option<std::time::Instant>,
+    taken: u64,
+    rate: u32,
+}
+
+impl Pace {
+    /// How far ahead of what's been played the device holds, in frames.
+    pub const BUFFER_FRAMES: u64 = 960;
 }
 
 impl Device for MemoryDevice {
@@ -179,15 +197,48 @@ impl Device for MemoryDevice {
             c.formats.push(f.clone());
             c.frames.push(0);
         }
+        if let Some(p) = &mut self.paced {
+            *p = Pace {
+                since: None,
+                taken: 0,
+                rate: f.rate,
+            };
+        }
         Ok(f)
     }
     fn available(&mut self) -> Result<usize, String> {
         Ok(self.period)
     }
     fn wait(&mut self) -> Result<usize, String> {
+        if let Some(p) = &mut self.paced {
+            let since = *p.since.get_or_insert_with(std::time::Instant::now);
+            // Until there's room for another period after what has played.
+            let played = (since.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
+            let ahead = p.taken.saturating_sub(played);
+            if ahead + self.period as u64 > Pace::BUFFER_FRAMES {
+                let over = ahead + self.period as u64 - Pace::BUFFER_FRAMES;
+                std::thread::sleep(std::time::Duration::from_secs_f64(
+                    over as f64 / f64::from(p.rate.max(1)),
+                ));
+            }
+        }
         Ok(self.period)
     }
+    fn latency_frames(&self) -> usize {
+        if self.paced.is_some() {
+            Pace::BUFFER_FRAMES as usize
+        } else {
+            0
+        }
+    }
     fn write(&mut self, bytes: &[u8], frames: usize) -> Result<(), String> {
+        if let Some(p) = &mut self.paced {
+            let since = *p.since.get_or_insert_with(std::time::Instant::now);
+            p.taken += frames as u64;
+            if let Ok(mut c) = self.captured.lock() {
+                c.started_at.get_or_insert(since);
+            }
+        }
         if let Ok(mut c) = self.captured.lock() {
             c.bytes.extend_from_slice(bytes);
             if let Some(f) = c.frames.last_mut() {

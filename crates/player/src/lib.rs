@@ -7,6 +7,7 @@ pub mod output;
 pub mod queue;
 pub mod remote;
 pub mod spectrum;
+pub mod sync;
 pub mod verify;
 #[cfg(windows)]
 pub mod wasapi_out;

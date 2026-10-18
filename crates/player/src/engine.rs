@@ -9,6 +9,7 @@ use crate::decode::{FileInfo, Source, SourceFormat};
 use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
 use crate::queue::{Queue, Repeat};
+use crate::sync::{Correction, SyncPlan, Trimmer};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -58,6 +59,9 @@ pub enum OutputChoice {
     Device { id: Option<String>, exclusive: bool },
     /// Memory, for checks.
     Memory(std::sync::Arc<std::sync::Mutex<output::Captured>>),
+    /// Memory taking sound at the pace a real device would (for checks that depend on time,
+    /// like playing in step with a room).
+    PacedMemory(std::sync::Arc<std::sync::Mutex<output::Captured>>),
 }
 
 pub enum Cmd<T> {
@@ -107,6 +111,8 @@ pub enum Cmd<T> {
     Spectrum(bool),
     /// Send the whole status again, queue included (a new window listening).
     Refresh,
+    /// Play in step with a room (listening together), or on its own again (`None`).
+    Sync(Option<SyncPlan>),
     Quit,
 }
 
@@ -151,6 +157,19 @@ pub struct Status<T: Serialize> {
     pub sleep_in_s: Option<u64>,
     /// Band levels of what's playing, 0-255 (see `spectrum`), while asked for and playing.
     pub bands: Option<Vec<u8>>,
+    /// While playing in step with a room: ready to start, and how far off it is.
+    pub sync: Option<SyncStatus>,
+}
+
+/// How playing in step with a room is going.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SyncStatus {
+    /// The song is ready where the room asked (decoded ahead, nothing waiting).
+    pub ready: bool,
+    /// The song after it is ready too (prepared ahead, to start at the end of this one).
+    pub next_ready: bool,
+    /// What's heard minus where the room is, milliseconds (positive: ahead).
+    pub error_ms: Option<f32>,
 }
 
 /// What the last report said, apart from the queue and the band levels (which only come with a
@@ -171,6 +190,7 @@ struct Said {
     sound: Sound,
     stop_after_current: bool,
     sleep_in_s: Option<u64>,
+    sync: Option<(bool, bool, Option<i32>)>,
 }
 
 impl Said {
@@ -190,6 +210,10 @@ impl Said {
             sound: s.sound.clone(),
             stop_after_current: s.stop_after_current,
             sleep_in_s: s.sleep_in_s,
+            // Readiness, and the error to the millisecond (finer changes aren't news).
+            sync: s
+                .sync
+                .map(|y| (y.ready, y.next_ready, y.error_ms.map(|e| e.round() as i32))),
         }
     }
 }
@@ -291,6 +315,14 @@ struct Engine<T: Item + Serialize> {
     scratch: Vec<i32>,
     mapped: Vec<i32>,
     bytes: Vec<u8>,
+    /// Playing in step with a room: the room's plan, the frames trimmer, the last error, and
+    /// until when a fresh start or seek is left to settle.
+    sync: Option<SyncPlan>,
+    trimmer: Trimmer,
+    sync_error_ms: Option<f32>,
+    settle_until: Option<Instant>,
+    /// A new plan whose sound hasn't come out yet: lined up exactly when it first does.
+    sync_fresh: bool,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -322,6 +354,11 @@ impl<T: Item + Serialize> Engine<T> {
             scratch: Vec::new(),
             mapped: Vec::new(),
             bytes: Vec::new(),
+            sync: None,
+            trimmer: Trimmer::default(),
+            sync_error_ms: None,
+            settle_until: None,
+            sync_fresh: false,
         }
     }
 
@@ -484,6 +521,7 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Refresh => self.queue_changed = true,
+            Cmd::Sync(plan) => self.set_sync(plan),
             Cmd::Quit => {}
         }
         self.publish(true);
@@ -662,6 +700,12 @@ impl<T: Item + Serialize> Engine<T> {
                 OutputChoice::Memory(c) => Box::new(output::MemoryDevice {
                     captured: c.clone(),
                     period: 4096,
+                    paced: None,
+                }),
+                OutputChoice::PacedMemory(c) => Box::new(output::MemoryDevice {
+                    captured: c.clone(),
+                    period: 480,
+                    paced: Some(output::Pace::default()),
                 }),
                 #[cfg(windows)]
                 OutputChoice::Device { id, exclusive } => Box::new(
@@ -830,6 +874,10 @@ impl<T: Item + Serialize> Engine<T> {
             dev.available()?
         };
         if want == 0 {
+            return Ok(());
+        }
+        // In step with a room: silent until its start, then kept where the room is.
+        if self.sync.is_some() && self.follow_room(want, &fmt)? {
             return Ok(());
         }
         let src_ch = usize::from(fmt.channels.max(1));
@@ -1037,6 +1085,168 @@ impl<T: Item + Serialize> Engine<T> {
         self.started = false;
     }
 
+    // --- Playing in step with a room ---------------------------------------------------------
+
+    /// A room's plan: make the song ready where it says, hold silent until its start, or pause
+    /// there. `None`: on its own again.
+    fn set_sync(&mut self, plan: Option<SyncPlan>) {
+        self.trimmer.reset();
+        self.sync_error_ms = None;
+        let Some(plan) = plan else {
+            self.sync = None;
+            return;
+        };
+        let now = Instant::now();
+        // Where the song should be when sound next comes out: the room's place, a moment on.
+        let started = plan.anchor.is_some_and(|a| a <= now);
+        let target = match plan.expected_ms(now) {
+            Some(at) if plan.playing && started => {
+                (at + self.heard_delay_ms(&plan)).max(0.0) as u64
+            }
+            _ => plan.position_ms,
+        };
+        if self.segs.is_empty() && self.queue.current().is_some() {
+            self.load_current(target);
+        } else if (self.position_ms() as i64 - target as i64).abs() > 30 {
+            self.seek(target);
+        }
+        self.sync = Some(plan);
+        self.sync_fresh = true;
+        self.settle_until = Some(now + Duration::from_millis(600));
+        // Playing (or waiting to) keeps the device going: silence until the start, which also
+        // keeps the song decoding ahead. Paused: paused there.
+        self.set_playing(plan.playing);
+    }
+
+    /// How long from writing a frame to hearing it: the device's buffer and any extra delay set
+    /// for this output (Bluetooth), milliseconds.
+    fn heard_delay_ms(&self, plan: &SyncPlan) -> f64 {
+        let device = match (&self.device, &self.dev_fmt) {
+            (Some(d), Some(f)) => d.latency_frames() as f64 * 1_000.0 / f64::from(f.rate.max(1)),
+            _ => 0.0,
+        };
+        device + f64::from(plan.extra_latency_ms)
+    }
+
+    /// One device period in step with the room. True when the period was handled here (silence
+    /// before the start); false to play it normally (after any seek or trimming).
+    fn follow_room(&mut self, want: usize, fmt: &SourceFormat) -> Result<bool, String> {
+        let Some(plan) = self.sync else {
+            return Ok(false);
+        };
+        let now = Instant::now();
+        let delay = self.heard_delay_ms(&plan);
+        let starts = plan.anchor.map(|a| {
+            a.checked_sub(Duration::from_secs_f64(delay.max(0.0) / 1_000.0))
+                .unwrap_or(a)
+        });
+        // Before the start (or not started yet): silence, the song decoding ahead meanwhile.
+        if !starts.is_some_and(|s| now >= s) {
+            self.fill()?;
+            self.write_silence(want)?;
+            return Ok(true);
+        }
+        let rate = f64::from(fmt.rate.max(1));
+        let Some(front) = self.segs.front() else {
+            return Ok(false);
+        };
+        let written_ms = (front.start_frame + front.played) as f64 * 1_000.0 / rate;
+        let heard_ms = written_ms - delay;
+        let Some(expected) = plan.expected_ms(now) else {
+            return Ok(false);
+        };
+        // The first sound of a plan: put the song exactly where the room will be when it's heard
+        // (the device may have taken a moment to open since the plan came).
+        if self.sync_fresh {
+            self.sync_fresh = false;
+            if (written_ms - (expected + delay)).abs() > 15.0 {
+                self.seek((expected + delay).max(0.0) as u64);
+                self.trimmer.reset();
+            }
+            self.settle_until = Some(now + Duration::from_millis(400));
+            return Ok(false);
+        }
+        let error = heard_ms - expected;
+        self.sync_error_ms = Some(error as f32);
+        let settling = self.settle_until.is_some_and(|t| now < t);
+        match crate::sync::correction(error, plan.same_room, settling) {
+            Correction::None => Ok(false),
+            Correction::Seek => {
+                let to = (expected + delay).max(0.0) as u64;
+                self.seek(to);
+                self.trimmer.reset();
+                self.settle_until = Some(now + Duration::from_millis(600));
+                Ok(false)
+            }
+            Correction::Trim { ppm, ahead } => {
+                let n = self.trimmer.due(want, ppm);
+                if n > 0 {
+                    self.trim_front(want, n, ahead);
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Repeat (`ahead`) or take out `n` frames among the next `want` of the playing song, keeping
+    /// its count of frames played true to the song.
+    fn trim_front(&mut self, want: usize, n: usize, ahead: bool) {
+        let Some(front) = self.segs.front_mut() else {
+            return;
+        };
+        let ch = usize::from(front.source.format.channels.max(1));
+        let span = if ahead {
+            want.saturating_sub(n)
+        } else {
+            want + n
+        }
+        .min(front.frames());
+        if span <= n {
+            return;
+        }
+        let mut head: Vec<i32> = front.samples.drain(..span * ch).collect();
+        if ahead {
+            crate::sync::repeat_frames(&mut head, ch, n);
+            front.played = front.played.saturating_sub(n as u64);
+        } else {
+            crate::sync::drop_frames(&mut head, ch, n);
+            front.played += n as u64;
+        }
+        for v in head.into_iter().rev() {
+            front.samples.push_front(v);
+        }
+    }
+
+    /// A period of silence (the device keeps its clock while the room hasn't started).
+    fn write_silence(&mut self, want: usize) -> Result<(), String> {
+        let (Some(fmt), Some(device)) = (self.dev_fmt.as_ref(), self.device.as_mut()) else {
+            return Ok(());
+        };
+        self.bytes.clear();
+        self.bytes.resize(want * fmt.bytes_per_frame(), 0);
+        device.write(&self.bytes, want)?;
+        if !self.started {
+            device.start()?;
+            self.started = true;
+        }
+        Ok(())
+    }
+
+    fn sync_status(&self) -> SyncStatus {
+        let ready_seg = |s: &Segment| {
+            s.source.is_ready()
+                && (s.ended || s.frames() as f64 >= f64::from(s.source.format.rate.max(1)) * 0.5)
+        };
+        SyncStatus {
+            ready: self.seek_waiting.is_none() && self.segs.front().is_some_and(ready_seg),
+            next_ready: self
+                .segs
+                .get(1)
+                .is_some_and(|s| s.source.is_ready() && s.frames() > 0),
+            error_ms: self.sync_error_ms,
+        }
+    }
+
     // --- Status ---------------------------------------------------------------------------
 
     fn position_ms(&self) -> u64 {
@@ -1139,6 +1349,7 @@ impl<T: Item + Serialize> Engine<T> {
                     .unwrap_or(44_100);
                 crate::spectrum::levels(self.recent.make_contiguous(), rate)
             }),
+            sync: self.sync.map(|_| self.sync_status()),
         };
         // The regular report, when it would only repeat the last one (paused, or nothing loaded),
         // is not sent: every window would otherwise redraw several times a second for nothing.
