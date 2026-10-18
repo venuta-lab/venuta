@@ -49,6 +49,10 @@ const DEFAULTS: Prefs = {
 }
 
 const KEY = 'appearance'
+/** A window showing a theme of its own (a lyrics window's choice): the look here with that
+ *  theme on top, never kept (Venuta's own look stays as it is). */
+let windowTheme: Pick<Prefs, 'style' | 'pack'> | null = null
+const shown = (p: Prefs): Prefs => (windowTheme ? { ...p, ...windowTheme } : p)
 let current: Prefs = load()
 const listeners = new Set<(p: Prefs) => void>()
 
@@ -79,7 +83,9 @@ export const getPrefs = () => current
  */
 export function setPrefs(change: Partial<Prefs>, opts: { save?: boolean } = {}) {
   const was = themeKey(current.style, current.pack)
-  current = { ...current, ...change }
+  // What's kept is Venuta's own look, never a window's theme on top of it.
+  const kept = { ...(windowTheme ? load() : current), ...change }
+  current = shown(kept)
   // A theme chosen: it and the one before it lead the recent row (Settings).
   const now = themeKey(current.style, current.pack)
   if (opts.save !== false && now !== was) {
@@ -87,11 +93,20 @@ export function setPrefs(change: Partial<Prefs>, opts: { save?: boolean } = {}) 
     noteTheme(now)
   }
   try {
-    localStorage.setItem(KEY, JSON.stringify(current))
+    localStorage.setItem(KEY, JSON.stringify(kept))
   } catch {
     // Not remembered on this computer this time; the library copy still is.
   }
-  if (opts.save !== false) void saveAppearance(current).catch(() => {})
+  if (opts.save !== false) void saveAppearance(kept).catch(() => {})
+  applyPrefs()
+  listeners.forEach((l) => l(current))
+}
+
+/** This window shows another theme (a built-in one, or one of yours by its id), or Venuta's
+ *  own again (`null`). Only here, and never kept. */
+export function setWindowTheme(theme: { style: Style } | { pack: string } | null) {
+  windowTheme = theme === null ? null : 'pack' in theme ? { style: load().style, pack: theme.pack } : { style: theme.style, pack: '' }
+  current = shown(load())
   applyPrefs()
   listeners.forEach((l) => l(current))
 }
@@ -178,7 +193,7 @@ onPackChange(() => {
 try {
   window.addEventListener('storage', (e) => {
     if (e.key !== KEY) return
-    current = load()
+    current = shown(load())
     applyPrefs()
     listeners.forEach((l) => l(current))
   })

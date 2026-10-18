@@ -1,5 +1,6 @@
-// How lyrics look on the big screen and on the desktop: one choice, shared by every window (it
-// is kept on this computer and every window hears when it changes).
+// How lyrics look on the big screen and on the desktop: each window its own (kept on this
+// computer; every window hears when either changes). The look from when they shared one is where
+// both begin.
 
 import { useEffect, useState } from 'react'
 
@@ -34,48 +35,72 @@ export const SIZES: { id: LyricSize; name: string; scale: number }[] = [
   { id: 'xl', name: 'Huge', scale: 1.7 },
 ]
 
-const DEFAULT: LyricLook = { look: 'karaoke', size: 'm', colour: 'cover', latin: false, lines: 2 }
-const KEY = 'lyric-look'
+/** What's behind the words: dark (the desktop, the cover's light, a dark theme) or a light theme. */
+export type Ground = 'dark' | 'light'
 
-function read(): LyricLook {
+/** The two lyrics windows: the big screen (`#stage`) and the desktop lyrics (`#overlay`). */
+export type LyricWindow = 'stage' | 'overlay'
+export const LYRIC_WINDOWS: LyricWindow[] = ['stage', 'overlay']
+
+const DEFAULT: LyricLook = { look: 'karaoke', size: 'm', colour: 'cover', latin: false, lines: 2 }
+/** The look when both windows shared one: where each begins. */
+const SHARED = 'lyric-look'
+const keyOf = (w: LyricWindow) => `lyric-look-${w}`
+
+/** A window's look from what's kept (`get` reads a key): its own, else the shared one from
+ *  before, else the default. Anything unreadable falls back the same way. */
+export function readLook(w: LyricWindow, get: (key: string) => string | null): LyricLook {
+  for (const key of [keyOf(w), SHARED]) {
+    try {
+      const raw = get(key)
+      if (raw) return { ...DEFAULT, ...(JSON.parse(raw) as Partial<LyricLook>) }
+    } catch {
+      // On to the next.
+    }
+  }
+  return DEFAULT
+}
+
+const stored = (key: string) => {
   try {
-    const raw = localStorage.getItem(KEY)
-    return raw ? { ...DEFAULT, ...(JSON.parse(raw) as Partial<LyricLook>) } : DEFAULT
+    return localStorage.getItem(key)
   } catch {
-    return DEFAULT
+    return null
   }
 }
 
-let current = read()
-const listeners = new Set<(l: LyricLook) => void>()
+const current: Record<LyricWindow, LyricLook> = { stage: readLook('stage', stored), overlay: readLook('overlay', stored) }
+const listeners = new Set<() => void>()
 
-export function setLyricLook(change: Partial<LyricLook>) {
-  current = { ...current, ...change }
+export function setLyricLook(w: LyricWindow, change: Partial<LyricLook>) {
+  current[w] = { ...current[w], ...change }
   try {
-    localStorage.setItem(KEY, JSON.stringify(current))
+    localStorage.setItem(keyOf(w), JSON.stringify(current[w]))
   } catch {
     // Not kept (private storage): it still applies until the window closes.
   }
-  listeners.forEach((l) => l(current))
+  listeners.forEach((l) => l())
 }
 
-// Another window changed it.
+// Another window changed one.
 if (typeof window !== 'undefined')
   window.addEventListener('storage', (e) => {
-    if (e.key !== KEY) return
-    current = read()
-    listeners.forEach((l) => l(current))
+    const w = LYRIC_WINDOWS.find((x) => e.key === keyOf(x))
+    if (!w) return
+    current[w] = readLook(w, stored)
+    listeners.forEach((l) => l())
   })
 
-export function useLyricLook(): LyricLook {
-  const [look, setLook] = useState(current)
+export function useLyricLook(w: LyricWindow): LyricLook {
+  const [, tick] = useState(0)
   useEffect(() => {
-    listeners.add(setLook)
+    const l = () => tick((n) => n + 1)
+    listeners.add(l)
     return () => {
-      listeners.delete(setLook)
+      listeners.delete(l)
     }
   }, [])
-  return look
+  return current[w]
 }
 
 export const scaleOf = (size: LyricSize) => SIZES.find((s) => s.id === size)?.scale ?? 1

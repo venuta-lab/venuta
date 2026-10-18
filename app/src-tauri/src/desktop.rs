@@ -159,12 +159,10 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
 /// Closing the main window: keep playing in the tray, or quit, as chosen. The first time, the
 /// window asks (and remembers); until then it stays open.
 pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
-    // The desktop lyrics gone (their own Close, the tray, the shortcut, a button here): every
-    // window is told, instead of each asking every few seconds.
-    if window.label() == "overlay" && matches!(event, WindowEvent::Destroyed) {
-        let _ = window
-            .app_handle()
-            .emit(crate::lyric_windows::DESKTOP_LYRICS_EVENT, false);
+    // A lyrics window gone (its own Close, the tray, the shortcut, a button here): every window
+    // is told, instead of each asking every few seconds.
+    if matches!(event, WindowEvent::Destroyed) {
+        crate::lyric_windows::closed(window.app_handle(), window.label());
     }
     if window.label() != "main" {
         return;

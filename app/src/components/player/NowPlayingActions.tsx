@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { askAddSongs } from '../AddToPlaylist'
 import { useEscape } from '../../lib/layers'
 import type { Lyrics } from '../../lib/lyrics'
-import { monitors, openBigScreen, toggleDesktopLyrics, useDesktopLyricsShown, type Monitor } from '../../lib/lyricWindows'
+import { groundOf, monitors, openBigScreen, toggleDesktopLyrics, useDesktopLyricsShown, useLyricWindow, type LyricWindow, type Monitor } from '../../lib/lyricWindows'
 import { notify } from '../../lib/notify'
 import { isSearchCancelled } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
@@ -108,6 +108,9 @@ function Pop(props: { onClose: () => void; className?: string; children: ReactNo
  */
 export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyrics | null; timing: boolean; onTiming: () => void; canTime?: boolean }) {
   const [open, setOpen] = useState<'style' | 'screens' | null>(null)
+  // Which window's look the style panel changes (each keeps its own).
+  const [which, setWhich] = useState<LyricWindow>('stage')
+  const whichBg = useLyricWindow(which).background
   const [screens, setScreens] = useState<Monitor[]>([])
   const desktop = useDesktopLyricsShown()
   const colour = useLyricColour('cover', props.root, props.song.dir)
@@ -166,9 +169,27 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
           <Pop key="style" onClose={() => setOpen(null)} className="w-[356px] p-4">
             <div className="mb-3">
               <div className="text-[14px] font-semibold">Lyric style</div>
-              <div className="mt-0.5 text-[12px] text-ink/55">How the words look on the big screen and the desktop.</div>
+              <div className="mt-0.5 text-[12px] text-ink/55">How the words look on the big screen and on the desktop, each its own.</div>
             </div>
-            <LookPanel tone="app" coverColour={colour} indic={hasIndic(props.lyrics?.lines)} />
+            <div role="radiogroup" aria-label="Which window" className="mb-3 inline-flex rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
+              {(
+                [
+                  ['stage', 'Big screen'],
+                  ['overlay', 'Desktop lyrics'],
+                ] as const
+              ).map(([w, name]) => (
+                <button
+                  key={w}
+                  role="radio"
+                  aria-checked={which === w}
+                  onClick={() => setWhich(w)}
+                  className={`rounded-full px-3 py-1 text-[12.5px] font-medium ${which === w ? 'bg-ink/[0.13] text-ink' : 'text-ink/55 hover:text-ink'}`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+            <LookPanel win={which} ground={groundOf(whichBg)} tone="app" coverColour={colour} indic={hasIndic(props.lyrics?.lines)} lines={which === 'overlay'} />
           </Pop>
         )}
         {open === 'screens' && (

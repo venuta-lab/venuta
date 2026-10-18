@@ -1,15 +1,18 @@
 import type { CSSProperties } from 'react'
-import type { LookId } from '../../lib/lyricLook'
+import type { Ground, LookId } from '../../lib/lyricLook'
 
 /** Words not yet sung, and lines around the one being sung. */
-const DIM = 'rgb(255 255 255 / 0.42)'
-const SHADOW = '0 2px 14px rgb(0 0 0 / 0.55), 0 1px 3px rgb(0 0 0 / 0.5)'
+const DIM: Record<Ground, string> = { dark: 'rgb(255 255 255 / 0.42)', light: 'rgb(0 0 0 / 0.36)' }
+const SHADOW: Record<Ground, string> = {
+  dark: '0 2px 14px rgb(0 0 0 / 0.55), 0 1px 3px rgb(0 0 0 / 0.5)',
+  light: '0 1px 2px rgb(255 255 255 / 0.5)',
+}
 
 /**
  * A line filling in as it is sung: by letters, word after word, so a line that wraps fills its
  * first row and then its second, as it is read.
  */
-function Sung(props: { text: string; progress: number; colour: string }) {
+function Sung(props: { text: string; progress: number; colour: string; dim: string }) {
   const parts = props.text.split(/(\s+)/)
   const letters = props.text.replace(/\s+/g, '').length || 1
   let done = props.progress * letters
@@ -25,7 +28,7 @@ function Sung(props: { text: string; progress: number; colour: string }) {
             key={i}
             style={{
               color: 'transparent',
-              backgroundImage: `linear-gradient(90deg, ${props.colour} ${pct}%, ${DIM} ${pct}%)`,
+              backgroundImage: `linear-gradient(90deg, ${props.colour} ${pct}%, ${props.dim} ${pct}%)`,
               backgroundClip: 'text',
               WebkitBackgroundClip: 'text',
             }}
@@ -54,8 +57,12 @@ export function LyricText(props: {
   px: number
   align?: 'center' | 'left'
   className?: string
+  /** What's behind the words (dark unless said). */
+  ground?: Ground
 }) {
   const { look, now, colour } = props
+  const g = props.ground ?? 'dark'
+  const dim = DIM[g]
   const p = Math.round((props.progress ?? (now ? 1 : 0)) * 1000) / 10
   const base: CSSProperties = {
     fontSize: props.px,
@@ -65,20 +72,21 @@ export function LyricText(props: {
     letterSpacing: '-0.01em',
     fontWeight: 700,
     fontFamily: 'var(--font-ui)',
-    color: now ? colour : DIM,
-    textShadow: SHADOW,
+    color: now ? colour : dim,
+    textShadow: SHADOW[g],
     transition: 'color 300ms ease, opacity 300ms ease',
   }
   const style: CSSProperties = { ...base }
   switch (look) {
     case 'karaoke':
       // Filled word by word in reading order (below), however the line wraps.
-      if (now) Object.assign(style, { color: DIM, textShadow: 'none', filter: 'drop-shadow(0 2px 8px rgb(0 0 0 / 0.55))', transition: 'none' })
+      if (now) Object.assign(style, { color: dim, textShadow: 'none', filter: g === 'dark' ? 'drop-shadow(0 2px 8px rgb(0 0 0 / 0.55))' : 'none', transition: 'none' })
       break
     case 'glow':
       if (now)
-        style.textShadow = `0 0 18px ${colour}, 0 0 46px color-mix(in oklab, ${colour} 70%, transparent), 0 2px 4px rgb(0 0 0 / 0.5)`
-      if (now) style.color = `color-mix(in oklab, ${colour} 35%, white)`
+        style.textShadow = `0 0 18px ${colour}, 0 0 46px color-mix(in oklab, ${colour} 70%, transparent)${g === 'dark' ? ', 0 2px 4px rgb(0 0 0 / 0.5)' : ''}`
+      // Lit from inside: towards white on dark, towards black on light (it still reads).
+      if (now) style.color = `color-mix(in oklab, ${colour} ${g === 'dark' ? '35%, white' : '65%, black'})`
       break
     case 'outline':
       Object.assign(style, {
@@ -109,7 +117,7 @@ export function LyricText(props: {
   }
   return (
     <div className={props.className}>
-      <div style={style}>{look === 'karaoke' && now && props.text ? <Sung text={props.text} progress={p / 100} colour={colour} /> : props.text || '♪'}</div>
+      <div style={style}>{look === 'karaoke' && now && props.text ? <Sung text={props.text} progress={p / 100} colour={colour} dim={dim} /> : props.text || '♪'}</div>
       {props.latin && (
         <div
           style={{
@@ -117,7 +125,7 @@ export function LyricText(props: {
             fontSize: props.px * 0.52,
             fontWeight: 500,
             marginTop: props.px * 0.22,
-            color: now ? 'rgb(255 255 255 / 0.85)' : 'rgb(255 255 255 / 0.4)',
+            color: g === 'dark' ? (now ? 'rgb(255 255 255 / 0.85)' : 'rgb(255 255 255 / 0.4)') : now ? 'rgb(0 0 0 / 0.72)' : 'rgb(0 0 0 / 0.36)',
             WebkitTextStroke: look === 'outline' ? `${Math.max(1.5, props.px / 26)}px rgb(0 0 0 / 0.8)` : undefined,
             paintOrder: 'stroke fill',
           }}

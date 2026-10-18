@@ -3029,6 +3029,7 @@ pub fn run() {
         .manage(Jobs::default())
         .manage(playback::Playback::default())
         .manage(together::Together::default())
+        .manage(lyric_windows::Locks::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
@@ -3145,6 +3146,10 @@ pub fn run() {
             lyric_windows::desktop_lyrics,
             lyric_windows::desktop_lyrics_lock,
             lyric_windows::desktop_lyrics_open,
+            lyric_windows::lyrics_window,
+            lyric_windows::lyrics_window_set,
+            lyric_windows::lyrics_window_open,
+            lyric_windows::lyrics_lock_spot,
             clipboard::clipboard_text,
             playback::player_spectrum,
             listening::listening_summary,

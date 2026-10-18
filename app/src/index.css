@@ -32,10 +32,9 @@ body,
   background: transparent;
 }
 
-/* The big screen is dark whatever the theme; the desktop lyrics have no background at all. */
-:root[data-window="stage"] body {
-  background: #000;
-}
+/* The lyrics windows are see-through: what is behind their words (nothing, the cover's light, or
+   a theme) is drawn by their frame (components/lyrics/LyricsWindow.tsx), inside its own edge. */
+:root[data-window="stage"] body,
 :root[data-window="overlay"] body {
   background: none;
 }

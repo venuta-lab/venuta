@@ -5,6 +5,7 @@ import { inApp } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
 import { setMyName, TOGETHER } from '../../lib/together'
+import { LyricWindowsSettings } from './LyricWindowsSettings'
 
 /*
   Settings > Listening: what plays next, how online songs come, which lyrics sources are asked
@@ -251,6 +252,8 @@ export function ListeningSettings() {
           </button>
         )}
       </div>
+
+      <LyricWindowsSettings />
 
       <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Never offered</h3>
       <Row
