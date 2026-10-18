@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { askAddSongs, askAddToPlaylist } from '../components/AddToPlaylist'
 import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './actionModel'
-import { searchWeb, type CatalogTrack, type PlaylistSummary, type SmartRule } from './engine'
+import { searchWeb, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
 import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
-import { enqueue, play, playAll, songItemOf } from './player'
+import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toRemoteItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
 import { deletePlaylist, duplicatePlaylist, exportPlaylist, goToPlaylists, renamePlaylist } from '../screens/playlists/ops'
@@ -58,6 +58,47 @@ export function songWork(nav: Go, t: CatalogTrack, playIt?: () => void): Work {
   }
 }
 export const songFacts = (t: CatalogTrack): Facts => ({ noArtist: !artistsOf(t).length })
+
+/** The catalog's own page for an online song, to share. */
+export const onlineSongLink = (t: Pick<OnlineTrack, 'track_id'>) => `https://music.youtube.com/watch?v=${encodeURIComponent(t.track_id)}`
+
+/** Put a song's link on the clipboard, and say so. */
+export function copySongLink(t: Pick<OnlineTrack, 'track_id' | 'title'>) {
+  navigator.clipboard
+    .writeText(onlineSongLink(t))
+    .then(() => notify(`Link to “${t.title}” copied.`))
+    .catch(() => notify("Couldn't reach the clipboard."))
+}
+
+/** What online song actions need: the library root, and how to open an artist or an album. */
+type GoOnline = Pick<Nav, 'root' | 'openArtistNamed' | 'openOnlineAlbum'>
+
+/** A song from the online catalog. `playIt`: play it within the list it is in (from that song on). */
+export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => void): Work {
+  const item = toRemoteItem(t)
+  const albumId = t.album_id
+  return {
+    play: playIt ?? (() => void playItems(nav.root, [item], 0)),
+    next: () => void enqueueItems(nav.root, [item], true),
+    queue: () => void enqueueItems(nav.root, [item], false),
+    playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
+    artist: goToEach(t.artists, nav.openArtistNamed),
+    album: albumId
+      ? () =>
+          nav.openOnlineAlbum({
+            provider: t.provider,
+            album_id: albumId,
+            title: t.album ?? t.title,
+            artists: t.artists,
+            track_count: null,
+            release_date: null,
+            artwork_url: t.artwork_url,
+          })
+      : undefined,
+    share: () => copySongLink(t),
+    web: () => void searchWeb(`${t.title} ${t.artists[0] ?? ''}`.trim()),
+  }
+}
 
 export function albumWork(nav: Go, a: Album): Work {
   const from = albumFrom(a)

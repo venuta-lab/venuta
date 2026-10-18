@@ -8,7 +8,7 @@ import type { OnlineAlbum, OnlineTrack } from '../../lib/engine'
 import { OFFLINE } from '../../lib/online'
 import { songLength, enqueueItems, playItems, toRemoteItem } from '../../lib/player'
 import { useNav } from './model'
-import { menuFor } from '../../lib/actions'
+import { menuFor, onlineSongWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { fromOnline, onlineSongs, splitOnlineSongs, withOnlineAlbum, type OnlineSearch } from './onlineSearch'
@@ -333,12 +333,13 @@ export function OnlineTrackRow(props: {
   onAdd: () => void
 }) {
   const t = props.track
+  const nav = useNav()
   const artists = t.artists.join(', ') || 'Unknown artist'
   const menu = () =>
     menuFor(
       'song',
-      { online: true, noArtist: true },
-      { play: props.onPlay, next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd },
+      { online: true, noArtist: !t.artists.length },
+      { ...onlineSongWork(nav, t, props.onPlay), next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd },
     )
   return (
     <div

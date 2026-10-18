@@ -5,7 +5,7 @@ import { IconMore, IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import { quality, type OnlineAlbum, type OnlineArtist } from '../../lib/engine'
 import { loadCovers, useCovers } from '../../lib/covers'
-import { menuFor } from '../../lib/actions'
+import { menuFor, onlineSongWork, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From } from '../../lib/player'
 import { useNav } from './model'
@@ -50,7 +50,8 @@ export function MixedSongs(props: {
   /** Each row's number (an album's track numbers), shown instead of its cover. */
   numbers?: number[]
 }) {
-  const { root } = useNav()
+  const nav = useNav()
+  const { root } = nav
   const cover = useCovers(96)
   const dirs = JSON.stringify([...new Set(props.songs.flatMap((s) => (s.where === 'library' ? [s.track.dir] : [])))])
   useEffect(() => {
@@ -86,17 +87,11 @@ export function MixedSongs(props: {
             ) : (
               <RemoteArt url={s.track.artwork_url} seed={s.track.album || s.track.title} size={40} imgClassName="h-full w-full object-cover" />
             )
+          const playIt = () => void playItems(root, items, i, from)
           const menu = () =>
-            menuFor(
-              'song',
-              { online: s.where === 'online', noArtist: true },
-              {
-                play: () => void playItems(root, items, i, from),
-                next: () => void enqueueItems(root, [item], true),
-                queue: () => void enqueueItems(root, [item], false),
-                playlist: () => askAddSongs([s.where === 'library' ? { path: s.track.path } : { online: onlineEntryFrom(s.track) }], t.title),
-              },
-            )
+            s.where === 'library'
+              ? menuFor('song', songFacts(s.track), songWork(nav, s.track, playIt))
+              : menuFor('song', { online: true, noArtist: !s.track.artists.length }, onlineSongWork(nav, s.track, playIt))
           return (
             <div
               key={queueKey(item)}

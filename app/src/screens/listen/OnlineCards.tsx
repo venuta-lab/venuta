@@ -5,7 +5,7 @@ import { onlineCollection, type MoodTile, type OnlineCollection, type OnlineShel
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
-import { menuFor } from '../../lib/actions'
+import { menuFor, onlineSongWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useNav } from './model'
 import { Shelf } from './parts'
@@ -97,19 +97,9 @@ export function MoodCard({ tile, onOpen }: { tile: MoodTile; onOpen: () => void 
 
 /** A song or video card: playing it plays the row from it. */
 export function OnlineSongCard({ track: t, now, onPlay, width = 168 }: { track: OnlineTrack; now: boolean; onPlay: () => void; width?: number }) {
-  const { root } = useNav()
+  const nav = useNav()
   const wide = isVideo(t)
-  const menu = () =>
-    menuFor(
-      'song',
-      { online: true, noArtist: true },
-      {
-        play: onPlay,
-        next: () => void enqueueItems(root, [toRemoteItem(t)], true),
-        queue: () => void enqueueItems(root, [toRemoteItem(t)], false),
-        playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
-      },
-    )
+  const menu = () => menuFor('song', { online: true, noArtist: !t.artists.length }, onlineSongWork(nav, t, onPlay))
   return (
     <button
       onClick={() => (now ? void toggle() : onPlay())}

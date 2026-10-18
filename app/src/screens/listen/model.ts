@@ -245,6 +245,9 @@ export interface Nav {
   /** `origin` names where the cover was, so it can fly from there to the album page. */
   openAlbum: (dir: string, origin?: string) => void
   openArtist: (name: string) => void
+  /** An artist by name, wherever they are: their page in your library (with their online part)
+   *  when you have music by them, else their online page. */
+  openArtistNamed: (name: string) => void
   /** An online catalog album, as its own page (Back returns to the search). */
   openOnlineAlbum: (album: OnlineAlbum) => void
   /** An online catalog artist, as its own page (Back returns to where it was opened). */
@@ -261,6 +264,7 @@ export const NavContext = createContext<Nav>({
   root: '',
   openAlbum: () => {},
   openArtist: () => {},
+  openArtistNamed: () => {},
   openOnlineAlbum: () => {},
   openOnlineArtist: () => {},
   openOnlineCollection: () => {},

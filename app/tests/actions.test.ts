@@ -85,8 +85,9 @@ test('no action appears twice, and every one has words', () => {
 
 test('an online song plays and is added like any song, but has no file to show or edit', () => {
   const o = ids(actionsFor('song', { online: true, nowPlaying: true }))
-  for (const id of ['play', 'next', 'queue', 'playlist', 'artist', 'moreOnline', 'web'] as const) assert.ok(o.includes(id), id)
-  for (const id of ['album', 'details', 'folder', 'lyrics'] as const) assert.ok(!o.includes(id), id)
+  // Online albums have pages of their own, so an online song goes to its album too.
+  for (const id of ['play', 'next', 'queue', 'playlist', 'artist', 'album', 'moreOnline', 'web'] as const) assert.ok(o.includes(id), id)
+  for (const id of ['details', 'folder', 'lyrics'] as const) assert.ok(!o.includes(id), id)
   assert.ok(ids(actionsFor('song', { online: true, inPlaylist: true })).includes('find'), 'in a playlist: find it in your library')
 })
 
@@ -95,4 +96,20 @@ test('an online album opens, plays and is added, with nothing local to edit', ()
   assert.deepEqual(actionsFor('album', { online: true })[0], PLAY)
   assert.ok(a.includes('open') && a.includes('playlist'))
   assert.ok(!a.includes('details') && !a.includes('folder'))
+})
+
+test('a song can be liked; an online song can also be disliked and its link copied', () => {
+  const local = ids(actionsFor('song', {}))
+  const online = ids(actionsFor('song', { online: true }))
+  assert.ok(local.includes('like') && online.includes('like'))
+  assert.ok(online.includes('dislike') && !local.includes('dislike'), 'dislike steers what the catalog plays next')
+  assert.ok(online.includes('share') && !local.includes('share'), 'a file of yours has no link')
+  // Liking sits right after playing, as in a music app's menu.
+  assert.deepEqual(actionsFor('song', { online: true })[1], ['like', 'dislike'])
+})
+
+test('an online song goes to its artist and its album, like a song of yours', () => {
+  const online = ids(actionsFor('song', { online: true }))
+  assert.ok(online.includes('artist') && online.includes('album'))
+  assert.ok(!online.includes('details') && !online.includes('folder'), 'no file to edit or show')
 })

@@ -1,10 +1,12 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineMore, type OnlineSuggestion } from '../lib/engine'
+import { isSearchCancelled, onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineMore, type OnlineSuggestion } from '../lib/engine'
 import { loadCovers, useCovers } from '../lib/covers'
 import { RemoteArt } from '../components/RemoteArt'
-import { fromOnline } from './listen/onlineSearch'
+import { findOnlineArtist, fromOnline } from './listen/onlineSearch'
+import { notify } from '../lib/notify'
+import { onlineProblem } from '../lib/online'
 import { useCatalog } from '../lib/catalog'
 import { current, isOnline, play, playItems, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
 import { askAddSongs } from '../components/AddToPlaylist'
@@ -22,7 +24,7 @@ import { OnlineShelfPage } from './listen/OnlineShelfPage'
 import { SearchHome } from './listen/SearchHome'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
-import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
+import { artistKey, indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
 
@@ -176,6 +178,11 @@ function Listen(props: Props) {
   const tracks = useCatalog(root, report)
 
   const lib = useMemo(() => indexTracks(tracks ?? []), [tracks])
+  // The library as of now, for opening an artist by name from a menu.
+  const libRef = useRef(lib)
+  useEffect(() => {
+    libRef.current = lib
+  })
   const withCover = useMemo(() => new Set((report?.albums ?? []).filter((a) => a.cover_track).map((a) => a.dir)), [report])
   const hasCover = useCallback((dir: string) => withCover.has(dir), [withCover])
 
@@ -239,6 +246,12 @@ function Listen(props: Props) {
       root,
       openAlbum: (dir, origin) => push({ kind: 'album', dir, origin }),
       openArtist: (name) => push({ kind: 'artist', name }),
+      openArtistNamed: (name) => {
+        if (libRef.current?.byArtist.has(artistKey(name))) return push({ kind: 'artist', name })
+        void findOnlineArtist(name, 'more-by')
+          .then(({ artist }) => (artist ? push({ kind: 'online-artist', artist }) : notify(`No artist page for ${name} in the online catalog.`)))
+          .catch((e) => !isSearchCancelled(e) && notify(onlineProblem(e)))
+      },
       openOnlineAlbum: (album) => push({ kind: 'online-album', album }),
       openOnlineArtist: (artist) => push({ kind: 'online-artist', artist }),
       openOnlineCollection: (collection) => push({ kind: 'online-collection', collection }),
