@@ -78,8 +78,7 @@ function HearingLabel({ how, host }: { how: Hearing; host: string }) {
 
 function syncWords(m: Member): string {
   if (m.away) return 'reconnecting…'
-  if (m.hearing === 'cannot') return 'back for the next song'
-  if (m.hearing === 'stepped_out' || m.hearing === 'opening') return ''
+  if (m.hearing === 'cannot' || m.hearing === 'stepped_out' || m.hearing === 'opening') return ''
   if (m.error_ms === null) return m.host ? 'in charge' : ''
   const e = Math.abs(m.error_ms)
   return e <= 60 ? `in sync ±${e} ms` : 'catching up…'

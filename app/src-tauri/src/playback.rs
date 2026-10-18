@@ -228,7 +228,7 @@ pub enum Button {
 
 type RoomButtons = Arc<Mutex<Option<Arc<dyn Fn(Button) + Send + Sync>>>>;
 
-/// The room has the press when you're in one (said by ).
+/// The room has the press when you're in one (said by `true`).
 fn room_takes(buttons: &RoomButtons, b: Button) -> bool {
     // Out of the lock first: the room's answer may come back to the player.
     let f = buttons.lock().ok().and_then(|f| f.clone());
@@ -241,6 +241,8 @@ pub struct RoomTick {
     pub index: Option<usize>,
     pub duration_ms: u64,
     pub sync: Option<player::engine::SyncStatus>,
+    /// The player stopped on an error (the output refused to open, the song couldn't be read).
+    pub error: bool,
     /// Not a status: time passing with none (the follower looks at the clock).
     pub idle: bool,
 }
@@ -251,6 +253,7 @@ impl RoomTick {
             index: None,
             duration_ms: 0,
             sync: None,
+            error: false,
             idle: true,
         }
     }
@@ -392,6 +395,7 @@ impl Playback {
                             index: s.index,
                             duration_ms: s.duration_ms,
                             sync: s.sync,
+                            error: !s.error.is_empty(),
                             idle: false,
                         });
                     }
