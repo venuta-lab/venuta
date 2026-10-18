@@ -874,6 +874,17 @@ fn entry_keys(lib: &Library, e: &PlaylistEntry) -> Vec<String> {
 /// "Your liked songs" when another list has that name, such as Spotify's). A song already
 /// liked (as your file or online) stays where it is. Returns the list's name.
 pub fn like(library_root: &Path, lib: &Library, item: &Item) -> Result<String, String> {
+    like_many(library_root, lib, std::slice::from_ref(item)).map(|(name, _)| name)
+}
+
+/// Like several songs in one write: the ones not liked yet go on top of your Liked songs, in the
+/// order given (the first ends up first). A song liked already, or twice in `items`, stays once.
+/// Returns the list's name and how many were added.
+pub fn like_many(
+    library_root: &Path,
+    lib: &Library,
+    items: &[Item],
+) -> Result<(String, usize), String> {
     let name = match liked_name(library_root) {
         Some(n) => n,
         None => {
@@ -891,16 +902,23 @@ pub fn like(library_root: &Path, lib: &Library, item: &Item) -> Result<String, S
         }
     };
     let (entries, _) = read(library_root, lib, &name)?;
-    let keys = item_keys(lib, item);
-    let liked_already = entries
-        .iter()
-        .any(|e| entry_keys(lib, e).iter().any(|k| keys.contains(k)));
-    if !liked_already {
-        let mut all = vec![item.clone()];
+    let mut seen: std::collections::HashSet<String> =
+        entries.iter().flat_map(|e| entry_keys(lib, e)).collect();
+    let mut all: Vec<Item> = Vec::new();
+    for item in items {
+        let keys = item_keys(lib, item);
+        if keys.iter().any(|k| seen.contains(k)) {
+            continue;
+        }
+        seen.extend(keys);
+        all.push(item.clone());
+    }
+    let added = all.len();
+    if added > 0 {
         all.extend(entries.iter().map(PlaylistEntry::item));
         write_items(library_root, lib, &name, &all, false, None)?;
     }
-    Ok(name)
+    Ok((name, added))
 }
 
 /// Take a song out of your Liked songs, however it is held there (your file or online).
@@ -3373,6 +3391,32 @@ mod tests {
                 .iter()
                 .any(|p| p.name == name && p.liked)
         );
+    }
+
+    #[test]
+    fn liking_many_adds_the_new_ones_on_top_in_order_once() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        let old = online("t-0", "Zingaat", "Ajay-Atul");
+        like(root.path(), &lib, &Item::online(old.clone())).unwrap();
+        let a = online("t-1", "Kesariya", "Arijit Singh");
+        let b = online("t-2", "Apna Bana Le", "Arijit Singh");
+        let items = [
+            Item::online(a.clone()),
+            Item::online(old.clone()),
+            Item::online(b.clone()),
+            Item::online(a.clone()),
+        ];
+        let (name, added) = like_many(root.path(), &lib, &items).unwrap();
+        assert_eq!(added, 2, "the liked one and the repeat stay once");
+        let (e, _) = read(root.path(), &lib, &name).unwrap();
+        let ids: Vec<&str> = e
+            .iter()
+            .filter_map(|e| e.online.as_ref().map(|o| o.track_id.as_str()))
+            .collect();
+        assert_eq!(ids, ["t-1", "t-2", "t-0"]);
+        let (_, again) = like_many(root.path(), &lib, &items).unwrap();
+        assert_eq!(again, 0);
     }
 
     #[test]
