@@ -36,6 +36,7 @@ Free and open source. No account, no ads, no tracking.
 | **Beautiful, on your own files**<br>Album-art backgrounds, 18 themes, a modern home for the music you own. | **Bring your playlists home**<br>Paste a Spotify, Apple Music or YouTube Music link. Matched to your files in seconds. |
 | **Lyrics everywhere**<br>Synced in Now Playing, full screen on your TV, floating over your desktop. | **Your player, sorted**<br>Playlists and albums onto your DAP's card, written and converted for it. |
 | **Know your FLACs are real**<br>Spots fake hi-res and lossy files dressed up as lossless. | **Bit-perfect, gapless, hi-res**<br>Exclusive WASAPI straight to your DAC, with every step shown. |
+| **Listen together**<br>The same song at the same moment with friends anywhere, each from their best copy. | **Your music and the catalog, as one**<br>The online catalog beside your files. Or Local only, and nothing online. |
 
 ## Lyrics everywhere
 
@@ -43,8 +44,9 @@ Free and open source. No account, no ads, no tracking.
 
 - **Synced lyrics** that follow the song, for most of your library, found for you. Click a line to
   jump to it.
-- **Big screen** (F11) puts them on your TV or a second monitor. **Desktop lyrics**
-  (Ctrl+Shift+D) float over every window, even your browser.
+- **Big screen** (F11) fills your TV or a second monitor. **Desktop lyrics** (Ctrl+Shift+D)
+  float over every window as a strip you move, size and lock so clicks pass through. Each in
+  Clear, Glass, Frosted, the cover's light or any theme.
 - **Six styles**, in the colour of the cover. Songs without timing? Tap along once and they're
   timed forever.
 
@@ -88,7 +90,8 @@ albums and artists you want.
 - **Only what changed is written**, it picks up where it left off if you pull the card, it can sync
   itself the moment you plug it in, and it never touches files it didn't put there.
 
-**Coming next**: phones and Android players over USB, and Wi-Fi sync to your phone, iPhone included.
+**Over Wi-Fi**, a Subsonic app on your phone (Android or iPhone) plays your library and keeps albums
+and playlists for offline. **Coming next**: phones and Android players over USB.
 
 ## Bit-perfect, when it matters
 
@@ -124,6 +127,16 @@ albums and artists you want.
 One search for everything, forgiving of spelling and across scripts: "kesariya" finds केसरिया, in
 names and in lyrics. Your library comes first; below it, the online catalog plays songs you don't
 own yet, with the original recording ahead of covers.
+
+## Listen together
+
+Start a room and send friends the invite. Everyone hears the same song at the same moment, each
+from their best copy: their own file, the online song, or yours streamed to them. Over the
+internet or your home Wi-Fi, with no account.
+
+- **You choose who does what**: control, add songs or just listen, per person.
+- **The room's queue** for everyone, with who added each song; your own queue back when you leave.
+- **Same room** keeps speakers that hear each other within a millisecond or two.
 
 ## Make it yours
 
@@ -167,7 +180,8 @@ or crossfade changes them.
 <summary><b>Will it work with my DAP or phone?</b></summary>
 Anything that reads an SD card or shows up as a drive works today, with ready-made profiles for
 Astell&Kern, Snowsky Echo Mini and Disc, and Poweramp on Android, and an exact copy for any other
-player. Phones and Android players over USB, and Wi-Fi sync, are coming next.
+player. Over Wi-Fi, Subsonic apps on Android and iPhone play your library and keep it for
+offline. Phones and Android players over USB are coming next.
 </details>
 
 <details>
@@ -186,7 +200,7 @@ The installer isn't code-signed yet, so SmartScreen doesn't know it. Choose <b>M
 <details>
 <summary><b>Where does my data live?</b></summary>
 In your library folder (a hidden <code>.venuta</code> folder beside your music), so it moves with
-your library. Nothing leaves your PC except what you ask for: lookups for lyrics and covers, the online catalog, and the daily check for updates.
+your library. Nothing leaves your PC except what you ask for: lookups for lyrics and covers, the online catalog, rooms you start or join, and the daily check for updates.
 </details>
 
 ## Install

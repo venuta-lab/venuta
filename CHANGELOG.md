@@ -1,5 +1,36 @@
 # Changes
 
+## 0.3.0 (2026-10-18)
+
+- **Listen together.** Start a room from the title bar and send the invite. Everyone hears the
+  same song at the same moment, each from their own file, the online song, or yours streamed to
+  them, over the internet or your home Wi-Fi, with no account. You choose who can control, add
+  songs or just listen.
+- **Lyrics windows, made over.** The big screen fills a TV or a second monitor and clears that
+  screen while it shows. The desktop lyrics are a strip you move, size from any edge and lock so
+  clicks pass through. Each has its own background (Clear, Glass, Frosted, the cover's light or
+  the theme's scene), its own theme and its own style.
+- **The online catalog beside your music.** Songs, albums, artists, playlists, podcasts and
+  videos, with suggestions as you type, moods and genres with their own pictures, and pages like
+  a music app's. Online songs start in a fraction of a second, play as Opus, show their waveform
+  and are levelled like your files.
+- **Your music, always in reach.** Your music on Home and in Search opens everything on this PC,
+  and genres bring your files and the catalog together. **Local only** shows just your own music
+  and makes no online requests at all.
+- **Sign in with Google** for your YouTube Music Home, playlists and radios. Likes go both ways.
+- **Liked songs**, radio from any song or artist, autoplay when a queue runs out, dislike a song,
+  block an artist, and **Listening**: your stats and history.
+- **A new Home**: a greeting, mood chips, Quick picks, the catalog's rows and the Shortcuts you
+  pin. **Edit Home** puts sections in your order and sizes the cards.
+- **Eight lyrics sources**, chosen per song, and lyrics for online songs everywhere.
+- **Phones over Wi-Fi**: Subsonic apps on Android and iPhone play your library and keep albums
+  and playlists for offline.
+- **Shortcuts from anywhere** on the keys you choose, one search in the title bar, Ctrl+K finds
+  music first, the interface size, a proxy for online requests, what Venuta keeps (and clearing
+  it), song notifications, and pre-releases for trying a version early.
+- **Fixed**: albums go straight into a card's music folder; ejecting from a card reader says it
+  worked; Layer Zero's cursor stays steady while a song plays.
+
 ## 0.2.3 (2026-10-16)
 
 - **Playlists play straight through.** Songs you don't have play from the online catalog in

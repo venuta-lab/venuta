@@ -53,17 +53,41 @@ tray, the windows and the shortcuts that open Venuta; the program file keeps Dus
 ## Lyrics
 
 - **In Now Playing**, synced lyrics follow the song; click a line to jump to it.
-- **Big screen** (F11): the lyrics on a whole screen, for a TV or a second monitor, with the
-  next line coming in. Esc closes it, T adds Roman letters to lines in Indian scripts.
-- **Desktop lyrics** (Ctrl+Shift+D, from anywhere, or the tray): the lines alone over every
-  window; clicks pass through them. **Move desktop lyrics** in the tray unlocks them to drag,
-  size and restyle.
-- **Style**: Clean, Karaoke, Glow, Outline, Serif or your theme's own type, in the cover's
-  colour, the accent or white, in four sizes. One choice for the big screen and the desktop.
+- **Big screen** (F11): the lyrics filling a TV or a second monitor, with the next line coming
+  in. While it shows, the other windows on that screen are minimized, and they come back as they
+  were when it closes. Move the mouse for its controls; Esc closes it, Space plays and pauses,
+  the arrows skip through the song, T adds Roman letters to lines in Indian scripts.
+- **Desktop lyrics** (Ctrl+Shift+D, from anywhere, or the tray): the lines in a strip over every
+  window. Unlocked, point at them to move them, size them from any edge and change them; **Lock**
+  lets clicks pass through. Locked, point at them and a small lock appears to open them again.
+- **Background, theme and style**, for each window on its own: Clear (nothing but the words),
+  Glass, Frosted, the cover's light, or the theme's own scene; Venuta's theme or any other; and
+  Clean, Karaoke, Glow, Outline, Serif or the theme's type, in the cover's colour, the accent or
+  white, in four sizes. Both start out looking like Venuta. **Settings > Listening > Lyrics
+  windows** has the same, for when nothing is playing.
 - **Time lyrics yourself**: for words with no timing, play the song and press Space as each
   line begins; Backspace steps back, B marks a break, ← → nudge a line by a tenth of a second.
   The timing is saved as a `.lrc` beside the song (the song itself is never changed) and can be
   undone in Activity.
+
+## Listen together
+
+The people icon in the title bar starts a room: what you're playing goes on, now for everyone
+in it. Copy the invite (a link, or a QR code) and send it to friends; each of them knocks, and
+you let them in.
+
+- **Everyone hears the same moment**, each from their best copy: their own file of the song, the
+  online song, or yours, streamed to them from your PC. Over the internet or on your home Wi-Fi,
+  with no account.
+- **You choose who does what**: control, add songs, or just listen, for everyone new and for each
+  person. You can undo the last skip or change, and take someone out.
+- **The room's queue** shows in the queue drawer, with who added each song. Your own queue comes
+  back, paused, when you leave.
+- **Step out** pauses just for you; **Catch up** brings you back to where the room is.
+- **Same room** (for speakers that hear each other) keeps every player within a millisecond or
+  two, at the cost of bit-perfect playback while it corrects.
+- **Settings > Listening > Listen together**: the name others see, hiding your IP address (the
+  connection goes through a relay), and your own relay.
 
 ## Search
 
