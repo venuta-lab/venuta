@@ -10,8 +10,9 @@
 use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
-    CancellationToken, EphemeralAudio, MediaHeader, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemotePlaylist, RemoteTrack,
+    CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page, PageRequest,
+    RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteTrack,
+    SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -103,6 +104,33 @@ trait LiveBackend: Send + Sync {
         video_id: &str,
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
+
+    fn suggest(
+        &self,
+        input: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SearchSuggestions, AccessError>;
+
+    fn search_cards(
+        &self,
+        query: &str,
+        kind: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError>;
+
+    fn search_videos(
+        &self,
+        query: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteTrack>, AccessError>;
+
+    fn moods(&self, cancel: &CancellationToken) -> Result<Vec<MoodSection>, AccessError>;
+
+    fn mood(
+        &self,
+        params: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError>;
 }
 
 /// The live catalog over the shared YouTube Music client.
@@ -418,6 +446,111 @@ impl LiveBackend for YtmBackend {
         }
         // 3) The older multi-identity resolver, started only now.
         self.legacy()?.resolve(video_id, cancel)
+    }
+
+    fn suggest(
+        &self,
+        input: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SearchSuggestions, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let found = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .search_suggestions(client, input)
+                .await
+                .map_err(|_| {
+                    AccessError::new(AccessErrorKind::Transport, "catalog suggestions failed")
+                })
+        }))?;
+        Ok(crate::catalog_cards::suggestions_of(&found))
+    }
+
+    fn search_cards(
+        &self,
+        query: &str,
+        kind: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let cards = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .search_cards(client, query, kind)
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog search failed"))
+        }))?;
+        let kind = if kind == "podcasts" {
+            "podcast"
+        } else {
+            "playlist"
+        };
+        Ok(cards
+            .iter()
+            .filter(|c| c.kind != "song")
+            .filter_map(|c| crate::catalog_cards::collection_of(c, kind))
+            .collect())
+    }
+
+    fn search_videos(
+        &self,
+        query: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteTrack>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let found = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .search_videos(client, query)
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog search failed"))
+        }))?;
+        Ok(found
+            .items
+            .iter()
+            .filter_map(crate::catalog_cards::track_of_row)
+            .collect())
+    }
+
+    fn moods(&self, cancel: &CancellationToken) -> Result<Vec<MoodSection>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let sections = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .moods(client)
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog moods failed"))
+        }))?;
+        Ok(sections
+            .into_iter()
+            .map(|s| MoodSection {
+                title: s.title,
+                tiles: s
+                    .items
+                    .into_iter()
+                    .map(|m| MoodTile {
+                        title: m.title,
+                        params: m.params,
+                        color: m.color,
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    fn mood(
+        &self,
+        params: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let cards = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .browse_grid(client, "FEmusic_moods_and_genres_category", Some(params))
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog page failed"))
+        }))?;
+        Ok(cards
+            .iter()
+            .filter(|c| c.kind == "playlist" || c.kind == "album")
+            .filter_map(|c| crate::catalog_cards::collection_of(c, "playlist"))
+            .collect())
     }
 }
 
@@ -1213,6 +1346,79 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         self.backend.resolve(track_id.trim(), cancel)
+    }
+
+    fn suggest(
+        &self,
+        input: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SearchSuggestions, AccessError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Ok(SearchSuggestions::default());
+        }
+        self.backend.suggest(input, cancel)
+    }
+
+    fn search_collections(
+        &self,
+        query: &str,
+        kind: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteCollection>, AccessError> {
+        let query = query.trim();
+        if query.is_empty() || !matches!(kind, "playlists" | "podcasts") {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "search playlists or podcasts for some words",
+            ));
+        }
+        let mut items = self.backend.search_cards(query, kind, cancel)?;
+        items.truncate(page.limit.clamp(1, 100));
+        Ok(Page {
+            items,
+            next_cursor: None,
+        })
+    }
+
+    fn search_videos(
+        &self,
+        query: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteTrack>, AccessError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "search query must not be empty",
+            ));
+        }
+        let mut items = self.backend.search_videos(query, cancel)?;
+        items.truncate(page.limit.clamp(1, 100));
+        Ok(Page {
+            items,
+            next_cursor: None,
+        })
+    }
+
+    fn moods(&self, cancel: &CancellationToken) -> Result<Vec<MoodSection>, AccessError> {
+        self.backend.moods(cancel)
+    }
+
+    fn mood_collections(
+        &self,
+        params: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        if params.trim().is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which mood?",
+            ));
+        }
+        self.backend.mood(params.trim(), cancel)
     }
 }
 

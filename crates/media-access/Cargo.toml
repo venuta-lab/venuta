@@ -39,3 +39,7 @@ required-features = ["live-provider"]
 [[example]]
 name = "catalog_timing"
 required-features = ["live-provider"]
+
+[[example]]
+name = "catalog_explore"
+required-features = ["live-provider"]

@@ -8,6 +8,8 @@
 
 mod access;
 mod art_url;
+#[cfg(feature = "live-provider")]
+mod catalog_cards;
 mod catalog_json;
 mod fake;
 #[cfg(feature = "live-provider")]
@@ -37,7 +39,8 @@ pub use region::{CatalogRegion, catalog_region};
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
-    Availability, CancellationToken, EphemeralAudio, MediaHeader, ONLINE_PLAYLIST_TAG, Page,
-    PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteArtistPage, RemotePlaylist,
-    RemoteTrack,
+    Availability, CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile,
+    ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist,
+    RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };

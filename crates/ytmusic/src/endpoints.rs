@@ -27,6 +27,8 @@ pub const FILTER_VIDEO: &str = "EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D";
 pub const FILTER_ALBUM: &str = "EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D";
 pub const FILTER_ARTIST: &str = "EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D";
 pub const FILTER_COMMUNITY_PLAYLIST: &str = "EgeKAQQoAEABagoQAxAEEAoQCRAF";
+/// Podcast shows (ytmusicapi's `JQ` filter, in the same parameter shape as the others).
+pub const FILTER_PODCAST: &str = "EgWKAQJQAWoKEAkQChAFEAMQBA%3D%3D";
 
 /// A comment's like/unlike/dislike/undislike and delete: `{context, actions: [<token>]}`.
 pub const COMMENT_ACTION_PATH: &str = "comment/perform_comment_action";
@@ -230,6 +232,7 @@ impl InnerTube {
             "albums" => FILTER_ALBUM,
             "artists" => FILTER_ARTIST,
             "playlists" => FILTER_COMMUNITY_PLAYLIST,
+            "podcasts" => FILTER_PODCAST,
             other => return Err(Error::Other(format!("unknown search category: {other}"))),
         };
         // No history: "Show more" repeats the query the search page already recorded.

@@ -1,6 +1,6 @@
 use crate::types::{
-    CancellationToken, EphemeralAudio, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemotePlaylist, RemoteTrack,
+    CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum, RemoteArtist,
+    RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -107,6 +107,56 @@ pub trait MediaAccess: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
 
+    /// What the catalog suggests for half-typed words (completions, and a few songs, albums,
+    /// artists and playlists). A catalog without suggestions answers Unsupported.
+    fn suggest(
+        &self,
+        input: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SearchSuggestions, AccessError> {
+        let _ = (input, cancel);
+        Err(unsupported("suggestions"))
+    }
+
+    /// Playlists (`kind` "playlists") or podcasts (`kind` "podcasts") for these words.
+    fn search_collections(
+        &self,
+        query: &str,
+        kind: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteCollection>, AccessError> {
+        let _ = (query, kind, page, cancel);
+        Err(unsupported("playlist and podcast search"))
+    }
+
+    /// Videos for these words: the live sets, covers and uploads that never had a release.
+    fn search_videos(
+        &self,
+        query: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteTrack>, AccessError> {
+        let _ = (query, page, cancel);
+        Err(unsupported("video search"))
+    }
+
+    /// The catalog's moods and genres to browse.
+    fn moods(&self, cancel: &CancellationToken) -> Result<Vec<MoodSection>, AccessError> {
+        let _ = cancel;
+        Err(unsupported("moods and genres"))
+    }
+
+    /// The playlists of one mood or genre (`params` from its tile).
+    fn mood_collections(
+        &self,
+        params: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        let _ = (params, cancel);
+        Err(unsupported("moods and genres"))
+    }
+
     /// Forget any remembered stream address for this song, so the next resolve asks afresh (the
     /// old address stopped working partway). Catalogs that remember nothing ignore it.
     fn forget(&self, track_id: &str) {
@@ -126,6 +176,13 @@ pub trait MediaAccess: Send + Sync {
             "artist pages are not available from this catalog",
         ))
     }
+}
+
+fn unsupported(what: &str) -> AccessError {
+    AccessError::new(
+        AccessErrorKind::Unsupported,
+        format!("{what} are not available from this catalog"),
+    )
 }
 
 /// Default factory used by the app and release builds.
@@ -307,6 +364,45 @@ impl MediaAccess for CachedAccess {
             cache.insert(id.to_owned(), (Instant::now(), audio.clone()));
         }
         Ok(audio)
+    }
+
+    fn suggest(
+        &self,
+        input: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SearchSuggestions, AccessError> {
+        self.inner.suggest(input, cancel)
+    }
+
+    fn search_collections(
+        &self,
+        query: &str,
+        kind: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteCollection>, AccessError> {
+        self.inner.search_collections(query, kind, page, cancel)
+    }
+
+    fn search_videos(
+        &self,
+        query: &str,
+        page: &PageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Page<RemoteTrack>, AccessError> {
+        self.inner.search_videos(query, page, cancel)
+    }
+
+    fn moods(&self, cancel: &CancellationToken) -> Result<Vec<MoodSection>, AccessError> {
+        self.inner.moods(cancel)
+    }
+
+    fn mood_collections(
+        &self,
+        params: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        self.inner.mood_collections(params, cancel)
     }
 
     fn forget(&self, track_id: &str) {

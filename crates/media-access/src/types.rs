@@ -175,6 +175,68 @@ pub struct RemoteArtist {
     pub audience: Option<u64>,
 }
 
+/// A playlist or podcast card from the online catalog: what it is called, its owner line
+/// ("YouTube Music • 50 songs", "T-Series • 550K views") and its cover. Opening it lists its songs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCollection {
+    pub provider: String,
+    /// The catalog page id (a playlist's `VL…`, a podcast's `MPSP…`).
+    pub collection_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    /// "playlist" or "podcast".
+    pub kind: String,
+}
+
+/// One thing the catalog suggests while words are typed: a song to play, or an album, artist
+/// or playlist to open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RemoteSuggestion {
+    Song {
+        track: RemoteTrack,
+    },
+    Album {
+        album: RemoteAlbum,
+        subtitle: Option<String>,
+    },
+    Artist {
+        artist: RemoteArtist,
+        subtitle: Option<String>,
+    },
+    Playlist {
+        collection: RemoteCollection,
+    },
+}
+
+/// What the catalog suggests for half-typed words: completions of the words (spelling fixed),
+/// and a few matching songs, albums, artists and playlists, in the catalog's order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchSuggestions {
+    pub queries: Vec<String>,
+    pub items: Vec<RemoteSuggestion>,
+}
+
+/// A browse tile: a mood ("Chill", "Workout") or a genre, and the color the catalog gives it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoodTile {
+    pub title: String,
+    /// Opaque token that opens this mood's page.
+    pub params: String,
+    /// `#rrggbb`.
+    pub color: String,
+}
+
+/// A titled group of tiles ("Moods & moments", "Genres"), in the catalog's order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoodSection {
+    pub title: String,
+    pub tiles: Vec<MoodTile>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageRequest {
     pub limit: usize,
