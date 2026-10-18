@@ -33,10 +33,12 @@ import {
   fromIs,
   onlineEntryFrom,
   onlineItem,
+  onlineTrackOf,
   playAllItems,
   playItems,
   queueKey,
   songItemOf,
+  toItem,
   toggle,
   usePlayerValue,
   type QueueItem,
@@ -50,9 +52,11 @@ import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { Mosaic } from '../../components/Mosaic'
 import { RemoteArt } from '../../components/RemoteArt'
 import { Detail, Segmented } from '../../components/ui'
-import { IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
+import { IconMore, IconPause, IconPlay, IconSelect, IconShuffle } from '../../components/Icons'
+import { PickMark, SelectBar } from '../../components/SelectBar'
+import { NO_PICKS, pick, pickAll, type Picks } from '../../lib/selection'
 import { Equalizer } from '../listen/parts'
-import { menuFor, songFacts, songWork } from '../../lib/actions'
+import { menuFor, onlineSongWork, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useDropTarget } from '../../lib/drag'
 import { AddSongs } from './AddSongs'
@@ -306,12 +310,24 @@ export function PlaylistPage(props: {
           ? 'all'
           : show
   const position = useMemo(() => new Map((rows ?? []).map((r, i) => [r.key, i])), [rows])
+  // "Search this playlist": the songs that hold every word, by title, artist or album.
+  const [words, setWords] = useState('')
+  const has = useMemo(() => (words.trim() ? matcher(words) : null), [words])
+  // Picking songs to act on them together (Select).
+  const [selecting, setSelecting] = useState(false)
+  const [picks, setPicks] = useState<Picks>(NO_PICKS)
+  const stopSelecting = () => {
+    setSelecting(false)
+    setPicks(NO_PICKS)
+  }
   const visible = useMemo(
     () =>
-      (rows ?? []).filter((r) =>
-        view === 'here' ? !r.missing : view === 'online' ? isRemote(r) : view === 'get' ? toGet(r) : true,
+      (rows ?? []).filter(
+        (r) =>
+          (view === 'here' ? !r.missing : view === 'online' ? isRemote(r) : view === 'get' ? toGet(r) : true) &&
+          (!has || has(keyFor(r, () => `${r.title} ${r.artist} ${r.album}`)) > 0),
       ),
-    [rows, view],
+    [rows, view, has],
   )
   const groups = useMemo(() => (view === 'get' ? byAlbum(visible) : []), [view, visible])
   // What the list draws: the songs, or (To get) each album's heading and its songs.
@@ -518,10 +534,37 @@ export function PlaylistPage(props: {
     void persist(next, one ? `“${one.title}” plays online from ${name} now.` : `${plural(chosen.length, 'song')} play online from ${name} now.`, before)
   }
 
+  const visibleKeys = useMemo(() => visible.map((r) => r.key), [visible])
+  const pickedRows = useMemo(() => {
+    const set = new Set(picks.keys)
+    return (rows ?? []).filter((r) => set.has(r.key))
+  }, [rows, picks])
+  const pickedSongs = useMemo(
+    () =>
+      pickedRows.flatMap((r): QueueItem[] => {
+        if (toGet(r)) return []
+        if (r.online && r.missing) return [onlineItem(r.online)]
+        return tracksFor([r.path]).map(toItem)
+      }),
+    [pickedRows],
+  )
+  const removePicked = () => {
+    const before = latest.current
+    const gone = new Set(picks.keys)
+    const n = before.filter((x) => gone.has(x.key)).length
+    stopSelecting()
+    void persist(
+      before.filter((x) => !gone.has(x.key)),
+      n === 1 ? `Removed a song from ${name}.` : `Removed ${n} songs from ${name}.`,
+      before,
+    )
+  }
+
   const rowFor = (r: Row, style: React.CSSProperties, grab: Grab | null, inGroup: boolean) => (
     <PlaylistRow
       key={r.key}
       row={r}
+      pick={selecting ? { picked: picks.keys.includes(r.key), onPick: (range) => setPicks((p) => pick(p, visibleKeys, r.key, { range })) } : undefined}
       index={position.get(r.key) ?? 0}
       smart={smart}
       style={style}
@@ -638,6 +681,12 @@ export function PlaylistPage(props: {
             ) : (
               <button onClick={() => setAdding((o) => !o)} aria-expanded={adding} className="btn-ghost btn-lg">
                 {adding ? 'Done adding' : 'Add songs'}
+              </button>
+            )}
+            {(rows?.length ?? 0) > 0 && (
+              <button onClick={() => (selecting ? stopSelecting() : setSelecting(true))} aria-pressed={selecting} className="btn-ghost btn-lg">
+                <IconSelect width={18} height={18} />
+                Select
               </button>
             )}
             <button onClick={(e) => menuFromEvent(e, pageMenu())} onContextMenu={(e) => menuFromEvent(e, pageMenu())} aria-label="More for this playlist" title="More" className="grid h-10 w-10 place-items-center rounded-full text-ink/70 transition-colors hover:bg-ink/10 hover:text-ink active:scale-90">
@@ -779,14 +828,30 @@ export function PlaylistPage(props: {
         </div>
       )}
 
+      {rows && rows.length > 4 && (
+        <div className={`flex justify-end ${(missing > 0 || online.length > 0) && !smart ? 'mt-4' : 'mt-9'}`}>
+          <input
+            type="search"
+            value={words}
+            onChange={(e) => setWords(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && words && (e.stopPropagation(), setWords(''))}
+            placeholder="Search this playlist"
+            aria-label="Search this playlist"
+            className="field h-9 w-[240px] rounded-full px-4 text-[13px]"
+          />
+        </div>
+      )}
+      {rows && rows.length > 0 && words.trim() && !visible.length && (
+        <p className="py-6 text-[13px] text-ink/55">No song in this playlist has “{words.trim()}”.</p>
+      )}
       {rows && rows.length > 0 && (
-        <div className={(missing > 0 || online.length > 0) && !smart ? 'mt-4' : 'mt-9'}>
+        <div className={rows.length > 4 ? 'mt-3' : (missing > 0 || online.length > 0) && !smart ? 'mt-4' : 'mt-9'}>
           <WindowedList
             lines={lines}
             rowHeight={64}
             headHeight={52}
             label={name}
-            movable={view === 'all' && !smart}
+            movable={view === 'all' && !smart && !words.trim() && !selecting}
             onMove={(from, to) => {
               const next = latest.current.slice()
               const [moved] = next.splice(from, 1)
@@ -797,6 +862,20 @@ export function PlaylistPage(props: {
           />
         </div>
       )}
+
+      {selecting && <div aria-hidden className="h-24" />}
+      <SelectBar
+        open={selecting}
+        root={root}
+        items={pickedSongs}
+        count={pickedRows.length}
+        total={visibleKeys.length}
+        from={from}
+        label={name}
+        more={smart ? [] : [{ label: 'Remove from playlist', run: removePicked }]}
+        onAll={() => setPicks((p) => pickAll(p, visibleKeys))}
+        onDone={stopSelecting}
+      />
 
       <AnimatePresence>
         {picking && (
@@ -890,6 +969,8 @@ function Title(props: { name: string; editable: boolean; startEditing: boolean; 
 function PlaylistRow(props: {
   root: string
   row: Row
+  /** Picking songs (Select): a click picks the row (Shift: up to it). */
+  pick?: { picked: boolean; onPick: (range: boolean) => void }
   /** Its place in the playlist (shown as its number, whatever is filtered). */
   index: number
   smart: boolean
@@ -927,10 +1008,12 @@ function PlaylistRow(props: {
     const web = () => void searchWeb(`${wordsFor(r)} ${r.album}`.trim())
     if (remote && r.online) {
       const item = onlineItem(r.online)
+      const t = onlineTrackOf(r.online)
       return menuFor(
         'song',
-        { online: true, inPlaylist: true, smart: props.smart, noArtist: true },
+        { online: true, inPlaylist: true, smart: props.smart, noArtist: !t.artists.length },
         {
+          ...onlineSongWork(nav, t, props.onPlay),
           play: props.onPlay,
           next: () => void enqueueItems(props.root, [item], true),
           queue: () => void enqueueItems(props.root, [item], false),
@@ -969,21 +1052,28 @@ function PlaylistRow(props: {
 
   return (
     <div
-      role="listitem"
       aria-keyshortcuts={grab ? MOVE_KEYS : undefined}
       style={props.style}
       aria-label={get ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
       onContextMenu={(e) => menuFromEvent(e, rowMenu())}
+      role={props.pick ? 'checkbox' : 'listitem'}
+      aria-checked={props.pick ? props.pick.picked : undefined}
       onClick={(e) => {
         if (grab?.justDropped() || (e.target as HTMLElement).closest('button')) return
-        if (!get) props.onPlay()
+        if (props.pick) props.pick.onPick(e.shiftKey)
+        else if (!get) props.onPlay()
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (grab && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
           e.preventDefault()
           grab.nudge(e.key === 'ArrowUp' ? -1 : 1)
+          return
+        }
+        if (props.pick && (e.key === ' ' || e.key === 'Enter')) {
+          e.preventDefault()
+          props.pick.onPick(e.shiftKey)
           return
         }
         if (e.key === 'Enter') {
@@ -994,9 +1084,13 @@ function PlaylistRow(props: {
       }}
       className={`row group absolute inset-x-0 grid grid-cols-[22px_32px_44px_minmax(0,1fr)_minmax(0,0.8fr)_52px_32px] items-center gap-3 rounded-xl px-2 transition-colors ${
         get ? 'cursor-default hover:bg-ink/[0.03]' : 'cursor-pointer hover:bg-ink/[0.05] active:bg-ink/[0.09]'
-      } ${isNow ? 'text-accent-ink' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
+      } ${isNow ? 'text-accent-ink' : ''} ${props.pick?.picked ? 'bg-ink/[0.07]' : ''} ${grab?.dragging ? 'scale-[1.01] bg-[var(--popover)] shadow-[0_14px_32px_-12px_rgb(0_0_0/0.55)]' : ''}`}
     >
-      {!grab ? (
+      {props.pick ? (
+        <span className="grid place-items-center">
+          <PickMark picked={props.pick.picked} />
+        </span>
+      ) : !grab ? (
         <span />
       ) : (
         <DragHandle label={r.title} onPointerDown={grab.onGrab} dragging={grab.dragging} />

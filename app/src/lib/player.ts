@@ -320,6 +320,19 @@ export const onlineEntryFrom = (t: OnlineTrack): OnlineEntry => ({
 })
 
 /** A queue row as a playlist line: the online song by its id, else the library file. */
+/** A playlist's online song as a catalog track (what the online song menu works on). */
+export const onlineTrackOf = (e: OnlineEntry): OnlineTrack => ({
+  provider: e.provider,
+  track_id: e.track_id,
+  title: e.title,
+  artists: e.artists ?? [],
+  album: e.album ?? null,
+  album_id: null,
+  duration_ms: e.duration_ms ?? null,
+  artwork_url: e.artwork_url ?? null,
+  isrc: e.isrc ?? null,
+})
+
 export const songItemOf = (q: QueueItem): PlaylistItem => {
   const o = onlineEntryOf(q)
   return o ? { online: o } : { path: q.path }

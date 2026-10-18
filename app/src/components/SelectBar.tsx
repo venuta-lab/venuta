@@ -16,9 +16,13 @@ const spring = { type: 'spring', stiffness: 520, damping: 38 } as const
 export function SelectBar(props: {
   open: boolean
   root: string
-  /** The picked songs, in the list's order. */
+  /** The picked songs that play, in the list's order. */
   items: QueueItem[]
+  /** How many are picked, when some cannot play (songs still to get); else `items`. */
+  count?: number
   total: number
+  /** What only this list can do with them (Remove from playlist). */
+  more?: { label: string; run: () => void }[]
   /** Where playing them says it played from. */
   from: From
   label: string
@@ -27,7 +31,8 @@ export function SelectBar(props: {
 }) {
   useEscape(props.open, props.onDone)
   const n = props.items.length
-  const all = n > 0 && n === props.total
+  const picked = props.count ?? n
+  const all = picked > 0 && picked === props.total
   const act = (run: () => void) => () => {
     run()
     props.onDone()
@@ -43,10 +48,10 @@ export function SelectBar(props: {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 16, scale: 0.98 }}
           transition={spring}
-          className="popover fixed bottom-[116px] left-1/2 z-40 flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-full py-1.5 pl-5 pr-1.5 no-scrollbar"
+          className="popover fixed inset-x-0 bottom-[116px] z-40 mx-auto flex w-fit max-w-[calc(100vw-32px)] items-center gap-1 overflow-x-auto rounded-full py-1.5 pl-5 pr-1.5 no-scrollbar"
         >
           <span className="mr-2 shrink-0 text-[13px] font-medium tabular-nums" aria-live="polite">
-            {n ? `${n} picked` : 'Pick songs to act on them'}
+            {picked ? `${picked} picked` : 'Pick songs to act on them'}
           </span>
           <button disabled={!n} className={button} onClick={act(() => void playItems(props.root, props.items, 0, props.from))}>
             <IconPlay width={14} height={14} />
@@ -66,6 +71,11 @@ export function SelectBar(props: {
             <IconPlaylistAdd width={15} height={15} />
             Add to playlist
           </button>
+          {props.more?.map((m) => (
+            <button key={m.label} disabled={!picked} className={button} onClick={m.run}>
+              {m.label}
+            </button>
+          ))}
           <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-ink/15" />
           <button className={button} onClick={props.onAll}>
             {all ? 'Select none' : `Select all (${props.total})`}
