@@ -6,6 +6,7 @@ import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
 import { menuFor, onlineSongWork } from '../../lib/actions'
+import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
 import { useNav } from './model'
 import { Shelf } from './parts'
@@ -44,6 +45,7 @@ export function CollectionCard({ collection: c, width = 168, wide = false }: { c
       { online: true },
       {
         open: () => openOnlineCollection(c),
+        shortcut: shortcutWork({ kind: 'online-collection', collection: c }, `“${c.title}”`),
         play,
         next: () => void withCollection(c, (items) => void enqueueItems(root, items, true)),
         queue: () => void withCollection(c, (items) => void enqueueItems(root, items, false)),

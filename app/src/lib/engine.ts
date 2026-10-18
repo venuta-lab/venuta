@@ -225,6 +225,8 @@ export interface Listening {
   lyrics_sources: string[]
   /** Say each new song in a Windows notification while Venuta is in the background. */
   song_notifications: boolean
+  /** What you pinned to the top of Home (lib/shortcuts.ts). */
+  shortcuts: unknown[]
 }
 
 /** A radio: songs like a seed, and its own list id to ask for more of it. */

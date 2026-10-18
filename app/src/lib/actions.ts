@@ -6,6 +6,7 @@ import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
 import { blockArtist, dislike, startRadio } from './radio'
+import { shortcutWork } from './shortcuts'
 import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
@@ -122,6 +123,7 @@ export function albumWork(nav: Go, a: Album): Work {
     next: () => void enqueue(nav.root, a.tracks, true),
     queue: () => void enqueue(nav.root, a.tracks, false),
     playlist: () => askAddToPlaylist(a.tracks.map((t) => t.path), a.title),
+    shortcut: shortcutWork({ kind: 'album', dir: a.dir, title: a.title }, `“${a.title}”`),
     artist: goToEach([a.artist], nav.openArtist),
     details: () => nav.editDetails(a.dir),
     folder: a.tracks[0] ? () => showInFolder(nav.root, a.tracks[0].path) : undefined,
@@ -139,6 +141,7 @@ export function artistWork(nav: Go, ar: Artist): Work {
     queue: () => void enqueue(nav.root, tracks, false),
     radio: tracks[0] ? () => void startRadio(nav.root, toItem(tracks[0])) : undefined,
     playlist: () => askAddToPlaylist(tracks.map((t) => t.path), ar.name),
+    shortcut: shortcutWork({ kind: 'artist', name: ar.name }, ar.name),
     open: () => nav.openArtist(ar.name),
   }
 }
@@ -156,6 +159,7 @@ export function playlistWork(root: string, p: PlaylistSummary, rule?: SmartRule)
         run: () => void playlistSongs(root, p.name, rule).then((songs) => askAddSongs(songs.map(songItemOf), p.name)),
       },
     ],
+    shortcut: shortcutWork({ kind: 'playlist', name: p.name }, `“${p.name}”`),
     rename: () => renamePlaylist(p),
     duplicate: p.smart
       ? [{ label: 'Duplicate as an ordinary playlist', run: () => void duplicatePlaylist(root, p, rule) }]

@@ -19,6 +19,7 @@ import {
 } from './model'
 import { Detail, InBar, Segmented, Switch } from '../../components/ui'
 import { arrange, move, readLayout, saveLayout, toggle as toggleHome, type HomeLayout } from '../../lib/homeLayout'
+import { useShortcuts } from '../../lib/shortcuts'
 import { FamiliarArtists, HomeChips, OnlineShelves, QuickPicks, useOnlineHome, useRecentOnline, useRecentPlays } from './HomeOnline'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
@@ -141,6 +142,12 @@ export const HomeView = memo(function HomeView(props: {
   // Your listening lately: the artists you play, and online songs for Jump back in.
   const plays = useRecentPlays(props.root, now.path)
   const recentOnline = useRecentOnline(plays)
+  // What you pinned to the top of Home, in the order you pinned it.
+  const pins = useShortcuts()
+  const pinnedAlbums = useMemo(
+    () => pins.flatMap((p) => (p.kind === 'album' ? [lib.byDir.get(p.dir)].filter((a): a is Album => !!a) : [])),
+    [pins, lib],
+  )
   const [layout, setLayout] = useState(readLayout)
   const [editing, setEditing] = useState(false)
   const change = (l: HomeLayout) => {
@@ -161,6 +168,34 @@ export const HomeView = memo(function HomeView(props: {
             hero && <Hero key={hero.dir} album={hero} label={playing ? (now.playing ? 'Playing now' : 'Paused') : 'Picked for today'} />
           )}
         </AnimatePresence>
+      ),
+    },
+    {
+      id: 'shortcuts',
+      label: 'Shortcuts',
+      node: pins.length > 0 && (
+        <Shelf
+          title="Shortcuts"
+          albums={pinnedAlbums}
+          origin="shelf-shortcuts"
+          at={(d) => pins.length - pins.findIndex((p) => p.kind === 'album' && p.dir === d)}
+          more={pins.flatMap((p, i): { key: string; at: number; node: React.ReactNode }[] => {
+            const at = pins.length - i
+            if (p.kind === 'artist') {
+              const ar = artistFor(lib, p.name)
+              return ar.albums.length ? [{ key: 'artist:' + p.name, at, node: <ArtistCard artist={ar} /> }] : []
+            }
+            if (p.kind === 'playlist') {
+              const pl = lists.find((x) => x.name === p.name)
+              return pl ? [{ key: 'playlist:' + p.name, at, node: <PlaylistCard root={props.root} p={pl} onOpen={() => props.onOpenPlaylist(p.name)} /> }] : []
+            }
+            if (p.kind === 'online-album') return [{ key: 'oa:' + p.album.album_id, at, node: <OnlineAlbumTile album={p.album} query={p.album.title} /> }]
+            if (p.kind === 'online-artist')
+              return [{ key: 'oar:' + p.artist.artist_id, at, node: <OnlineArtistCard artist={{ provider: 'remote_catalog', audience: null, artwork_url: null, ...p.artist }} /> }]
+            if (p.kind === 'online-collection') return [{ key: 'oc:' + p.collection.collection_id, at, node: <CollectionCard collection={p.collection} /> }]
+            return []
+          })}
+        />
       ),
     },
     {

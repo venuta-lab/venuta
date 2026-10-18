@@ -125,3 +125,8 @@ test('a song starts a radio; an online song can block its artist', () => {
 test('an artist starts their radio', () => {
   assert.ok(ids(actionsFor('artist', {})).includes('radio'))
 })
+
+test('albums, artists and playlists can be added to Home', () => {
+  for (const kind of ['album', 'artist', 'playlist'] as const) assert.ok(ids(actionsFor(kind, {})).includes('shortcut'), kind)
+  assert.ok(ids(actionsFor('album', { online: true })).includes('shortcut'))
+})

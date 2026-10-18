@@ -10,6 +10,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From, type QueueItem } from '../../lib/player'
 import { useNav } from './model'
 import { playRadioList } from '../../lib/radio'
+import { shortcutWork } from '../../lib/shortcuts'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
@@ -182,6 +183,7 @@ export function OnlineAlbumTile({ album: a, query }: { album: OnlineAlbum; query
       { online: true },
       {
         open: () => openOnlineAlbum(a),
+        shortcut: shortcutWork({ kind: 'online-album', album: a }, `“${a.title}”`),
         play: playIt,
         next: () => void withOnlineAlbum(a, (t) => void enqueueItems(root, onlineItems(t), true)),
         queue: () => void withOnlineAlbum(a, (t) => void enqueueItems(root, onlineItems(t), false)),
@@ -222,6 +224,7 @@ export function OnlineArtistCard({ artist: ar }: { artist: OnlineArtist }) {
           e,
           menuFor('artist', { online: true }, {
             open: () => openOnlineArtist(ar),
+            shortcut: shortcutWork({ kind: 'online-artist', artist: ar }, ar.name),
             play: () => void playOnlineArtistPage(root, ar),
             radio: () =>
               void onlineArtistPage(ar.artist_id)

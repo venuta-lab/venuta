@@ -16,6 +16,7 @@ export type ActionId =
   | 'like'
   | 'dislike'
   | 'block'
+  | 'shortcut'
   | 'share'
   | 'playlist'
   | 'open'
@@ -75,6 +76,7 @@ export const LABELS: Record<ActionId, string> = {
   like: 'Add to Liked songs',
   dislike: 'Dislike',
   block: 'Block artist',
+  shortcut: 'Add to Home',
   share: 'Copy link',
   playlist: 'Add to playlist…',
   open: 'Open',
@@ -124,13 +126,13 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
           when(f.inPlaylist && !f.smart, 'remove'),
         ]
       case 'album':
-        return f.online ? [PLAY, ['playlist'], ['open']] : [PLAY, ['playlist'], ['artist'], ['details', 'folder']]
+        return f.online ? [PLAY, ['playlist', 'shortcut'], ['open']] : [PLAY, ['playlist', 'shortcut'], ['artist'], ['details', 'folder']]
       case 'artist':
-        return [PLAY, ['radio'], ['playlist'], ['open']]
+        return [PLAY, ['radio'], ['playlist', 'shortcut'], ['open']]
       case 'playlist':
         return [
           PLAY,
-          ['playlist'],
+          ['playlist', 'shortcut'],
           [
             ...when(!f.smart, 'rename'),
             'duplicate',

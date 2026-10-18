@@ -79,6 +79,10 @@ pub struct Listening {
     /// Say each new song in a Windows notification while Venuta is in the background.
     #[serde(default)]
     pub song_notifications: bool,
+    /// What you pinned to the top of Home (albums, artists, playlists; yours or online), as the
+    /// app keeps them.
+    #[serde(default)]
+    pub shortcuts: Vec<serde_json::Value>,
     /// The lyrics sources in your order, "-id" for one switched off (see
     /// `lyrics_online::order`); empty: the default order, all on.
     #[serde(default)]
@@ -109,6 +113,7 @@ impl Default for Listening {
             stream_quality: auto(),
             catalog_region: String::new(),
             song_notifications: false,
+            shortcuts: Vec::new(),
             lyrics_sources: Vec::new(),
         }
     }
