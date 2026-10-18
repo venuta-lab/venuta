@@ -326,6 +326,9 @@ struct Engine<T: Item + Serialize> {
     /// Once settled after lining up mid-song, a second look: a seek lands a few ms off, so one
     /// more lines it up closer (no trimming needed, still bit-perfect).
     sync_second_look: bool,
+    /// Just lined up by a seek: what's left (the seek's own moment) is closed exactly on the
+    /// next period, past or before a few just-decoded frames.
+    sync_fine: bool,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -363,6 +366,7 @@ impl<T: Item + Serialize> Engine<T> {
             settle_until: None,
             sync_fresh: false,
             sync_second_look: false,
+            sync_fine: false,
         }
     }
 
@@ -1148,6 +1152,7 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.sync = Some(plan);
         self.sync_fresh = true;
+        self.sync_fine = false;
         // Joining mid-song (or lining up again while it plays), apart: a second look. A start
         // from silence lines up at the first sound and never jumps just after it; in one room
         // small gaps close by single frames instead (a jump there is heard).
@@ -1218,13 +1223,30 @@ impl<T: Item + Serialize> Engine<T> {
         if self.sync_fresh {
             self.sync_fresh = false;
             if (written_ms - (expected + delay)).abs() > 15.0 {
-                self.seek((expected + delay).max(0.0) as u64);
-                self.trimmer.reset();
+                self.realign(expected + delay, 400);
+            } else {
+                self.settle_until = Some(now + Duration::from_millis(400));
             }
-            self.settle_until = Some(now + Duration::from_millis(400));
             return Ok(Some(0));
         }
         let error = heard_ms - expected;
+        if self.sync_fine {
+            self.sync_fine = false;
+            // A fresh measure from here on (this isn't a jump in the sound).
+            self.sync_error_ms = None;
+            let frames = (error.abs() * rate / 1_000.0).round() as usize;
+            if error < -1.0 && frames > 0 {
+                // Behind: past the first few frames just decoded.
+                if self.skip_front(frames) < frames {
+                    self.sync_fine = true;
+                }
+                return Ok(Some(0));
+            }
+            if error > 1.0 && frames > 0 && frames < want {
+                // Ahead: a moment of silence first.
+                return Ok(Some(frames));
+            }
+        }
         let last = self.sync_error_ms.map(f64::from);
         self.sync_error_ms = Some(error as f32);
         let settling = self.settle_until.is_some_and(|t| now < t);
@@ -1234,19 +1256,14 @@ impl<T: Item + Serialize> Engine<T> {
         if !settling && (self.sync_second_look || jumped) {
             self.sync_second_look = false;
             if error.abs() > crate::sync::SECOND_LOOK_MS {
-                self.seek((expected + delay).max(0.0) as u64);
-                self.trimmer.reset();
-                self.settle_until = Some(now + Duration::from_millis(400));
+                self.realign(expected + delay, 400);
                 return Ok(Some(0));
             }
         }
         match crate::sync::correction(error, plan.same_room, settling) {
             Correction::None => Ok(Some(0)),
             Correction::Seek => {
-                let to = (expected + delay).max(0.0) as u64;
-                self.seek(to);
-                self.trimmer.reset();
-                self.settle_until = Some(now + Duration::from_millis(600));
+                self.realign(expected + delay, 600);
                 Ok(Some(0))
             }
             Correction::Trim { ppm, ahead } => {
@@ -1257,6 +1274,27 @@ impl<T: Item + Serialize> Engine<T> {
                 Ok(Some(0))
             }
         }
+    }
+
+    /// Line up with the room by a seek to `to_ms` (where it will be when this is heard); what
+    /// the seek itself takes is closed on the next period.
+    fn realign(&mut self, to_ms: f64, settle_ms: u64) {
+        self.seek(to_ms.max(0.0) as u64);
+        self.trimmer.reset();
+        self.sync_fine = true;
+        self.settle_until = Some(Instant::now() + Duration::from_millis(settle_ms));
+    }
+
+    /// Past the next `n` frames of the playing song (as many as are decoded): how many.
+    fn skip_front(&mut self, n: usize) -> usize {
+        let Some(front) = self.segs.front_mut() else {
+            return 0;
+        };
+        let ch = usize::from(front.source.format.channels.max(1));
+        let k = n.min(front.frames());
+        front.samples.drain(..k * ch);
+        front.played += k as u64;
+        k
     }
 
     /// Repeat (`ahead`) or take out `n` frames among the next `want` of the playing song, keeping
