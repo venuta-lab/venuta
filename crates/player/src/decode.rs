@@ -30,10 +30,10 @@ const OPEN_AFTER_DEFAULT: usize = 256 * 1024;
 fn open_after_bytes(mime_type: Option<&str>, url: &str) -> usize {
     match media_extension(mime_type, url).as_deref() {
         Some("wav" | "aiff") => 24 * 1024,
-        Some("mp3" | "ogg" | "oga") => 64 * 1024,
+        Some("mp3" | "ogg" | "oga" | "opus") => 64 * 1024,
         // Enough for the header and the first fragment of a streamed MP4. A probe that runs
         // short retries with more as it arrives, so a small window only ever costs a retry.
-        Some("m4a" | "mp4" | "aac") => 128 * 1024,
+        Some("m4a" | "mp4" | "aac" | "webm") => 128 * 1024,
         Some("flac") => 128 * 1024,
         _ => OPEN_AFTER_DEFAULT,
     }
@@ -77,6 +77,9 @@ pub struct Source {
     pub info: FileInfo,
     /// Frames to drop from the next decoded output (to land exactly on a seek target).
     skip: u64,
+    /// The track's clock (seconds per timestamp tick), when it is not one tick per frame: a WebM
+    /// stream counts in milliseconds. Seek answers come in these ticks.
+    time_base: Option<(u64, u64)>,
     duration_hint_ms: Option<u64>,
     remote: Option<RemoteState>,
     /// Progressive download body (cancel + wake blocked readers on Drop).
@@ -295,6 +298,23 @@ enum LocalDecode {
     End,
 }
 
+/// A timestamp in a track's ticks (`numer/denom` seconds each) as frames at `rate`.
+fn ticks_to_frames(ticks: u64, numer: u64, denom: u64, rate: u64) -> u64 {
+    (u128::from(ticks) * u128::from(numer) * u128::from(rate) / u128::from(denom.max(1))) as u64
+}
+
+/// Every decoder symphonia brings, and Opus (libopus) beside them.
+fn codecs() -> &'static symphonia::core::codecs::registry::CodecRegistry {
+    static CODECS: std::sync::OnceLock<symphonia::core::codecs::registry::CodecRegistry> =
+        std::sync::OnceLock::new();
+    CODECS.get_or_init(|| {
+        let mut registry = symphonia::core::codecs::registry::CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
+        registry
+    })
+}
+
 fn codec_name(extension: Option<&str>) -> String {
     match extension.map(str::to_ascii_lowercase).as_deref() {
         Some("flac") => "FLAC",
@@ -303,6 +323,7 @@ fn codec_name(extension: Option<&str>) -> String {
         Some("wav") => "WAV",
         Some("aif" | "aiff") => "AIFF",
         Some("ogg" | "oga") => "Vorbis",
+        Some("opus" | "webm") => "Opus",
         _ => "Audio",
     }
     .to_owned()
@@ -403,6 +424,7 @@ impl Source {
             frames: None,
             info: FileInfo::default(),
             skip: 0,
+            time_base: None,
             duration_hint_ms,
             remote: Some(RemoteState {
                 receiver,
@@ -452,11 +474,27 @@ impl Source {
             return Err("The file has no audio.".into());
         };
         let track_id = track.id;
-        let frames = track.num_frames;
-        let decoder = symphonia::default::get_codecs()
+        let rate_of_track = u64::from(params.sample_rate.unwrap_or(44_100).max(1));
+        let time_base = track
+            .time_base
+            .map(|tb| (u64::from(tb.numer.get()), u64::from(tb.denom.get())))
+            // One tick per frame needs no converting.
+            .filter(|&(numer, denom)| !(numer == 1 && denom == rate_of_track));
+        let frames = track.num_frames.or_else(|| {
+            let (numer, denom) = time_base?;
+            track
+                .duration
+                .map(|d| ticks_to_frames(d.get(), numer, denom, rate_of_track))
+        });
+        let decoder = codecs()
             .make_audio_decoder(&params, &AudioDecoderOptions::default())
             .map_err(|e| format!("Venuta can't decode this file ({e})."))?;
-        let mut codec = codec_name(extension);
+        let mut codec = if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS
+        {
+            "Opus".to_owned()
+        } else {
+            codec_name(extension)
+        };
         if codec == "AAC" && params.bits_per_sample.is_some() {
             // An MP4 with stored bit depth is Apple Lossless.
             codec = "ALAC".into();
@@ -501,6 +539,7 @@ impl Source {
             frames,
             info,
             skip: 0,
+            time_base,
             duration_hint_ms,
             remote: None,
             download_body: None,
@@ -767,9 +806,16 @@ impl Source {
                 other => format!("Could not move there ({other})."),
             })?;
         self.decoder.as_mut().expect("local decoder").reset();
-        let actual = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
-        let required = u64::try_from(seeked.required_ts.get()).unwrap_or(target);
-        // Timestamps are in frames for every format Venuta plays (time base 1/rate).
+        let to_frames = |ts: u64| match self.time_base {
+            Some((numer, denom)) => ticks_to_frames(ts, numer, denom, rate),
+            None => ts,
+        };
+        let actual = u64::try_from(seeked.actual_ts.get())
+            .map(to_frames)
+            .unwrap_or(0);
+        let required = u64::try_from(seeked.required_ts.get())
+            .map(to_frames)
+            .unwrap_or(target);
         self.skip = required.saturating_sub(actual);
         Ok(required)
     }
@@ -1080,6 +1126,8 @@ fn media_extension(mime_type: Option<&str>, url: &str) -> Option<String> {
         "audio/wav" | "audio/x-wav" | "audio/wave" => Some("wav"),
         "audio/aiff" | "audio/x-aiff" => Some("aiff"),
         "audio/ogg" | "audio/vorbis" => Some("ogg"),
+        "audio/webm" => Some("webm"),
+        "audio/opus" => Some("opus"),
         _ => None,
     };
     extension.map(str::to_owned).or_else(|| {

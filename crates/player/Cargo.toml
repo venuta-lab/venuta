@@ -13,7 +13,10 @@ live-provider = ["media-access/live-provider"]
 
 [dependencies]
 media-access = { path = "../media-access", features = ["live-provider"] }
-symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "vorbis", "ogg"] }
+symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "vorbis", "ogg", "mkv"] }
+# Opus (the catalog's better stream, and local .opus files) through the reference libopus.
+# Building it needs CMake, which comes with Visual Studio's C++ build tools.
+symphonia-adapter-libopus = "0.3"
 serde = { workspace = true }
 ureq.workspace = true
 rand = "0.9"

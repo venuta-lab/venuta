@@ -36,6 +36,9 @@ Windows 10 or 11 (the player uses WASAPI; the engine also builds on Linux and ma
 
 - **Rust** (stable, via [rustup](https://rustup.rs); `rust-toolchain.toml` picks the version)
 - **Visual Studio Build Tools** with "Desktop development with C++"
+- **CMake**, for the Opus decoder: the C++ workload above includes one (its folder is
+  `...\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`). Put it on `PATH`, or set `CMAKE`
+  to that `cmake.exe`, or `winget install Kitware.CMake`. `scripts/hybrid-dev.ps1` finds it for you.
 - **Node 24** and **pnpm 10**
 - **WebView2** (already on Windows 11)
 

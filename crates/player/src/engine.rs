@@ -272,6 +272,9 @@ struct Engine<T: Item + Serialize> {
     started: bool,
     /// The playing song first; the next (decoded ahead) after it.
     segs: VecDeque<Segment>,
+    /// A seek past what has downloaded so far, waiting for those bytes. The position already
+    /// shows it; it completes as soon as they arrive.
+    seek_waiting: Option<u64>,
     on_status: Box<dyn FnMut(Status<T>) + Send>,
     last_status: Instant,
     /// What the last report said (see `Said`).
@@ -305,6 +308,7 @@ impl<T: Item + Serialize> Engine<T> {
             opened_for: None,
             started: false,
             segs: VecDeque::new(),
+            seek_waiting: None,
             on_status,
             last_status: Instant::now(),
             said: None,
@@ -509,6 +513,7 @@ impl<T: Item + Serialize> Engine<T> {
     /// Open the current song (skipping ones that can't be opened), from `start_ms`.
     fn load_current(&mut self, start_ms: u64) {
         self.segs.clear();
+        self.seek_waiting = None;
         let mut tries = self.queue.items().len();
         while let Some(item) = self.queue.current().cloned() {
             match item.open() {
@@ -543,6 +548,7 @@ impl<T: Item + Serialize> Engine<T> {
     }
 
     fn seek(&mut self, ms: u64) {
+        self.seek_waiting = None;
         let Some(front) = self.segs.front_mut() else {
             return;
         };
@@ -554,7 +560,41 @@ impl<T: Item + Serialize> Engine<T> {
                 front.start_frame = frame;
                 self.segs.truncate(1);
             }
+            // An online song not downloaded that far yet: move there now and finish the seek
+            // when the bytes arrive, instead of refusing it.
+            Err(e) if e.contains("waiting") => {
+                front.samples.clear();
+                front.ended = false;
+                front.played = 0;
+                front.start_frame = ms * u64::from(front.source.format.rate.max(1)) / 1000;
+                self.segs.truncate(1);
+                self.seek_waiting = Some(ms);
+            }
             Err(e) => self.error = e,
+        }
+    }
+
+    /// Try the waiting seek again. True while it still waits (nothing to decode yet).
+    fn retry_waiting_seek(&mut self) -> bool {
+        let Some(ms) = self.seek_waiting else {
+            return false;
+        };
+        let Some(front) = self.segs.front_mut() else {
+            self.seek_waiting = None;
+            return false;
+        };
+        match front.source.seek(ms) {
+            Ok(frame) => {
+                front.start_frame = frame;
+                self.seek_waiting = None;
+                false
+            }
+            Err(e) if e.contains("waiting") => true,
+            Err(e) => {
+                self.error = e;
+                self.seek_waiting = None;
+                false
+            }
         }
     }
 
@@ -572,6 +612,7 @@ impl<T: Item + Serialize> Engine<T> {
         if usable {
             self.segs.pop_front();
             self.segs.truncate(1);
+            self.seek_waiting = None;
         } else {
             self.load_current(0);
         }
@@ -683,6 +724,10 @@ impl<T: Item + Serialize> Engine<T> {
             .unwrap_or(44_100);
         let front_target =
             (rate as f32 * (BUFFER_SECONDS + self.sound.crossfade_s.max(0.0))) as usize;
+        // A seek waiting for its bytes: nothing to decode until it lands.
+        if self.retry_waiting_seek() {
+            return Ok(());
+        }
         // 1) Current song must stay full enough to play without gaps.
         loop {
             let Some(front) = self.segs.front_mut() else {

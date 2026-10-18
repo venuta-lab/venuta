@@ -8,8 +8,8 @@
 
 use ytmusic::{Format, StreamingData};
 
-/// Whether the player decodes Opus. AAC is the safe choice until it does.
-pub(crate) const PLAYS_OPUS: bool = false;
+/// Whether the player decodes Opus (it does, through libopus): the better codec at a quality.
+pub(crate) const PLAYS_OPUS: bool = true;
 
 /// The stream to play, or none when no plain, playable audio stream is offered.
 pub(crate) fn pick_audio(data: &StreamingData, opus: bool) -> Option<&Format> {

@@ -57,6 +57,10 @@ fn main() {
     let mut total_samples = 0usize;
     let mut ready = false;
     let mut first_audio_ms = None;
+    // VENUTA_SEEK_MS=120000 seeks there after the first audio, to prove seeking in a stream.
+    let mut seek_to: Option<u64> = std::env::var("VENUTA_SEEK_MS")
+        .ok()
+        .and_then(|v| v.parse().ok());
     // Prefer enough samples to prove more than a short preview (~30s at 44.1k stereo).
     let want_samples = 44_100usize * 2 * 30;
     loop {
@@ -71,6 +75,27 @@ fn main() {
             Ok(DecodeState::Samples) => {
                 ready = true;
                 first_audio_ms.get_or_insert(started.elapsed().as_millis());
+                if let Some(ms) = seek_to.take() {
+                    let t = Instant::now();
+                    match source.seek(ms) {
+                        Ok(frame) => println!("seek_to_ms={ms} landed_frame={frame}"),
+                        Err(e) => println!("seek_to_ms={ms} answered {e:?}"),
+                    }
+                    let mut probe = Vec::new();
+                    loop {
+                        match source.next(&mut probe) {
+                            Ok(DecodeState::Samples) => break,
+                            Ok(DecodeState::Pending) => {
+                                std::thread::sleep(Duration::from_millis(10))
+                            }
+                            other => {
+                                println!("after seek: {other:?}");
+                                break;
+                            }
+                        }
+                    }
+                    println!("audio_after_seek_ms={}", t.elapsed().as_millis());
+                }
                 total_samples += samples.len();
                 samples.clear();
                 if total_samples >= want_samples {

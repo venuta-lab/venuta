@@ -24,6 +24,15 @@ if (-not (Test-Path $marker)) {
 }
 
 $env:VENUTA_HOME = $Lib
+
+# The Opus decoder (libopus) builds with CMake. Visual Studio's C++ build tools include one;
+# use it when no CMake is on PATH.
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue) -and -not $env:CMAKE) {
+  $vsCmake = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio", "$env:ProgramFiles\Microsoft Visual Studio" -Recurse -Filter cmake.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -like "*CMake\bin\cmake.exe" } | Select-Object -First 1
+  if ($vsCmake) { $env:CMAKE = $vsCmake.FullName; Write-Host "CMake: $($vsCmake.FullName)" }
+}
+
 if ($Fake) {
   $env:VENUTA_FAKE_CATALOG = "1"
   Remove-Item Env:VENUTA_LIVE_CATALOG -ErrorAction SilentlyContinue

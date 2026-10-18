@@ -141,3 +141,113 @@ fn deferred_remote_item_resolves_through_media_access_at_open() {
     );
     assert!(status.error.is_empty());
 }
+
+/// A 16-bit stereo 44.1 kHz WAV of `secs` seconds (a quiet ramp, never silent).
+fn wav_bytes(secs: usize) -> Vec<u8> {
+    let frames = secs * 44_100;
+    let data_len = frames * 4;
+    let mut v = Vec::with_capacity(44 + data_len);
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&2u16.to_le_bytes());
+    v.extend_from_slice(&44_100u32.to_le_bytes());
+    v.extend_from_slice(&(44_100u32 * 4).to_le_bytes());
+    v.extend_from_slice(&4u16.to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for i in 0..frames {
+        let s = ((i % 400) as i16 - 200) * 8;
+        v.extend_from_slice(&s.to_le_bytes());
+        v.extend_from_slice(&s.to_le_bytes());
+    }
+    v
+}
+
+/// A media host that sends `body` slowly, in small pieces with pauses, like a slow network.
+fn slow_host(body: Vec<u8>) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = Arc::new(body);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let body = body.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 && line.trim() != "" {
+                    line.clear();
+                }
+                let mut s = stream;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                if s.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
+                for piece in body.chunks(32 * 1024) {
+                    if s.write_all(piece).is_err() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(15));
+                }
+            });
+        }
+    });
+    format!("http://{addr}/song.wav")
+}
+
+#[test]
+fn seeking_past_what_has_arrived_waits_for_it_and_lands_there() {
+    let wav = wav_bytes(6);
+    let audio = media_access::EphemeralAudio {
+        track_id: "slow".into(),
+        provider: "test".into(),
+        url: slow_host(wav.clone()),
+        mime_type: Some("audio/wav".into()),
+        content_length: Some(wav.len() as u64),
+        duration_ms: Some(6_000),
+        headers: Vec::new(),
+        via: "test",
+    };
+    let item = RemoteItem::new(audio, "Slow song", None);
+    let captured = Arc::new(Mutex::new(Captured::default()));
+    let (tx, rx) = channel::<Status<RemoteItem>>();
+    let player = Player::spawn(OutputChoice::Memory(captured), move |s| {
+        let _ = tx.send(s);
+    });
+    player.send(Cmd::Set {
+        items: vec![item],
+        index: 0,
+        start_ms: 0,
+        play: true,
+        from: String::new(),
+    });
+    let started = Instant::now();
+    let mut sought = false;
+    let mut landed = false;
+    while started.elapsed() < Duration::from_secs(15) {
+        let Ok(s) = rx.recv_timeout(Duration::from_secs(5)) else {
+            break;
+        };
+        assert!(
+            s.error.is_empty(),
+            "a seek past the download is not an error: {}",
+            s.error
+        );
+        if !sought && s.playing && s.position_ms > 100 {
+            player.send(Cmd::Seek(5_000));
+            sought = true;
+        } else if sought && s.position_ms >= 5_000 {
+            landed = true;
+            break;
+        }
+    }
+    assert!(sought, "it started playing");
+    assert!(landed, "and it reached 5 s once the bytes arrived");
+}
