@@ -1,7 +1,7 @@
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
-    RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore,
+    RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -168,6 +168,17 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<RemoteRadio, AccessError> {
         let _ = (seed, playlist_id, cancel);
         Err(unsupported("radios"))
+    }
+
+    /// The catalog's home feed (filtered by a chip's `params`), or its next rows.
+    fn home(
+        &self,
+        params: Option<&str>,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteHome, AccessError> {
+        let _ = (params, continuation, cancel);
+        Err(unsupported("home feeds"))
     }
 
     /// A song's lyrics as the catalog has them (timed when it can). None when it has none.
@@ -494,6 +505,15 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Option<CatalogLyrics>, AccessError> {
         self.inner.lyrics(track_id, cancel)
+    }
+
+    fn home(
+        &self,
+        params: Option<&str>,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteHome, AccessError> {
+        self.inner.home(params, continuation, cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

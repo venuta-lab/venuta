@@ -211,6 +211,32 @@ pub struct RemoteArtistLink {
     pub artist_id: Option<String>,
 }
 
+/// The catalog's home feed: its mood chips (each filters the feed), its rows, and where more
+/// rows start.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHome {
+    pub chips: Vec<RemoteChip>,
+    /// Rows, each with `kind` when it is one the app knows ("quick_picks", "listen_again"…).
+    pub shelves: Vec<RemoteHomeShelf>,
+    #[serde(default)]
+    pub continuation: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteChip {
+    pub title: String,
+    /// Opaque: asks for the feed filtered to this chip.
+    pub params: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHomeShelf {
+    #[serde(flatten)]
+    pub shelf: RemoteShelf,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
 /// A song's lyrics as the catalog has them: timed lines when it has them, else the words as
 /// text, and who provided them ("Source: Musixmatch").
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

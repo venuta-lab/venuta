@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { listeningSummary, playlistShelf, type ListeningSummary, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from '../playlists/PlaylistsHome'
 import { loadCovers, useCovers } from '../../lib/covers'
@@ -17,7 +17,9 @@ import {
   type Artist,
   type Library,
 } from './model'
-import { Detail, InBar, Segmented } from '../../components/ui'
+import { Detail, InBar, Segmented, Switch } from '../../components/ui'
+import { arrange, move, readLayout, saveLayout, toggle as toggleHome, type HomeLayout } from '../../lib/homeLayout'
+import { FamiliarArtists, HomeChips, OnlineShelves, QuickPicks, useOnlineHome, useRecentOnline, useRecentPlays } from './HomeOnline'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
 import { SongList } from './SongList'
 import { albumWork, artistWork, menuFor } from '../../lib/actions'
@@ -131,33 +133,137 @@ export const HomeView = memo(function HomeView(props: {
     () => lib.categories.map(([c]) => [c, lib.albums.filter((a) => a.category === c)] as const),
     [lib],
   )
+  // The online catalog's part: its mood chips (one picked filters its rows), Quick picks, rows.
+  const [chip, setChip] = useState<string | null>(null)
+  const online = useOnlineHome(chip)
+  const quick = online.shelves?.find((s) => s.kind === 'quick_picks')
+  const onlineRows = (online.shelves ?? []).filter((s) => s !== quick)
+  // Your listening lately: the artists you play, and online songs for Jump back in.
+  const plays = useRecentPlays(props.root, now.path)
+  const recentOnline = useRecentOnline(plays)
+  const [layout, setLayout] = useState(readLayout)
+  const [editing, setEditing] = useState(false)
+  const change = (l: HomeLayout) => {
+    setLayout(l)
+    saveLayout(l)
+  }
+
+  // Every part of Home, by id, in its own order (Edit Home puts them in yours).
+  const parts: { id: string; label: string; node: React.ReactNode }[] = [
+    {
+      id: 'hero',
+      label: 'Playing now, or picked for today',
+      node: (
+        <AnimatePresence mode="wait" initial={false}>
+          {!playing && now.online ? (
+            <OnlineHero key={queueKey(now.online)} song={now.online} playing={now.playing} />
+          ) : (
+            hero && <Hero key={hero.dir} album={hero} label={playing ? (now.playing ? 'Playing now' : 'Paused') : 'Picked for today'} />
+          )}
+        </AnimatePresence>
+      ),
+    },
+    {
+      id: 'jump',
+      label: 'Jump back in',
+      node: recent.length + playedLists.length + recentOnline.length > 0 && (
+        <Shelf title="Jump back in" albums={recent} origin="shelf-recent" more={[...playedLists, ...recentOnline]} at={(d) => heard?.last_played[d] ?? 0} />
+      ),
+    },
+    { id: 'quick', label: 'Quick picks', node: quick && <QuickPicks shelf={quick} /> },
+    { id: 'familiar', label: 'Familiar artists', node: <FamiliarArtists lib={lib} plays={plays} /> },
+    { id: 'playlists', label: 'Your playlists', node: <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} /> },
+    { id: 'most', label: 'Most played', node: top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" /> },
+    { id: 'rated', label: 'Top rated', node: rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" /> },
+    { id: 'rediscover', label: 'Rediscover', node: rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" /> },
+    { id: 'hires', label: 'Hi-Res', node: <Shelf title="Hi-Res" albums={lib.hiRes} origin="shelf-hires" onSeeAll={() => props.onSeeAll(HI_RES)} /> },
+    {
+      id: 'categories',
+      label: 'Your categories',
+      node: shelves.map(([c, albums]) => <Shelf key={c} title={c} albums={albums} origin={`shelf-${c}`} onSeeAll={() => props.onSeeAll(c)} />),
+    },
+    { id: 'online', label: 'From the online catalog', node: <OnlineShelves shelves={onlineRows} more={online.more} label="Home" /> },
+  ]
+  const known = parts.map((p) => p.id)
+  const shown = arrange(layout, known)
   return (
     <div className="pb-16">
-      <AnimatePresence mode="wait" initial={false}>
-        {!playing && now.online ? (
-          <OnlineHero key={queueKey(now.online)} song={now.online} playing={now.playing} />
-        ) : hero && (
-          <Hero
-            key={hero.dir}
-            album={hero}
-            label={playing ? (now.playing ? 'Playing now' : 'Paused') : 'Picked for today'}
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <h2 className="title text-[24px] leading-tight">{greeting()}</h2>
+        <button onClick={() => setEditing((e) => !e)} aria-expanded={editing} className="btn-ghost btn-sm ml-auto">
+          {editing ? 'Done' : 'Edit Home'}
+        </button>
+      </div>
+      <HomeChips chips={online.chips} chip={chip} onChip={setChip} />
+      <AnimatePresence>
+        {editing && (
+          <EditHome
+            key="edit"
+            parts={shown.map((s) => ({ ...s, label: parts.find((p) => p.id === s.id)?.label ?? s.id }))}
+            onToggle={(id) => change(toggleHome(layout, id))}
+            onMove={(id, by) => change(move(layout, known, id, by))}
+            onReset={() => change({ order: [], hidden: [] })}
           />
         )}
       </AnimatePresence>
-      {recent.length + playedLists.length > 0 && (
-        <Shelf title="Jump back in" albums={recent} origin="shelf-recent" more={playedLists} at={(d) => heard?.last_played[d] ?? 0} />
-      )}
-      <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} />
-      {top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" />}
-      {rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" />}
-      {rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" />}
-      <Shelf title="Hi-Res" albums={lib.hiRes} origin="shelf-hires" onSeeAll={() => props.onSeeAll(HI_RES)} />
-      {shelves.map(([c, albums]) => (
-        <Shelf key={c} title={c} albums={albums} origin={`shelf-${c}`} onSeeAll={() => props.onSeeAll(c)} />
-      ))}
+      <div className="mt-4">
+        {shown
+          .filter((s) => s.on)
+          .map((s) => (
+            <Fragment key={s.id}>{parts.find((p) => p.id === s.id)?.node}</Fragment>
+          ))}
+      </div>
     </div>
   )
 })
+
+/** "Good morning", "Good afternoon", "Good evening", by the hour. */
+function greeting() {
+  const h = new Date().getHours()
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
+}
+
+/** Edit Home: each part on or off, and where it goes. Kept on this computer. */
+function EditHome(props: {
+  parts: { id: string; label: string; on: boolean }[]
+  onToggle: (id: string) => void
+  onMove: (id: string, by: -1 | 1) => void
+  onReset: () => void
+}) {
+  return (
+    <motion.section
+      aria-label="Edit Home"
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={spring}
+      className="overflow-hidden"
+    >
+      <div className="glass mt-3 rounded-2xl p-3">
+        <div className="flex items-baseline gap-3 px-2 pb-2 pt-1">
+          <h3 className="text-[14px] font-semibold">What Home shows, in this order</h3>
+          <button onClick={props.onReset} className="ml-auto rounded-full px-2.5 py-0.5 text-[12px] text-ink/60 hover:bg-ink/[0.08] hover:text-ink">
+            As it was
+          </button>
+        </div>
+        <ol className="grid gap-0.5">
+          {props.parts.map((p, i) => (
+            <li key={p.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.04]">
+              <Switch on={p.on} onChange={() => props.onToggle(p.id)} label={p.label} />
+              <span className={`min-w-0 flex-1 truncate text-[13.5px] ${p.on ? '' : 'text-ink/45'}`}>{p.label}</span>
+              <button disabled={i === 0} onClick={() => props.onMove(p.id, -1)} aria-label={`Move ${p.label} up`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
+                ↑
+              </button>
+              <button disabled={i === props.parts.length - 1} onClick={() => props.onMove(p.id, 1)} aria-label={`Move ${p.label} down`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
+                ↓
+              </button>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </motion.section>
+  )
+}
 
 /**
  * Home's top card while an online song plays: the song as the card shows an album of yours, its

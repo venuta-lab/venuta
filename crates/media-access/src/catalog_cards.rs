@@ -262,6 +262,38 @@ pub(crate) fn artist_extras(
     }
 }
 
+/// The client's home feed as Venuta's: chips, and the rows it can show.
+pub(crate) fn home_of(page: &ytmusic::HomePage) -> crate::types::RemoteHome {
+    crate::types::RemoteHome {
+        chips: page
+            .chips
+            .iter()
+            .filter(|c| !c.title.trim().is_empty() && !c.params.trim().is_empty())
+            .map(|c| crate::types::RemoteChip {
+                title: c.title.trim().to_owned(),
+                params: c.params.clone(),
+            })
+            .collect(),
+        shelves: page
+            .sections
+            .iter()
+            .filter_map(|s| {
+                let shelf = shelf_of(&ytmusic::ArtistCarousel {
+                    title: s.title.clone(),
+                    items: s.items.clone(),
+                    more_browse_id: s.more_browse_id.clone(),
+                    more_params: s.more_params.clone(),
+                })?;
+                Some(crate::types::RemoteHomeShelf {
+                    shelf,
+                    kind: s.kind.map(str::to_owned),
+                })
+            })
+            .collect(),
+        continuation: page.continuation.clone(),
+    }
+}
+
 /// A radio's songs as catalog tracks: the seed left out, each song once.
 pub(crate) fn radio_of(next: &ytmusic::NextResult, seed: Option<&str>) -> Vec<RemoteTrack> {
     let mut seen = std::collections::HashSet::new();
@@ -543,6 +575,49 @@ mod tests {
         assert_eq!(ids, ["a", "b"]);
         // A radio of a mix has no seed: every song is in it.
         assert_eq!(radio_of(&next, None).len(), 3);
+    }
+
+    #[test]
+    fn the_home_feed_keeps_its_chips_rows_and_their_kinds() {
+        let page = ytmusic::HomePage {
+            chips: vec![
+                ytmusic::models::browse::HomeChip {
+                    title: "Romance".into(),
+                    params: "p1".into(),
+                },
+                ytmusic::models::browse::HomeChip {
+                    title: " ".into(),
+                    params: "p2".into(),
+                },
+            ],
+            sections: vec![
+                ytmusic::Section {
+                    title: "Quick picks".into(),
+                    kind: Some("quick_picks"),
+                    items: vec![card("song", "s1", "Tum Hi Ho", "Arijit Singh")],
+                    more_browse_id: None,
+                    more_params: None,
+                },
+                ytmusic::Section {
+                    title: "Nothing to show".into(),
+                    kind: None,
+                    items: vec![card("episode", "e", "x", "")],
+                    more_browse_id: None,
+                    more_params: None,
+                },
+            ],
+            continuation: Some("next".into()),
+        };
+        let home = home_of(&page);
+        assert_eq!(home.chips.len(), 1, "a chip with no name is left out");
+        assert_eq!(
+            home.shelves.len(),
+            1,
+            "a row with nothing to show is left out"
+        );
+        assert_eq!(home.shelves[0].kind.as_deref(), Some("quick_picks"));
+        assert_eq!(home.shelves[0].shelf.title, "Quick picks");
+        assert_eq!(home.continuation.as_deref(), Some("next"));
     }
 
     #[test]

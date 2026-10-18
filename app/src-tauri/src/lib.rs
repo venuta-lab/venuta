@@ -3110,6 +3110,7 @@ pub fn run() {
             online::online_shelf_more,
             online::online_album_page,
             online::online_radio,
+            online::online_home,
             listening::listening_plays,
             listening::listening_forget,
             lyrics_find::lyrics_find,

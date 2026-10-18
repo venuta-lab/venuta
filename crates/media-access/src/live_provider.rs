@@ -12,8 +12,8 @@ use crate::catalog_json;
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
     PageRequest, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
-    RemoteCollection, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -142,6 +142,14 @@ trait LiveBackend: Send + Sync {
     ) -> Result<(Option<String>, ytmusic::NextResult), AccessError>;
 
     fn set_blocked(&self, blocked: &[(Option<String>, String)]);
+
+    /// The home feed (see `MediaAccess::home`).
+    fn home(
+        &self,
+        params: Option<&str>,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<ytmusic::HomePage, AccessError>;
 
     /// A song's lyrics from the catalog (see `MediaAccess::lyrics`).
     fn lyrics(
@@ -615,6 +623,23 @@ impl LiveBackend for YtmBackend {
     fn set_blocked(&self, blocked: &[(Option<String>, String)]) {
         self.it
             .set_blocked(ytmusic::BlockList::new(blocked.iter().cloned()));
+    }
+
+    fn home(
+        &self,
+        params: Option<&str>,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<ytmusic::HomePage, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.run(cancellable(cancel.clone(), async {
+            self.ensure_visitor().await;
+            let page = match continuation {
+                Some(token) => self.it.home_continuation(client, token).await,
+                None => self.it.home(client, params).await,
+            };
+            page.map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog home failed"))
+        }))
     }
 
     fn lyrics(
@@ -1686,6 +1711,26 @@ impl MediaAccess for LiveCatalogAccess {
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
         self.backend.set_blocked(blocked);
+    }
+
+    fn home(
+        &self,
+        params: Option<&str>,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteHome, AccessError> {
+        let started = std::time::Instant::now();
+        let page = self.backend.home(
+            params.map(str::trim).filter(|p| !p.is_empty()),
+            continuation.map(str::trim).filter(|c| !c.is_empty()),
+            cancel,
+        )?;
+        crate::timing::note_timing(&format!(
+            "online home answered in {} ms ({} rows)",
+            started.elapsed().as_millis(),
+            page.sections.len()
+        ));
+        Ok(crate::catalog_cards::home_of(&page))
     }
 
     fn lyrics(

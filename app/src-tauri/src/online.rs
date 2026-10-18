@@ -364,6 +364,27 @@ pub async fn online_mood(
     .map_err(|e| e.to_string())?
 }
 
+/// The catalog's home feed (filtered by a chip's `params`), or its next rows.
+#[tauri::command]
+pub async fn online_home(
+    params: Option<String>,
+    continuation: Option<String>,
+    pb: State<'_, Playback>,
+) -> Result<media_access::RemoteHome, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .home(
+                params.as_deref(),
+                continuation.as_deref(),
+                &CancellationToken::default(),
+            )
+            .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A radio: songs like `seed` (a song id), or more of the radio `playlist_id` after the song
 /// `seed`. Songs you disliked are left out.
 #[tauri::command]
