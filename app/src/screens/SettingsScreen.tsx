@@ -113,6 +113,28 @@ export function SettingsScreen(props: {
   )
 }
 
+/** Pre-releases (beta): newer versions before they are released to everyone. */
+function BetaRow() {
+  const [beta, setBeta] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!inApp()) return
+    void getSettings().then((s) => setBeta(s.update_channel === 'beta'))
+  }, [])
+  if (beta === null) return null
+  return (
+    <Row title="Pre-releases" hint="Also offer versions released early, to try what is new before everyone. Each is signed like any release, and installed only when you choose.">
+      <Switch
+        label="Offer pre-releases"
+        on={beta}
+        onChange={(on) => {
+          setBeta(on)
+          void setSettings({ update_channel: on ? 'beta' : 'stable' }).then(() => void checkForUpdate())
+        }}
+      />
+    </Row>
+  )
+}
+
 function Row(props: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-4 border-b border-edge py-4 last:border-b-0">
@@ -943,6 +965,7 @@ function About() {
           }}
         />
       </Row>
+      <BetaRow />
       <p className="mt-4 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
         published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.

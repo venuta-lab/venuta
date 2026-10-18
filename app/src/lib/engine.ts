@@ -204,6 +204,8 @@ export interface Settings {
   listening?: Listening
   /** A proxy for every online request, used from the next start. */
   proxy?: string | null
+  /** Which new versions are offered: releases, or pre-releases too. */
+  update_channel?: 'stable' | 'beta' | null
 }
 
 /** How listening goes: what plays next, what is never offered, what is remembered. */

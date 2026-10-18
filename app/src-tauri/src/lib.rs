@@ -401,7 +401,8 @@ fn use_proxy() {
         let browser = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            format!("{browser} --proxy-server={proxy} --proxy-bypass-list=localhost;127.0.0.1").trim(),
+            format!("{browser} --proxy-server={proxy} --proxy-bypass-list=localhost;127.0.0.1")
+                .trim(),
         );
     }
 }

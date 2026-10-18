@@ -50,6 +50,9 @@ pub struct Settings {
     /// for networks that only let traffic out that way. Used from the next start.
     #[serde(default)]
     pub proxy: Option<String>,
+    /// Which new versions are offered: "stable" (releases), or "beta" (pre-releases too).
+    #[serde(default)]
+    pub update_channel: Option<String>,
 }
 
 /// A proxy address as it may be used: `http`, `https`, `socks5` or `socks5h`, then a host and a
