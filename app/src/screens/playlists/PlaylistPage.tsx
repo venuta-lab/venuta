@@ -580,7 +580,7 @@ export function PlaylistPage(props: {
       }
     >
       <div className="flex flex-wrap items-end gap-8">
-        <Mosaic root={root} dirs={dirs} smart={smart} className="aspect-square w-[220px] shrink-0 rounded-3xl shadow-2xl shadow-black/40" />
+        <Mosaic root={root} dirs={dirs} smart={smart} liked={props.summary?.liked} className="aspect-square w-[220px] shrink-0 rounded-3xl shadow-2xl shadow-black/40" />
         <div className="min-w-[280px] flex-1 pb-1">
           <p className="text-[13px] font-medium text-ink/60">{kind}</p>
           <Title

@@ -1679,6 +1679,7 @@ pub fn apply(
                 source: Some(source.clone()),
                 source_id: c.source_id.clone().or(before.source_id),
                 base: Some(m.base.clone()),
+                liked: before.liked,
             };
             playlists::write_with(library_root, lib, t, &m.items, false, &header)?;
             let done = Written {
@@ -1715,6 +1716,7 @@ pub fn apply(
                         .map(|i| i.keys)
                         .collect(),
                 ),
+                liked: false,
             };
             playlists::write_with(library_root, lib, &name, &c.items, false, &header)?;
             let done = Written {

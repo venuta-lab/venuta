@@ -36,6 +36,8 @@ import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { useDropTarget } from '../../lib/drag'
 import { notify } from '../../lib/notify'
+import { LikeButton } from '../LikeButton'
+import { useLikes } from '../../lib/likes'
 import {
   IconExpand,
   IconLyrics,
@@ -631,6 +633,8 @@ export function NowPlayingBar(props: {
   expanded: boolean
 }) {
   const s = usePlayer()
+  // Hearts on the playing song are right wherever the window opens.
+  useLikes(s.root ?? '')
   const song = current(s)
   const cover = useCovers(320)
   useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
@@ -710,6 +714,7 @@ export function NowPlayingBar(props: {
                 )}
               </div>
             </div>
+            {s.root && <LikeButton root={s.root} item={song} />}
           </motion.div>
 
           <div className="flex min-w-0 flex-col items-center gap-1">

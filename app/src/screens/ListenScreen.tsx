@@ -6,6 +6,7 @@ import { loadCovers, useCovers } from '../lib/covers'
 import { RemoteArt } from '../components/RemoteArt'
 import { findOnlineArtist, fromOnline } from './listen/onlineSearch'
 import { notify } from '../lib/notify'
+import { useLikes } from '../lib/likes'
 import { onlineProblem } from '../lib/online'
 import { useCatalog } from '../lib/catalog'
 import { current, isOnline, play, playItems, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
@@ -178,6 +179,8 @@ function Listen(props: Props) {
   const tracks = useCatalog(root, report)
 
   const lib = useMemo(() => indexTracks(tracks ?? []), [tracks])
+  // What is liked, read again whenever the library is.
+  useLikes(root, tracks)
   // The library as of now, for opening an artist by name from a menu.
   const libRef = useRef(lib)
   useEffect(() => {

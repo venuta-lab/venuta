@@ -721,6 +721,8 @@ export interface PlaylistSummary {
   name: string
   file: string
   smart: boolean
+  /** It is your Liked songs (whatever it is called). */
+  liked?: boolean
   tracks: number
   /** Songs still to get (not in the library, not online). */
   missing: number

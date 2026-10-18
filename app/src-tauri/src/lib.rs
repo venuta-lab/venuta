@@ -1843,6 +1843,37 @@ async fn playlist_add(
     .await
 }
 
+/// What is liked: your files by path and online songs by id (and the liked list's name).
+#[tauri::command]
+async fn liked_songs(root: String) -> CmdResult<engine::playlists::LikedSet> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        Ok(engine::playlists::liked_set(&rootp, &lib))
+    })
+    .await
+}
+
+/// Like a song (on top of your Liked songs) or take it out; returns what is liked now.
+#[tauri::command]
+async fn like_song(
+    root: String,
+    item: engine::playlists::Item,
+    liked: bool,
+) -> CmdResult<engine::playlists::LikedSet> {
+    blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let (_, lib) = load_lib(&rootp)?;
+        if liked {
+            engine::playlists::like(&rootp, &lib, &item)?;
+        } else {
+            engine::playlists::unlike(&rootp, &lib, &item)?;
+        }
+        Ok(engine::playlists::liked_set(&rootp, &lib))
+    })
+    .await
+}
+
 /// A playlist as the player gets it, in order: each song from your file when it's here, else
 /// online; songs still to get are left out (see `engine::playlists::playables`).
 #[tauri::command]
@@ -3040,6 +3071,8 @@ pub fn run() {
             smart_save,
             playlist_save_items,
             playlist_add,
+            liked_songs,
+            like_song,
             playlist_queue,
             online::online_search,
             online::online_search_tracks,

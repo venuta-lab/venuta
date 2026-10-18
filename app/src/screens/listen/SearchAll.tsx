@@ -11,6 +11,7 @@ import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle,
 import { useNav } from './model'
 import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
 import { QualityBadge } from './parts'
+import { LikeButton } from '../../components/LikeButton'
 
 /*
   The pieces of the All results that mix your library and the online catalog: the songs beside
@@ -101,7 +102,7 @@ export function MixedSongs(props: {
               onClick={(e) => !(e.target as HTMLElement).closest('button') && (now ? void toggle() : void playItems(root, items, i, from))}
               onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && void playItems(root, items, i, from)}
               onContextMenu={(e) => menuFromEvent(e, menu())}
-              className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_auto_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''}`}
+              className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_88px_32px_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''}`}
             >
               {props.numbers ? (
                 <span className="relative grid h-10 w-10 place-items-center text-[13px] tabular-nums text-ink/50">
@@ -125,6 +126,7 @@ export function MixedSongs(props: {
               <span className="text-right text-[12px] tabular-nums text-ink/50">
                 {s.where === 'library' ? <QualityBadge text={quality(s.track)} /> : playsText(s.track.plays)}
               </span>
+              <LikeButton root={root} item={item} quiet />
               <span className="text-right text-[12.5px] tabular-nums text-ink/55">{t.duration_ms ? songLength(t.duration_ms) : ''}</span>
               <AvailabilityBadge availability={s.where === 'library' ? 'local' : 'online'} />
               <button

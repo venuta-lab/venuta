@@ -5,7 +5,7 @@ import { loadCovers, useCovers } from '../lib/covers'
  * A playlist's cover, made from its songs: four different albums as a 2×2 grid, else the first
  * album's cover, else a tile in the accent (a sparkle for smart playlists, a note otherwise).
  */
-export function Mosaic(props: { root: string; dirs: string[]; smart?: boolean; className?: string }) {
+export function Mosaic(props: { root: string; dirs: string[]; smart?: boolean; liked?: boolean; className?: string }) {
   const { root, dirs } = props
   const key = dirs.slice(0, 4).join('|')
   useEffect(() => {
@@ -16,6 +16,18 @@ export function Mosaic(props: { root: string; dirs: string[]; smart?: boolean; c
     .slice(0, 4)
     .map((d) => cover(d)?.src)
     .filter((s): s is string => !!s)
+  // Liked songs always wears its heart, so it is found at a glance among the covers.
+  if (props.liked)
+    return (
+      <div
+        className={`relative grid place-items-center overflow-hidden text-on-accent ${props.className ?? ''}`}
+        style={{ background: 'linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 45%, var(--solid)))' }}
+      >
+        <svg width="38%" height="38%" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10Z" />
+        </svg>
+      </div>
+    )
   return (
     <div className={`relative overflow-hidden bg-ink/[0.06] ${props.className ?? ''}`}>
       {arts.length >= 4 ? (

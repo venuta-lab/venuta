@@ -36,6 +36,11 @@ const SOURCE_ID_TAG: &str = "#VENUTA-SOURCE-ID:";
 /// The songs the source had when it was last brought in (short keys), so an update can tell a
 /// song you took out from one the source added, and a song the source dropped from one you added.
 const BASE_TAG: &str = "#VENUTA-BASE:";
+/// The playlist that is your Liked songs (whatever it is called; see `like`).
+const LIKED_TAG: &str = "#VENUTA-LIKED";
+/// What the liked list is called when it is made, and when another list has that name.
+const LIKED_NAME: &str = "Liked songs";
+const LIKED_NAME_TAKEN: &str = "Your liked songs";
 
 /// A song a playlist wants that isn't in the library: enough to find it again later.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -257,6 +262,8 @@ pub struct Header {
     pub source_id: Option<String>,
     /// The source's songs when last brought in: each song's keys (see `song_keys`).
     pub base: Option<Vec<Vec<String>>>,
+    /// It is your Liked songs.
+    pub liked: bool,
 }
 
 fn header_in(text: &str) -> Header {
@@ -266,6 +273,8 @@ fn header_in(text: &str) -> Header {
             h.source_id = Some(s.trim().to_owned()).filter(|s| !s.is_empty());
         } else if let Some(s) = l.strip_prefix(SOURCE_TAG) {
             h.source = Some(s.trim().to_owned()).filter(|s| !s.is_empty());
+        } else if l == LIKED_TAG || l.starts_with(&format!("{LIKED_TAG} ")) {
+            h.liked = true;
         } else if let Some(s) = l.strip_prefix(BASE_TAG) {
             h.base = Some(
                 s.split_whitespace()
@@ -453,6 +462,8 @@ pub struct PlaylistSummary {
     pub duration_ms: u64,
     /// When its file last changed (seconds since 1970), for "recent first".
     pub modified: u64,
+    /// It is your Liked songs.
+    pub liked: bool,
 }
 
 pub fn folder(library_root: &Path) -> PathBuf {
@@ -813,6 +824,135 @@ pub fn add_with(
     Ok(added.len())
 }
 
+/// Your Liked songs, if you have liked anything: the playlist marked as it, whatever its name.
+pub fn liked_name(library_root: &Path) -> Option<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder(library_root))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("m3u8") || x.eq_ignore_ascii_case("m3u"))
+        })
+        .filter(|p| crate::text::read_text(p).is_ok_and(|t| header_in(&t).liked))
+        .filter_map(|p| Some(p.file_stem()?.to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    names.into_iter().next()
+}
+
+/// What tells this song from others, to find it in the liked list however it is held there.
+fn item_keys(lib: &Library, item: &Item) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(o) = &item.online {
+        keys.extend(online_keys(o));
+    }
+    if let Some(p) = item.path.as_deref().filter(|p| !p.is_empty())
+        && let Some(t) = lib.tracks.iter().find(|t| t.path == p)
+    {
+        keys.extend(track_keys(t));
+    }
+    if let Some(w) = &item.want {
+        keys.extend(want_keys(w));
+    }
+    keys
+}
+
+fn entry_keys(lib: &Library, e: &PlaylistEntry) -> Vec<String> {
+    let mut keys = item_keys(lib, &e.item());
+    if !e.missing
+        && !e.path.is_empty()
+        && let Some(t) = lib.tracks.iter().find(|t| t.path == e.path)
+    {
+        keys.extend(track_keys(t));
+    }
+    keys
+}
+
+/// Like a song: it goes on top of your Liked songs (made the first time, as "Liked songs", or
+/// "Your liked songs" when another list has that name, such as Spotify's). A song already
+/// liked (as your file or online) stays where it is. Returns the list's name.
+pub fn like(library_root: &Path, lib: &Library, item: &Item) -> Result<String, String> {
+    let name = match liked_name(library_root) {
+        Some(n) => n,
+        None => {
+            let name = if exists(library_root, LIKED_NAME) {
+                free_name(library_root, LIKED_NAME_TAKEN)
+            } else {
+                LIKED_NAME.to_owned()
+            };
+            let header = Header {
+                liked: true,
+                ..Header::default()
+            };
+            write_with(library_root, lib, &name, &[], false, &header)?;
+            name
+        }
+    };
+    let (entries, _) = read(library_root, lib, &name)?;
+    let keys = item_keys(lib, item);
+    let liked_already = entries
+        .iter()
+        .any(|e| entry_keys(lib, e).iter().any(|k| keys.contains(k)));
+    if !liked_already {
+        let mut all = vec![item.clone()];
+        all.extend(entries.iter().map(PlaylistEntry::item));
+        write_items(library_root, lib, &name, &all, false, None)?;
+    }
+    Ok(name)
+}
+
+/// Take a song out of your Liked songs, however it is held there (your file or online).
+pub fn unlike(library_root: &Path, lib: &Library, item: &Item) -> Result<(), String> {
+    let Some(name) = liked_name(library_root) else {
+        return Ok(());
+    };
+    let (entries, _) = read(library_root, lib, &name)?;
+    let keys = item_keys(lib, item);
+    let kept: Vec<Item> = entries
+        .iter()
+        .filter(|e| !entry_keys(lib, e).iter().any(|k| keys.contains(k)))
+        .map(PlaylistEntry::item)
+        .collect();
+    if kept.len() < entries.len() {
+        write_items(library_root, lib, &name, &kept, false, None)?;
+    }
+    Ok(())
+}
+
+/// What is liked, the way songs are shown: your files by path, online songs by id.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LikedSet {
+    /// The liked list's name; None until something is liked.
+    pub name: Option<String>,
+    pub paths: Vec<String>,
+    /// `provider:track_id` of each liked online song.
+    pub online: Vec<String>,
+}
+
+pub fn liked_set(library_root: &Path, lib: &Library) -> LikedSet {
+    let Some(name) = liked_name(library_root) else {
+        return LikedSet::default();
+    };
+    let entries = read(library_root, lib, &name)
+        .map(|r| r.0)
+        .unwrap_or_default();
+    LikedSet {
+        paths: entries
+            .iter()
+            .filter(|e| !e.missing && !e.path.is_empty())
+            .map(|e| e.path.clone())
+            .collect(),
+        online: entries
+            .iter()
+            .filter_map(|e| e.online.as_ref())
+            .map(|o| format!("{}:{}", o.provider, o.track_id))
+            .collect(),
+        name: Some(name),
+    }
+}
+
 /// Write a static playlist from library-relative paths (keeping the source it came from).
 pub fn write(
     library_root: &Path,
@@ -865,6 +1005,10 @@ pub fn write_with(
     if smart {
         out.push_str(SMART_TAG);
         out.push_str(" written from your rules; edit the rule, not this file\n");
+    }
+    if header.liked && !smart {
+        out.push_str(LIKED_TAG);
+        out.push_str(" the songs you liked in Venuta\n");
     }
     if let Some(s) = header.source.as_deref().filter(|s| !s.is_empty()) {
         out.push_str(&format!("{SOURCE_TAG}{s}\n"));
@@ -980,6 +1124,7 @@ pub fn list(library_root: &Path, lib: &Library) -> Vec<PlaylistSummary> {
             Some(PlaylistSummary {
                 file: e.path().to_string_lossy().into_owned(),
                 smart: text.contains(SMART_TAG) || text.contains(OLD_SMART_TAG),
+                liked: header_in(&text).liked,
                 tracks: entries.len(),
                 missing: entries
                     .iter()
@@ -3198,5 +3343,98 @@ mod tests {
             !text.contains("\"track_id\":\"https://"),
             "track ids must never be addresses: {text}"
         );
+    }
+
+    #[test]
+    fn liking_a_song_puts_it_on_top_of_liked_songs_once() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        assert_eq!(
+            liked_name(root.path()),
+            None,
+            "no list until something is liked"
+        );
+        let name = like(root.path(), &lib, &Item::track("A/01.flac")).unwrap();
+        assert_eq!(name, "Liked songs");
+        let o = online("t-1", "Kesariya", "Arijit Singh");
+        like(root.path(), &lib, &Item::online(o.clone())).unwrap();
+        // Liking again changes nothing.
+        like(root.path(), &lib, &Item::online(o.clone())).unwrap();
+        let (e, _) = read(root.path(), &lib, &name).unwrap();
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[0].online.as_ref(), Some(&o), "the newest like is first");
+        assert_eq!(e[1].path, "A/01.flac");
+        let set = liked_set(root.path(), &lib);
+        assert_eq!(set.name.as_deref(), Some("Liked songs"));
+        assert_eq!(set.paths, ["A/01.flac"]);
+        assert_eq!(set.online, ["remote_catalog:t-1"]);
+        assert!(
+            list(root.path(), &lib)
+                .iter()
+                .any(|p| p.name == name && p.liked)
+        );
+    }
+
+    #[test]
+    fn unliking_takes_it_out_whichever_way_it_is_shown() {
+        let root = tempfile::tempdir().unwrap();
+        let path = "A/01 - Kesariya.flac";
+        std::fs::create_dir_all(root.path().join("A")).unwrap();
+        std::fs::write(root.path().join(path), b"flac").unwrap();
+        let mut have = song(1, path, "Kesariya", "Arijit Singh", "Brahmastra", 268_000);
+        have.tags.insert("ISRC".into(), vec!["INZ032201234".into()]);
+        let lib = library(vec![have]);
+        let o = OnlineEntry {
+            isrc: Some("INZ032201234".into()),
+            ..online("t-1", "Kesariya (From \"Brahmastra\")", "Arijit Singh")
+        };
+        like(root.path(), &lib, &Item::online(o.clone())).unwrap();
+        // Liked online, and the library has it: it shows liked as your file too.
+        let set = liked_set(root.path(), &lib);
+        assert_eq!(set.paths, [path]);
+        assert_eq!(set.online, ["remote_catalog:t-1"]);
+        // Unliked as your file, the online like goes too: it is the same song.
+        unlike(root.path(), &lib, &Item::track(path)).unwrap();
+        let set = liked_set(root.path(), &lib);
+        assert!(set.paths.is_empty() && set.online.is_empty());
+    }
+
+    #[test]
+    fn a_spotify_liked_songs_list_is_never_written_into() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![song(1, "A/01.flac", "One", "X", "Al", 200_000)]);
+        write_items(
+            root.path(),
+            &lib,
+            "Liked Songs",
+            &[],
+            false,
+            Some("Spotify 2026-10-13"),
+        )
+        .unwrap();
+        let name = like(root.path(), &lib, &Item::track("A/01.flac")).unwrap();
+        assert_eq!(name, "Your liked songs");
+        let (spotify, _) = read(root.path(), &lib, "Liked Songs").unwrap();
+        assert!(spotify.is_empty());
+    }
+
+    #[test]
+    fn the_liked_list_stays_the_liked_list_through_edits_and_a_new_name() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![
+            song(1, "A/01.flac", "One", "X", "Al", 200_000),
+            song(2, "A/02.flac", "Two", "X", "Al", 200_000),
+        ]);
+        let name = like(root.path(), &lib, &Item::track("A/01.flac")).unwrap();
+        add(root.path(), &lib, &name, &[Item::track("A/02.flac")]).unwrap();
+        assert_eq!(liked_name(root.path()).as_deref(), Some("Liked songs"));
+        rename(root.path(), &name, "Favourites").unwrap();
+        assert_eq!(liked_name(root.path()).as_deref(), Some("Favourites"));
+        like(root.path(), &lib, &Item::track("A/02.flac")).unwrap();
+        assert_eq!(read(root.path(), &lib, "Favourites").unwrap().0.len(), 2);
+        // A copy is an ordinary playlist.
+        let copy = duplicate(root.path(), &lib, "Favourites", "Favourites copy").unwrap();
+        assert_eq!(liked_name(root.path()).as_deref(), Some("Favourites"));
+        assert!(!header_of(root.path(), &copy).liked);
     }
 }

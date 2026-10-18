@@ -96,6 +96,15 @@ export const IconShuffle = (p: P) => (
     <path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5" />
   </svg>
 )
+/** A heart: an outline, filled with `filled` (a song you liked). */
+export const IconHeart = ({ filled = false, ...p }: P & { filled?: boolean }) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path
+      d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10Z"
+      fill={filled ? 'currentColor' : 'none'}
+    />
+  </svg>
+)
 export const IconMore = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
     <circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" />

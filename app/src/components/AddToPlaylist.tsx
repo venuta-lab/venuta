@@ -151,7 +151,7 @@ export function AddToPlaylist({ root }: { root: string }) {
                   onClick={() => void add(p.name)}
                   className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
                 >
-                  <Mosaic root={root} dirs={p.dirs} className="h-10 w-10 shrink-0 rounded-lg" />
+                  <Mosaic root={root} dirs={p.dirs} liked={p.liked} className="h-10 w-10 shrink-0 rounded-lg" />
                   <span className="min-w-0">
                     <span className="block truncate text-[14px]">{p.name}</span>
                     <span className="block truncate text-[12px] text-ink/50">

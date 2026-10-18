@@ -8,11 +8,12 @@ import { InBar } from '../../components/ui'
 import { Equalizer, QualityBadge, TrackMenu } from './parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { LikeButton } from '../../components/LikeButton'
 import { dragSource } from '../../lib/drag'
 
 const ROW = 44
 const OVERSCAN = 10
-const COLS = 'grid-cols-[36px_minmax(0,1.7fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_52px_96px_32px]'
+const COLS = 'grid-cols-[36px_minmax(0,1.7fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_52px_96px_32px_32px]'
 
 type SortKey = 'title' | 'artist' | 'album' | 'time' | 'quality'
 const HEADERS: [SortKey, string][] = [
@@ -119,6 +120,7 @@ export const SongList = memo(function SongList(props: {
     <div className={`grid ${COLS} items-center gap-3 border-b border-edge px-2 pb-1.5`}>
       <span />
       {HEADERS.map(([k, l]) => heading(k, l, k === 'time'))}
+      <span />
       <span />
     </div>
   )
@@ -238,6 +240,7 @@ const SongRow = memo(function SongRow(props: {
       <span className="min-w-0">
         <QualityBadge text={quality(t)} />
       </span>
+      <LikeButton root={nav.root} item={toItem(t)} quiet />
       <TrackMenu track={t} label={t.title} play={playHere} />
     </div>
   )

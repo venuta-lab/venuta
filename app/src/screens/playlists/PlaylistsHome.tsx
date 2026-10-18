@@ -79,7 +79,7 @@ export function PlaylistCard(props: {
       className="card group relative rounded-2xl"
     >
       <button onClick={props.onOpen} className="block w-full text-left">
-        <Mosaic root={root} dirs={p.dirs} smart={p.smart} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
+        <Mosaic root={root} dirs={p.dirs} smart={p.smart} liked={p.liked} className="card-art aspect-square rounded-2xl shadow-xl shadow-black/30" />
         <div className={`mt-2.5 truncate text-[14px] font-medium ${isNow ? 'text-accent-ink' : ''}`}>{p.name}</div>
         <div className="truncate text-[12.5px] text-ink/55" title={line}>
           {line}
@@ -140,7 +140,10 @@ export function PlaylistsHome(props: {
   const smartNames = new Set(data?.smart.map((r) => r.name) ?? [])
   // Empty ones (no songs yet) sit in a compact row under the grid, not as full tiles.
   const empty = all.filter((p) => !p.smart && !smartNames.has(p.name) && p.tracks === 0 && match(p))
-  const yours = all.filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
+  // Liked songs leads what you made.
+  const yours = all
+    .filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
+    .sort((a, b) => Number(!!b.liked) - Number(!!a.liked))
   const imported = useMemo(() => {
     const groups = new Map<string, PlaylistSummary[]>()
     for (const p of all.filter((x) => !x.smart && !smartNames.has(x.name) && x.source && x.tracks > 0 && match(x))) {

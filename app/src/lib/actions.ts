@@ -4,7 +4,8 @@ import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './acti
 import { searchWeb, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
 import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
-import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toRemoteItem } from './player'
+import { isLiked, setLiked } from './likes'
+import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
 import { deletePlaylist, duplicatePlaylist, exportPlaylist, goToPlaylists, renamePlaylist } from '../screens/playlists/ops'
@@ -49,6 +50,7 @@ export function songWork(nav: Go, t: CatalogTrack, playIt?: () => void): Work {
     play: playIt ?? (() => void play(nav.root, [t], 0)),
     next: () => void enqueue(nav.root, [t], true),
     queue: () => void enqueue(nav.root, [t], false),
+    like: likeWork(nav.root, toItem(t)),
     playlist: () => askAddToPlaylist([t.path], t.title),
     artist: goToEach(artists, nav.openArtist),
     album: () => nav.openAlbum(t.dir),
@@ -70,6 +72,12 @@ export function copySongLink(t: Pick<OnlineTrack, 'track_id' | 'title'>) {
     .catch(() => notify("Couldn't reach the clipboard."))
 }
 
+/** Like a song, or take it out of Liked songs when it is in. */
+export function likeWork(root: string, q: QueueItem): MenuItem[] {
+  const liked = isLiked(q)
+  return [{ label: liked ? 'Remove from Liked songs' : 'Add to Liked songs', run: () => void setLiked(root, q, !liked) }]
+}
+
 /** What online song actions need: the library root, and how to open an artist or an album. */
 type GoOnline = Pick<Nav, 'root' | 'openArtistNamed' | 'openOnlineAlbum'>
 
@@ -81,6 +89,7 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
     play: playIt ?? (() => void playItems(nav.root, [item], 0)),
     next: () => void enqueueItems(nav.root, [item], true),
     queue: () => void enqueueItems(nav.root, [item], false),
+    like: likeWork(nav.root, item),
     playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
     artist: goToEach(t.artists, nav.openArtistNamed),
     album: albumId

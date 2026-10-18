@@ -9,6 +9,7 @@ import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
 import { menuFor, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { LikeButton } from '../../components/LikeButton'
 import { dragSource } from '../../lib/drag'
 
 /** One album: its cover large, what it is, and its songs to play. */
@@ -122,7 +123,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                     move(i, e.key === 'ArrowDown' ? 1 : -1)
                   }
                 }}
-                className={`row group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${
+                className={`row group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_32px_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${
                   isNow ? 'text-accent-ink' : ''
                 }`}
               >
@@ -151,6 +152,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                   )}
                 </span>
                 <span>{q !== a.quality && <QualityBadge text={q} />}</span>
+                <LikeButton root={nav.root} item={toItem(t)} quiet />
                 <span className={`text-right text-[12.5px] ${isNow ? '' : 'text-ink/55'}`}>{clock(t.duration_ms)}</span>
                 <TrackMenu track={t} label={t.title} play={() => playAt(i)} />
               </div>
