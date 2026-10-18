@@ -24,6 +24,7 @@ import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
 import { ProxySetting } from './settings/ProxySetting'
 import { CacheSetting } from './settings/CacheSetting'
+import { readZoom, setZoom, ZOOM_EVENT } from '../lib/zoom'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
@@ -401,6 +402,9 @@ function LookAndFeel() {
             )}
           </Drawer>
         )}
+        <Drawer id="size" title="Size" summary={<SizeSummary />}>
+          <InterfaceSize />
+        </Drawer>
         <Drawer id="motion" title="Motion" summary={motionSummary}>
           <Row title="Motion" hint="Reduced keeps fades and drops springs, slides, the drifting background and the themes' moving effects.">
             <Segmented
@@ -427,6 +431,35 @@ function LookAndFeel() {
  * A part of Look and feel as one line saying what it is set to, opened to change it. Whether it
  * was left open is remembered.
  */
+/** The size the window draws at, kept current when Ctrl + or Ctrl - changes it. */
+function useZoom() {
+  const [zoom, setZoomShown] = useState(readZoom)
+  useEffect(() => {
+    const read = () => setZoomShown(readZoom())
+    window.addEventListener(ZOOM_EVENT, read)
+    return () => window.removeEventListener(ZOOM_EVENT, read)
+  }, [])
+  return zoom
+}
+
+const pct = (z: number) => `${Math.round(z * 100)}%`
+
+function SizeSummary() {
+  const zoom = useZoom()
+  return <>{zoom === 1 ? '100%, as designed' : pct(zoom)}</>
+}
+
+function InterfaceSize() {
+  const zoom = useZoom()
+  const shown = [0.8, 0.9, 1, 1.1, 1.25, 1.5]
+  const options = (shown.includes(zoom) ? shown : [...shown, zoom].sort((a, b) => a - b)).map((z) => ({ value: String(z), label: pct(z) }))
+  return (
+    <Row title="Interface size" hint="Text, covers and controls everywhere, in every theme. Ctrl + and Ctrl - change it from anywhere, Ctrl 0 goes back to 100%.">
+      <Segmented id="ui-size" value={String(zoom)} onChange={(v) => setZoom(Number(v))} options={options} />
+    </Row>
+  )
+}
+
 function Drawer(props: { id: string; title: string; summary: React.ReactNode; children: React.ReactNode }) {
   const [open, setOpen] = useRemembered(`look-open:${props.id}`, false)
   return (
