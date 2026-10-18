@@ -1286,6 +1286,20 @@ export const lyricsChoose = (key: string, source: string | null, rename?: { titl
 /** How much later (positive) or earlier a song's lyrics run, in ms. */
 export const lyricsOffset = (key: string, offsetMs: number) => invoke<LyricsChoice>('lyrics_offset', { key, offsetMs })
 
+/** Who is signed in to YouTube Music. */
+export interface YtmAccountInfo {
+  name: string | null
+  email: string | null
+  handle: string | null
+  picture: string | null
+}
+/** Open Google's sign-in for YouTube Music (it answers with the ytm-account-changed event). */
+export const ytmSignIn = () => invoke<void>('ytm_sign_in')
+export const ytmSignOut = () => invoke<void>('ytm_sign_out')
+export const ytmAccount = () => invoke<YtmAccountInfo | null>('ytm_account')
+/** Your YouTube Music playlists (none when signed out). */
+export const ytmPlaylists = () => invoke<OnlineCollection[]>('ytm_playlists')
+
 /** Playback catalog health for Settings (never includes stream URLs). */
 export interface OnlineCatalogStatus {
   live_env: boolean

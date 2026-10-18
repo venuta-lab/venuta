@@ -211,6 +211,15 @@ pub struct RemoteArtistLink {
     pub artist_id: Option<String>,
 }
 
+/// Who is signed in to the catalog (YouTube Music), as its account menu says.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteAccount {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub handle: Option<String>,
+    pub picture: Option<String>,
+}
+
 /// The catalog's home feed: its mood chips (each filters the feed), its rows, and where more
 /// rows start.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

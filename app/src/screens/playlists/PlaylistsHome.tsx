@@ -11,6 +11,9 @@ import { dragSource, useDropTarget } from '../../lib/drag'
 import { addSongsTo } from './ops'
 import { playlistSongs, playPlaylist, plural, sourceName } from './common'
 import { keyFor, matcher } from '../../lib/textsearch'
+import { ytmPlaylists, type OnlineCollection } from '../../lib/engine'
+import { useYtmAccount } from '../../lib/ytmAccount'
+import { CollectionCard } from '../listen/OnlineCards'
 
 /** A playlist with no songs yet, small: opens it, has its menu, takes songs dropped on it. */
 function EmptyPlaylist(props: { root: string; p: PlaylistSummary; onOpen: () => void }) {
@@ -140,6 +143,20 @@ export function PlaylistsHome(props: {
   const smartNames = new Set(data?.smart.map((r) => r.name) ?? [])
   // Empty ones (no songs yet) sit in a compact row under the grid, not as full tiles.
   const empty = all.filter((p) => !p.smart && !smartNames.has(p.name) && p.tracks === 0 && match(p))
+  // Your YouTube Music playlists, when you are signed in (they open as online playlists).
+  const account = useYtmAccount()
+  const [ytm, setYtm] = useState<OnlineCollection[]>([])
+  useEffect(() => {
+    if (!account) return
+    let live = true
+    ytmPlaylists()
+      .then((l) => live && setYtm(l))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [account])
+  const ytmShown = account ? ytm.filter((c) => match({ name: c.title } as PlaylistSummary)) : []
   // Liked songs leads what you made.
   const yours = all
     .filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
@@ -250,6 +267,16 @@ export function PlaylistsHome(props: {
                   <PlaylistCard key={p.name} root={root} p={p} onOpen={() => props.onOpen(p.name)} />
                 ))}
               </div>,
+            )}
+          {ytmShown.length > 0 &&
+            section(
+              'From your YouTube Music',
+              <div className="flex flex-wrap gap-x-5 gap-y-7">
+                {ytmShown.map((c) => (
+                  <CollectionCard key={c.collection_id} collection={c} />
+                ))}
+              </div>,
+              <span className="text-[12.5px] text-ink/50">{account?.name ?? ''}</span>,
             )}
           {imported.map(([from, lists]) =>
             section(

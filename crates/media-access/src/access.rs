@@ -1,7 +1,8 @@
 use crate::types::{
-    CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
-    RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore,
-    RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest,
+    RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection,
+    RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -168,6 +169,32 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<RemoteRadio, AccessError> {
         let _ = (seed, playlist_id, cancel);
         Err(unsupported("radios"))
+    }
+
+    /// Sign in to the catalog with a browser's cookies for it (None: signed out). Searches,
+    /// Home and radios then answer for that account.
+    fn set_account_cookie(&self, cookie: Option<&str>) {
+        let _ = cookie;
+    }
+
+    /// The cookies the catalog holds now (they are renewed as it answers), to keep for next time.
+    fn account_cookie(&self) -> Option<String> {
+        None
+    }
+
+    /// Who is signed in, or None.
+    fn account(&self, cancel: &CancellationToken) -> Result<Option<RemoteAccount>, AccessError> {
+        let _ = cancel;
+        Ok(None)
+    }
+
+    /// The signed-in account's playlists (its library).
+    fn account_playlists(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        let _ = cancel;
+        Err(unsupported("account playlists"))
     }
 
     /// One catalog song by its id: what it is (for a pasted link).
@@ -542,6 +569,29 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Option<RemoteTrack>, AccessError> {
         self.inner.track(track_id, cancel)
+    }
+
+    fn set_account_cookie(&self, cookie: Option<&str>) {
+        // Addresses found for the old session may not play for the new one.
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+        self.inner.set_account_cookie(cookie)
+    }
+
+    fn account_cookie(&self) -> Option<String> {
+        self.inner.account_cookie()
+    }
+
+    fn account(&self, cancel: &CancellationToken) -> Result<Option<RemoteAccount>, AccessError> {
+        self.inner.account(cancel)
+    }
+
+    fn account_playlists(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        self.inner.account_playlists(cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

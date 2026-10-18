@@ -31,6 +31,7 @@ mod phone;
 mod playback;
 mod theme_packs;
 mod updates;
+mod ytm_account;
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
@@ -2997,6 +2998,8 @@ pub fn run() {
                     &engine::settings::load().listening,
                 );
             }
+            // A YouTube Music sign-in kept from before is used again.
+            ytm_account::restore(app.handle());
             // Ensure the stream tool is ready before the first online play (download if needed).
             std::thread::Builder::new()
                 .name("venuta-ensure-stream-tool".into())
@@ -3115,6 +3118,10 @@ pub fn run() {
             want_remove,
             desktop::set_close_action,
             desktop::quit_app,
+            ytm_account::ytm_sign_in,
+            ytm_account::ytm_sign_out,
+            ytm_account::ytm_account,
+            ytm_account::ytm_playlists,
             diagnostics,
             desktop::song_notification,
             lyrics_find::lyrics_forget_all,

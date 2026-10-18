@@ -11,9 +11,9 @@ use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
-    PageRequest, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
-    RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion,
-    RemoteTrack, SearchSuggestions,
+    PageRequest, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink,
+    RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio,
+    RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -142,6 +142,17 @@ trait LiveBackend: Send + Sync {
     ) -> Result<(Option<String>, ytmusic::NextResult), AccessError>;
 
     fn set_blocked(&self, blocked: &[(Option<String>, String)]);
+
+    fn set_cookie(&self, cookie: Option<&str>);
+
+    fn cookie(&self) -> Option<String>;
+
+    fn account(&self, cancel: &CancellationToken) -> Result<Option<RemoteAccount>, AccessError>;
+
+    fn library_playlists(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError>;
 
     /// The home feed (see `MediaAccess::home`).
     fn home(
@@ -716,6 +727,59 @@ impl LiveBackend for YtmBackend {
 
     fn set_data_saver(&self, on: bool) {
         self.saver.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn set_cookie(&self, cookie: Option<&str>) {
+        self.it.set_cookie(
+            cookie
+                .map(str::to_owned)
+                .filter(|c| ytmusic::cookie_sapisid(c).is_some()),
+        );
+    }
+
+    fn cookie(&self) -> Option<String> {
+        self.it.cookie()
+    }
+
+    fn account(&self, cancel: &CancellationToken) -> Result<Option<RemoteAccount>, AccessError> {
+        if !self.it.is_logged_in() {
+            return Ok(None);
+        }
+        let client = self.client(PAGES_CLIENT)?;
+        let info = self.run(cancellable(cancel.clone(), async {
+            self.it.account_menu(client).await.map_err(|_| {
+                AccessError::new(AccessErrorKind::Transport, "the account didn't answer")
+            })
+        }))?;
+        Ok(Some(RemoteAccount {
+            name: info.name,
+            email: info.email,
+            handle: info.handle,
+            picture: info.thumbnail,
+        }))
+    }
+
+    fn library_playlists(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        if !self.it.is_logged_in() {
+            return Ok(Vec::new());
+        }
+        let client = self.client(PAGES_CLIENT)?;
+        let cards = self.run(cancellable(cancel.clone(), async {
+            self.it.library_playlists(client).await.map_err(|_| {
+                AccessError::new(
+                    AccessErrorKind::Transport,
+                    "the account's playlists didn't come",
+                )
+            })
+        }))?;
+        Ok(cards
+            .iter()
+            .filter(|c| c.kind == "playlist")
+            .filter_map(|c| crate::catalog_cards::collection_of(c, "playlist"))
+            .collect())
     }
 
     fn grid(
@@ -1813,6 +1877,25 @@ impl MediaAccess for LiveCatalogAccess {
 
     fn set_data_saver(&self, on: bool) {
         self.backend.set_data_saver(on);
+    }
+
+    fn set_account_cookie(&self, cookie: Option<&str>) {
+        self.backend.set_cookie(cookie);
+    }
+
+    fn account_cookie(&self) -> Option<String> {
+        self.backend.cookie()
+    }
+
+    fn account(&self, cancel: &CancellationToken) -> Result<Option<RemoteAccount>, AccessError> {
+        self.backend.account(cancel)
+    }
+
+    fn account_playlists(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteCollection>, AccessError> {
+        self.backend.library_playlists(cancel)
     }
 
     fn shelf_more(

@@ -21,6 +21,7 @@ import { Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
+import { YtmAccount } from '../components/YtmAccount'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
@@ -747,6 +748,7 @@ function Online() {
         Tags, covers and lyrics for your files come from these sources. Optional keys stay on this computer.
       </p>
       <h3 className="mt-6 text-[15px] font-semibold">Accounts</h3>
+      <YtmAccount />
       <SpotifyAccount />
       {(
         [
