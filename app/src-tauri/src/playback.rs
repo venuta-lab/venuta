@@ -262,12 +262,26 @@ impl Playback {
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
                     {
                         let song = s.index.and_then(|i| queue.get(i));
+                        // An online song is counted by its id, with what it was.
+                        let online =
+                            song.filter(|q| q.is_remote())
+                                .map(|q| crate::listening::OnlineSong {
+                                    file: q.media_key(),
+                                    title: q.title.clone(),
+                                    artists: q.artists.clone(),
+                                    album: q.album.clone(),
+                                    art: q.artwork_url.clone(),
+                                });
                         let _ = keep.send(Keep::Heard {
                             folder: folder.clone(),
-                            // Remote items are not counted as local plays (no library path).
-                            song: song
-                                .filter(|q| !q.is_remote())
-                                .map(|q| (q.path.clone(), q.dir.clone())),
+                            song: song.map(|q| {
+                                if q.is_remote() {
+                                    (q.media_key(), String::new())
+                                } else {
+                                    (q.path.clone(), q.dir.clone())
+                                }
+                            }),
+                            online,
                             playing: s.playing,
                             position_ms: s.position_ms,
                             duration_ms: s.duration_ms,
@@ -684,6 +698,7 @@ enum Keep {
     Heard {
         folder: String,
         song: Option<(String, String)>,
+        online: Option<crate::listening::OnlineSong>,
         playing: bool,
         position_ms: u64,
         duration_ms: u64,
@@ -708,6 +723,7 @@ impl Keep {
             Keep::Heard {
                 folder,
                 song,
+                online,
                 playing,
                 position_ms,
                 duration_ms,
@@ -715,6 +731,7 @@ impl Keep {
             } => tracker.update(
                 &folder,
                 song.as_ref().map(|(p, d)| (p.as_str(), d.as_str())),
+                online.as_ref(),
                 playing,
                 position_ms,
                 duration_ms,

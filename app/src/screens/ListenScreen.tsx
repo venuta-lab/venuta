@@ -23,13 +23,14 @@ import { OnlineCollectionPage } from './listen/OnlineCollectionPage'
 import { MoodPage } from './listen/MoodPage'
 import { OnlineShelfPage } from './listen/OnlineShelfPage'
 import { SearchHome } from './listen/SearchHome'
+import { ListeningView } from './listen/ListeningView'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
 import { artistKey, indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
 
-export type Tab = 'home' | 'search' | 'albums' | 'artists' | 'songs' | 'playlists'
+export type Tab = 'home' | 'search' | 'albums' | 'artists' | 'songs' | 'playlists' | 'listening'
 /** The library's own views, as chips under Library. */
 type LibraryView = 'albums' | 'artists' | 'songs' | 'playlists'
 const LIBRARY: [LibraryView, string][] = [
@@ -38,14 +39,16 @@ const LIBRARY: [LibraryView, string][] = [
   ['songs', 'Songs'],
   ['playlists', 'Playlists'],
 ]
-/** The tabs along the top: Home, Search, and Library (which opens its last view). */
-type Top = 'home' | 'search' | 'library'
+/** The tabs along the top: Home, Search, Library (which opens its last view) and Listening
+ *  (your stats and history). */
+type Top = 'home' | 'search' | 'library' | 'listening'
 const TOPS: [Top, string][] = [
   ['home', 'Home'],
   ['search', 'Search'],
   ['library', 'Library'],
+  ['listening', 'Listening'],
 ]
-const isLibrary = (t: Tab): t is LibraryView => t !== 'home' && t !== 'search'
+const isLibrary = (t: Tab): t is LibraryView => t !== 'home' && t !== 'search' && t !== 'listening'
 const topOf = (t: Tab): Top => (isLibrary(t) ? 'library' : t)
 
 /*
@@ -522,6 +525,8 @@ function Listen(props: Props) {
         onOpenPlaylist={props.onOpenPlaylist}
         onPlaylists={props.onPlaylists}
       />
+    ) : tab === 'listening' ? (
+      <ListeningView lib={lib} root={root} />
     ) : tab === 'playlists' ? (
       playlists
     ) : tab === 'albums' ? (

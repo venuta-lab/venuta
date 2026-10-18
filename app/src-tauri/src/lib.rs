@@ -3109,6 +3109,8 @@ pub fn run() {
             online::online_shelf_more,
             online::online_album_page,
             online::online_radio,
+            listening::listening_plays,
+            listening::listening_forget,
             online::online_collection,
             online::online_artist,
             online::online_album_tracks,
