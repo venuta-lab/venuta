@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useState, type RefObject } from 'react'
-import { isHiRes, quality, type CatalogTrack, type OnlineAlbum } from '../../lib/engine'
+import { type MoodTile, type OnlineCollection, isHiRes, quality, type CatalogTrack, type OnlineAlbum } from '../../lib/engine'
 import type { From, QueueItem } from '../../lib/player'
 import { matcher, ranked, searchKey } from '../../lib/textsearch'
 
@@ -249,6 +249,10 @@ export interface Nav {
   openOnlineAlbum: (album: OnlineAlbum) => void
   /** An online catalog artist, as its own page (Back returns to where it was opened). */
   openOnlineArtist: (artist: OnlineArtistRef) => void
+  /** An online playlist or podcast, as its own page. */
+  openOnlineCollection: (collection: OnlineCollection) => void
+  /** A mood or genre's playlists, as their own page. */
+  openMood: (tile: MoodTile) => void
   editDetails: (dir: string) => void
 }
 export const NavContext = createContext<Nav>({
@@ -257,6 +261,8 @@ export const NavContext = createContext<Nav>({
   openArtist: () => {},
   openOnlineAlbum: () => {},
   openOnlineArtist: () => {},
+  openOnlineCollection: () => {},
+  openMood: () => {},
   editDetails: () => {},
 })
 export const useNav = () => useContext(NavContext)

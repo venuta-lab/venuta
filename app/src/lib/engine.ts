@@ -1071,6 +1071,66 @@ export const onlineSearchTracks = (query: string, cursor: string, searchBox: Sea
   inApp()
     ? invoke<OnlineTrackPage>('online_search_tracks', { query, cursor, searchBox }).catch(cancelled)
     : Promise.resolve<OnlineTrackPage>({ tracks: [], next_cursor: null })
+/** A playlist or podcast in the online catalog: its name, owner line and cover. */
+export interface OnlineCollection {
+  provider: string
+  /** The catalog page id (a playlist's `VL…`, a podcast's `MPSP…`). */
+  collection_id: string
+  title: string
+  /** "YouTube Music • 50 songs", "T-Series • 550K views". */
+  subtitle: string | null
+  artwork_url: string | null
+  kind: 'playlist' | 'podcast'
+}
+
+/** One thing the catalog suggests while typing: a song to play, or something to open. */
+export type OnlineSuggestion =
+  | { kind: 'song'; track: OnlineTrack }
+  | { kind: 'album'; album: OnlineAlbum; subtitle: string | null }
+  | { kind: 'artist'; artist: OnlineArtist; subtitle: string | null }
+  | { kind: 'playlist'; collection: OnlineCollection }
+
+/** Completions of the typed words, and a few matching things, in the catalog's order. */
+export interface OnlineSuggestions {
+  queries: string[]
+  items: OnlineSuggestion[]
+}
+
+/** A mood or genre to browse, with the catalog's color for it. */
+export interface MoodTile {
+  title: string
+  params: string
+  color: string
+}
+export interface MoodSection {
+  title: string
+  tiles: MoodTile[]
+}
+
+/** A catalog playlist or podcast, opened: its name and its songs or episodes. */
+export interface OnlineCollectionPage {
+  title: string | null
+  tracks: OnlineTrack[]
+}
+
+const none = <T,>(empty: T) => Promise.resolve<T>(empty)
+
+/** What the catalog suggests for half-typed words (empty offline, never an error). */
+export const onlineSuggest = (input: string, searchBox: SearchBox = 'music') =>
+  inApp() ? invoke<OnlineSuggestions>('online_suggest', { input, searchBox }).catch(cancelled) : none<OnlineSuggestions>({ queries: [], items: [] })
+/** Playlists or podcasts for these words. */
+export const onlineCollections = (query: string, kind: 'playlists' | 'podcasts', searchBox: SearchBox = 'music') =>
+  inApp() ? invoke<OnlineCollection[]>('online_collections', { query, kind, searchBox }).catch(cancelled) : none<OnlineCollection[]>([])
+/** Videos for these words (live sets, covers, uploads). */
+export const onlineVideos = (query: string, searchBox: SearchBox = 'music') =>
+  inApp() ? invoke<OnlineTrack[]>('online_videos', { query, searchBox }).catch(cancelled) : none<OnlineTrack[]>([])
+/** The catalog's moods and genres (empty offline). */
+export const onlineMoods = () => (inApp() ? invoke<MoodSection[]>('online_moods') : none<MoodSection[]>([]))
+/** One mood's or genre's playlists. */
+export const onlineMood = (params: string) => invoke<OnlineCollection[]>('online_mood', { params })
+/** A catalog playlist's or podcast's songs. */
+export const onlineCollection = (collectionId: string) => invoke<OnlineCollectionPage>('online_collection', { collectionId })
+
 /** An online artist's page. */
 export const onlineArtistPage = (artistId: string) => invoke<OnlineArtistPage>('online_artist', { artistId })
 /** An online album's songs, in order. */

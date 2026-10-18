@@ -1,32 +1,48 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { type HealthReport, type OnlineAlbum } from '../lib/engine'
+import { onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineSuggestion } from '../lib/engine'
+import { loadCovers, useCovers } from '../lib/covers'
+import { RemoteArt } from '../components/RemoteArt'
+import { fromOnline } from './listen/onlineSearch'
 import { useCatalog } from '../lib/catalog'
-import { current, isOnline, queueKey, readFrom, songItemOf, usePlayer, usePlayerValue } from '../lib/player'
+import { current, isOnline, play, playItems, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
 import { recentSearches } from '../lib/recentSearches'
-import { SearchBox, type Suggestion } from '../components/search/SearchBox'
+import { SearchBox, type OnlineSuggestions, type Suggestion } from '../components/search/SearchBox'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
 import { OnlineAlbumPage } from './listen/OnlineAlbumPage'
 import { OnlineArtistPage } from './listen/OnlineArtistPage'
+import { OnlineCollectionPage } from './listen/OnlineCollectionPage'
+import { MoodPage } from './listen/MoodPage'
+import { SearchHome } from './listen/SearchHome'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
-import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, type Nav, type OnlineArtistRef } from './listen/model'
+import { indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
 
-export type Tab = 'home' | 'albums' | 'artists' | 'songs' | 'playlists'
-const TABS: [Tab, string][] = [
-  ['home', 'Home'],
+export type Tab = 'home' | 'search' | 'albums' | 'artists' | 'songs' | 'playlists'
+/** The library's own views, as chips under Library. */
+type LibraryView = 'albums' | 'artists' | 'songs' | 'playlists'
+const LIBRARY: [LibraryView, string][] = [
   ['albums', 'Albums'],
   ['artists', 'Artists'],
   ['songs', 'Songs'],
   ['playlists', 'Playlists'],
 ]
+/** The tabs along the top: Home, Search, and Library (which opens its last view). */
+type Top = 'home' | 'search' | 'library'
+const TOPS: [Top, string][] = [
+  ['home', 'Home'],
+  ['search', 'Search'],
+  ['library', 'Library'],
+]
+const isLibrary = (t: Tab): t is LibraryView => t !== 'home' && t !== 'search'
+const topOf = (t: Tab): Top => (isLibrary(t) ? 'library' : t)
 
 /*
   A view of Music asked for from outside (a playlist to open, the palette's Playlists): taken
@@ -66,6 +82,8 @@ type Page =
   | { kind: 'artist'; name: string }
   | { kind: 'online-album'; album: OnlineAlbum }
   | { kind: 'online-artist'; artist: OnlineArtistRef }
+  | { kind: 'online-collection'; collection: OnlineCollection }
+  | { kind: 'mood'; tile: MoodTile }
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
 type Entry = { page: Page; scroll: number }
 
@@ -88,7 +106,7 @@ interface Props {
 }
 
 // The view you were on, kept while you visit other places (the screen itself is remounted).
-const kept: { tab: Tab; filter: string } = { tab: 'home', filter: 'all' }
+const kept: { tab: Tab; filter: string; library: LibraryView; asked: string } = { tab: 'home', filter: 'all', library: 'albums', asked: '' }
 
 /** Music: your library to listen to. Home, albums, artists and songs, and search across them. */
 export function ListenScreen(props: Props) {
@@ -121,18 +139,23 @@ function Listen(props: Props) {
   const box = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState<Tab>(kept.tab)
   const [stack, setStack] = useState<Entry[]>([])
-  const [query, setQuery] = useState('')
+  // What is typed (the dropdown follows it), and what was searched for (Enter, or a pick from
+  // the dropdown): the results are for the words searched, as on the Search page.
+  const [query, setQuery] = useState(kept.asked)
+  const [asked, setAsked] = useState(kept.asked)
   // The words now, for remembering a search when something found by it is played or opened.
   const words = useRef('')
-  words.current = query.trim()
+  words.current = asked.trim()
   const [filter, setFilter] = useState(kept.filter)
   useEffect(() => {
     kept.tab = tab
     kept.filter = filter
-  }, [tab, filter])
+    kept.asked = asked
+    if (isLibrary(tab)) kept.library = tab
+  }, [tab, filter, asked])
   const [fadeIn, setFadeIn] = useState(true)
   const [shown, setShown] = useState<string | null>(null)
-  const typed = useDeferredValue(query)
+  const typed = useDeferredValue(asked)
   const playlistsAt = usePlaylistsKind()
 
   // A new report means the folder was read again: the catalog is read again with it (shared
@@ -172,7 +195,11 @@ function Listen(props: Props) {
             ? last.kind === 'online-album' && last.album.album_id === page.album.album_id
             : page.kind === 'online-artist'
               ? last.kind === 'online-artist' && last.artist.artist_id === page.artist.artist_id
-              : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
+              : page.kind === 'online-collection'
+                ? last.kind === 'online-collection' && last.collection.collection_id === page.collection.collection_id
+                : page.kind === 'mood'
+                  ? last.kind === 'mood' && last.tile.params === page.tile.params
+                  : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
       return same ? s : [...s, { page, scroll }]
     })
   }, [])
@@ -199,6 +226,8 @@ function Listen(props: Props) {
       openArtist: (name) => push({ kind: 'artist', name }),
       openOnlineAlbum: (album) => push({ kind: 'online-album', album }),
       openOnlineArtist: (artist) => push({ kind: 'online-artist', artist }),
+      openOnlineCollection: (collection) => push({ kind: 'online-collection', collection }),
+      openMood: (tile) => push({ kind: 'mood', tile }),
       editDetails: (dir) => edit.current(dir),
     }),
     [root, push],
@@ -210,6 +239,7 @@ function Listen(props: Props) {
     else if (lib.byDir.has(openAlbum)) {
       setShown(openAlbum)
       setQuery('')
+      setAsked('')
       setStack([{ page: { kind: 'album', dir: openAlbum }, scroll: 0 }])
     }
   }
@@ -224,6 +254,7 @@ function Listen(props: Props) {
     else if (lib.byDir.size) {
       setShownArtist(openArtist)
       setQuery('')
+      setAsked('')
       setStack([{ page: { kind: 'artist', name: openArtist }, scroll: 0 }])
     }
   }
@@ -261,6 +292,7 @@ function Listen(props: Props) {
     restore.current = 0
     setStack([])
     setQuery('')
+    setAsked('')
     setFadeIn(true)
     setTab(tabAsked)
   }, [tabAsked])
@@ -273,17 +305,33 @@ function Listen(props: Props) {
     restore.current = 0
     setStack([])
     setQuery('')
+    setAsked('')
     if (tab === 'playlists') showPlaylists({ kind: 'home' })
     scrollerOf(box.current)?.scrollTo({ top: 0, behavior: 'smooth' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.reset])
 
   const choose = (id: Tab) => {
-    setQuery('')
+    // Search keeps its words; the other tabs are left without them.
+    if (id !== 'search') {
+      setQuery('')
+      setAsked('')
+    }
     leavePages()
     setFadeIn(true)
     if (id === 'albums' && tab !== 'albums') setFilter('all')
     setTab(id)
+  }
+  const chooseTop = (t: Top) => choose(t === 'library' ? (isLibrary(tab) ? tab : kept.library) : t)
+  /** Search for these words: the Search tab, with their results. */
+  const searchFor = (words: string) => {
+    const w = words.trim()
+    setQuery(words)
+    setAsked(w)
+    if (w) recentSearches.push(w)
+    leavePages()
+    setFadeIn(true)
+    setTab('search')
   }
   // Music dropped on the Playlists tab: pick the playlist. Held over it: the playlists show, to
   // drop onto one of them.
@@ -303,17 +351,56 @@ function Listen(props: Props) {
     const f = readFrom(playingFrom)
     if (f?.kind === 'search' && words.current && f.ref.trim().toLowerCase() === words.current.toLowerCase()) recentSearches.push(words.current)
   }, [playingFrom])
-  // Quick suggestions under the field, from the library: a couple of artists and albums, a few songs.
+  // What the dropdown shows from the library: an artist, an album, a couple of songs, each with
+  // its picture; picking one opens it (or plays the song), as the catalog's suggestions do.
   const suggest = useCallback(
     (text: string): Suggestion[] => {
       const r = search(lib, text)
+      const from = { kind: 'search' as const, ref: text, label: `Search: ${text}` }
       return [
-        ...r.artists.slice(0, 2).map((a) => ({ key: `artist:${a.key}`, kind: 'Artist' as const, label: a.name, detail: `${a.albums.length} ${a.albums.length === 1 ? 'album' : 'albums'}`, value: a.name })),
-        ...r.albums.slice(0, 2).map((a) => ({ key: `album:${a.dir}`, kind: 'Album' as const, label: a.title, detail: a.artist, value: a.title })),
-        ...r.tracks.slice(0, 3).map((t) => ({ key: `song:${t.path}`, kind: 'Song' as const, label: t.title, detail: t.artists.join(', '), value: t.title })),
-      ].slice(0, 6)
+        ...r.artists.slice(0, 1).map((a) => ({
+          key: `artist:${a.key}`,
+          kind: 'Artist' as const,
+          label: a.name,
+          detail: `${a.albums.length} ${a.albums.length === 1 ? 'album' : 'albums'}`,
+          value: a.name,
+          art: a.albums[0] ? <LocalCover dir={a.albums[0].dir} /> : undefined,
+          round: true,
+          where: 'library' as const,
+          onPick: () => nav.openArtist(a.name),
+        })),
+        ...r.albums.slice(0, 1).map((a) => ({
+          key: `album:${a.dir}`,
+          kind: 'Album' as const,
+          label: a.title,
+          detail: [a.artist, a.year].filter(Boolean).join(' · '),
+          value: a.title,
+          art: <LocalCover dir={a.dir} />,
+          where: 'library' as const,
+          onPick: () => nav.openAlbum(a.dir),
+        })),
+        ...r.tracks.slice(0, 2).map((t, i) => ({
+          key: `song:${t.path}`,
+          kind: 'Song' as const,
+          label: t.title,
+          detail: t.artists.join(', '),
+          value: t.title,
+          art: <LocalCover dir={t.dir} />,
+          where: 'library' as const,
+          onPick: () => void play(root, r.tracks.slice(0, 2), i, from),
+        })),
+      ]
     },
-    [lib],
+    [lib, nav, root],
+  )
+  // The online catalog's suggestions, as dropdown rows that play or open what they are.
+  const suggestOnline = useCallback(
+    (text: string): Promise<OnlineSuggestions> =>
+      onlineSuggest(text).then((found) => ({
+        queries: found.queries,
+        items: found.items.flatMap((item): Suggestion[] => suggestionRow(item, text, { root, nav })),
+      })),
+    [root, nav],
   )
   const lyricHits = useLyricHits(root, typed)
   // Songs found by their words, apart from the ones already found by name.
@@ -340,7 +427,7 @@ function Listen(props: Props) {
 
   // Playlists live here too: their home among the tabs, a playlist (or an import) as its own page.
   const playlists = <PlaylistsScreen root={root} report={report} embedded onAlbum={(dir) => push({ kind: 'album', dir })} />
-  const playlistOpen = tab === 'playlists' && playlistsAt !== 'home' && !typed.trim() && !query.trim()
+  const playlistOpen = tab === 'playlists' && playlistsAt !== 'home'
 
   const body = (() => {
     if (!report) return <Reading busy={busy} />
@@ -348,7 +435,10 @@ function Listen(props: Props) {
     if (top?.page.kind === 'online-album') return <OnlineAlbumPage key={top.page.album.album_id} album={top.page.album} onBack={back} />
     if (top?.page.kind === 'online-artist')
       return <OnlineArtistPage key={top.page.artist.artist_id} artist={top.page.artist} lib={lib} onBack={back} />
-    if (!lib.tracks.length && !typed.trim())
+    if (top?.page.kind === 'online-collection')
+      return <OnlineCollectionPage key={top.page.collection.collection_id} collection={top.page.collection} onBack={back} />
+    if (top?.page.kind === 'mood') return <MoodPage key={top.page.tile.params} tile={top.page.tile} onBack={back} />
+    if (!lib.tracks.length && tab !== 'search')
       return (
         <p className="py-20 text-center text-[14px] text-ink/55">
           No songs to play here yet. Bring music in from Organize and it shows up here.
@@ -364,8 +454,12 @@ function Listen(props: Props) {
       )
     }
     if (page?.kind === 'artist') return <ArtistPage key={page.name} lib={lib} name={page.name} onBack={back} />
-    const view = typed.trim() ? (
-      <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} lyrics={inLyrics} />
+    const view = tab === 'search' ? (
+      typed.trim() ? (
+        <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} lyrics={inLyrics} />
+      ) : (
+        <SearchHome onSearch={searchFor} />
+      )
     ) : tab === 'home' ? (
       <HomeView
         root={root}
@@ -388,7 +482,7 @@ function Listen(props: Props) {
     )
     return (
       <motion.div
-        key={typed.trim() ? 'search' : tab}
+        key={tab === 'search' ? `search:${typed.trim() ? 'results' : 'home'}` : tab}
         initial={fadeIn ? { opacity: 0, y: 8 } : false}
         animate={{ opacity: 1, y: 0 }}
         transition={spring}
@@ -419,14 +513,26 @@ function Listen(props: Props) {
         <Page
           title="Music"
           line={line}
+          under={
+            isLibrary(tab) ? (
+              <Segmented
+                tabs
+                size="sm"
+                label="Library views"
+                value={tab}
+                options={LIBRARY.map(([value, label]) => ({ value, label, drop: value === 'playlists' ? toPlaylists : null }))}
+                onChange={choose}
+              />
+            ) : undefined
+          }
           bar={
             <>
               <Segmented
                 tabs
                 label="Music views"
-                value={query.trim() ? ('' as Tab) : tab}
-                options={TABS.map(([value, label]) => ({ value, label, drop: value === 'playlists' ? toPlaylists : null }))}
-                onChange={choose}
+                value={topOf(tab)}
+                options={TOPS.map(([value, label]) => ({ value, label }))}
+                onChange={chooseTop}
               />
           <SearchBox
             id="listen-search"
@@ -434,12 +540,22 @@ function Listen(props: Props) {
             value={query}
             onChange={(v) => {
               setQuery(v)
-              setFadeIn(true)
+              // Cleared: back to the Search page before anything was searched.
+              if (!v.trim()) setAsked('')
               if (stack.length) leavePages()
+              if (tab !== 'search' && v.trim()) {
+                setFadeIn(true)
+                setTab('search')
+              }
             }}
-            onEscape={() => setQuery('')}
+            onSubmit={searchFor}
+            onEscape={() => {
+              setQuery('')
+              setAsked('')
+            }}
             suggest={lib.tracks.length ? suggest : undefined}
-            placeholder="Search albums, artists, songs"
+            onlineSuggest={suggestOnline}
+            placeholder="Search songs, albums, artists, playlists"
             label="Search your music"
             hint={<kbd>/</kbd>}
             className="ml-auto min-w-[240px] max-w-[380px] flex-1"
@@ -467,4 +583,84 @@ function Loading() {
       ))}
     </div>
   )
+}
+
+/** A library album's cover, small, for a dropdown row (asked for when shown). */
+function LocalCover({ dir }: { dir: string }) {
+  const { root } = useNav()
+  const cover = useCovers(96)
+  useEffect(() => {
+    void loadCovers(root, [dir], 96)
+  }, [root, dir])
+  const art = cover(dir)
+  return art ? <img src={art.src} alt="" draggable={false} className="h-full w-full object-cover" /> : null
+}
+
+/** One catalog suggestion as a dropdown row: a song plays, the rest open their page. */
+function suggestionRow(item: OnlineSuggestion, text: string, ctx: { root: string; nav: Nav }): Suggestion[] {
+  switch (item.kind) {
+    case 'song': {
+      const t = item.track
+      return [
+        {
+          key: `online-song:${t.track_id}`,
+          kind: 'Song',
+          label: t.title,
+          detail: t.artists.join(', '),
+          value: t.title,
+          art: <RemoteArt url={t.artwork_url} seed={t.album || t.title} size={40} imgClassName="h-full w-full object-cover" />,
+          where: 'online',
+          onPick: () => void playItems(ctx.root, [toRemoteItem(t)], 0, fromOnline(text)),
+        },
+      ]
+    }
+    case 'album':
+      return [
+        {
+          key: `online-album:${item.album.album_id}`,
+          kind: 'Album',
+          label: item.album.title,
+          detail: stripKind(item.subtitle, 'Album') ?? item.album.artists.join(', '),
+          value: item.album.title,
+          art: <RemoteArt url={item.album.artwork_url} seed={item.album.title} size={40} imgClassName="h-full w-full object-cover" />,
+          where: 'online',
+          onPick: () => ctx.nav.openOnlineAlbum(item.album),
+        },
+      ]
+    case 'artist':
+      return [
+        {
+          key: `online-artist:${item.artist.artist_id}`,
+          kind: 'Artist',
+          label: item.artist.name,
+          detail: stripKind(item.subtitle, 'Artist') ?? undefined,
+          value: item.artist.name,
+          art: <RemoteArt url={item.artist.artwork_url} fallback={item.artist.name.slice(0, 1)} size={40} imgClassName="h-full w-full object-cover" />,
+          round: true,
+          where: 'online',
+          onPick: () => ctx.nav.openOnlineArtist(item.artist),
+        },
+      ]
+    case 'playlist':
+      return [
+        {
+          key: `online-list:${item.collection.collection_id}`,
+          kind: 'Playlist',
+          label: item.collection.title,
+          detail: stripKind(item.collection.subtitle, 'Playlist') ?? undefined,
+          value: item.collection.title,
+          art: <RemoteArt url={item.collection.artwork_url} seed={item.collection.title} size={40} imgClassName="h-full w-full object-cover" />,
+          where: 'online',
+          onPick: () => ctx.nav.openOnlineCollection(item.collection),
+        },
+      ]
+  }
+}
+
+/** A catalog line without its leading kind ("Album • Arijit Singh • 2023" → "Arijit Singh · 2023"). */
+function stripKind(line: string | null | undefined, kind: string): string | null {
+  if (!line) return null
+  const parts = line.split('•').map((p) => p.trim()).filter(Boolean)
+  if (parts[0]?.toLowerCase() === kind.toLowerCase()) parts.shift()
+  return parts.length ? parts.join(' · ') : null
 }

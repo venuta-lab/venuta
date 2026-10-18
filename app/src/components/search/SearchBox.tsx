@@ -1,36 +1,65 @@
-import { useEffect, useId, useState, useSyncExternalStore } from 'react'
+import { useEffect, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { recentSearches } from '../../lib/recentSearches'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { IconClose, IconSearch } from '../Icons'
 
 /*
-  A search field with a panel under it: your recent searches when it's empty (kept on this
-  computer only, each one removable), and quick suggestions from your library while you type.
-  Picking either fills the field and runs the search. Enter runs (and remembers) what's typed.
+  A search field with a panel under it. Empty: your recent searches (kept on this computer
+  only, each one removable). While you type: things that match, your own first (an artist, an
+  album, a song, each with its picture and what it is), then the online catalog's, then
+  completions of the words, then "All results for …". Picking a thing opens or plays it;
+  picking words (or Enter) searches for them. Up and Down move through it all.
 */
 
-/** A quick suggestion: what it is, what it says, and the words it puts in the field. */
+/** A thing that matches: what it is, what it says, its picture, and what picking it does. */
 export interface Suggestion {
   key: string
-  kind: 'Song' | 'Artist' | 'Album'
+  kind: 'Song' | 'Artist' | 'Album' | 'Playlist'
   label: string
   detail?: string
-  /** The search it runs. */
+  /** The search it runs when it has no `onPick`. */
   value: string
+  /** Its picture (a cover, an avatar). */
+  art?: ReactNode
+  /** Round picture (an artist). */
+  round?: boolean
+  /** In your library (a quiet badge says so) or from the online catalog. */
+  where?: 'library' | 'online'
+  /** Open or play it instead of searching. */
+  onPick?: () => void
 }
 
-const SUGGEST_AFTER_MS = 180
+/** What the online catalog suggests for the words: things, and completions of the words. */
+export interface OnlineSuggestions {
+  items: Suggestion[]
+  queries: string[]
+}
+
+const SUGGEST_AFTER_MS = 120
+const ONLINE_AFTER_MS = 150
 const RECENT_SHOWN = 8
+/** Things shown at most (yours first, then the catalog's), and completions. */
+const THINGS_SHOWN = 6
+const QUERIES_SHOWN = 6
+
+type Row =
+  | { key: string; type: 'recent'; label: string; value: string }
+  | { key: string; type: 'thing'; s: Suggestion }
+  | { key: string; type: 'query'; label: string; value: string }
+  | { key: string; type: 'all'; label: string; value: string }
 
 export function SearchBox(props: {
   id: string
   value: string
   onChange: (value: string) => void
-  /** The words are meant (Enter, a recent or a suggestion picked): run them. Remembered here. */
+  /** The words are meant (Enter, a recent or completion picked): run them. Remembered here. */
   onSubmit?: (value: string) => void
   /** Escape with the panel closed: clear and leave the field. */
   onEscape?: () => void
   /** Library suggestions for the words (instant, local); none when left out. */
   suggest?: (text: string) => Suggestion[]
+  /** The online catalog's suggestions for the words; none when left out. */
+  onlineSuggest?: (text: string) => Promise<OnlineSuggestions>
   placeholder: string
   label: string
   inputRef?: React.Ref<HTMLInputElement>
@@ -47,21 +76,46 @@ export function SearchBox(props: {
   const [active, setActive] = useState(-1)
   const text = props.value.trim()
 
-  // Suggestions for the words, a moment after typing stops.
+  // Your library's matches, a moment after typing stops.
   const [suggested, setSuggested] = useState<{ for: string; items: Suggestion[] }>({ for: '', items: [] })
-  const { suggest } = props
+  const { suggest, onlineSuggest } = props
   useEffect(() => {
     if (!text || !suggest) return
     const t = window.setTimeout(() => setSuggested({ for: text, items: suggest(text) }), SUGGEST_AFTER_MS)
     return () => window.clearTimeout(t)
   }, [text, suggest])
 
-  const rows: { key: string; kind: 'recent' | Suggestion['kind']; label: string; detail?: string; value: string }[] = text
-    ? suggested.for === text
-      ? suggested.items
-      : []
-    : recent.slice(0, RECENT_SHOWN).map((r) => ({ key: `recent:${r.q}`, kind: 'recent' as const, label: r.q, value: r.q }))
-  const open = focused && closedFor !== props.value && rows.length > 0
+  // The online catalog's, a moment later; an answer for older words is dropped.
+  const [online, setOnline] = useState<{ for: string; found: OnlineSuggestions }>({ for: '', found: { items: [], queries: [] } })
+  useEffect(() => {
+    if (!text || !onlineSuggest) return
+    let live = true
+    const t = window.setTimeout(() => {
+      onlineSuggest(text)
+        .then((found) => live && setOnline({ for: text, found }))
+        .catch(() => {})
+    }, ONLINE_AFTER_MS)
+    return () => {
+      live = false
+      window.clearTimeout(t)
+    }
+  }, [text, onlineSuggest])
+
+  const rows: Row[] = (() => {
+    if (!text) return recent.slice(0, RECENT_SHOWN).map((r) => ({ key: `recent:${r.q}`, type: 'recent' as const, label: r.q, value: r.q }))
+    const mine = suggested.for === text ? suggested.items : []
+    const theirs = online.for === text ? online.found : { items: [], queries: [] }
+    // Yours first; the catalog's fill the rest, without one you already have by name.
+    const seen = new Set(mine.map((s) => `${s.kind}:${s.label.toLowerCase()}`))
+    const things = [...mine, ...theirs.items.filter((s) => !seen.has(`${s.kind}:${s.label.toLowerCase()}`))].slice(0, THINGS_SHOWN)
+    const queries = theirs.queries.filter((q) => q.trim().toLowerCase() !== text.toLowerCase()).slice(0, QUERIES_SHOWN)
+    return [
+      ...things.map((s) => ({ key: `thing:${s.key}`, type: 'thing' as const, s })),
+      ...queries.map((q) => ({ key: `query:${q}`, type: 'query' as const, label: q, value: q })),
+      { key: 'all', type: 'all' as const, label: `All results for “${text}”`, value: props.value },
+    ]
+  })()
+  const open = focused && closedFor !== props.value && (text ? rows.length > 1 || !!props.onSubmit : rows.length > 0)
   const at = open && active < rows.length ? active : -1
 
   // Scrolling the page closes the panel, so it never sits over the results being looked at.
@@ -82,6 +136,20 @@ export function SearchBox(props: {
     setClosedFor(value)
     setActive(-1)
   }
+  const pick = (row: Row) => {
+    if (row.type === 'thing' && row.s.onPick) {
+      // Opening or playing something found by these words means them: they're remembered.
+      if (text) recentSearches.push(text)
+      row.s.onPick()
+      setClosedFor(props.value)
+      setActive(-1)
+      return
+    }
+    run(row.type === 'thing' ? row.s.value : row.value)
+  }
+
+  const firstQuery = rows.findIndex((r) => r.type === 'query')
+  const allAt = rows.findIndex((r) => r.type === 'all')
 
   return (
     <div className={`relative ${props.className ?? ''}`}>
@@ -122,7 +190,8 @@ export function SearchBox(props: {
               setActive((i) => (e.key === 'ArrowDown' ? (i + 1) % n : i <= 0 ? n - 1 : i - 1))
             } else if (e.key === 'Enter') {
               e.preventDefault()
-              run(at >= 0 ? rows[at].value : props.value)
+              if (at >= 0) pick(rows[at])
+              else run(props.value)
             } else if (e.key === 'Escape') {
               if (open) {
                 e.preventDefault()
@@ -144,7 +213,9 @@ export function SearchBox(props: {
         <div
           // Keeps the field focused while the panel is used.
           onMouseDown={(e) => e.preventDefault()}
-          className="popover absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-2xl p-1.5"
+          className="popover absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-y-auto overscroll-contain rounded-2xl p-1.5"
+          // Never under the player bar: a long list scrolls inside the panel.
+          style={{ minWidth: 340, maxHeight: 'min(560px, calc(100vh - 260px))' }}
         >
           {!text && <div className="px-3 pb-1 pt-1.5 text-[11.5px] font-medium text-ink/45">Recent searches</div>}
           <ul id={listId} role="listbox" aria-label={text ? 'Suggestions' : 'Recent searches'} className="grid gap-0.5">
@@ -155,27 +226,43 @@ export function SearchBox(props: {
                 role="option"
                 aria-selected={i === at}
                 onMouseMove={() => setActive(i)}
-                onClick={() => run(r.value)}
-                className={`group flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-[13.5px] ${i === at ? 'bg-ink/[0.08]' : ''}`}
+                onClick={() => pick(r)}
+                className={`group flex cursor-pointer items-center gap-3 rounded-xl px-2.5 text-[13.5px] ${
+                  r.type === 'thing' ? 'py-1.5' : 'py-2'
+                } ${i === at ? 'bg-ink/[0.08]' : ''} ${(i === firstQuery && i > 0) || (i === allAt && i > 0 && firstQuery < 0) ? 'mt-1 border-t border-edge pt-2.5' : ''}`}
               >
-                {r.kind !== 'recent' && <span className="w-12 shrink-0 text-[11.5px] text-ink/45">{r.kind}</span>}
-                <span className="min-w-0 flex-1 truncate">
-                  {r.label}
-                  {r.detail && <span className="text-ink/50"> · {r.detail}</span>}
-                </span>
-                {r.kind === 'recent' && (
-                  <button
-                    tabIndex={-1}
-                    aria-label={`Remove “${r.label}” from recent searches`}
-                    title="Remove"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      recentSearches.remove(r.value)
-                    }}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink/40 opacity-0 hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
-                  >
-                    <IconClose width={12} height={12} />
-                  </button>
+                {r.type === 'thing' ? (
+                  <>
+                    <span
+                      className={`grid h-10 w-10 shrink-0 place-items-center overflow-hidden bg-ink/[0.07] text-[15px] text-ink/40 ${r.s.round ? 'rounded-full' : 'rounded-lg'}`}
+                    >
+                      {r.s.art ?? r.s.label.slice(0, 1)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{r.s.label}</span>
+                      <span className="block truncate text-[12px] text-ink/55">{[r.s.kind, r.s.detail].filter(Boolean).join(' · ')}</span>
+                    </span>
+                    {r.s.where === 'library' && <AvailabilityBadge availability="local" />}
+                  </>
+                ) : (
+                  <>
+                    <IconSearch width={15} height={15} className="shrink-0 text-ink/45" />
+                    <span className={`min-w-0 flex-1 truncate ${r.type === 'all' ? 'text-[13px] text-ink/65' : ''}`}>{r.label}</span>
+                    {r.type === 'recent' && (
+                      <button
+                        tabIndex={-1}
+                        aria-label={`Remove “${r.label}” from recent searches`}
+                        title="Remove"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          recentSearches.remove(r.value)
+                        }}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink/40 opacity-0 hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
+                      >
+                        <IconClose width={12} height={12} />
+                      </button>
+                    )}
+                  </>
                 )}
               </li>
             ))}
