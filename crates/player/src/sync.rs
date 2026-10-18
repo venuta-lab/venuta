@@ -229,13 +229,13 @@ mod tests {
         repeat_frames(&mut more, 2, 2);
         assert_eq!(more.len(), base.len() + 4);
         assert!(
-            more.chunks_exact(2).all(|f| f[0] == -f[1]),
+            more.as_chunks::<2>().0.iter().all(|f| f[0] == -f[1]),
             "channels stay together"
         );
         let mut fewer = base.clone();
         drop_frames(&mut fewer, 2, 2);
         assert_eq!(fewer.len(), base.len() - 4);
-        assert!(fewer.chunks_exact(2).all(|f| f[0] == -f[1]));
+        assert!(fewer.as_chunks::<2>().0.iter().all(|f| f[0] == -f[1]));
         let mut none = base.clone();
         drop_frames(&mut none, 2, 0);
         assert_eq!(none, base);

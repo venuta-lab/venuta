@@ -147,31 +147,61 @@ fn same_room_closes_a_small_gap_by_single_frames() {
     let captured = Arc::new(Mutex::new(Captured::default()));
     let errors = Arc::new(Mutex::new(Vec::<(Instant, f32)>::new()));
     let seen = errors.clone();
-    let player = Player::spawn(OutputChoice::PacedMemory(captured.clone()), move |s: Status<PathBuf>| {
-        if let Some(e) = s.sync.and_then(|y| y.error_ms) {
-            seen.lock().unwrap().push((Instant::now(), e));
-        }
+    let player = Player::spawn(
+        OutputChoice::PacedMemory(captured.clone()),
+        move |s: Status<PathBuf>| {
+            if let Some(e) = s.sync.and_then(|y| y.error_ms) {
+                seen.lock().unwrap().push((Instant::now(), e));
+            }
+        },
+    );
+    player.send(Cmd::Set {
+        items: vec![song("room")],
+        index: 0,
+        start_ms: 0,
+        play: false,
+        from: "room".into(),
     });
-    player.send(Cmd::Set { items: vec![song("room")], index: 0, start_ms: 0, play: false, from: "room".into() });
     std::thread::sleep(Duration::from_millis(100));
     let start = Instant::now() + Duration::from_millis(300);
-    let plan = SyncPlan { anchor: Some(start), position_ms: 0, playing: true, same_room: true, extra_latency_ms: 0 };
+    let plan = SyncPlan {
+        anchor: Some(start),
+        position_ms: 0,
+        playing: true,
+        same_room: true,
+        extra_latency_ms: 0,
+    };
     player.send(Cmd::Sync(Some(plan)));
     std::thread::sleep(Duration::from_millis(1_500));
     // The room is found to be 4 ms further on (as a clock estimate improves): within the
     // lining-up tolerance, so it's taken out gently, not by a seek.
-    player.send(Cmd::Sync(Some(SyncPlan { anchor: Some(start - Duration::from_millis(4)), ..plan })));
+    player.send(Cmd::Sync(Some(SyncPlan {
+        anchor: Some(start - Duration::from_millis(4)),
+        ..plan
+    })));
     std::thread::sleep(Duration::from_millis(4_500));
     drop(player);
     let e = errors.lock().unwrap().clone();
-    let after = |ms: u64| e.iter().filter(|(t, _)| *t >= start + Duration::from_millis(ms)).map(|(_, v)| *v).next();
+    let after = |ms: u64| {
+        e.iter()
+            .filter(|(t, _)| *t >= start + Duration::from_millis(ms))
+            .map(|(_, v)| *v)
+            .next()
+    };
     let early = after(2_200).expect("errors reported");
     let late = after(5_600).expect("errors reported");
     assert!(early < -1.0, "behind the room at first: {early}");
-    assert!(late.abs() < early.abs() - 0.8, "closing in: {early} then {late}");
+    assert!(
+        late.abs() < early.abs() - 0.8,
+        "closing in: {early} then {late}"
+    );
     // Never a jump: the heard frames run on with at most single frames taken out.
     let h = heard(&std::mem::take(&mut *captured.lock().unwrap()));
     let first = h.iter().position(|&v| v != 0).unwrap();
-    let jumps = h[first..].windows(2).filter(|w| w[1] != w[0] + 1 && w[1] != 0).filter(|w| (w[1] - w[0]).abs() > 2).count();
+    let jumps = h[first..]
+        .windows(2)
+        .filter(|w| w[1] != w[0] + 1 && w[1] != 0)
+        .filter(|w| (w[1] - w[0]).abs() > 2)
+        .count();
     assert_eq!(jumps, 0, "no seek, only single frames");
 }
