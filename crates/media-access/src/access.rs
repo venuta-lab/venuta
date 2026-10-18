@@ -402,11 +402,11 @@ pub fn catalog_health() -> CatalogHealth {
         "Live catalog is off for this session (VENUTA_FAKE_CATALOG or VENUTA_LIVE_CATALOG=0). Online search shows test songs only."
             .into()
     } else if !stream_tool_available {
-        "Live catalog is on, but the stream tool is missing. Install yt-dlp (python -m pip install -U yt-dlp) for full-length play."
+        "Live catalog is on: search and full-length play. The backup stream tool isn't installed yet; Venuta downloads it the first time it's needed."
             .into()
     } else {
         format!(
-            "Live catalog is on. Stream tool: {} ({}).",
+            "Live catalog is on: search and full-length play. Backup stream tool: {} ({}).",
             stream_tool_kind, stream_tool_detail
         )
     };

@@ -624,9 +624,9 @@ function KeyField(props: {
 const CATALOG_STATES: Record<string, { label: string; tone: 'good' | 'problem' | 'quiet'; line: string }> = {
   live: { label: 'Live', tone: 'good', line: 'Search and full-length play are on.' },
   live_no_tool: {
-    label: 'Stream tool missing',
-    tone: 'problem',
-    line: 'Online search works, but songs can’t play in full until the stream tool is installed.',
+    label: 'Live',
+    tone: 'good',
+    line: 'Search and full-length play are on. The backup stream tool, for the odd song the catalog won’t hand over directly, isn’t installed yet: Venuta downloads it the first time it’s needed.',
   },
   off: {
     label: 'Off',
@@ -686,13 +686,13 @@ function CatalogHealth() {
       </div>
       {catalog?.mode === 'live' && catalog.stream_tool_kind && (
         <p className="mt-2 text-[12px] text-ink/45">
-          Stream tool: {catalog.stream_tool_kind}
+          Backup stream tool: {catalog.stream_tool_kind}
           {catalog.stream_tool_detail ? ` (${catalog.stream_tool_detail})` : ''}
         </p>
       )}
       {catalog?.mode === 'live_no_tool' && (
         <div className="mt-3 max-w-[64ch] rounded-xl bg-ink/[0.04] px-3.5 py-3 text-[12.5px] leading-relaxed text-ink/65">
-          <p className="mb-2">Venuta can download the stream tool for you (no Python required):</p>
+          <p className="mb-2">To have the backup ready now, Venuta can download it (no Python required):</p>
           <button
             className="btn-primary btn-sm"
             onClick={() =>

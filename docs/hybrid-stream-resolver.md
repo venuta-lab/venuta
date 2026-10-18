@@ -1,6 +1,14 @@
 # Hybrid stream resolver (maintenance)
 
-Product layers talk only to `MediaAccess`. Full-length online audio is unlocked by a **replaceable stream tool**, not by app UI code.
+Product layers talk only to `MediaAccess`. Full-length online audio is found in three ways, tried in
+order, and never by app UI code:
+
+1. **In the app** (`live_provider`, over the `ytmusic` crate): one `/player` request as the catalog's
+   VISIONOS identity, which hands out plain stream addresses (nothing to decipher, no token), then a
+   check that the address serves its last 256 bytes, which catches addresses that stop after their
+   first megabyte. About 0.1 to 0.4 s. The identities live in `crates/ytmusic/clients.json`.
+2. **The stream tool** (yt-dlp), a separate program that is easy to update on its own. 1.5 to 3 s.
+3. **The older multi-identity resolver** (innertube-rs), started only when both of the above fail.
 
 **Test and release use the same tool.** Dev (`hybrid-dev`), Settings → Install, first online play, and the Windows installer all land on the official standalone yt-dlp binary (or your override).
 
@@ -27,15 +35,23 @@ node scripts/fetch-stream-tool.mjs --bundle
 
 ## What to update when playback breaks
 
-1. Update **yt-dlp** (primary unlock tool):
+Look in the playback log first (`.venuta\logs\playback.log` in the library folder): every online song notes how
+long it took to find and which way found it ("via catalog", "via stream tool", "via fallback").
+
+1. When songs come "via stream tool", or fail: the in-app way is being refused. Check the identities
+   in `crates/ytmusic/clients.json` against current Metrolist and Limusic, and `STREAM_CLIENT` in
+   `crates/media-access/src/live_provider.rs`.
+2. Update **yt-dlp** (the backup). Venuta's own copy replaces itself once it is over 14 days old;
+   by hand:
    - `pwsh -File scripts/install-stream-tool.ps1` (re-download standalone)
    - Settings → Online sources → **Install stream tool**
    - or `python3 -m pip install -U yt-dlp`
    - or replace the binary pointed at by `VENUTA_STREAM_RESOLVER`
-2. Optional: update **bgutil** pot helper if yt-dlp asks for PO tokens:
+3. Optional: update **bgutil** pot helper if yt-dlp asks for PO tokens:
    - keep `http://127.0.0.1:4416` running from `_tools/bgutil-ytdlp-pot-provider`
    - or `pip install -U bgutil-ytdlp-pot-provider`
-3. Do **not** change playlist/UI code for CDN 403s.
+4. Do **not** change playlist/UI code for CDN 403s. A song whose address stops partway asks for a
+   fresh one and carries on from the same byte (`crates/player/src/decode.rs`).
 
 ## Live catalog in the app
 
@@ -57,7 +73,7 @@ $env:VENUTA_FAKE_CATALOG = "1"
 5. `python3` / `python` / `py` with `-m yt_dlp`
 6. `%LOCALAPPDATA%\Python\bin\python3.exe -m yt_dlp` (Windows store layout)
 
-If nothing is found, the app downloads the official standalone binary into the managed path (startup thread, first play, or Settings).
+If nothing is found, the app downloads the official standalone binary into the managed path (startup thread, first play, or Settings). The managed copy is replaced in the background once it is more than 14 days old, and a run that takes over 30 s is stopped.
 
 ## Release packaging
 
@@ -76,6 +92,6 @@ Expect `source_duration_secs` well above 90 (full song), not ~60.
 | Layer | Owner of breakage |
 |-------|-------------------|
 | Search / browse (InnerTube) | sealed `live_provider` |
-| Full stream URL + headers | stream tool (yt-dlp) |
+| Full stream URL + headers | `live_provider` (VISIONOS), then the stream tool (yt-dlp) |
 | Ranged HTTP open + decode | `player` |
 | Queue / playlists / UI | product (Fake or trait only) |

@@ -58,6 +58,7 @@ pub fn resolve_with_stream_tool(track_id: &str) -> Result<EphemeralAudio, Access
             )
         })?;
 
+    refresh_managed_tool_when_old();
     let watch_url = format!("https://www.youtube.com/watch?v={track_id}");
     // Prefer AAC/MP4 audio; fall back to best audio.
     let format = "ba[ext=m4a]/ba[acodec^=mp4a]/ba/b";
@@ -273,6 +274,7 @@ const YT_DLP_DOWNLOAD: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/
 /// Returns the path to the binary (or the python used with `-m yt_dlp`).
 pub fn ensure_stream_tool() -> Result<PathBuf, AccessError> {
     if let Some(existing) = find_stream_tool() {
+        refresh_managed_tool_when_old();
         return Ok(match existing {
             StreamTool::Binary(p) => p,
             StreamTool::PythonModule { python } => python,
@@ -427,14 +429,8 @@ fn run_dump_json(tool: &StreamTool, watch_url: &str, format: &str) -> Result<Vec
             c
         }
     };
-    // Give BotGuard/pot helpers time when present.
     cmd.stdin(Stdio::null());
-    let output = cmd.output().map_err(|_| {
-        AccessError::new(
-            AccessErrorKind::Transport,
-            "could not start the stream resolver",
-        )
-    })?;
+    let output = output_within(cmd, TOOL_TIME_LIMIT)?;
     if !output.status.success() {
         return Err(AccessError::new(
             AccessErrorKind::Transport,
@@ -450,9 +446,126 @@ fn run_dump_json(tool: &StreamTool, watch_url: &str, format: &str) -> Result<Vec
     Ok(output.stdout)
 }
 
+/// A copy of the stream tool that Venuta installed is replaced with the newest after this long:
+/// the catalog changes often, and an old copy is the usual reason the tool stops working.
+const TOOL_FRESH_FOR: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+
+/// Replace Venuta's own copy of the stream tool when it is old, in the background and at most once
+/// per run. A copy the user installed (on PATH, a Python module, `VENUTA_STREAM_RESOLVER`) is
+/// theirs to update and is left alone. The new copy goes in only once fully downloaded.
+fn refresh_managed_tool_when_old() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CHECKED: AtomicBool = AtomicBool::new(false);
+    if CHECKED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let Some(path) = managed_tool_path() else {
+        return;
+    };
+    let old = fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age > TOOL_FRESH_FOR);
+    if old {
+        let _ = std::thread::Builder::new()
+            .name("venuta-stream-tool-update".into())
+            .spawn(move || {
+                let _ = download_stream_tool(&path);
+            });
+    }
+}
+
+/// How long the stream tool may take for one song before it is stopped.
+const TOOL_TIME_LIMIT: Duration = Duration::from_secs(30);
+
+/// Run `cmd` to the end, or stop it after `limit`: a stuck tool must not hold a song (and the
+/// thread waiting on it) forever.
+fn output_within(mut cmd: Command, limit: Duration) -> Result<std::process::Output, AccessError> {
+    use std::io::Read;
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            AccessError::new(
+                AccessErrorKind::Transport,
+                "could not start the stream resolver",
+            )
+        })?;
+    // Read its output beside the wait, so a full pipe can never stall it.
+    let mut stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        if let Some(pipe) = stdout.as_mut() {
+            let _ = pipe.read_to_end(&mut out);
+        }
+        out
+    });
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(25)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(AccessError::new(
+                    AccessErrorKind::Transport,
+                    "the stream resolver took too long",
+                ));
+            }
+        }
+    };
+    let stdout = reader.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_that_takes_too_long_is_stopped_at_the_limit() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("ping");
+            c.args(["-n", "6", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("5");
+            c
+        };
+        cmd.stdin(Stdio::null());
+        let started = std::time::Instant::now();
+        let result = output_within(cmd, Duration::from_millis(400));
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "stopped, not waited out"
+        );
+    }
+
+    #[test]
+    fn a_quick_tool_gives_its_output() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "echo hello"]);
+            c
+        } else {
+            let mut c = Command::new("echo");
+            c.arg("hello");
+            c
+        };
+        cmd.stdin(Stdio::null());
+        let out = output_within(cmd, Duration::from_secs(10)).unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("hello"));
+    }
 
     #[test]
     fn find_stream_tool_does_not_panic() {
