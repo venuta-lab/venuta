@@ -22,7 +22,8 @@ pub(crate) fn pick_audio_for(data: &StreamingData, opus: bool, saver: bool) -> O
     let playable = |f: &&Format| {
         f.is_audio()
             && f.direct_url().is_some()
-            && (f.mime_type.contains("mp4a") || (opus && f.mime_type.contains("opus")))
+            && ((f.mime_type.contains("mp4a") && !high_efficiency_aac(f))
+                || (opus && f.mime_type.contains("opus")))
     };
     let mut audio: Vec<&Format> = data.adaptive_formats.iter().filter(playable).collect();
     if audio.is_empty() {
@@ -37,6 +38,12 @@ pub(crate) fn pick_audio_for(data: &StreamingData, opus: bool, saver: bool) -> O
     }
     pool.into_iter()
         .max_by_key(|f| (quality_rank(f), codec_rank(f), f.bitrate))
+}
+
+/// HE-AAC (`mp4a.40.5`, and v2 `mp4a.40.29`): the smallest stream YouTube offers (itag 139),
+/// which the player's AAC decoder can't play.
+fn high_efficiency_aac(f: &Format) -> bool {
+    f.mime_type.contains("mp4a.40.5") || f.mime_type.contains("mp4a.40.29")
 }
 
 fn quality_rank(f: &Format) -> u8 {
@@ -71,6 +78,12 @@ mod tests {
                 "bitrate": bitrate, "audioQuality": quality, "contentLength": "3500000" })
     }
 
+    /// itag 139 as YouTube sends it: HE-AAC.
+    fn he_aac(itag: i32, bitrate: i64) -> serde_json::Value {
+        json!({ "itag": itag, "url": format!("https://x/{itag}"), "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"",
+                "bitrate": bitrate, "audioQuality": "AUDIO_QUALITY_LOW", "contentLength": "1500000" })
+    }
+
     #[test]
     fn data_saver_plays_the_smallest_stream() {
         let d = data(json!([
@@ -80,6 +93,27 @@ mod tests {
             aac(140, 130_000, "AUDIO_QUALITY_MEDIUM"),
         ]));
         assert_eq!(pick_audio_for(&d, true, true).map(|f| f.itag), Some(139));
+        assert_eq!(pick_audio_for(&d, true, false).map(|f| f.itag), Some(251));
+    }
+
+    #[test]
+    fn he_aac_is_passed_over_it_does_not_decode() {
+        let d = data(json!([
+            opus(251, 160_000, "AUDIO_QUALITY_MEDIUM"),
+            he_aac(139, 48_000),
+            opus(249, 50_000, "AUDIO_QUALITY_LOW"),
+            aac(140, 130_000, "AUDIO_QUALITY_MEDIUM"),
+        ]));
+        assert_eq!(
+            pick_audio_for(&d, true, true).map(|f| f.itag),
+            Some(249),
+            "the smallest that plays"
+        );
+        assert_eq!(
+            pick_audio_for(&d, false, true).map(|f| f.itag),
+            Some(140),
+            "without Opus, plain AAC"
+        );
         assert_eq!(pick_audio_for(&d, true, false).map(|f| f.itag), Some(251));
     }
 
