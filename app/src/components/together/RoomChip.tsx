@@ -7,10 +7,12 @@ import {
   admit,
   can,
   deny,
+  dropInvite,
   joinRoom,
   leaveRoom,
   meIn,
   memberName,
+  pendingInvite,
   readInvite,
   removeMember,
   setLetIn,
@@ -86,12 +88,23 @@ function syncWords(m: Member): string {
 /** The title bar's chip and its panel. */
 export function RoomChip() {
   const v = useTogether()
-  const [open, setOpen] = useState(false)
+  const [shut, setOpen] = useState(false)
+  // An invite link Venuta was opened with opens the panel, ready to join.
+  const offered = pendingInvite()
+  const open = shut || offered !== null
   const box = useRef<HTMLDivElement>(null)
-  useEscape(open, () => setOpen(false))
+  const closeIt = () => {
+    setOpen(false)
+    dropInvite()
+  }
+  useEscape(open, closeIt)
   useEffect(() => {
     if (!open) return
-    const close = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
+    const close = (e: PointerEvent) => {
+      if (box.current?.contains(e.target as Node)) return
+      setOpen(false)
+      dropInvite()
+    }
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
   }, [open])
@@ -131,7 +144,7 @@ export function RoomChip() {
         </button>
       ) : (
         <button
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => (open ? closeIt() : setOpen(true))}
           aria-expanded={open}
           aria-label={TOGETHER}
           title={TOGETHER}
@@ -166,7 +179,7 @@ export function RoomChip() {
 
 /** Out of a room: start one, or join with an invite. */
 function StartPanel({ v }: { v: TogetherView }) {
-  const [code, setCode] = useState('')
+  const [code, setCode] = useState(() => pendingInvite() ?? '')
   const [read, setRead] = useState<{ code: string; host: string; open: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   // Your edit while typing; the saved name otherwise.
@@ -242,7 +255,7 @@ function StartPanel({ v }: { v: TogetherView }) {
 
 function RoleMenu({ value, onChange, label }: { value: Role; onChange: (r: Role) => void; label: string }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as Role)} aria-label={label} className="field h-6 shrink-0 rounded-full px-2 text-[11.5px]">
+    <select value={value} onChange={(e) => onChange(e.target.value as Role)} aria-label={label} className="field h-7 shrink-0 rounded-full py-0 pl-2.5 pr-2 text-[12px] leading-none">
       {ROLES.map(([r, l]) => (
         <option key={r} value={r}>
           {l}

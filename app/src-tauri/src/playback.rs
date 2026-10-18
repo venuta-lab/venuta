@@ -207,6 +207,29 @@ pub struct Playback {
     offline: Arc<dyn MediaAccess>,
     /// Listening together: the room's follower hears every status here.
     room_tap: Arc<Mutex<Option<std::sync::mpsc::Sender<RoomTick>>>>,
+    /// Listening together: the room takes the player's buttons (the tray, media keys, every
+    /// window), so no one plays on their own by accident.
+    room_buttons: RoomButtons,
+}
+
+/// A press of one of the player's buttons, from wherever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    Toggle,
+    Play,
+    Pause,
+    Next,
+    Previous,
+    Seek(u64),
+}
+
+type RoomButtons = Arc<Mutex<Option<Arc<dyn Fn(Button) + Send + Sync>>>>;
+
+/// The room has the press when you're in one (said by ).
+fn room_takes(buttons: &RoomButtons, b: Button) -> bool {
+    // Out of the lock first: the room's answer may come back to the player.
+    let f = buttons.lock().ok().and_then(|f| f.clone());
+    f.map(|f| f(b)).is_some()
 }
 
 /// What the room's follower needs of each player status.
@@ -305,6 +328,7 @@ impl Default for Playback {
             local_only: Arc::default(),
             offline: Arc::new(LocalOnlyAccess),
             room_tap: Arc::default(),
+            room_buttons: Arc::default(),
         }
     }
 }
@@ -534,13 +558,35 @@ impl Playback {
     /// For the tray: play or pause, next, previous.
     pub fn toggle(&self) {
         note_play("play or pause", "the tray");
-        let _ = self.send(Cmd::Toggle);
+        let _ = self.press(Button::Toggle);
     }
     pub fn next(&self) {
-        let _ = self.send(Cmd::Next);
+        let _ = self.press(Button::Next);
     }
     pub fn previous(&self) {
-        let _ = self.send(Cmd::Previous);
+        let _ = self.press(Button::Previous);
+    }
+
+    /// A button pressed: the room's when you're in one, else the player's.
+    pub fn press(&self, b: Button) -> Result<(), String> {
+        if room_takes(&self.room_buttons, b) {
+            return Ok(());
+        }
+        self.send(match b {
+            Button::Toggle => Cmd::Toggle,
+            Button::Play => Cmd::Play,
+            Button::Pause => Cmd::Pause,
+            Button::Next => Cmd::Next,
+            Button::Previous => Cmd::Previous,
+            Button::Seek(ms) => Cmd::Seek(ms),
+        })
+    }
+
+    /// Listening together: the room takes the buttons (`None`: the player has them again).
+    pub fn set_room_buttons(&self, f: Option<Arc<dyn Fn(Button) + Send + Sync>>) {
+        if let Ok(mut b) = self.room_buttons.lock() {
+            *b = f;
+        }
     }
 }
 
@@ -576,6 +622,7 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
     };
     let rx = pb.follow();
     let player = pb.player.clone();
+    let buttons = pb.room_buttons.clone();
     // Windows hears about Venuta only once you've played something this time. A restored
     // queue sits paused, and Windows sends Play to a paused session when a headset reconnects
     // or the flyout is touched: that must never start the music by itself.
@@ -592,6 +639,18 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                 return;
             };
             let send = move |cmd: Cmd<QueueItem>| {
+                let b = match &cmd {
+                    Cmd::Toggle => Some(Button::Toggle),
+                    Cmd::Play => Some(Button::Play),
+                    Cmd::Pause => Some(Button::Pause),
+                    Cmd::Next => Some(Button::Next),
+                    Cmd::Previous => Some(Button::Previous),
+                    Cmd::Seek(ms) => Some(Button::Seek(*ms)),
+                    _ => None,
+                };
+                if b.is_some_and(|b| room_takes(&buttons, b)) {
+                    return;
+                }
                 if let Ok(p) = player.lock()
                     && let Some(p) = p.as_ref()
                 {
@@ -1048,22 +1107,22 @@ pub fn player_follow(
 #[tauri::command]
 pub fn player_toggle(pb: State<'_, Playback>, window: tauri::Window) -> Result<(), String> {
     note_play("play or pause", &format!("the {} window", window.label()));
-    pb.send(Cmd::Toggle)
+    pb.press(Button::Toggle)
 }
 
 #[tauri::command]
 pub fn player_next(pb: State<'_, Playback>) -> Result<(), String> {
-    pb.send(Cmd::Next)
+    pb.press(Button::Next)
 }
 
 #[tauri::command]
 pub fn player_previous(pb: State<'_, Playback>) -> Result<(), String> {
-    pb.send(Cmd::Previous)
+    pb.press(Button::Previous)
 }
 
 #[tauri::command]
 pub fn player_seek(ms: u64, pb: State<'_, Playback>) -> Result<(), String> {
-    pb.send(Cmd::Seek(ms))
+    pb.press(Button::Seek(ms))
 }
 
 #[tauri::command]

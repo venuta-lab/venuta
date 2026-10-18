@@ -3032,6 +3032,9 @@ pub fn run() {
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
+        // Invite links (venuta://join/…): registered by the installer, so a test copy never
+        // takes them over.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -3052,6 +3055,7 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .setup(|app| {
             allow_data_assets(app.handle());
+            together::watch_invite_links(app.handle());
             if test_copy()
                 && let Some(w) = app.get_webview_window("main")
             {
@@ -3213,6 +3217,7 @@ pub fn run() {
             get_hotkeys,
             set_hotkey,
             together::together_view,
+            together::together_take_invite,
             together::together_host,
             together::together_read_invite,
             together::together_join,

@@ -257,7 +257,18 @@ impl Follower {
                 }
                 In::Room(view) => {
                     st.queue = view.queue;
+                    let way_changed = st.same_room != view.same_room;
                     st.same_room = view.same_room;
+                    // Same room switched on or off: the player follows the new way at once.
+                    if way_changed
+                        && !st.stepped_out
+                        && view.timeline == st.timeline
+                        && let Some(t) = st.timeline
+                        && st.now.as_ref().is_some_and(|n| n.index == t.index)
+                        && let Some(plan) = me.plan(&t, st.same_room)
+                    {
+                        let _ = me.pb().room_sync(Some(plan));
+                    }
                     match view.timeline {
                         Some(t) if Some(t) != st.timeline => {
                             st.timeline = Some(t);
@@ -275,6 +286,7 @@ impl Follower {
         let pb = me.pb();
         let _ = pb.room_sync(None);
         pb.set_room_tap(None);
+        pb.set_room_buttons(None);
     }
 
     /// The room's timeline changed: follow it with what's loaded, or get it.
@@ -376,6 +388,7 @@ pub fn start(f: Follower) -> Sender<In> {
     let (tx, rx) = std::sync::mpsc::channel::<In>();
     let (tap_tx, tap_rx) = std::sync::mpsc::channel::<RoomTick>();
     f.app.state::<Playback>().set_room_tap(Some(tap_tx));
+    super::take_buttons(&f.app);
     let fwd = tx.clone();
     std::thread::Builder::new()
         .name("venuta-room-tap".into())

@@ -233,6 +233,14 @@ export interface Listening {
   sync_likes: boolean
   /** Only your own music, and nothing online (lib/localOnly.ts). */
   local_only: boolean
+  /** Listening together: the name others see ('' for this computer's user name). */
+  together_name: string
+  /** Listening together through a relay only, so others never see your IP address. */
+  together_hide_ip: boolean
+  /** Listening together through your own relay (https://...), not the public ones. */
+  together_relay: string | null
+  /** Each output's delay (Bluetooth), by output id, milliseconds. */
+  together_delay: Record<string, number>
   /** What you pinned to the top of Home (lib/shortcuts.ts). */
   shortcuts: unknown[]
 }

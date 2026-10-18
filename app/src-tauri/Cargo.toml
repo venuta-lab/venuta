@@ -31,7 +31,7 @@ urlencoding.workspace = true
 tauri = { version = "2.12.3", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.8"
 souvlaki = "0.8"
-tauri-plugin-single-instance = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
@@ -45,6 +45,7 @@ iroh-tickets = "1"
 getrandom = "0.3"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
+tauri-plugin-deep-link = "2"
 
 [target.'cfg(windows)'.dependencies]
 # The app icon you choose, on the shortcuts that open Venuta.

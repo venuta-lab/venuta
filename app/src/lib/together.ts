@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useSyncExternalStore } from 'react'
 import { inApp } from './engine'
+import { loadListening } from './listening'
 import { notify } from './notify'
-import { getPlayerState, keepQueue, restoreQueue, type QueueItem } from './player'
+import { clock, getPlayerState, keepQueue, restoreQueue, type QueueItem } from './player'
 import { setRoomRoute } from './roomRoute'
 
 /*
@@ -91,12 +92,33 @@ const listeners = new Set<() => void>()
 /** Your own queue, kept aside while you're in a room (given back when you leave). */
 let yours: ReturnType<typeof keepQueue> = null
 let root = ''
+/** An invite link Venuta was opened with (a chat, the browser), until the panel takes it. */
+let invite: string | null = null
+
+function changed() {
+  version++
+  listeners.forEach((l) => l())
+}
+
+function offerInvite(link: string | null) {
+  if (!link) return
+  if (inRoom(view)) return notify('Leave this room first to join another.')
+  invite = link
+  changed()
+}
+
+/** The invite link waiting to be joined (shown in the panel), if any. */
+export const pendingInvite = () => invite
+export function dropInvite() {
+  if (invite === null) return
+  invite = null
+  changed()
+}
 
 function publish(v: TogetherView) {
   const was = view.state
   view = v
-  version++
-  listeners.forEach((l) => l())
+  changed()
   setRoomRoute(inRoom(v) ? route : null)
   // A room that ended (removed, the host ended it, lost): your own music back.
   if (v.state === 'ended' && was !== 'ended') {
@@ -112,7 +134,13 @@ export function startTogether() {
   if (started || !inApp()) return
   started = true
   void invoke<TogetherView>('together_view').then(publish).catch(() => {})
-  void import('@tauri-apps/api/event').then(({ listen }) => listen<TogetherView>('together', (e) => publish(e.payload)))
+  void invoke<string | null>('together_take_invite').then(offerInvite).catch(() => {})
+  void import('@tauri-apps/api/event').then(({ listen }) => {
+    void listen<TogetherView>('together', (e) => publish(e.payload))
+    // Why a button pressed elsewhere (the tray, media keys, the mini player) did nothing.
+    void listen<string>('together-note', (e) => notify(e.payload))
+    void listen<string>('together-invite', (e) => offerInvite(e.payload))
+  })
 }
 
 export const togetherView = () => view
@@ -221,6 +249,7 @@ export async function startRoom(libraryRoot: string) {
 export const readInvite = (code: string) => invoke<{ host: string; open: boolean; until: number }>('together_read_invite', { code })
 
 export async function joinRoom(libraryRoot: string, code: string) {
+  dropInvite()
   root = libraryRoot
   yours = keepQueue()
   try {
@@ -251,8 +280,36 @@ export const setSameRoom = (on: boolean) => invoke('together_same_room', { on })
 export const setLetIn = (on: boolean) => invoke('together_let_in_without_asking', { on }).catch((e) => notify(String(e)))
 export const undoRoom = () => invoke('together_undo').catch((e) => notify(String(e)))
 export const stepOut = (out: boolean) => invoke('together_step_out', { out }).catch((e) => notify(String(e)))
-export const setMyName = (name: string) => invoke('together_set_name', { name }).catch((e) => notify(String(e)))
-export const setMyDelay = (ms: number) => invoke('together_set_delay', { ms: Math.round(ms) }).catch((e) => notify(String(e)))
+// Saved by the app: your listening choices here are read again, so a later change there
+// doesn't put back the old ones.
+export const setMyName = (name: string) =>
+  invoke('together_set_name', { name })
+    .then(() => loadListening(true))
+    .catch((e) => notify(String(e)))
+export const setMyDelay = (ms: number) =>
+  invoke('together_set_delay', { ms: Math.round(ms) })
+    .then(() => loadListening(true))
+    .catch((e) => notify(String(e)))
 export const jumpInRoom = (index: number) => (can(view, 'control') ? ask({ do: 'jump', index }) : explainNo('control'))
 export const removeFromRoom = (index: number) => (can(view, 'control') ? ask({ do: 'remove', index }) : explainNo('control'))
 export const moveInRoom = (from: number, to: number) => (can(view, 'control') ? ask({ do: 'move', from, to }) : explainNo('control'))
+
+/** What the queue drawer's header says in a room. */
+export function roomQueueLine(v: TogetherView): string {
+  const q = v.room?.queue ?? []
+  const at = v.room?.timeline?.index ?? -1
+  const after = q.slice(at + 1)
+  if (!after.length) return 'Nothing after this song'
+  const left = after.reduce((t, s) => t + (s.duration_ms ?? 0), 0)
+  return `${after.length.toLocaleString('en-IN')} up next, ${clock(left)}`
+}
+
+/** Whose room you're listening in, with whom (null out of a room). */
+export function roomWords(v: TogetherView): string | null {
+  if (!inRoom(v) || !v.room) return null
+  if (!v.host) return `Listening in ${v.room.host_name}'s room`
+  const others = v.room.members.filter((m) => !m.host).map((m) => m.name)
+  if (!others.length) return 'Your room is open'
+  const shown = others.length > 2 ? `${others.slice(0, 2).join(', ')} and ${others.length - 2} more` : others.join(' and ')
+  return `Listening with ${shown}`
+}

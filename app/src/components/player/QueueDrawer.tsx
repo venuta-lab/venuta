@@ -15,6 +15,8 @@ import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
 import { QueueRadio } from './QueueRadio'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
+import { roomQueueLine, roomWords, useTogether } from '../../lib/together'
+import { RoomQueue } from '../together/RoomQueue'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
 
@@ -69,6 +71,9 @@ const ROW = 'group absolute inset-x-0 flex min-w-0 cursor-pointer items-center g
  */
 export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
   const s = usePlayer()
+  // In a room, the drawer shows the room's queue (the same for everyone).
+  const v = useTogether()
+  const room = (v.state === 'hosting' || v.state === 'in' || v.state === 'reconnecting') && v.room ? v : null
   const list = useRef<WindowedListHandle>(null)
   const { open, onClose } = props
   useEscape(open, onClose)
@@ -180,13 +185,22 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
           <header className="flex items-start gap-3 px-5 pb-2 pt-4">
             <div className="min-w-0 flex-1">
               <h2 className="title text-[18px]">Queue</h2>
-              <PlayingFrom className="mt-0.5 block truncate text-[12px] text-ink/55" />
-              <p className="mt-0.5 truncate text-[12px] text-ink/55">
-                {upcoming > 0 ? `${upcoming.toLocaleString('en-IN')} up next, ${clock(left)}` : 'Nothing after this song'}
-              </p>
-              <QueueRadio className="mt-1.5" />
+              {room ? (
+                <>
+                  <p className="mt-0.5 truncate text-[12px] text-ink/55">{roomWords(room)}</p>
+                  <p className="mt-0.5 truncate text-[12px] text-ink/55">{roomQueueLine(room)}</p>
+                </>
+              ) : (
+                <>
+                  <PlayingFrom className="mt-0.5 block truncate text-[12px] text-ink/55" />
+                  <p className="mt-0.5 truncate text-[12px] text-ink/55">
+                    {upcoming > 0 ? `${upcoming.toLocaleString('en-IN')} up next, ${clock(left)}` : 'Nothing after this song'}
+                  </p>
+                  <QueueRadio className="mt-1.5" />
+                </>
+              )}
               {/* Shuffled, what comes next isn't the order of the list it came from: say so, with the way back. */}
-              {s.shuffle && upcoming > 0 && (
+              {!room && s.shuffle && upcoming > 0 && (
                 <p className="mt-1 flex items-center gap-2 text-[12px] text-ink/55">
                   <span>Shuffled</span>
                   <button onClick={() => void setShuffle(false)} className="rounded-full px-2 py-0.5 text-accent-ink hover:bg-ink/[0.08]">
@@ -195,7 +209,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
                 </p>
               )}
             </div>
-            {s.queue.length > 0 && (
+            {!room && s.queue.length > 0 && (
               <button
                 onClick={() => askAddSongs(s.queue.map(songItemOf), 'the queue')}
                 className="btn-ghost btn-sm mt-0.5 shrink-0"
@@ -209,7 +223,9 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
             </button>
           </header>
           <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
-            {s.queue.length === 0 ? (
+            {room ? (
+              <RoomQueue v={room} />
+            ) : s.queue.length === 0 ? (
               <p className="px-2 py-10 text-center text-[13px] text-ink/55">Play an album or a song, and it lines up here.</p>
             ) : (
               <WindowedList

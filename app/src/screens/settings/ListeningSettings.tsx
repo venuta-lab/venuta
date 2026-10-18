@@ -1,9 +1,10 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Segmented, Switch } from '../../components/ui'
 import { invoke } from '@tauri-apps/api/core'
 import { inApp } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
+import { setMyName, TOGETHER } from '../../lib/together'
 
 /*
   Settings > Listening: what plays next, how online songs come, which lyrics sources are asked
@@ -54,6 +55,68 @@ function Row(props: { title: string; hint?: string; children: React.ReactNode })
       </div>
       {props.children}
     </div>
+  )
+}
+
+/** Listening together: the name others see, and how rooms connect (for the next room). */
+function TogetherSettings() {
+  const l = listening()
+  // Your edits while typing; what's saved otherwise.
+  const [name, setName] = useState<string | null>(null)
+  const [relay, setRelay] = useState<string | null>(null)
+  const relayNow = relay ?? l.together_relay ?? ''
+  const relayOk = !relayNow.trim() || /^https:\/\/[^\s/]+/.test(relayNow.trim())
+  const saveRelay = () => {
+    if (relay === null) return
+    const v = relay.trim()
+    if (v && !relayOk) return notify('A relay address starts with https://')
+    void updateListening({ together_relay: v || null })
+      .then(() => setRelay(null))
+      .catch((e) => notify(String(e)))
+  }
+  return (
+    <>
+      <h3 className="mt-8 text-[13px] font-semibold text-ink/60">{TOGETHER}</h3>
+      <Row title="Your name" hint="What others in a room see. Empty: this computer's user name.">
+        <input
+          value={name ?? l.together_name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => {
+            if (name !== null && name !== l.together_name) void setMyName(name)
+            setName(null)
+          }}
+          maxLength={40}
+          aria-label="Your name"
+          className="field h-8 w-[220px] rounded-full px-3 text-[13px]"
+        />
+      </Row>
+      <Row
+        title="Hide your IP address"
+        hint="Rooms connect through a relay only, so the people in them never see your IP address. Sound arrives a little later; sync stays the same. From the next room you start or join."
+      >
+        <Switch on={l.together_hide_ip} onChange={(on) => void updateListening({ together_hide_ip: on }).catch((e) => notify(String(e)))} label="Hide your IP address" />
+      </Row>
+      <Row
+        title="Your own relay"
+        hint={
+          l.local_only
+            ? 'With Local only on, rooms stay on your own network and use no relay.'
+            : 'When two computers cannot reach each other directly, a relay passes the encrypted sound between them. Empty: the free public relays. From the next room.'
+        }
+      >
+        <input
+          value={relayNow}
+          onChange={(e) => setRelay(e.target.value)}
+          onBlur={saveRelay}
+          onKeyDown={(e) => e.key === 'Enter' && saveRelay()}
+          placeholder="https://relay.example.com"
+          spellCheck={false}
+          aria-label="Your own relay"
+          aria-invalid={!relayOk}
+          className={`field h-8 w-[260px] rounded-full px-3 text-[13px] ${relayOk ? '' : 'ring-1 ring-[#d05050]'}`}
+        />
+      </Row>
+    </>
   )
 }
 
@@ -110,6 +173,8 @@ export function ListeningSettings() {
       <Row title="Keep a history" hint="What you play, from your files and online, for Listening's stats and history, Home and Most played. Kept with your library, never sent anywhere.">
         <Switch on={l.history} onChange={(on) => set({ history: on })} label="Keep a history" />
       </Row>
+
+      <TogetherSettings />
 
       <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Online songs</h3>
       <Row title="Stream quality" hint={l.stream_quality === 'low' ? 'The smallest stream each song offers: less data, less detail.' : 'The best stream each song offers (Opus or AAC, whichever is better).'}>

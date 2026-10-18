@@ -30,6 +30,8 @@ pub struct Together {
     /// A start or a join under way (for the window to say so).
     busy: Mutex<Option<&'static str>>,
     error: Mutex<Option<String>>,
+    /// An invite link opened from outside (a chat, the browser), for the window to offer.
+    invite_link: Mutex<Option<String>>,
 }
 
 /// What the window shows.
@@ -151,6 +153,90 @@ pub fn trace(what: &str) {
     crate::playback::note_play(what, "listening together");
 }
 
+/// A player button pressed in a room (the tray, media keys, the mini player): it asks the room,
+/// or the main window says why not.
+fn button(app: &AppHandle, b: crate::playback::Button) {
+    use crate::playback::Button;
+    let Some(s) = current(&app.state::<Together>()) else {
+        return;
+    };
+    let (room, may) = match &s {
+        Session::Host(h) => (Some(h.room.lock().unwrap().view(true)), true),
+        Session::Guest(g) => {
+            let room = g.view.lock().unwrap().clone();
+            let me = *g.me.lock().unwrap();
+            let may = room
+                .as_ref()
+                .and_then(|r| r.members.iter().find(|m| Some(m.id) == me))
+                .is_some_and(|m| m.role == Role::Control);
+            (room, may)
+        }
+    };
+    if !may {
+        let host = room
+            .map(|r| r.host_name)
+            .unwrap_or_else(|| "The host".into());
+        let _ = app.emit("together-note", format!("{host} is in control."));
+        return;
+    }
+    let playing = room.and_then(|r| r.timeline).is_some_and(|t| t.playing);
+    let action = match b {
+        Button::Toggle if playing => Action::Pause,
+        Button::Toggle | Button::Play => Action::Play,
+        Button::Pause => Action::Pause,
+        Button::Next => Action::Next,
+        Button::Previous => Action::Previous,
+        Button::Seek(ms) => Action::Seek { position_ms: ms },
+    };
+    match &s {
+        Session::Host(h) => {
+            if let Err(e) = h.ask(action) {
+                let _ = app.emit("together-note", e);
+            }
+        }
+        Session::Guest(g) => g.ask(action),
+    }
+}
+
+/// The room takes the player's buttons while this session lasts.
+pub(crate) fn take_buttons(app: &AppHandle) {
+    let a = app.clone();
+    app.state::<Playback>()
+        .set_room_buttons(Some(Arc::new(move |b| button(&a, b))));
+}
+
+/// Invite links clicked anywhere (venuta://join/…) bring Venuta forward with the room to join.
+pub fn watch_invite_links(app: &AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    // Opened by a link: it's here from the start.
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        offer_invite(app, &urls);
+    }
+    // Open already: the link comes on (single instance passes it).
+    let a = app.clone();
+    app.deep_link()
+        .on_open_url(move |e| offer_invite(&a, &e.urls()));
+}
+
+fn offer_invite<U: AsRef<str>>(app: &AppHandle, urls: &[U]) {
+    let Some(link) = urls
+        .iter()
+        .map(|u| u.as_ref())
+        .find(|u| u.starts_with(together::invite::LINK_PREFIX))
+    else {
+        return;
+    };
+    *app.state::<Together>().invite_link.lock().unwrap() = Some(link.to_owned());
+    crate::desktop::show_main(app);
+    let _ = app.emit("together-invite", link);
+}
+
+/// The invite link Venuta was opened with, once (the window asks as it starts).
+#[tauri::command]
+pub fn together_take_invite(t: State<'_, Together>) -> Option<String> {
+    t.invite_link.lock().unwrap().take()
+}
+
 /// Tell the window what changed.
 fn emit(app: &AppHandle) {
     let mut v = view(&app.state::<Together>());
@@ -171,7 +257,7 @@ fn view(t: &Together) -> View {
     if let Some(b) = *t.busy.lock().unwrap() {
         v.state = b.into();
     }
-    match current(&t).as_ref() {
+    match current(t).as_ref() {
         Some(Session::Host(h)) => {
             v.state = "hosting".into();
             v.host = true;
@@ -354,7 +440,7 @@ pub fn together_add(
 }
 
 fn with_host<R>(t: &Together, f: impl FnOnce(&host::Host) -> R) -> Result<R, String> {
-    match current(&t).as_ref() {
+    match current(t).as_ref() {
         Some(Session::Host(h)) => Ok(f(h)),
         _ => Err("Only the host can do that.".into()),
     }

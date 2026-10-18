@@ -19,6 +19,10 @@ const DEFAULTS: Listening = {
   song_notifications: false,
   sync_likes: false,
   local_only: false,
+  together_name: '',
+  together_hide_ip: false,
+  together_relay: null,
+  together_delay: {},
   shortcuts: [],
 }
 

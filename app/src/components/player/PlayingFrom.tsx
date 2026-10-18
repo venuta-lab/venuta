@@ -1,8 +1,13 @@
 import { openFrom, readFrom, usePlayerValue } from '../../lib/player'
+import { roomWords, useTogether } from '../../lib/together'
 
 /** "Playing from Hindi": the playlist, album or artist the queue came from, as a way back to it. */
 export function PlayingFrom(props: { className?: string; onOpen?: () => void }) {
   const raw = usePlayerValue((s) => s.from)
+  const v = useTogether()
+  // In a room the music comes from the room.
+  const room = roomWords(v)
+  if (room) return <span className={props.className}>{room}</span>
   const f = readFrom(raw)
   if (!f?.label) return null
   const linked = f.kind === 'playlist' || f.kind === 'album' || f.kind === 'artist'
