@@ -43,6 +43,8 @@ export interface Member {
 
 export interface Activity {
   who: number
+  /** Their name then (still right after they leave). */
+  name: string
   what: string
   at_us: number
   undoable: boolean

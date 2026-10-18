@@ -288,6 +288,12 @@ export const onlineItem = (o: OnlineEntry): QueueItem =>
 /** Is this row an online song (no file of yours behind it)? */
 export const isOnline = (q: QueueItem) => !q.path && q.online?.kind === 'online'
 
+/** A song the room's host streams to you from their file (listening together). */
+export const fromRoomHost = (q: QueueItem | null | undefined) => q?.online?.kind === 'online' && q.online.provider === 'venuta_room'
+
+/** Where a queue row plays from, for its badge. */
+export const availabilityOf = (q: QueueItem): Availability => (fromRoomHost(q) ? 'room' : (q.availability ?? (isOnline(q) ? 'online' : 'local')))
+
 /** Cover picture for a queue row: online artwork URL when set, else nothing (local uses covers). */
 export const remoteArtUrl = (q: QueueItem | null | undefined): string | undefined =>
   q && isOnline(q) ? q.artwork_url : undefined

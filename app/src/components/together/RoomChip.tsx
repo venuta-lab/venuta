@@ -310,7 +310,7 @@ function ActivityLine({ v, host }: { v: TogetherView; host: boolean }) {
         {last.map((x, i) => (
           <span key={i}>
             {i > 0 && ' · '}
-            {memberName(v, x.who)} {x.what}
+            {x.name || memberName(v, x.who)} {x.what}
           </span>
         ))}
       </span>

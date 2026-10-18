@@ -245,6 +245,8 @@ pub struct Member {
 #[serde(deny_unknown_fields)]
 pub struct Activity {
     pub who: u32,
+    /// Their name then (so it still reads right after they leave).
+    pub name: String,
     /// Plain words, made by the host ("skipped", "added 2 songs").
     pub what: String,
     /// The host's time it happened (microseconds).

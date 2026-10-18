@@ -303,6 +303,19 @@ fn current(t: &Together) -> Option<Session> {
     t.session.lock().unwrap().clone()
 }
 
+/// A room that ended (the host ended it, you were taken out, it was lost) is over: starting or
+/// joining another one clears it.
+fn clear_ended(t: &Together) {
+    let mut s = t.session.lock().unwrap();
+    if let Some(Session::Guest(g)) = s.as_ref()
+        && *g.stage.lock().unwrap() == guest::Stage::Ended
+    {
+        let g = g.clone();
+        *s = None;
+        tauri::async_runtime::spawn(async move { g.close().await });
+    }
+}
+
 fn role(s: &str) -> Result<Role, String> {
     host::role_of(s).ok_or_else(|| format!("no role called {s}"))
 }
@@ -328,6 +341,7 @@ pub async fn together_host(
 ) -> Result<View, String> {
     {
         let t = app.state::<Together>();
+        clear_ended(&t);
         if t.session.lock().unwrap().is_some() {
             return Err("You're in a room already.".into());
         }
@@ -368,6 +382,7 @@ pub async fn together_join(app: AppHandle, root: String, code: String) -> Result
     let invite = Invite::parse(&code)?;
     {
         let t = app.state::<Together>();
+        clear_ended(&t);
         if t.session.lock().unwrap().is_some() {
             return Err("You're in a room already. Leave it first.".into());
         }

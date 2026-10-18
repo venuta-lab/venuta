@@ -1,5 +1,5 @@
 import { toggleLiked, useLiked } from '../lib/likes'
-import type { QueueItem } from '../lib/player'
+import { fromRoomHost, type QueueItem } from '../lib/player'
 import { IconHeart } from './Icons'
 
 /**
@@ -8,6 +8,8 @@ import { IconHeart } from './Icons'
  */
 export function LikeButton({ root, item, quiet = false, size = 18 }: { root: string; item: QueueItem; quiet?: boolean; size?: number }) {
   const liked = useLiked(item)
+  // A friend's file streamed in a room: nothing of yours to like.
+  if (fromRoomHost(item)) return null
   return (
     <button
       onClick={(e) => {

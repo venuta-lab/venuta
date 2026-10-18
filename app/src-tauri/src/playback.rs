@@ -210,6 +210,9 @@ pub struct Playback {
     /// Listening together: the room takes the player's buttons (the tray, media keys, every
     /// window), so no one plays on their own by accident.
     room_buttons: RoomButtons,
+    /// Which room's follower has the player now (0: none), so one winding down never undoes
+    /// what the next one set up.
+    room_owner: std::sync::atomic::AtomicU64,
 }
 
 /// A press of one of the player's buttons, from wherever.
@@ -329,6 +332,7 @@ impl Default for Playback {
             offline: Arc::new(LocalOnlyAccess),
             room_tap: Arc::default(),
             room_buttons: Arc::default(),
+            room_owner: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -580,6 +584,28 @@ impl Playback {
             Button::Previous => Cmd::Previous,
             Button::Seek(ms) => Cmd::Seek(ms),
         })
+    }
+
+    /// Listening together: a room's follower takes the player (its id, to let go of it later).
+    pub fn claim_room(&self) -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.room_owner
+            .store(id, std::sync::atomic::Ordering::SeqCst);
+        id
+    }
+
+    /// Listening together: that follower lets go of the player, unless another room's has it
+    /// already. True when it was still its own.
+    pub fn release_room(&self, id: u64) -> bool {
+        self.room_owner
+            .compare_exchange(
+                id,
+                0,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
     }
 
     /// Listening together: the room takes the buttons (`None`: the player has them again).

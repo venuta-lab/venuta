@@ -803,7 +803,8 @@ export interface WantEntry {
 
 /** Whether a song plays from your library or from the online catalog ('local_preferred': an
  *  online song you have, playing from your file). */
-export type Availability = 'local' | 'online' | 'local_preferred'
+/** 'room': a friend's file, streamed from the host of the room you're in (shown only). */
+export type Availability = 'local' | 'online' | 'local_preferred' | 'room'
 
 /** A stable id for a song. Local ones use their library path; online ones a provider id.
  *  Stream URLs never appear here. */

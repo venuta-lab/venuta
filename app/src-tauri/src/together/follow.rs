@@ -53,6 +53,8 @@ pub struct Follower {
     pub to_local: Arc<dyn Fn(i64) -> Option<Instant> + Send + Sync>,
     pub report: Box<dyn Report>,
     pub delay_ms: i32,
+    /// Its hold on the player (set as it starts).
+    pub owner: u64,
 }
 
 #[derive(Clone)]
@@ -76,6 +78,9 @@ struct State {
     own_keys: HashMap<String, usize>,
     /// When the player should have moved on to the next song (its start), to nudge it if not.
     next_due: Option<Instant>,
+    /// The start time the player was last given for the song playing (to see when a better
+    /// estimate of the host's clock moves it).
+    anchor: Option<Instant>,
 }
 
 impl Follower {
@@ -114,6 +119,36 @@ impl Follower {
         })
     }
 
+    /// The player follows this plan (its start time kept, to see when the clock moves it).
+    fn follow_plan(&self, st: &mut State, plan: SyncPlan) {
+        st.anchor = plan.anchor;
+        let _ = self.pb().room_sync(Some(plan));
+    }
+
+    /// The host's clock is known better now (or at all, just after joining): the song playing
+    /// follows the room's start by it, when it moved enough to matter.
+    fn follow_the_clock(&self, st: &mut State) {
+        let Some(t) = st.timeline else { return };
+        if st.stepped_out
+            || st.pending.is_some()
+            || !st.now.as_ref().is_some_and(|n| n.index == t.index)
+        {
+            return;
+        }
+        let Some(plan) = self.plan(&t, st.same_room) else {
+            return;
+        };
+        let tolerance = Duration::from_micros(if st.same_room { 1_000 } else { 5_000 });
+        let moved = match (st.anchor, plan.anchor) {
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => a.max(b) - a.min(b) > tolerance,
+            _ => false,
+        };
+        if moved {
+            self.follow_plan(st, plan);
+        }
+    }
+
     /// Get this entry ready at `position_ms`, silent, and wait to say so.
     fn load(&self, st: &mut State, rev: u64, index: usize, position_ms: u64) {
         let Some(song) = st.queue.get(index).cloned() else {
@@ -128,6 +163,7 @@ impl Follower {
                 super::trace("follow: loading");
                 let _ = self.pb().room_load(&self.root, c.item, position_ms, c.own);
                 super::trace("follow: loaded");
+                st.anchor = None;
                 let _ = self.pb().room_sync(Some(SyncPlan {
                     anchor: None,
                     position_ms,
@@ -192,6 +228,7 @@ impl Follower {
             last_sync_report: Instant::now(),
             own_keys: HashMap::new(),
             next_due: None,
+            anchor: None,
         };
         if self.hosting
             && let Some(lib) = &self.lib
@@ -267,7 +304,7 @@ impl Follower {
                         && st.now.as_ref().is_some_and(|n| n.index == t.index)
                         && let Some(plan) = me.plan(&t, st.same_room)
                     {
-                        let _ = me.pb().room_sync(Some(plan));
+                        me.follow_plan(&mut st, plan);
                     }
                     match view.timeline {
                         Some(t) if Some(t) != st.timeline => {
@@ -283,10 +320,13 @@ impl Follower {
                 In::Tick(tick) => me.tick(&mut st, tick),
             }
         }
+        // On its own again, unless the next room's follower has the player already.
         let pb = me.pb();
-        let _ = pb.room_sync(None);
-        pb.set_room_tap(None);
-        pb.set_room_buttons(None);
+        if pb.release_room(me.owner) {
+            let _ = pb.room_sync(None);
+            pb.set_room_tap(None);
+            pb.set_room_buttons(None);
+        }
     }
 
     /// The room's timeline changed: follow it with what's loaded, or get it.
@@ -302,7 +342,7 @@ impl Follower {
             .is_some_and(|n| n.index == t.index && Some(&n.key) == key.as_ref());
         if loaded_now {
             if let Some(plan) = self.plan(&t, st.same_room) {
-                let _ = self.pb().room_sync(Some(plan));
+                self.follow_plan(st, plan);
             }
         } else if loaded_next {
             // It follows the one playing at its end; the player moves on by itself then.
@@ -311,7 +351,7 @@ impl Follower {
             // Not loaded (joined mid-song, back after stepping out): get it where the room is.
             self.load(st, t.rev, t.index, t.position_ms);
             if let Some(plan) = self.plan(&t, st.same_room) {
-                let _ = self.pb().room_sync(Some(plan));
+                self.follow_plan(st, plan);
             }
             // Playing at once (no start to wait for): say how it's heard now.
             if st.pending.take().is_some()
@@ -347,7 +387,7 @@ impl Follower {
                     && st.now.as_ref().is_some_and(|n| n.index == t.index)
                     && let Some(plan) = self.plan(&t, st.same_room)
                 {
-                    let _ = self.pb().room_sync(Some(plan));
+                    self.follow_plan(st, plan);
                 }
             }
             // The host's player knows the song's real length.
@@ -367,6 +407,7 @@ impl Follower {
                 self.report.sync(e.round() as i32);
             }
         }
+        self.follow_the_clock(st);
         // This copy is longer than the room's: the room has moved on, so does this player.
         if let Some(due) = st.next_due
             && Instant::now() > due + Duration::from_millis(400)
@@ -384,9 +425,10 @@ thread_local! {
 }
 
 /// Start a follower on its own thread; its player's statuses come to it.
-pub fn start(f: Follower) -> Sender<In> {
+pub fn start(mut f: Follower) -> Sender<In> {
     let (tx, rx) = std::sync::mpsc::channel::<In>();
     let (tap_tx, tap_rx) = std::sync::mpsc::channel::<RoomTick>();
+    f.owner = f.app.state::<Playback>().claim_room();
     f.app.state::<Playback>().set_room_tap(Some(tap_tx));
     super::take_buttons(&f.app);
     let fwd = tx.clone();

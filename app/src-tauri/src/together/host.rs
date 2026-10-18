@@ -56,7 +56,7 @@ impl Host {
         playing: bool,
     ) -> Result<Arc<Host>, String> {
         let reach = net::Reach::from_settings();
-        let ep = net::endpoint(&reach, true).await?;
+        let ep = net::endpoint(&reach, true, None).await?;
         super::trace("room: endpoint open");
         let name = super::my_name();
         let lib = crate::load_lib(std::path::Path::new(&root))
@@ -112,6 +112,7 @@ impl Host {
             to_local: Arc::new(move |us| Some(clock.instant(us))),
             report: Box::new(HostReport(Arc::downgrade(&host))),
             delay_ms: super::my_delay(&app),
+            owner: 0,
         });
         *host.follow.lock().unwrap() = Some(tx);
         super::trace("room: follower started");
@@ -295,6 +296,7 @@ impl Host {
         });
         // Their messages.
         let mut pings: u32 = 0;
+        let mut said_bye = false;
         loop {
             let line = match lines.next().await {
                 Ok(Some(l)) => l,
@@ -356,13 +358,35 @@ impl Host {
                     }
                 }
                 ToHost::Undo => {}
-                ToHost::Bye => break,
+                ToHost::Bye => {
+                    said_bye = true;
+                    break;
+                }
                 ToHost::Hello { .. } => {}
             }
         }
-        // Gone (or dropped): away now, out after a minute unless back.
-        self.waiting.lock().unwrap().remove(&id);
-        let was_conn = self.conns.lock().unwrap().remove(&id).is_some();
+        // Back on a new connection already: that one is theirs now, nothing to tidy here.
+        let this = conn.stable_id();
+        let ours = |m: &mut std::collections::HashMap<u32, (Out, Connection)>| {
+            if m.get(&id).is_some_and(|(_, c)| c.stable_id() == this) {
+                m.remove(&id).is_some()
+            } else {
+                false
+            }
+        };
+        let was_waiting = ours(&mut self.waiting.lock().unwrap());
+        let was_conn = ours(&mut self.conns.lock().unwrap());
+        if !was_waiting && !was_conn {
+            return;
+        }
+        // A goodbye: out at once. Gone without one (dropped): away now, out after a minute
+        // unless back.
+        if was_conn && said_bye {
+            let now = self.clock.now_us();
+            let c = self.room.lock().unwrap().left(id, now);
+            self.apply(c);
+            return;
+        }
         let c = if was_conn {
             self.room.lock().unwrap().away(id)
         } else {

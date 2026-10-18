@@ -23,6 +23,7 @@ import {
   setVolume,
   onlineQuality,
   sourceLabel,
+  fromRoomHost,
   toggle,
   usePlayer,
   usePlayerValue,
@@ -33,6 +34,7 @@ import {
   useWaveform,
   verifyCurrent,
 } from '../../lib/player'
+import { togetherView } from '../../lib/together'
 import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { useDropTarget } from '../../lib/drag'
@@ -381,7 +383,7 @@ function Volume(props: { volume: number }) {
 /** "FLAC 24/96, Bit-perfect": opens the signal path and where the sound goes. */
 /** The sound in a word or two, and the way to where it goes. Your file: "FLAC 24/96". An online
  *  song: "Online · AAC 129 kbps", the one Online label it gets here (just "Online" until it opens). */
-function SignalBadge(props: { signal: Signal | null; online: boolean; fallback: string }) {
+function SignalBadge(props: { signal: Signal | null; online: boolean; room?: boolean; fallback: string }) {
   const [open, setOpen] = useState(false)
   const [choices, setChoices] = useState<OutputChoices | null>(null)
   const box = useRef<HTMLDivElement>(null)
@@ -393,7 +395,13 @@ function SignalBadge(props: { signal: Signal | null; online: boolean; fallback: 
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
   }, [open])
-  const label = props.online ? ['Online', onlineQuality(s)].filter(Boolean).join(' · ') : s ? sourceLabel(s.source) : props.fallback
+  const label = props.online
+    ? ['Online', onlineQuality(s)].filter(Boolean).join(' · ')
+    : props.room
+      ? [`From ${togetherView().room?.host_name ?? 'the host'}`, s ? sourceLabel(s.source) : ''].filter(Boolean).join(' · ')
+      : s
+        ? sourceLabel(s.source)
+        : props.fallback
   return (
     <div ref={box} className="relative">
       <button
@@ -716,7 +724,7 @@ export function NowPlayingBar(props: {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-[14px] font-medium">{song.title}</span>
-                <SignalBadge signal={s.signal} online={isOnline(song)} fallback={song.format} />
+                <SignalBadge signal={s.signal} online={isOnline(song) && !fromRoomHost(song)} room={fromRoomHost(song)} fallback={song.format} />
               </div>
               <div className="truncate text-[12.5px] text-ink/60">
                 {s.buffering ? (

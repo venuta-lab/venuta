@@ -8,7 +8,7 @@ import { SyncMaker } from '../lyrics/SyncMaker'
 import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
-import { songLength, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
+import { availabilityOf, songLength, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
 import { artUrl, OnlineCover, RemoteArt } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
@@ -116,7 +116,7 @@ function UpNext() {
               <span className="min-w-0 flex-1">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-[13.5px]">{q.title}</span>
-                  {online && <AvailabilityBadge availability={q.availability ?? 'online'} />}
+                  {online && <AvailabilityBadge availability={availabilityOf(q)} />}
                 </span>
                 <span className="block truncate text-[12px] text-ink/55">{q.artists.join(', ') || q.album_artist}</span>
               </span>
@@ -234,7 +234,7 @@ export function NowPlaying(props: {
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
                 <h2 className="title flex items-center justify-center gap-2 truncate text-[26px]">
                   <span className="truncate">{song.title}</span>
-                  {isOnline(song) && <AvailabilityBadge availability={song.availability ?? 'online'} />}
+                  {isOnline(song) && <AvailabilityBadge availability={availabilityOf(song)} />}
                 </h2>
                 {s.buffering && (
                   <p className="mt-1 inline-flex items-center gap-1.5 text-[12.5px] text-ink/55">

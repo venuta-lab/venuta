@@ -41,8 +41,34 @@ impl Reach {
     }
 }
 
-/// An endpoint for a room (`host`: one that takes connections).
-pub async fn endpoint(reach: &Reach, host: bool) -> Result<Endpoint, String> {
+/// This Venuta's key in one room: the same each time you join that room, so the host knows it's
+/// you back (and a person taken out and blocked stays out); a different one in every other room,
+/// so hosts can't tell it's you elsewhere. Made from a secret kept on this computer.
+pub fn guest_key(room_secret: &str) -> iroh::SecretKey {
+    let path = engine::paths::app_data_dir().join("together.key");
+    let mine: [u8; 32] = std::fs::read(&path)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .unwrap_or_else(|| {
+            let mut k = [0u8; 32];
+            getrandom::fill(&mut k).expect("random bytes");
+            let _ = std::fs::create_dir_all(engine::paths::app_data_dir());
+            let _ = std::fs::write(&path, k);
+            k
+        });
+    key_in_room(&mine, room_secret)
+}
+
+fn key_in_room(mine: &[u8; 32], room_secret: &str) -> iroh::SecretKey {
+    iroh::SecretKey::from_bytes(blake3::keyed_hash(mine, room_secret.as_bytes()).as_bytes())
+}
+
+/// An endpoint for a room (`host`: one that takes connections; `key`: who it is, else new).
+pub async fn endpoint(
+    reach: &Reach,
+    host: bool,
+    key: Option<iroh::SecretKey>,
+) -> Result<Endpoint, String> {
     let mut b = if reach.local_only {
         Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
     } else {
@@ -62,6 +88,9 @@ pub async fn endpoint(reach: &Reach, host: bool) -> Result<Endpoint, String> {
     }
     if host {
         b = b.alpns(vec![ALPN.to_vec()]);
+    }
+    if let Some(k) = key {
+        b = b.secret_key(k);
     }
     b.bind()
         .await
@@ -178,6 +207,27 @@ impl Clock {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn your_key_is_the_same_in_one_room_and_different_in_others() {
+        let mine = [7u8; 32];
+        let a = super::key_in_room(&mine, "room-a").public();
+        assert_eq!(
+            a,
+            super::key_in_room(&mine, "room-a").public(),
+            "back as yourself"
+        );
+        assert_ne!(
+            a,
+            super::key_in_room(&mine, "room-b").public(),
+            "unlinkable elsewhere"
+        );
+        assert_ne!(
+            a,
+            super::key_in_room(&[8u8; 32], "room-a").public(),
+            "someone else"
+        );
+    }
+
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -186,7 +236,7 @@ mod tests {
             local_only: true,
             ..Reach::default()
         };
-        let host = endpoint(&reach, true).await.unwrap();
+        let host = endpoint(&reach, true, None).await.unwrap();
         let ticket = ticket(&host, &reach).await;
         let accept = tokio::spawn({
             let host = host.clone();
@@ -201,7 +251,7 @@ mod tests {
                 got
             }
         });
-        let guest = endpoint(&reach, false).await.unwrap();
+        let guest = endpoint(&reach, false, None).await.unwrap();
         let t: iroh_tickets::endpoint::EndpointTicket = ticket.parse().unwrap();
         let conn = tokio::time::timeout(
             Duration::from_secs(10),
@@ -228,7 +278,7 @@ mod tests {
             local_only: true,
             ..Reach::default()
         };
-        let host = endpoint(&reach, true).await.unwrap();
+        let host = endpoint(&reach, true, None).await.unwrap();
         let ticket = ticket(&host, &reach).await;
         let accept = tokio::spawn({
             let host = host.clone();
@@ -238,7 +288,7 @@ mod tests {
                 Lines::new(recv).next().await
             }
         });
-        let guest = endpoint(&reach, false).await.unwrap();
+        let guest = endpoint(&reach, false, None).await.unwrap();
         let t: iroh_tickets::endpoint::EndpointTicket = ticket.parse().unwrap();
         let conn = guest
             .connect(t.endpoint_addr().clone(), ALPN)

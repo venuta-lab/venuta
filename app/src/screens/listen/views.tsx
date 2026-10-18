@@ -32,7 +32,7 @@ import { useCatalogTiles } from '../../lib/catalogTiles'
 import { useLocalOnly } from '../../lib/localOnly'
 import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
+import { availabilityOf, enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay } from '../../components/Icons'
@@ -398,7 +398,7 @@ function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
           {artist && <p className="mt-1.5 text-[15px] text-ink/80">{artist}</p>}
           <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
             {song.album && <span>{song.album}</span>}
-            <AvailabilityBadge availability="online" />
+            <AvailabilityBadge availability={availabilityOf(song)} />
           </div>
           <div className="mt-5">
             <button onClick={() => void toggle()} className="btn-primary play-main btn-lg">

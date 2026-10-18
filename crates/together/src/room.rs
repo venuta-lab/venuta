@@ -231,6 +231,15 @@ impl Room {
         Changes::room()
     }
 
+    /// They said goodbye: out at once (no waiting for them to come back).
+    pub fn left(&mut self, id: u32, now_us: i64) -> Changes {
+        if id == HOST || !self.is_member(id) {
+            return self.remove(id, false);
+        }
+        self.note(id, "left", false, now_us);
+        self.remove(id, false)
+    }
+
     /// Their connection dropped: shown as away until they're back (or removed).
     pub fn away(&mut self, id: u32) -> Changes {
         if let Some(p) = self.person(id) {
@@ -685,8 +694,15 @@ impl Room {
                 a.undoable = false;
             }
         }
+        let name = self
+            .people
+            .iter()
+            .find(|p| p.id == who)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         self.activity.push_back(Activity {
             who,
+            name,
             what: what.to_owned(),
             at_us: now_us,
             undoable,
@@ -1059,5 +1075,26 @@ mod tests {
             "nothing after: the room rests"
         );
         assert!(r.ask(HOST, Action::Next, ends).unwrap().prepare.is_none());
+    }
+
+    #[test]
+    fn a_goodbye_takes_them_out_at_once_and_back_is_the_same_person() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        // A dropped connection: away, still in the room, the same person when back.
+        r.away(ravi);
+        assert!(r.is_member(ravi));
+        assert!(matches!(r.knock("k1", "Ravi", &proof(SECRET, "k1")), Knock::In(id) if id == ravi));
+        // A goodbye: out at once, and the room says so.
+        r.left(ravi, 5_000_000);
+        assert!(!r.is_member(ravi));
+        assert_eq!(r.view(true).members.len(), 1);
+        let said = r.view(true).activity.last().cloned().unwrap();
+        assert_eq!((said.name.as_str(), said.what.as_str()), ("Ravi", "left"));
+        // Back with the same invite: asks again (a new arrival, waiting for the host).
+        assert!(matches!(
+            r.knock("k1", "Ravi", &proof(SECRET, "k1")),
+            Knock::Waiting(_)
+        ));
     }
 }

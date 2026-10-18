@@ -56,7 +56,7 @@ impl Guest {
             return Err("This room's invite has ended. Ask for a new one.".into());
         }
         let reach = net::Reach::from_settings();
-        let ep = net::endpoint(&reach, false).await?;
+        let ep = net::endpoint(&reach, false, Some(net::guest_key(&invite.secret))).await?;
         let g = Arc::new(Guest {
             invite,
             ep,
@@ -113,6 +113,7 @@ impl Guest {
             }),
             report: Box::new(GuestReport(Arc::downgrade(&g))),
             delay_ms: super::my_delay(&app),
+            owner: 0,
         });
         *g.follow.lock().unwrap() = Some(tx);
         Ok(g)
@@ -296,6 +297,11 @@ impl Guest {
         *self.stage.lock().unwrap() = Stage::Ended;
         self.to_follower(follow::In::Stop);
         tokio::time::sleep(Duration::from_millis(200)).await;
+        self.ep.close().await;
+    }
+
+    /// Let go of the connection (a room that ended).
+    pub async fn close(&self) {
         self.ep.close().await;
     }
 
