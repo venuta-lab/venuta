@@ -5,8 +5,8 @@
 use crate::playback::Playback;
 use media_access::{
     AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RemoteAlbum,
-    RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -358,6 +358,22 @@ pub async fn online_mood(
     tauri::async_runtime::spawn_blocking(move || {
         access
             .mood_collections(&params, &CancellationToken::default())
+            .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// An online album's whole page: what it is, who made it, its songs and the rows under them.
+#[tauri::command]
+pub async fn online_album_page(
+    album_id: String,
+    pb: State<'_, Playback>,
+) -> Result<RemoteAlbumPage, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .album_page(&album_id, &CancellationToken::default())
             .map_err(words)
     })
     .await

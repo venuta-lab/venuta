@@ -456,7 +456,7 @@ function Listen(props: Props) {
   const body = (() => {
     if (!report) return <Reading busy={busy} />
     if (!tracks) return <Loading />
-    if (top?.page.kind === 'online-album') return <OnlineAlbumPage key={top.page.album.album_id} album={top.page.album} onBack={back} />
+    if (top?.page.kind === 'online-album') return <OnlineAlbumPage key={top.page.album.album_id} album={top.page.album} lib={lib} onBack={back} />
     if (top?.page.kind === 'online-artist')
       return <OnlineArtistPage key={top.page.artist.artist_id} artist={top.page.artist} lib={lib} onBack={back} />
     if (top?.page.kind === 'online-collection')

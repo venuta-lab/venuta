@@ -8,9 +8,9 @@
 use crate::art_url::sized_art;
 use crate::catalog_json::{parse_audience, parse_count, parse_duration};
 
-/// A play count as the client abbreviates it ("534M", "2.5B").
-fn plays(text: &str) -> Option<u64> {
-    parse_count(&format!("{} plays", text.trim()))
+/// A play count as the client abbreviates it ("534M", "2.5B"), or as written ("534M plays").
+pub(crate) fn plays(text: &str) -> Option<u64> {
+    parse_count(text.trim()).or_else(|| parse_count(&format!("{} plays", text.trim())))
 }
 
 /// The audience at the end of a card line ("Artist • 646M monthly audience").

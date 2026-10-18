@@ -47,6 +47,8 @@ export function MixedSongs(props: {
   seeAllLabel?: string
   /** Where playing from here says it played from (the search, unless given). */
   from?: From
+  /** Each row's number (an album's track numbers), shown instead of its cover. */
+  numbers?: number[]
 }) {
   const { root } = useNav()
   const cover = useCovers(96)
@@ -62,15 +64,17 @@ export function MixedSongs(props: {
   const from: From = props.from ?? fromOnline(props.query)
   const title = props.title ?? 'Songs'
   return (
-    <section aria-label={title} className="min-w-0">
-      <div className="mb-2 flex items-baseline gap-3">
-        <h2 className="title text-[19px]">{title}</h2>
-        {props.onSeeAll && (
-          <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
-            {props.seeAllLabel ?? 'See all'}
-          </button>
-        )}
-      </div>
+    <section aria-label={title || 'Songs'} className="min-w-0">
+      {(title || props.onSeeAll) && (
+        <div className="mb-2 flex items-baseline gap-3">
+          {title && <h2 className="title text-[19px]">{title}</h2>}
+          {props.onSeeAll && (
+            <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
+              {props.seeAllLabel ?? 'See all'}
+            </button>
+          )}
+        </div>
+      )}
       <div className="grid gap-0.5">
         {props.songs.map((s, i) => {
           const item = items[i]
@@ -104,12 +108,21 @@ export function MixedSongs(props: {
               onContextMenu={(e) => menuFromEvent(e, menu())}
               className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_auto_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''}`}
             >
-              <span className="relative h-10 w-10 overflow-hidden rounded-lg bg-ink/[0.06]">
-                {art}
-                <span className="absolute inset-0 grid place-items-center bg-scrim text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-                  <IconPlay width={15} height={15} />
+              {props.numbers ? (
+                <span className="relative grid h-10 w-10 place-items-center text-[13px] tabular-nums text-ink/50">
+                  <span className={`transition-opacity duration-150 group-hover:opacity-0 ${now ? 'text-accent-ink' : ''}`}>{props.numbers[i]}</span>
+                  <span className="absolute inset-0 grid place-items-center text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    <IconPlay width={15} height={15} />
+                  </span>
                 </span>
-              </span>
+              ) : (
+                <span className="relative h-10 w-10 overflow-hidden rounded-lg bg-ink/[0.06]">
+                  {art}
+                  <span className="absolute inset-0 grid place-items-center bg-scrim text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    <IconPlay width={15} height={15} />
+                  </span>
+                </span>
+              )}
               <span className="min-w-0">
                 <span className="block truncate text-[13.5px] font-medium">{t.title}</span>
                 <span className="block truncate text-[12.5px] text-ink/55">{t.artists.join(', ') || 'Unknown artist'}</span>

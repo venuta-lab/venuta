@@ -1,7 +1,7 @@
 use crate::types::{
-    CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
+    RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
+    RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -156,6 +156,16 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         let _ = (params, cancel);
         Err(unsupported("moods and genres"))
+    }
+
+    /// An album's whole page: what it is, who made it, its songs and the rows under them.
+    fn album_page(
+        &self,
+        album_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteAlbumPage, AccessError> {
+        let _ = (album_id, cancel);
+        Err(unsupported("album pages"))
     }
 
     /// Everything in a row of a catalog page (its "See all": all their albums, all their singles).
@@ -422,6 +432,14 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteSuggestion>, AccessError> {
         self.inner.shelf_more(more, cancel)
+    }
+
+    fn album_page(
+        &self,
+        album_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteAlbumPage, AccessError> {
+        self.inner.album_page(album_id, cancel)
     }
 
     fn forget(&self, track_id: &str) {

@@ -846,6 +846,21 @@ export interface OnlineArtistPage {
   shelves?: OnlineShelf[]
 }
 
+/** An online album's whole page: what it is, who made it, its songs and the rows under them. */
+export interface OnlineAlbumPage {
+  album: OnlineAlbum
+  /** Who made it, in credit order, each with their online page when the catalog links one. */
+  artists: { name: string; artist_id: string | null }[]
+  /** "Album • 2026", "EP • 2025". */
+  subtitle: string | null
+  /** "18 songs • 1 hour, 8 minutes". */
+  length: string | null
+  description: string | null
+  explicit: boolean
+  tracks: OnlineTrack[]
+  shelves: OnlineShelf[]
+}
+
 /** A titled row of cards on an online page, and where its "See all" leads. */
 export interface OnlineShelf {
   title: string
@@ -1151,6 +1166,8 @@ export const onlineVideos = (query: string, searchBox: SearchBox = 'music') =>
 export const onlineMoods = () => (inApp() ? invoke<MoodSection[]>('online_moods') : none<MoodSection[]>([]))
 /** One mood's or genre's playlists. */
 export const onlineMood = (params: string) => invoke<OnlineCollection[]>('online_mood', { params })
+/** An online album's whole page. */
+export const onlineAlbumPage = (albumId: string) => invoke<OnlineAlbumPage>('online_album_page', { albumId })
 /** Everything in a row of an online page (its "See all"). */
 export const onlineShelfMore = (more: OnlineMore) => invoke<OnlineSuggestion[]>('online_shelf_more', { more })
 /** A catalog playlist's or podcast's songs. */

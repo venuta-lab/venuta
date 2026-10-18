@@ -11,8 +11,8 @@ use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
     CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page, PageRequest,
-    RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
+    RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -82,12 +82,12 @@ trait LiveBackend: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError>;
 
-    /// An album's songs, in order.
+    /// An album's page: its header, its songs in order, and the rows under them.
     fn album(
         &self,
         album_id: &str,
         cancel: &CancellationToken,
-    ) -> Result<Vec<RemoteTrack>, AccessError>;
+    ) -> Result<ytmusic::AlbumPage, AccessError>;
 
     /// A catalog page as it comes (an artist, an artist's song list, a playlist).
     fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError>;
@@ -397,14 +397,13 @@ impl LiveBackend for YtmBackend {
         &self,
         album_id: &str,
         cancel: &CancellationToken,
-    ) -> Result<Vec<RemoteTrack>, AccessError> {
+    ) -> Result<ytmusic::AlbumPage, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
-        let page = self.run(cancellable(cancel.clone(), async {
+        self.run(cancellable(cancel.clone(), async {
             self.it.album(client, album_id).await.map_err(|_| {
                 AccessError::new(AccessErrorKind::Transport, "catalog album lookup failed")
             })
-        }))?;
-        Ok(album_tracks_of(page, album_id))
+        }))
     }
 
     fn browse(&self, browse_id: &str, cancel: &CancellationToken) -> Result<Value, AccessError> {
@@ -582,12 +581,13 @@ impl LiveBackend for YtmBackend {
 }
 
 /// An album page's songs as catalog tracks: the album's own title, id and cover on each.
-fn album_tracks_of(page: ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack> {
+fn album_tracks_of(page: &ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack> {
     let cover = clean_artwork_url(page.thumbnail.clone());
     let album_title = page.title.clone();
     page.items
-        .into_iter()
+        .iter()
         .filter(|s| !s.video_id.trim().is_empty())
+        .cloned()
         .map(|s| {
             let named: Vec<String> = s
                 .artist_runs
@@ -609,11 +609,76 @@ fn album_tracks_of(page: ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack>
                 album_id: Some(s.album_id.unwrap_or_else(|| album_id.to_owned())),
                 duration_ms: s.duration.as_deref().and_then(catalog_json::parse_duration),
                 artwork_url: clean_artwork_url(s.thumbnail).or_else(|| cover.clone()),
-                plays: s.play_count.as_deref().and_then(catalog_json::parse_count),
+                plays: s
+                    .play_count
+                    .as_deref()
+                    .and_then(crate::catalog_cards::plays),
                 ..Default::default()
             }
         })
         .collect()
+}
+
+/// An album's whole page: what it is, who made it, its songs, and the rows under them.
+fn album_page_of(page: &ytmusic::AlbumPage, album_id: &str) -> RemoteAlbumPage {
+    let text = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+    };
+    let mut artists: Vec<RemoteArtistLink> = page
+        .artist_runs
+        .iter()
+        .filter(|r| !r.text.trim().is_empty() && !is_name_joiner(r.text.trim()))
+        .map(|r| RemoteArtistLink {
+            name: r.text.trim().to_owned(),
+            artist_id: r.id.clone().filter(|id| !id.trim().is_empty()),
+        })
+        .collect();
+    if artists.is_empty()
+        && let Some(name) = text(&page.artist)
+    {
+        artists.push(RemoteArtistLink {
+            name,
+            artist_id: page.artist_id.clone(),
+        });
+    }
+    let subtitle = text(&page.subtitle);
+    let words: Vec<&str> = subtitle
+        .as_deref()
+        .map(|s| s.split('•').map(str::trim).collect())
+        .unwrap_or_default();
+    let tracks = album_tracks_of(page, album_id);
+    RemoteAlbumPage {
+        album: RemoteAlbum {
+            provider: PROVIDER.into(),
+            album_id: album_id.to_owned(),
+            title: text(&page.title).unwrap_or_default(),
+            artists: artists.iter().map(|a| a.name.clone()).collect(),
+            track_count: u32::try_from(tracks.len()).ok(),
+            release_date: words
+                .iter()
+                .rfind(|w| w.len() == 4 && w.bytes().all(|b| b.is_ascii_digit()))
+                .map(|w| (*w).to_owned()),
+            artwork_url: clean_artwork_url(page.thumbnail.clone()),
+            kind: words
+                .first()
+                .map(|w| (*w).to_owned())
+                .filter(|w| !w.is_empty()),
+        },
+        artists,
+        subtitle,
+        length: text(&page.second_subtitle),
+        description: text(&page.description),
+        explicit: page.explicit,
+        tracks,
+        shelves: page
+            .sections
+            .iter()
+            .filter_map(crate::catalog_cards::shelf_of)
+            .collect(),
+    }
 }
 
 /// The words and marks between names in a credit line ("A, B & C").
@@ -1231,7 +1296,10 @@ impl MediaAccess for LiveCatalogAccess {
                 "album cursor is invalid",
             ));
         }
-        let tracks = self.backend.album(album_id.trim(), cancel)?;
+        let tracks = album_tracks_of(
+            &self.backend.album(album_id.trim(), cancel)?,
+            album_id.trim(),
+        );
         if tracks.is_empty() {
             return Err(AccessError::new(
                 AccessErrorKind::MalformedResponse,
@@ -1454,6 +1522,28 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         self.backend.mood(params.trim(), cancel)
+    }
+
+    fn album_page(
+        &self,
+        album_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteAlbumPage, AccessError> {
+        let id = album_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "album id must not be empty",
+            ));
+        }
+        let page = album_page_of(&self.backend.album(id, cancel)?, id);
+        if page.tracks.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::MalformedResponse,
+                "catalog album tracks contained no usable track IDs",
+            ));
+        }
+        Ok(page)
     }
 
     fn shelf_more(
@@ -1683,7 +1773,40 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::playlist_browse_id;
+    use super::{album_page_of, playlist_browse_id};
+
+    #[test]
+    fn an_album_page_says_what_it_is_who_made_it_and_what_is_under_it() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ytm/album-heartbeat.json");
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).expect("fixture")).expect("json");
+        let page = album_page_of(
+            &ytmusic::models::browse::parse_album(&raw),
+            "MPREb_DbkpS1rORXk",
+        );
+        assert_eq!(page.album.title, "Heartbeat Diaries");
+        assert_eq!(page.album.kind.as_deref(), Some("Album"));
+        assert_eq!(page.album.release_date.as_deref(), Some("2026"));
+        assert!(
+            page.subtitle
+                .as_deref()
+                .is_some_and(|s| s.starts_with("Album"))
+        );
+        assert!(page.length.as_deref().is_some_and(|s| s.contains("songs")));
+        assert!(!page.artists.is_empty());
+        assert!(!page.tracks.is_empty());
+        assert!(
+            page.tracks
+                .iter()
+                .all(|t| t.album_id.as_deref() == Some("MPREb_DbkpS1rORXk"))
+        );
+        assert!(
+            page.tracks.iter().any(|t| t.plays.is_some()),
+            "album rows carry their plays"
+        );
+        assert_eq!(page.album.track_count, Some(page.tracks.len() as u32));
+    }
 
     #[test]
     fn playlists_and_podcasts_open_by_their_list() {

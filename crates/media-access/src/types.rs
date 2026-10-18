@@ -179,6 +179,38 @@ pub struct RemoteArtistPage {
     pub shelves: Vec<RemoteShelf>,
 }
 
+/// An album's page in the online catalog: what it is, who made it (each linked to their page
+/// when the catalog links them), its songs, and the rows under them (other versions, more by the
+/// artist, releases like it). Ids and what to show only, never a stream address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteAlbumPage {
+    pub album: RemoteAlbum,
+    /// Who made it, in credit order.
+    #[serde(default)]
+    pub artists: Vec<RemoteArtistLink>,
+    /// What it is and when, as the catalog words it ("Album • 2026", "EP • 2025").
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// How long, as the catalog words it ("18 songs • 1 hour, 8 minutes").
+    #[serde(default)]
+    pub length: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub explicit: bool,
+    pub tracks: Vec<RemoteTrack>,
+    #[serde(default)]
+    pub shelves: Vec<RemoteShelf>,
+}
+
+/// A name in a credit line, and their artist page when the catalog links one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteArtistLink {
+    pub name: String,
+    #[serde(default)]
+    pub artist_id: Option<String>,
+}
+
 /// A titled row of cards on a catalog page, and where its "See all" leads when it has one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteShelf {

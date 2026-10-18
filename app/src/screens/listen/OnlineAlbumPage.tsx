@@ -5,52 +5,86 @@ import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
-import { onlineAlbumTracks, type OnlineAlbum, type OnlineTrack } from '../../lib/engine'
+import { onlineAlbumPage, type OnlineAlbum, type OnlineAlbumPage as Page } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
-import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
-import { minutes, plural, spring, useNav } from './model'
-import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
+import { ownedIndex, titleCore } from '../../lib/owned'
+import { current, fromIs, onlineEntryFrom, playAllItems, queueKey, toggle, usePlayerValue, type From } from '../../lib/player'
+import { matcher, searchKey } from '../../lib/textsearch'
+import { spring, useNav, type Library } from './model'
+import { OnlineShelfRow } from './OnlineCards'
+import { itemOf, type MixedSong } from './onlineSearch'
+import { MixedSongs } from './SearchAll'
 
 /*
-  An online catalog album as its own page, the way a library album has one: its picture, what
-  it is, Play / Shuffle / Add to playlist, and its songs in the same columns as Online search.
-  Back returns to the search it was opened from.
+  An online album as its own page, the way the catalog lays it out: its cover, what it is and
+  when, who made it (each a link to their page), how long, and what it is about; Play, Shuffle,
+  Add to playlist and a search of its songs; its songs, numbered, with their plays; then the
+  rows under them (other versions, more by the artist, releases like it). A song you have says
+  LOCAL and plays your file, and an album you have links to yours. Back returns to where it was
+  opened from.
 */
 
-const keyOf = (t: OnlineTrack) => `online:${t.provider}:${t.track_id}`
-
-export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBack: () => void }) {
-  const { root } = useNav()
-  const [tracks, setTracks] = useState<OnlineTrack[] | null>(null)
+export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum; lib: Library; onBack: () => void }) {
+  const nav = useNav()
+  const { root } = nav
+  const [page, setPage] = useState<Page | null>(null)
   const [problem, setProblem] = useState('')
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [words, setWords] = useState('')
   useEffect(() => {
     let live = true
-    onlineAlbumTracks(a.album_id)
-      .then((t) => live && setTracks(t))
-      .catch((e) => {
-        if (!live) return
-        setProblem(onlineProblem(e))
-        setTracks([])
-      })
+    onlineAlbumPage(a.album_id)
+      .then((p) => live && setPage(p))
+      .catch((e) => live && setProblem(onlineProblem(e)))
     return () => {
       live = false
     }
   }, [a.album_id])
 
-  const items = useMemo(() => (tracks ?? []).map(toRemoteItem), [tracks])
+  const album = page?.album ?? a
+  const title = album.title || a.title
+  // Each song once, as yours when you have it (it plays your file), numbered as on the album.
+  const owns = useMemo(() => ownedIndex(lib.tracks), [lib.tracks])
+  const songs: MixedSong[] = useMemo(
+    () =>
+      (page?.tracks ?? []).map((t): MixedSong => {
+        const mine = owns(t)
+        return mine ? { where: 'library', track: mine } : { where: 'online', track: t }
+      }),
+    [page, owns],
+  )
+  const items = useMemo(() => songs.map(itemOf), [songs])
   // "Playing from" names the album; choosing it there searches for it again.
-  const from: From = useMemo(() => ({ kind: 'search', ref: a.title, label: `Online: ${a.title}` }), [a.title])
+  const from: From = useMemo(() => ({ kind: 'search', ref: title, label: `Online: ${title}` }), [title])
+  // The songs that hold the words typed in "Search this album", with their album numbers.
+  const shown = useMemo(() => {
+    const all = songs.map((s, i) => ({ s, n: i + 1 }))
+    const q = words.trim()
+    if (!q) return all
+    const has = matcher(q)
+    return all.filter(({ s }) => has(searchKey(`${s.track.title} ${s.track.artists.join(' ')}`)))
+  }, [songs, words])
+
   const nowKey = usePlayerValue((s) => {
     const c = current(s)
     return c ? queueKey(c) : ''
   })
   const playing = usePlayerValue((s) => s.playing)
   const nowFrom = usePlayerValue((s) => s.from)
-  const isNow = fromIs(nowFrom, 'search', a.title) && (tracks ?? []).some((t) => keyOf(t) === nowKey)
-  const art = artUrl(a.artwork_url, 240)
-  const total = (tracks ?? []).reduce((n, t) => n + (t.duration_ms ?? 0), 0)
-  const year = a.release_date?.slice(0, 4)
-  const addAll = () => tracks?.length && askAddSongs(tracks.map((t) => ({ online: onlineEntryFrom(t) })), a.title)
+  const isNow = fromIs(nowFrom, 'search', title) && items.some((it) => queueKey(it) === nowKey)
+
+  // The same album in your library, when you have it.
+  const mine = useMemo(() => {
+    const key = titleCore(title)
+    const theirs = (page?.artists.map((x) => x.name) ?? a.artists).map(searchKey)
+    return lib.albums.find((m) => titleCore(m.title) === key && (!theirs.length || theirs.includes(searchKey(m.artist))))
+  }, [lib.albums, title, page, a.artists])
+
+  const kicker = [album.kind || 'Album', album.release_date?.slice(0, 4)].filter(Boolean).join(' · ')
+  const length = page?.length?.replaceAll(' • ', ' · ')
+  const about = page?.description?.trim()
+  const artists = page?.artists.length ? page.artists : a.artists.map((name) => ({ name, artist_id: null }))
+  const addAll = () => songs.length && askAddSongs(songs.map((s) => (s.where === 'library' ? { path: s.track.path } : { online: onlineEntryFrom(s.track) })), title)
 
   const playButton = (size: 'sm' | 'lg') => (
     <button
@@ -64,20 +98,54 @@ export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBa
   )
 
   return (
-    <Detail title={a.title} onBack={onBack} glow={art} tools={items.length ? playButton('sm') : undefined}>
+    <Detail title={title} onBack={onBack} glow={artUrl(album.artwork_url ?? a.artwork_url, 240)} tools={items.length ? playButton('sm') : undefined}>
       <div className="relative flex flex-wrap items-end gap-8">
         <div className="grid aspect-square w-[240px] shrink-0 place-items-center overflow-hidden rounded-3xl bg-ink/[0.06] text-[56px] text-ink/25 shadow-2xl shadow-black/40">
-          <RemoteArt url={a.artwork_url} seed={a.title} size={240} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={album.artwork_url ?? a.artwork_url} seed={title} size={240} imgClassName="h-full w-full object-cover" />
         </div>
         <motion.div className="min-w-[260px] flex-1 pb-1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.05 }}>
           <p className="flex items-center gap-2 text-[13px] font-medium text-ink/60">
-            Album <AvailabilityBadge availability="online" />
+            {kicker} <AvailabilityBadge availability="online" />
+            {page?.explicit && (
+              <span title="Explicit" className="rounded bg-ink/[0.12] px-1 text-[10.5px] font-semibold leading-[16px] text-ink/70">
+                E
+              </span>
+            )}
           </p>
-          <h1 className="title hero-title mt-1 text-[34px] leading-[1.1]">{a.title}</h1>
-          {a.artists.length > 0 && <p className="mt-2 text-[16px] font-medium text-ink/85">{a.artists.join(', ')}</p>}
-          <p className="mt-2.5 text-[13px] text-ink/60">
-            {[year, tracks === null ? 'Reading its songs…' : tracks.length ? `${plural(tracks.length, 'song')}, ${minutes(total)}` : ''].filter(Boolean).join(' · ')}
-          </p>
+          <h1 className="title hero-title mt-1 text-[34px] leading-[1.1]">{title}</h1>
+          {artists.length > 0 && (
+            <p className="mt-2 text-[16px] font-medium text-ink/85">
+              {artists.map((ar, i) => (
+                <span key={`${ar.name}:${i}`}>
+                  {i > 0 && ', '}
+                  {ar.artist_id ? (
+                    <button
+                      onClick={() => ar.artist_id && nav.openOnlineArtist({ artist_id: ar.artist_id, name: ar.name })}
+                      className="underline-offset-4 hover:text-ink hover:underline"
+                    >
+                      {ar.name}
+                    </button>
+                  ) : (
+                    ar.name
+                  )}
+                </span>
+              ))}
+            </p>
+          )}
+          <p className="mt-2.5 text-[13px] text-ink/60">{page === null && !problem ? 'Reading its songs…' : length}</p>
+          {mine && (
+            <button onClick={() => nav.openAlbum(mine.dir)} className="mt-1 text-left text-[13px] text-ink/65 underline-offset-4 hover:text-ink hover:underline">
+              In your library: open your copy
+            </button>
+          )}
+          {about && (
+            <div className="mt-3 max-w-[68ch]">
+              <p className={`whitespace-pre-line text-[13.5px] leading-relaxed text-ink/70 ${aboutOpen ? '' : 'line-clamp-2'}`}>{about}</p>
+              <button onClick={() => setAboutOpen((o) => !o)} className="mt-1 text-[12.5px] font-medium text-ink/60 hover:text-ink">
+                {aboutOpen ? 'Less' : 'More'}
+              </button>
+            </div>
+          )}
           <div className="mt-5 flex flex-wrap items-center gap-2.5">
             {playButton('lg')}
             <button disabled={items.length < 2} onClick={() => void playAllItems(root, items, from, 'shuffle')} className="btn btn-lg shuffle-main">
@@ -97,28 +165,34 @@ export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBa
           <p role="status" className="py-6 text-[13px] text-ink/55">
             {problem}
           </p>
-        ) : tracks === null ? (
+        ) : page === null ? (
           <p className="py-6 text-[13px] text-ink/45">Reading the album’s songs from the online catalog…</p>
-        ) : !tracks.length ? (
+        ) : !songs.length ? (
           <p className="py-6 text-[13px] text-ink/55">The online catalog lists no songs for this album.</p>
         ) : (
           <>
-            <OnlineTrackHeader />
-            <div className="mt-1 grid gap-0.5">
-              {tracks.map((t, i) => (
-                <OnlineTrackRow
-                  key={keyOf(t)}
-                  track={t}
-                  now={isNow && keyOf(t) === nowKey}
-                  onPlay={() => (isNow && keyOf(t) === nowKey ? void toggle() : void playItems(root, items, i, from))}
-                  onQueue={(next) => void enqueueItems(root, [toRemoteItem(t)], next)}
-                  onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
+            {songs.length > 4 && (
+              <div className="mb-3 flex justify-end">
+                <input
+                  type="search"
+                  value={words}
+                  onChange={(e) => setWords(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Escape' && words && (e.stopPropagation(), setWords(''))}
+                  placeholder="Search this album"
+                  aria-label="Search this album"
+                  className="field h-9 w-[240px] rounded-full px-4 text-[13px]"
                 />
-              ))}
-            </div>
+              </div>
+            )}
+            {shown.length ? (
+              <MixedSongs query={title} from={from} title="" songs={shown.map((x) => x.s)} numbers={shown.map((x) => x.n)} />
+            ) : (
+              <p className="py-6 text-[13px] text-ink/55">No song on this album has “{words.trim()}”.</p>
+            )}
           </>
         )}
       </div>
+      {page?.shelves.map((s) => <OnlineShelfRow key={s.title} shelf={s} label={title} onSeeAll={s.more ? () => s.more && nav.openOnlineShelf(s.title, title, s.more) : undefined} />)}
     </Detail>
   )
 }

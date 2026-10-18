@@ -3049,6 +3049,7 @@ pub fn run() {
             online::online_moods,
             online::online_mood,
             online::online_shelf_more,
+            online::online_album_page,
             online::online_collection,
             online::online_artist,
             online::online_album_tracks,
