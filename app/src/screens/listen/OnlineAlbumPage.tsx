@@ -2,7 +2,9 @@ import { motion } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
-import { IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
+import { IconPause, IconPlay, IconPlaylistAdd, IconSelect, IconShuffle } from '../../components/Icons'
+import { SelectBar } from '../../components/SelectBar'
+import { NO_PICKS, pick, pickAll, picked, type Picks } from '../../lib/selection'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { onlineAlbumPage, type OnlineAlbum, type OnlineAlbumPage as Page } from '../../lib/engine'
@@ -31,6 +33,9 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
   const [problem, setProblem] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
   const [words, setWords] = useState('')
+  // Picking songs to act on them together (Select).
+  const [picking, setPicking] = useState(false)
+  const [picks, setPicks] = useState<Picks>(NO_PICKS)
   useEffect(() => {
     let live = true
     onlineAlbumPage(a.album_id)
@@ -64,6 +69,14 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
     const has = matcher(q)
     return all.filter(({ s }) => has(searchKey(`${s.track.title} ${s.track.artists.join(' ')}`)))
   }, [songs, words])
+
+  const shownKeys = useMemo(() => shown.map((x) => queueKey(itemOf(x.s))), [shown])
+  const byKey = useMemo(() => new Map(items.map((it) => [queueKey(it), it])), [items])
+  const pickedItems = picked(picks, items.map(queueKey)).flatMap((k) => byKey.get(k) ?? [])
+  const stopPicking = () => {
+    setPicking(false)
+    setPicks(NO_PICKS)
+  }
 
   const nowKey = usePlayerValue((s) => {
     const c = current(s)
@@ -156,6 +169,10 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
               <IconPlaylistAdd width={18} height={18} />
               Add to playlist
             </button>
+            <button disabled={!items.length} onClick={() => (picking ? stopPicking() : setPicking(true))} aria-pressed={picking} className="btn-ghost btn-lg">
+              <IconSelect width={18} height={18} />
+              Select
+            </button>
           </div>
         </motion.div>
       </div>
@@ -185,13 +202,32 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
               </div>
             )}
             {shown.length ? (
-              <MixedSongs query={title} from={from} title="" songs={shown.map((x) => x.s)} numbers={shown.map((x) => x.n)} />
+              <MixedSongs
+                query={title}
+                from={from}
+                title=""
+                songs={shown.map((x) => x.s)}
+                numbers={shown.map((x) => x.n)}
+                pick={picking ? { keys: picks.keys, onPick: (key, range) => setPicks((p) => pick(p, shownKeys, key, { range })) } : undefined}
+              />
             ) : (
               <p className="py-6 text-[13px] text-ink/55">No song on this album has “{words.trim()}”.</p>
             )}
           </>
         )}
       </div>
+      {/* Room under the songs, so the bar never covers the last of them. */}
+      {picking && <div aria-hidden className="h-24" />}
+      <SelectBar
+        open={picking}
+        root={root}
+        items={pickedItems}
+        total={shownKeys.length}
+        from={from}
+        label={title}
+        onAll={() => setPicks((p) => pickAll(p, shownKeys))}
+        onDone={stopPicking}
+      />
       {page?.shelves.map((s) => <OnlineShelfRow key={s.title} shelf={s} label={title} onSeeAll={s.more ? () => s.more && nav.openOnlineShelf(s.title, title, s.more) : undefined} />)}
     </Detail>
   )

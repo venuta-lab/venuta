@@ -12,6 +12,7 @@ import { useNav } from './model'
 import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
 import { QualityBadge } from './parts'
 import { LikeButton } from '../../components/LikeButton'
+import { PickMark } from '../../components/SelectBar'
 
 /*
   The pieces of the All results that mix your library and the online catalog: the songs beside
@@ -50,6 +51,8 @@ export function MixedSongs(props: {
   from?: From
   /** Each row's number (an album's track numbers), shown instead of its cover. */
   numbers?: number[]
+  /** Picking songs (Select): a click picks a row (Shift: up to it) instead of playing it. */
+  pick?: { keys: string[]; onPick: (key: string, range: boolean) => void }
 }) {
   const nav = useNav()
   const { root } = nav
@@ -93,18 +96,37 @@ export function MixedSongs(props: {
             s.where === 'library'
               ? menuFor('song', songFacts(s.track), songWork(nav, s.track, playIt))
               : menuFor('song', { online: true, noArtist: !s.track.artists.length }, onlineSongWork(nav, s.track, playIt))
+          const key = queueKey(item)
+          const pick = props.pick
+          const picked = !!pick && pick.keys.includes(key)
           return (
             <div
-              key={queueKey(item)}
-              role="button"
+              key={key}
+              role={pick ? 'checkbox' : 'button'}
+              aria-checked={pick ? picked : undefined}
               tabIndex={0}
               aria-current={now || undefined}
-              onClick={(e) => !(e.target as HTMLElement).closest('button') && (now ? void toggle() : void playItems(root, items, i, from))}
-              onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && void playItems(root, items, i, from)}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest('button')) return
+                if (pick) pick.onPick(key, e.shiftKey)
+                else if (now) void toggle()
+                else void playItems(root, items, i, from)
+              }}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return
+                if (pick && (e.key === ' ' || e.key === 'Enter')) {
+                  e.preventDefault()
+                  pick.onPick(key, e.shiftKey)
+                } else if (e.key === 'Enter') void playItems(root, items, i, from)
+              }}
               onContextMenu={(e) => menuFromEvent(e, menu())}
-              className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_88px_32px_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''}`}
+              className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_88px_32px_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''} ${picked ? 'bg-ink/[0.07]' : ''}`}
             >
-              {props.numbers ? (
+              {pick ? (
+                <span className="grid h-10 w-10 place-items-center">
+                  <PickMark picked={picked} />
+                </span>
+              ) : props.numbers ? (
                 <span className="relative grid h-10 w-10 place-items-center text-[13px] tabular-nums text-ink/50">
                   <span className={`transition-opacity duration-150 group-hover:opacity-0 ${now ? 'text-accent-ink' : ''}`}>{props.numbers[i]}</span>
                   <span className="absolute inset-0 grid place-items-center text-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100">

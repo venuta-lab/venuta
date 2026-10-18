@@ -94,5 +94,21 @@ export async function setLiked(r: string, q: QueueItem, liked: boolean) {
   }
 }
 
+/** Like several songs at once (the ones picked on a page); says so once. */
+export async function likeMany(r: string, items: QueueItem[]) {
+  if (!r || !inApp() || !items.length) return
+  let last: LikedSet | null = null
+  try {
+    // One at a time: each goes on top, so the first picked ends up first.
+    for (const q of [...items].reverse()) last = await invoke<LikedSet>('like_song', { root: r, item: songItemOf(q), liked: true })
+    if (last) publish(r, last)
+    notify(`Added ${items.length === 1 ? `“${items[0].title}”` : `${items.length} songs`} to ${last?.name ?? 'Liked songs'}.`)
+  } catch (e) {
+    notify(`Couldn't like them all: ${String(e)}`)
+    root = ''
+    void loadLikes(r)
+  }
+}
+
 /** Like it if it isn't, unlike it if it is. */
 export const toggleLiked = (r: string, q: QueueItem) => setLiked(r, q, !isLiked(q))

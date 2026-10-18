@@ -96,6 +96,16 @@ export const IconShuffle = (p: P) => (
     <path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5" />
   </svg>
 )
+/** Picking songs: a ticked circle beside lines. */
+export const IconSelect = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="6" cy="7" r="2.5" />
+    <path d="m4.9 7 .8.8 1.5-1.6" />
+    <path d="M11 7h9M11 12h9M11 17h9" />
+    <circle cx="6" cy="12" r="2.5" />
+    <circle cx="6" cy="17" r="2.5" />
+  </svg>
+)
 /** A heart: an outline, filled with `filled` (a song you liked). */
 export const IconHeart = ({ filled = false, ...p }: P & { filled?: boolean }) => (
   <svg {...base} width={18} height={18} {...p}>

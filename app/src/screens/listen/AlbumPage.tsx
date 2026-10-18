@@ -1,9 +1,11 @@
 import { motion } from 'motion/react'
-import { memo, useMemo, useRef } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
 import { quality, type CatalogTrack } from '../../lib/engine'
 import { useCovers, usePageAccent } from '../../lib/covers'
 import { clock, play, toggle, toItem } from '../../lib/player'
-import { IconPause, IconPlay } from '../../components/Icons'
+import { IconPause, IconPlay, IconSelect } from '../../components/Icons'
+import { PickMark, SelectBar } from '../../components/SelectBar'
+import { NO_PICKS, pick, pickAll, picked, type Picks } from '../../lib/selection'
 import { albumFrom, coverId, minutes, plural, spring, useNav, useNowPlaying, type Album } from './model'
 import { Detail } from '../../components/ui'
 import { Art, Equalizer, HiResPill, PlayButtons, QualityBadge, TrackMenu } from './parts'
@@ -15,6 +17,18 @@ import { dragSource } from '../../lib/drag'
 /** One album: its cover large, what it is, and its songs to play. */
 export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?: string; onBack: () => void }) {
   const nav = useNav()
+  // Picking songs to act on them together (Select).
+  const [picking, setPicking] = useState(false)
+  const [picks, setPicks] = useState<Picks>(NO_PICKS)
+  const keys = useMemo(() => a.tracks.map((t) => t.path), [a.tracks])
+  const pickedItems = useMemo(() => {
+    const set = new Set(picked(picks, keys))
+    return a.tracks.filter((t) => set.has(t.path)).map(toItem)
+  }, [picks, keys, a.tracks])
+  const stopPicking = () => {
+    setPicking(false)
+    setPicks(NO_PICKS)
+  }
   const cover = useCovers(320)(a.dir)
   const accent = cover?.accent
   usePageAccent(accent)
@@ -57,16 +71,32 @@ export function AlbumPage({ album: a, origin, onBack }: { album: Album; origin?:
               <button onClick={() => nav.editDetails(a.dir)} className="btn-ghost btn-lg">
                 Edit details
               </button>
+              <button onClick={() => (picking ? stopPicking() : setPicking(true))} aria-pressed={picking} className="btn-ghost btn-lg">
+                <IconSelect width={18} height={18} />
+                Select
+              </button>
             </div>
           </motion.div>
         </div>
       </div>
-      <TrackList album={a} />
+      <TrackList album={a} pick={picking ? { keys: picks.keys, onPick: (key, range) => setPicks((p) => pick(p, keys, key, { range })) } : undefined} />
+      {/* Room under the songs, so the bar never covers the last of them. */}
+      {picking && <div aria-hidden className="h-24" />}
+      <SelectBar
+        open={picking}
+        root={nav.root}
+        items={pickedItems}
+        total={keys.length}
+        from={albumFrom(a)}
+        label={a.title}
+        onAll={() => setPicks((p) => pickAll(p, keys))}
+        onDone={stopPicking}
+      />
     </Detail>
   )
 }
 
-const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
+const TrackList = memo(function TrackList({ album: a, pick }: { album: Album; pick?: { keys: string[]; onPick: (key: string, range: boolean) => void } }) {
   const nav = useNav()
   const { root } = nav
   // The album's cover, carried with a song dragged from here.
@@ -99,10 +129,12 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
             const state = t.path === now.path ? (now.playing ? 'playing' : 'paused') : 'no'
             const q = quality(t)
             const isNow = state !== 'no'
+            const picked = !!pick && pick.keys.includes(t.path)
             return (
               <div
                 key={t.path}
-                role="listitem"
+                role={pick ? 'checkbox' : 'listitem'}
+                aria-checked={pick ? picked : undefined}
                 onContextMenu={(e) => menuFromEvent(e, menuFor('song', songFacts(t), songWork(nav, t, () => playAt(i))))}
                 {...dragSource(() => ({ label: t.title, count: 1, cover: art?.src, songs: async () => [toItem(t)] }))}
                 tabIndex={0}
@@ -110,12 +142,16 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                 aria-current={isNow || undefined}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
-                  if (isNow) void toggle()
+                  if (pick) pick.onPick(t.path, e.shiftKey)
+                  else if (isNow) void toggle()
                   else playAt(i)
                 }}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return
-                  if (e.key === 'Enter') {
+                  if (pick && (e.key === ' ' || e.key === 'Enter')) {
+                    e.preventDefault()
+                    pick.onPick(t.path, e.shiftKey)
+                  } else if (e.key === 'Enter') {
                     e.preventDefault()
                     playAt(i)
                   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -125,8 +161,13 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                 }}
                 className={`row group grid min-h-[52px] grid-cols-[40px_minmax(0,1fr)_auto_32px_52px_32px] items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${
                   isNow ? 'text-accent-ink' : ''
-                }`}
+                } ${picked ? 'bg-ink/[0.07]' : ''}`}
               >
+                {pick ? (
+                  <span className="grid h-8 place-items-center">
+                    <PickMark picked={picked} />
+                  </span>
+                ) : (
                 <span className="relative grid h-8 place-items-center">
                   {isNow ? (
                     <span className="group-hover:hidden">
@@ -145,6 +186,7 @@ const TrackList = memo(function TrackList({ album: a }: { album: Album }) {
                     {state === 'playing' ? <IconPause width={15} height={15} /> : <IconPlay width={15} height={15} />}
                   </button>
                 </span>
+                )}
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] font-medium">{t.title}</span>
                   {t.artists.length > 0 && (
