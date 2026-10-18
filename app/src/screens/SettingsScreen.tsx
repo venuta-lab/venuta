@@ -23,6 +23,7 @@ import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } fro
 import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
 import { ProxySetting } from './settings/ProxySetting'
+import { CacheSetting } from './settings/CacheSetting'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
@@ -767,6 +768,7 @@ function Online() {
       <h3 className="mt-6 text-[15px] font-semibold">Playback catalog</h3>
       <CatalogHealth />
       <ProxySetting />
+      <CacheSetting />
       <h3 className="mt-8 text-[15px] font-semibold">Looking things up</h3>
       <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Tags, covers and lyrics for your files come from these sources. Optional keys stay on this computer.

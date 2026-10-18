@@ -183,6 +183,18 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
+/// What the caches take (Settings, Online sources).
+#[tauri::command]
+async fn cache_sizes() -> CmdResult<engine::cache::CacheSizes> {
+    blocking(|| Ok(engine::cache::sizes(&paths::app_data_dir()))).await
+}
+
+/// Clear the caches; returns what they took.
+#[tauri::command]
+async fn clear_cache() -> CmdResult<engine::cache::CacheSizes> {
+    blocking(|| engine::cache::clear(&paths::app_data_dir())).await
+}
+
 #[tauri::command]
 fn engine_version() -> &'static str {
     engine::VERSION
@@ -3157,6 +3169,8 @@ pub fn run() {
             ytm_account::ytm_account,
             ytm_account::ytm_playlists,
             ytm_account::ytm_rate,
+            cache_sizes,
+            clear_cache,
             ytm_account::ytm_bring_in_likes,
             diagnostics,
             restart_app,
