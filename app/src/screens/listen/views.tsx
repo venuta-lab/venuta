@@ -39,6 +39,8 @@ import { ownedIndex, titleCore } from '../../lib/owned'
 import { searchKey } from '../../lib/textsearch'
 import { MixedSongs, OnlineAlbumTile, OnlineArtistCard, type MixedSong } from './SearchAll'
 import { CollectionCard } from './OnlineCards'
+import { OnlineArtistSections } from './OnlineArtistSections'
+import { useArtistSongs, useOnlineArtistFor } from './artistSongs'
 import type { OnlineTrack } from '../../lib/engine'
 export const HI_RES = 'Hi-Res'
 
@@ -345,6 +347,11 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
   const also = useMemo(() => appearsOn(lib, ar.key), [lib, ar.key])
   const own = useMemo(() => ar.albums.flatMap((a) => a.tracks), [ar])
   const cover = useArtistCover(ar)
+  // Their page in the online catalog, when there is one: shown under what you have.
+  const online = useOnlineArtistFor(ar.name)
+  const onlineName = online?.name || ar.name
+  const onlineSongs = useArtistSongs(online, onlineName, lib)
+  const nav = useNav()
   const counts = [
     ar.albums.length ? plural(ar.albums.length, 'album') : '',
     own.length ? plural(own.length, 'song') : '',
@@ -385,6 +392,21 @@ export function ArtistPage({ lib, name, onBack }: { lib: Library; name: string; 
         <section className="mt-10">
           <h2 className="mb-3 text-[19px] font-semibold tracking-[-0.02em]">Also appears on</h2>
           <SongList tracks={also} from={{ kind: 'artist', ref: ar.name, label: ar.name }} />
+        </section>
+      )}
+      {online && (
+        <section className="mt-14" aria-label={`${onlineName} online`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="title text-[22px]">More by {onlineName} online</h2>
+            <AvailabilityBadge availability="online" />
+            <button
+              onClick={() => nav.openOnlineArtist({ artist_id: online.artist_id, name: onlineName, artwork_url: online.artwork_url })}
+              className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink"
+            >
+              Open their online page
+            </button>
+          </div>
+          <OnlineArtistSections page={online} name={onlineName} songs={onlineSongs.songs} from={onlineSongs.from} />
         </section>
       )}
     </Detail>

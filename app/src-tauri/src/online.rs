@@ -5,7 +5,8 @@
 use crate::playback::Playback;
 use media_access::{
     AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RemoteAlbum,
-    RemoteArtist, RemoteCollection, RemotePlaylist, RemoteTrack, SearchSuggestions,
+    RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -357,6 +358,22 @@ pub async fn online_mood(
     tauri::async_runtime::spawn_blocking(move || {
         access
             .mood_collections(&params, &CancellationToken::default())
+            .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Everything in a row of a catalog page (its "See all": all their albums, all their singles).
+#[tauri::command]
+pub async fn online_shelf_more(
+    more: RemoteMore,
+    pb: State<'_, Playback>,
+) -> Result<Vec<RemoteSuggestion>, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .shelf_more(&more, &CancellationToken::default())
             .map_err(words)
     })
     .await

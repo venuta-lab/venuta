@@ -834,6 +834,29 @@ export interface OnlineArtistPage {
   albums: OnlineAlbum[]
   singles: OnlineAlbum[]
   similar: OnlineArtist[]
+  /** Who they are, in a paragraph or two. */
+  description?: string | null
+  /** "6.52M subscribers". */
+  subscribers?: string | null
+  /** The wide picture across the top of their page. */
+  banner_url?: string | null
+  /** Their radio (a mix of them and artists like them). */
+  radio_id?: string | null
+  /** Every row of their page in the catalog's order (Albums, Singles & EPs, Videos…). */
+  shelves?: OnlineShelf[]
+}
+
+/** A titled row of cards on an online page, and where its "See all" leads. */
+export interface OnlineShelf {
+  title: string
+  items: OnlineSuggestion[]
+  more: OnlineMore | null
+}
+
+/** The catalog page behind a row's "See all". */
+export interface OnlineMore {
+  browse_id: string
+  params: string | null
 }
 
 /** A further page of online songs, and where the next one starts. */
@@ -1046,7 +1069,7 @@ export const playlistQueue = (root: string, name: string) => invoke<Playable[]>(
 /** Songs, albums and artists in the online catalog for these words (empty outside the app). */
 /** Which search box asks. A newer search from the same box replaces the one before it (which
  *  fails with `SearchCancelled`); other boxes' searches carry on. */
-export type SearchBox = 'music' | 'palette' | 'add-songs' | 'pick' | 'more-by'
+export type SearchBox = 'music' | 'palette' | 'add-songs' | 'pick' | 'more-by' | 'artist-page'
 
 /** A search replaced by a newer one from the same box: ignore it, it is not "nothing found". */
 export class SearchCancelled extends Error {
@@ -1128,6 +1151,8 @@ export const onlineVideos = (query: string, searchBox: SearchBox = 'music') =>
 export const onlineMoods = () => (inApp() ? invoke<MoodSection[]>('online_moods') : none<MoodSection[]>([]))
 /** One mood's or genre's playlists. */
 export const onlineMood = (params: string) => invoke<OnlineCollection[]>('online_mood', { params })
+/** Everything in a row of an online page (its "See all"). */
+export const onlineShelfMore = (more: OnlineMore) => invoke<OnlineSuggestion[]>('online_shelf_more', { more })
 /** A catalog playlist's or podcast's songs. */
 export const onlineCollection = (collectionId: string) => invoke<OnlineCollectionPage>('online_collection', { collectionId })
 

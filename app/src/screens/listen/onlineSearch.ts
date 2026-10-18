@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { isSearchCancelled, onlineAlbumTracks, onlineArtistPage, onlineCollections, onlineSearch, onlineSearchTracks, onlineVideos, type OnlineArtistPage, type OnlineAlbum, type OnlineCollection, type OnlineResults as Results, type OnlineTrack, type SearchBox } from '../../lib/engine'
+import { isSearchCancelled, onlineAlbumTracks, onlineArtistPage, onlineCollections, onlineSearch, onlineSearchTracks, onlineVideos, type CatalogTrack, type OnlineArtist, type OnlineArtistPage, type OnlineAlbum, type OnlineCollection, type OnlineResults as Results, type OnlineTrack, type SearchBox } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
 import { isCoverClass, rankOnlineResults, rankOnlineTracks } from '../../lib/searchRank'
-import { onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/player'
+import { searchKey } from '../../lib/textsearch'
+import { onlineEntryFrom, playItems, toItem, toRemoteItem, type From, type QueueItem } from '../../lib/player'
 
 /*
   Online catalog search for the window: the search hook every search box uses (ranked once
@@ -12,10 +13,29 @@ import { onlineEntryFrom, playItems, toRemoteItem, type From } from '../../lib/p
 */
 
 const items = (tracks: OnlineTrack[]) => tracks.map(toRemoteItem)
+
+/**
+ * An artist's online page found by their name: the catalog's artist of exactly that name (the
+ * one most listened to, when several share it), else one whose name begins with it. Null when
+ * there is none; `found` is the whole answer, for a caller that plays their songs instead.
+ */
+export async function findOnlineArtist(name: string, box: SearchBox): Promise<{ artist: OnlineArtist | null; found: Results }> {
+  const found = await onlineSearch(name, box)
+  const key = searchKey(name)
+  const exact = found.artists.filter((a) => a.artist_id && searchKey(a.name) === key).sort((a, b) => (b.audience ?? 0) - (a.audience ?? 0))
+  const artist = exact[0] ?? found.artists.find((a) => a.artist_id && searchKey(a.name).startsWith(key)) ?? null
+  return { artist, found }
+}
 /** Online songs as lines for a playlist (stable ids only). */
 export const onlineSongs = (tracks: OnlineTrack[]) => tracks.map((t) => ({ online: onlineEntryFrom(t) }))
 const say = onlineProblem
 
+/** A video is drawn wide, like the catalog shows it; a song square, like a cover. */
+export const isVideo = (t: OnlineTrack) => t.video_type === 'OMV' || t.video_type === 'UGC'
+/** One song in a mixed list: yours (plays your file) or the catalog's. */
+export type MixedSong = { where: 'library'; track: CatalogTrack } | { where: 'online'; track: OnlineTrack }
+/** A mixed song as the queue holds it. */
+export const itemOf = (s: MixedSong): QueueItem => (s.where === 'library' ? toItem(s.track) : toRemoteItem(s.track))
 export const fromOnline = (query: string): From => ({ kind: 'search', ref: query, label: `Online: ${query}` })
 /** An online album's songs, then `then` with them (a calm notice when it has none). */
 export async function withOnlineAlbum(a: OnlineAlbum, then: (tracks: OnlineTrack[]) => void) {

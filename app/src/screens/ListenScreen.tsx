@@ -1,7 +1,7 @@
 import { useEscape } from '../lib/layers'
 import { motion } from 'motion/react'
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineSuggestion } from '../lib/engine'
+import { onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineMore, type OnlineSuggestion } from '../lib/engine'
 import { loadCovers, useCovers } from '../lib/covers'
 import { RemoteArt } from '../components/RemoteArt'
 import { fromOnline } from './listen/onlineSearch'
@@ -18,6 +18,7 @@ import { OnlineAlbumPage } from './listen/OnlineAlbumPage'
 import { OnlineArtistPage } from './listen/OnlineArtistPage'
 import { OnlineCollectionPage } from './listen/OnlineCollectionPage'
 import { MoodPage } from './listen/MoodPage'
+import { OnlineShelfPage } from './listen/OnlineShelfPage'
 import { SearchHome } from './listen/SearchHome'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
@@ -92,6 +93,7 @@ type Page =
   | { kind: 'online-artist'; artist: OnlineArtistRef }
   | { kind: 'online-collection'; collection: OnlineCollection }
   | { kind: 'mood'; tile: MoodTile }
+  | { kind: 'online-shelf'; title: string; owner: string; more: OnlineMore }
 /** A page of Music that can be asked for from outside (see `showMusicPage`). */
 export type MusicPage = Page
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
@@ -210,7 +212,9 @@ function Listen(props: Props) {
                 ? last.kind === 'online-collection' && last.collection.collection_id === page.collection.collection_id
                 : page.kind === 'mood'
                   ? last.kind === 'mood' && last.tile.params === page.tile.params
-                  : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
+                  : page.kind === 'online-shelf'
+                    ? last.kind === 'online-shelf' && last.more.browse_id === page.more.browse_id && last.more.params === page.more.params
+                    : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
       return same ? s : [...s, { page, scroll }]
     })
   }, [])
@@ -239,6 +243,7 @@ function Listen(props: Props) {
       openOnlineArtist: (artist) => push({ kind: 'online-artist', artist }),
       openOnlineCollection: (collection) => push({ kind: 'online-collection', collection }),
       openMood: (tile) => push({ kind: 'mood', tile }),
+      openOnlineShelf: (title, owner, more) => push({ kind: 'online-shelf', title, owner, more }),
       editDetails: (dir) => edit.current(dir),
     }),
     [root, push],
@@ -457,6 +462,8 @@ function Listen(props: Props) {
     if (top?.page.kind === 'online-collection')
       return <OnlineCollectionPage key={top.page.collection.collection_id} collection={top.page.collection} onBack={back} />
     if (top?.page.kind === 'mood') return <MoodPage key={top.page.tile.params} tile={top.page.tile} onBack={back} />
+    if (top?.page.kind === 'online-shelf')
+      return <OnlineShelfPage key={`${top.page.more.browse_id}:${top.page.more.params ?? ''}`} title={top.page.title} owner={top.page.owner} more={top.page.more} onBack={back} />
     if (!lib.tracks.length && tab !== 'search')
       return (
         <p className="py-20 text-center text-[14px] text-ink/55">

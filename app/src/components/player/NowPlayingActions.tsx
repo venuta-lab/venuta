@@ -6,13 +6,13 @@ import { useEscape } from '../../lib/layers'
 import type { Lyrics } from '../../lib/lyrics'
 import { monitors, openBigScreen, toggleDesktopLyrics, useDesktopLyricsShown, type Monitor } from '../../lib/lyricWindows'
 import { notify } from '../../lib/notify'
-import { isSearchCancelled, onlineSearch } from '../../lib/engine'
+import { isSearchCancelled } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
 import { rankOnlineTracks } from '../../lib/searchRank'
-import { searchKey } from '../../lib/textsearch'
 import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
 import { goToEach, menuFor, showInFolder } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
+import { findOnlineArtist } from '../../screens/listen/onlineSearch'
 import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
 import { hasIndic, useLyricColour } from '../lyrics/useNowLyrics'
@@ -224,10 +224,8 @@ export function SongActions(props: {
   /** Their online artist page, found by name; without one, their songs (ranked) play instead. */
   const moreBy = async (name: string) => {
     try {
-      const found = await onlineSearch(name, 'more-by')
-      const key = searchKey(name)
-      const artist = found.artists.find((a) => searchKey(a.name) === key) ?? found.artists.find((a) => searchKey(a.name).startsWith(key))
-      if (artist?.artist_id) return props.onOnlineArtist(artist)
+      const { artist, found } = await findOnlineArtist(name, 'more-by')
+      if (artist) return props.onOnlineArtist(artist)
       if (!found.tracks.length) return notify(`No online songs for ${name}.`)
       notify(`No artist page for ${name} in the online catalog; playing their songs.`)
       void playItems(props.root, rankOnlineTracks(name, found.tracks).map(toRemoteItem), 0, { kind: 'search', ref: name, label: `Online: ${name}` })

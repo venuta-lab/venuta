@@ -41,6 +41,6 @@ pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile,
     ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist, RemoteShelf, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions,
 };

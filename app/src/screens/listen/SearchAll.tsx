@@ -3,13 +3,13 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconMore, IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
-import { quality, type CatalogTrack, type OnlineAlbum, type OnlineArtist, type OnlineTrack } from '../../lib/engine'
+import { quality, type OnlineAlbum, type OnlineArtist } from '../../lib/engine'
 import { loadCovers, useCovers } from '../../lib/covers'
 import { menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
-import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toItem, toRemoteItem, toggle, usePlayerValue, current, type From, type QueueItem } from '../../lib/player'
+import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From } from '../../lib/player'
 import { useNav } from './model'
-import { fromOnline, onlineItems, playOnlineArtistPage, withOnlineAlbum } from './onlineSearch'
+import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
 import { QualityBadge } from './parts'
 
 /*
@@ -18,10 +18,8 @@ import { QualityBadge } from './parts'
   online albums and artists sized like the library's, so a row of both reads as one row.
 */
 
-/** One song in the mixed list: yours (plays your file) or the catalog's. */
-export type MixedSong = { where: 'library'; track: CatalogTrack } | { where: 'online'; track: OnlineTrack }
+export type { MixedSong } from './onlineSearch'
 
-const itemOf = (s: MixedSong): QueueItem => (s.where === 'library' ? toItem(s.track) : toRemoteItem(s.track))
 
 /** Plays as a number the way the catalog writes it ("534M plays"). */
 function playsText(n: number | null | undefined): string {
@@ -39,7 +37,17 @@ function playsText(n: number | null | undefined): string {
  * The songs beside the Top result: a few, yours first. Playing one plays the list from it, so
  * the next is the next row whichever kind it is.
  */
-export function MixedSongs(props: { query: string; songs: MixedSong[]; onSeeAll?: () => void }) {
+export function MixedSongs(props: {
+  query: string
+  songs: MixedSong[]
+  onSeeAll?: () => void
+  /** "Songs" unless the page says better ("Top songs"). */
+  title?: string
+  /** What "See all" says ("Show fewer" once all are shown). */
+  seeAllLabel?: string
+  /** Where playing from here says it played from (the search, unless given). */
+  from?: From
+}) {
   const { root } = useNav()
   const cover = useCovers(96)
   const dirs = JSON.stringify([...new Set(props.songs.flatMap((s) => (s.where === 'library' ? [s.track.dir] : [])))])
@@ -51,14 +59,15 @@ export function MixedSongs(props: { query: string; songs: MixedSong[]; onSeeAll?
     const c = current(st)
     return c ? queueKey(c) : ''
   })
-  const from: From = fromOnline(props.query)
+  const from: From = props.from ?? fromOnline(props.query)
+  const title = props.title ?? 'Songs'
   return (
-    <section aria-label="Songs" className="min-w-0">
+    <section aria-label={title} className="min-w-0">
       <div className="mb-2 flex items-baseline gap-3">
-        <h2 className="title text-[19px]">Songs</h2>
+        <h2 className="title text-[19px]">{title}</h2>
         {props.onSeeAll && (
           <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
-            See all
+            {props.seeAllLabel ?? 'See all'}
           </button>
         )}
       </div>
@@ -108,7 +117,7 @@ export function MixedSongs(props: { query: string; songs: MixedSong[]; onSeeAll?
               <span className="text-right text-[12px] tabular-nums text-ink/50">
                 {s.where === 'library' ? <QualityBadge text={quality(s.track)} /> : playsText(s.track.plays)}
               </span>
-              <span className="text-right text-[12.5px] tabular-nums text-ink/55">{songLength(t.duration_ms)}</span>
+              <span className="text-right text-[12.5px] tabular-nums text-ink/55">{t.duration_ms ? songLength(t.duration_ms) : ''}</span>
               <AvailabilityBadge availability={s.where === 'library' ? 'local' : 'online'} />
               <button
                 onClick={(e) => menuFromEvent(e, menu())}

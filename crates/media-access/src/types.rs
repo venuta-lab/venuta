@@ -161,6 +161,40 @@ pub struct RemoteArtistPage {
     /// Artists their listeners also play.
     #[serde(default)]
     pub similar: Vec<RemoteArtist>,
+    /// Who they are, in a paragraph or two, when the catalog has it.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Subscribers as the catalog words it ("6.52M subscribers").
+    #[serde(default)]
+    pub subscribers: Option<String>,
+    /// The wide picture across the top of their page (the square one is `artwork_url`).
+    #[serde(default)]
+    pub banner_url: Option<String>,
+    /// Their radio: a never-ending mix of them and artists like them.
+    #[serde(default)]
+    pub radio_id: Option<String>,
+    /// Every row of their page in the catalog's order: Albums, Singles & EPs, Videos, Live
+    /// performances, Featured on, Playlists by them, Fans might also like, Appears on.
+    #[serde(default)]
+    pub shelves: Vec<RemoteShelf>,
+}
+
+/// A titled row of cards on a catalog page, and where its "See all" leads when it has one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteShelf {
+    pub title: String,
+    /// Songs and videos to play; albums, artists and playlists to open.
+    pub items: Vec<RemoteSuggestion>,
+    #[serde(default)]
+    pub more: Option<RemoteMore>,
+}
+
+/// The catalog page behind a row's "See all".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteMore {
+    pub browse_id: String,
+    #[serde(default)]
+    pub params: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

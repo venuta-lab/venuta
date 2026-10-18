@@ -11,8 +11,8 @@ use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
     CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page, PageRequest,
-    RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteTrack,
-    SearchSuggestions,
+    RemoteAlbum, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
+    RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -131,6 +131,14 @@ trait LiveBackend: Send + Sync {
         params: &str,
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError>;
+
+    /// The cards of a page that is one grid (a row's "See all").
+    fn grid(
+        &self,
+        browse_id: &str,
+        params: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteSuggestion>, AccessError>;
 }
 
 /// The live catalog over the shared YouTube Music client.
@@ -550,6 +558,25 @@ impl LiveBackend for YtmBackend {
             .iter()
             .filter(|c| c.kind == "playlist" || c.kind == "album")
             .filter_map(|c| crate::catalog_cards::collection_of(c, "playlist"))
+            .collect())
+    }
+
+    fn grid(
+        &self,
+        browse_id: &str,
+        params: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteSuggestion>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let cards = self.run(cancellable(cancel.clone(), async {
+            self.it
+                .browse_grid(client, browse_id, params)
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog page failed"))
+        }))?;
+        Ok(cards
+            .iter()
+            .filter_map(crate::catalog_cards::suggestion_of)
             .collect())
     }
 }
@@ -1242,11 +1269,14 @@ impl MediaAccess for LiveCatalogAccess {
             })
             .collect();
         // More of their songs, from their full song list (a second page; skipped if it fails).
-        let songs = page
+        let songs_raw = page
             .songs_list_id
             .as_deref()
-            .and_then(|list| self.backend.browse(list, cancel).ok())
-            .map(|raw| catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER))
+            .and_then(|list| self.backend.browse(list, cancel).ok());
+        let extras = crate::catalog_cards::artist_extras(&raw, id, songs_raw.as_ref());
+        let songs = songs_raw
+            .as_ref()
+            .map(|raw| catalog_json::tracks_from_hits(&catalog_json::read_hits(raw), PROVIDER))
             .unwrap_or_default()
             .into_iter()
             .filter(|t| !top_songs.iter().any(|top| top.track_id == t.track_id))
@@ -1288,6 +1318,11 @@ impl MediaAccess for LiveCatalogAccess {
                     artwork_url: clean_artwork_url(c.thumbnail),
                 })
                 .collect(),
+            description: extras.description,
+            subscribers: extras.subscribers,
+            banner_url: extras.banner_url,
+            radio_id: extras.radio_id,
+            shelves: extras.shelves,
         })
     }
 
@@ -1419,6 +1454,21 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         self.backend.mood(params.trim(), cancel)
+    }
+
+    fn shelf_more(
+        &self,
+        more: &RemoteMore,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteSuggestion>, AccessError> {
+        let id = more.browse_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which row?",
+            ));
+        }
+        self.backend.grid(id, more.params.as_deref(), cancel)
     }
 }
 

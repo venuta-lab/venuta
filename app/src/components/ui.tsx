@@ -240,6 +240,8 @@ export function Detail(props: {
   /** Beside the small title, once pinned (a play button). */
   tools?: ReactNode
   glow?: string
+  /** A wide picture across the top (an artist's banner), fading into the page. */
+  banner?: string
   children: ReactNode
 }) {
   const top = useRef<HTMLDivElement>(null)
@@ -261,6 +263,23 @@ export function Detail(props: {
           }}
         >
           <img src={props.glow} alt="" className="hero-glow-img h-full w-full scale-125 object-cover" style={{ filter: "blur(64px) saturate(1.5) var(--art-tint)" }} />
+        </div>
+      )}
+      {props.banner && (
+        <div
+          aria-hidden
+          className="hero-banner pointer-events-none absolute inset-x-0 top-0 h-[420px] overflow-hidden"
+          style={{ maskImage: 'linear-gradient(to bottom, #000 35%, transparent 100%)' }}
+        >
+          <img src={props.banner} alt="" className="hero-banner-img h-full w-full object-cover object-[50%_22%]" style={{ filter: 'var(--art-tint)' }} />
+          {/* The page's own colour rises from below, so the name over it reads in any theme. */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(to top, var(--solid) 0%, color-mix(in oklab, var(--solid) 78%, transparent) 38%, color-mix(in oklab, var(--solid) 30%, transparent) 72%, transparent 100%)',
+            }}
+          />
         </div>
       )}
       <div className={`pin sticky top-0 z-20 ${stuck ? 'bar' : ''}`}>

@@ -1,6 +1,7 @@
 use crate::types::{
     CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteArtistPage, RemoteCollection, RemotePlaylist, RemoteTrack, SearchSuggestions,
+    RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -155,6 +156,16 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         let _ = (params, cancel);
         Err(unsupported("moods and genres"))
+    }
+
+    /// Everything in a row of a catalog page (its "See all": all their albums, all their singles).
+    fn shelf_more(
+        &self,
+        more: &RemoteMore,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteSuggestion>, AccessError> {
+        let _ = (more, cancel);
+        Err(unsupported("full rows"))
     }
 
     /// Forget any remembered stream address for this song, so the next resolve asks afresh (the
@@ -403,6 +414,14 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         self.inner.mood_collections(params, cancel)
+    }
+
+    fn shelf_more(
+        &self,
+        more: &RemoteMore,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteSuggestion>, AccessError> {
+        self.inner.shelf_more(more, cancel)
     }
 
     fn forget(&self, track_id: &str) {

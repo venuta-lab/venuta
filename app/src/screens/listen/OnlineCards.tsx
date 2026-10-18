@@ -1,13 +1,16 @@
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
-import { onlineCollection, type MoodTile, type OnlineCollection } from '../../lib/engine'
+import { onlineCollection, type MoodTile, type OnlineCollection, type OnlineShelf, type OnlineTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
-import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem } from '../../lib/player'
+import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
 import { menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { useNav } from './model'
+import { Shelf } from './parts'
+import { isVideo } from './onlineSearch'
+import { useOnlineCards } from './useOnlineCards'
 
 /*
   Cards for the browse side of the online catalog: a playlist or podcast to open (or play from
@@ -31,7 +34,7 @@ async function withCollection(c: OnlineCollection, then: (items: ReturnType<type
 }
 
 /** A playlist or podcast card: the card opens it; its round button plays it from the start. */
-export function CollectionCard({ collection: c, width = 168 }: { collection: OnlineCollection; width?: number }) {
+export function CollectionCard({ collection: c, width = 168, wide = false }: { collection: OnlineCollection; width?: number; wide?: boolean }) {
   const { root, openOnlineCollection } = useNav()
   const from = { kind: 'search' as const, ref: c.title, label: `Online: ${c.title}` }
   const play = () => void withCollection(c, (items) => void playAllItems(root, items, from))
@@ -53,7 +56,7 @@ export function CollectionCard({ collection: c, width = 168 }: { collection: Onl
   return (
     <div className="group relative shrink-0" style={{ width }}>
       <button onClick={() => openOnlineCollection(c)} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${c.title}”`} className="block w-full text-left">
-        <span className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-2xl bg-ink/[0.06] text-[28px] text-ink/25 shadow-lg shadow-black/20">
+        <span className={`relative grid w-full place-items-center overflow-hidden bg-ink/[0.06] text-[28px] text-ink/25 shadow-lg shadow-black/20 ${wide ? 'aspect-video rounded-xl' : 'aspect-square rounded-2xl'}`}>
           <RemoteArt url={c.artwork_url} seed={c.title} size={width} imgClassName="h-full w-full object-cover" />
         </span>
         <span className="mt-2.5 block truncate text-[13.5px] font-medium">{c.title}</span>
@@ -64,7 +67,7 @@ export function CollectionCard({ collection: c, width = 168 }: { collection: Onl
         aria-label={`Play “${c.title}”`}
         title="Play"
         className="absolute right-2.5 grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent opacity-0 shadow-lg transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
-        style={{ top: width - 50 }}
+        style={{ top: (wide ? Math.round((width * 9) / 16) : width) - 50 }}
       >
         <IconPlay width={17} height={17} />
       </button>
@@ -89,4 +92,51 @@ export function MoodCard({ tile, onOpen }: { tile: MoodTile; onOpen: () => void 
       <span className="relative text-[14px] font-semibold tracking-[-0.01em]">{tile.title}</span>
     </button>
   )
+}
+
+
+/** A song or video card: playing it plays the row from it. */
+export function OnlineSongCard({ track: t, now, onPlay, width = 168 }: { track: OnlineTrack; now: boolean; onPlay: () => void; width?: number }) {
+  const { root } = useNav()
+  const wide = isVideo(t)
+  const menu = () =>
+    menuFor(
+      'song',
+      { online: true, noArtist: true },
+      {
+        play: onPlay,
+        next: () => void enqueueItems(root, [toRemoteItem(t)], true),
+        queue: () => void enqueueItems(root, [toRemoteItem(t)], false),
+        playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
+      },
+    )
+  return (
+    <button
+      onClick={() => (now ? void toggle() : onPlay())}
+      onContextMenu={(e) => menuFromEvent(e, menu())}
+      aria-current={now || undefined}
+      title={`Play “${t.title}”`}
+      className="group block shrink-0 text-left"
+      style={{ width }}
+    >
+      <span className={`relative grid w-full place-items-center overflow-hidden bg-ink/[0.06] text-[28px] text-ink/25 shadow-lg shadow-black/20 ${wide ? 'aspect-video rounded-xl' : 'aspect-square rounded-2xl'}`}>
+        <RemoteArt url={t.artwork_url} seed={t.album || t.title} size={width} imgClassName="h-full w-full object-cover" />
+        <span className={`absolute inset-0 grid place-items-center bg-scrim text-ink transition-opacity duration-150 ${now ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'}`}>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent shadow-lg">
+            <IconPlay width={17} height={17} />
+          </span>
+        </span>
+      </span>
+      <span className={`mt-2.5 block truncate text-[13.5px] font-medium ${now ? 'text-accent-ink' : ''}`}>{t.title}</span>
+      <span className="block truncate text-[12px] text-ink/55">{t.artists.join(', ') || (wide ? 'Video' : 'Song')}</span>
+    </button>
+  )
+}
+
+/** A row of an online page as a library shelf: it scrolls, has arrows, and says See all. */
+export function OnlineShelfRow({ shelf, label, onSeeAll }: { shelf: OnlineShelf; label: string; onSeeAll?: () => void }) {
+  const cards = useOnlineCards(shelf.items, label)
+  // `at` keeps the catalog's order (the shelf sorts its extra cards by it, newest first).
+  const more = cards.map((c, i) => ({ ...c, at: cards.length - i }))
+  return <Shelf title={shelf.title} albums={[]} origin="" more={more} limit={more.length} onSeeAll={onSeeAll} />
 }
