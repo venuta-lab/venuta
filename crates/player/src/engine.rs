@@ -385,8 +385,9 @@ impl<T: Item + Serialize> Engine<T> {
             Cmd::Toggle => self.set_playing(!self.playing),
             Cmd::Seek(ms) => self.seek(ms),
             Cmd::Next => {
+                let ahead = self.queue.peek_next();
                 if self.queue.skip_next().is_some() {
-                    self.load_current(0);
+                    self.play_ahead_or_load(ahead);
                 } else {
                     self.set_playing(false);
                 }
@@ -404,9 +405,12 @@ impl<T: Item + Serialize> Engine<T> {
                 if self.queue.index == Some(i) {
                     self.seek(0);
                     self.set_playing(true);
-                } else if self.queue.jump(i) {
-                    self.load_current(0);
-                    self.set_playing(true);
+                } else {
+                    let ahead = self.queue.peek_next();
+                    if self.queue.jump(i) {
+                        self.play_ahead_or_load(ahead);
+                        self.set_playing(true);
+                    }
                 }
             }
             Cmd::Volume(v) => self.volume = v.clamp(0.0, 1.0),
@@ -547,6 +551,25 @@ impl<T: Item + Serialize> Engine<T> {
                 self.segs.truncate(1);
             }
             Err(e) => self.error = e,
+        }
+    }
+
+    /// After Next or a jump: when the song now current is the one already decoded ahead
+    /// (`ahead` was the queue's next index before the move), play that one. An online song is
+    /// then already resolved and downloading, so it starts at once instead of from nothing.
+    fn play_ahead_or_load(&mut self, ahead: Option<usize>) {
+        let usable = self.segs.len() >= 2
+            && ahead.is_some()
+            && self.queue.index == ahead
+            && self
+                .segs
+                .get(1)
+                .is_some_and(|s| !(s.ended && s.frames() == 0));
+        if usable {
+            self.segs.pop_front();
+            self.segs.truncate(1);
+        } else {
+            self.load_current(0);
         }
     }
 
@@ -1073,5 +1096,133 @@ impl<T: Item + Serialize> Engine<T> {
         self.said = Some(said);
         self.queue_changed = false;
         (self.on_status)(status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A song that counts how many times the engine opened it.
+    #[derive(Clone, Serialize)]
+    struct Counted {
+        path: PathBuf,
+        #[serde(skip)]
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl Item for Counted {
+        fn path(&self) -> Option<&Path> {
+            Some(&self.path)
+        }
+        fn open(&self) -> Result<Source, String> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            Source::open(&self.path)
+        }
+    }
+
+    /// A silent 16-bit stereo WAV of `frames` frames.
+    fn wav(path: &Path, frames: usize) {
+        let data_len = frames * 4;
+        let mut v = Vec::with_capacity(44 + data_len);
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+        v.extend_from_slice(b"WAVEfmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&44_100u32.to_le_bytes());
+        v.extend_from_slice(&(44_100u32 * 4).to_le_bytes());
+        v.extend_from_slice(&4u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&(data_len as u32).to_le_bytes());
+        v.resize(44 + data_len, 0);
+        std::fs::write(path, v).unwrap();
+    }
+
+    fn songs(n: usize) -> (PathBuf, Vec<Counted>) {
+        let dir = std::env::temp_dir().join(format!(
+            "venuta-engine-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let items = (0..n)
+            .map(|i| {
+                let path = dir.join(format!("{i}.wav"));
+                wav(&path, 3 * 44_100);
+                Counted {
+                    path,
+                    opens: Arc::new(AtomicUsize::new(0)),
+                }
+            })
+            .collect();
+        (dir, items)
+    }
+
+    fn engine(items: Vec<Counted>) -> Engine<Counted> {
+        let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
+        let mut e = Engine::new(OutputChoice::Memory(captured), Box::new(|_| {}));
+        e.handle(Cmd::Set {
+            items,
+            index: 0,
+            start_ms: 0,
+            play: false,
+            from: String::new(),
+        });
+        e
+    }
+
+    #[test]
+    fn next_plays_the_song_already_decoded_ahead_without_opening_it_again() {
+        let (dir, items) = songs(3);
+        let opens: Vec<_> = items.iter().map(|i| i.opens.clone()).collect();
+        let mut e = engine(items);
+        e.fill().unwrap();
+        assert_eq!(
+            opens[1].load(Ordering::SeqCst),
+            1,
+            "the next song was opened ahead"
+        );
+        e.handle(Cmd::Next);
+        assert_eq!(e.queue.index, Some(1));
+        assert_eq!(
+            e.segs.len(),
+            1,
+            "the decoded-ahead song is now the one playing"
+        );
+        assert_eq!(
+            opens[1].load(Ordering::SeqCst),
+            1,
+            "and it was not opened a second time"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn jumping_to_the_song_decoded_ahead_reuses_it_and_any_other_opens_fresh() {
+        let (dir, items) = songs(3);
+        let opens: Vec<_> = items.iter().map(|i| i.opens.clone()).collect();
+        let mut e = engine(items.clone());
+        e.fill().unwrap();
+        e.handle(Cmd::Jump(1));
+        assert_eq!(opens[1].load(Ordering::SeqCst), 1, "song 2 reused");
+
+        let mut e = engine(items);
+        e.fill().unwrap();
+        e.handle(Cmd::Jump(2));
+        assert_eq!(e.queue.index, Some(2));
+        assert_eq!(
+            opens[2].load(Ordering::SeqCst),
+            1,
+            "song 3 opened once, now"
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 }
