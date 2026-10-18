@@ -8,7 +8,7 @@ import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } fro
 import { menuFor, onlineSongWork } from '../../lib/actions'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
-import { useNav } from './model'
+import { useCardWidth, useNav } from './model'
 import { Shelf } from './parts'
 import { isVideo } from './onlineSearch'
 import { useOnlineCards } from './useOnlineCards'
@@ -35,7 +35,9 @@ async function withCollection(c: OnlineCollection, then: (items: ReturnType<type
 }
 
 /** A playlist or podcast card: the card opens it; its round button plays it from the start. */
-export function CollectionCard({ collection: c, width = 168, wide = false }: { collection: OnlineCollection; width?: number; wide?: boolean }) {
+export function CollectionCard({ collection: c, width: asked, wide = false }: { collection: OnlineCollection; width?: number; wide?: boolean }) {
+  const shelfWidth = useCardWidth()
+  const width = asked ?? shelfWidth
   const { root, openOnlineCollection } = useNav()
   const from = { kind: 'search' as const, ref: c.title, label: `Online: ${c.title}` }
   const play = () => void withCollection(c, (items) => void playAllItems(root, items, from))
@@ -98,7 +100,9 @@ export function MoodCard({ tile, onOpen }: { tile: MoodTile; onOpen: () => void 
 
 
 /** A song or video card: playing it plays the row from it. */
-export function OnlineSongCard({ track: t, now, onPlay, width = 168 }: { track: OnlineTrack; now: boolean; onPlay: () => void; width?: number }) {
+export function OnlineSongCard({ track: t, now, onPlay, width: asked }: { track: OnlineTrack; now: boolean; onPlay: () => void; width?: number }) {
+  const shelfWidth = useCardWidth()
+  const width = asked ?? shelfWidth
   const nav = useNav()
   const wide = isVideo(t)
   const menu = () => menuFor('song', { online: true, noArtist: !t.artists.length }, onlineSongWork(nav, t, onPlay))

@@ -2,7 +2,7 @@
 // Home's sections in your order, each on or off: what Edit Home keeps.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { arrange, move, toggle, type HomeLayout } from '../src/lib/homeLayout.ts'
+import { arrange, CARD_WIDTHS, move, toggle, type HomeLayout } from '../src/lib/homeLayout.ts'
 
 const known = ['hero', 'jump', 'quick', 'online']
 
@@ -32,4 +32,12 @@ test('moving and switching keep the rest as they are', () => {
   const off = toggle(up, 'jump')
   assert.deepEqual(off.hidden, ['jump'])
   assert.deepEqual(toggle(off, 'jump').hidden, [])
+})
+
+test('the card size stays through moving and switching, and grows from small to large', () => {
+  const l: HomeLayout = { order: [], hidden: [], size: 'l' }
+  assert.equal(move(l, known, 'quick', -1).size, 'l')
+  assert.equal(toggle(l, 'jump').size, 'l')
+  assert.equal(CARD_WIDTHS.m, 168, 'medium is the size cards are everywhere else')
+  assert.ok(CARD_WIDTHS.s < CARD_WIDTHS.m && CARD_WIDTHS.m < CARD_WIDTHS.l)
 })

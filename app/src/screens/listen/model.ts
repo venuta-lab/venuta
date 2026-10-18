@@ -283,6 +283,10 @@ export interface Now {
   online?: QueueItem
 }
 export const NowContext = createContext<Now>({ path: '', dir: '', playing: false })
+
+/** How wide a card is drawn in shelves (Home's Edit Home sets it there; 168 elsewhere). */
+export const CardWidth = createContext(168)
+export const useCardWidth = () => useContext(CardWidth)
 export const useNowPlaying = () => useContext(NowContext)
 
 /** A cover flies between places that share its layout id; one place per origin. */

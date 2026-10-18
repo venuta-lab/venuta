@@ -7,6 +7,7 @@ import {
   appearsOn,
   artistFor,
   albumFrom,
+  CardWidth,
   coverId,
   featured,
   plural,
@@ -18,7 +19,7 @@ import {
   type Library,
 } from './model'
 import { Detail, InBar, Segmented, Switch } from '../../components/ui'
-import { arrange, move, readLayout, saveLayout, toggle as toggleHome, type HomeLayout } from '../../lib/homeLayout'
+import { arrange, CARD_WIDTHS, move, readLayout, saveLayout, toggle as toggleHome, type CardSize, type HomeLayout } from '../../lib/homeLayout'
 import { useShortcuts } from '../../lib/shortcuts'
 import { FamiliarArtists, HomeChips, OnlineShelves, QuickPicks, useOnlineHome, useRecentOnline, useRecentPlays } from './HomeOnline'
 import { AlbumGrid, Art, Avatar, Chip, HiResPill, PlayButtons, QualityBadge, Shelf } from './parts'
@@ -238,16 +239,20 @@ export const HomeView = memo(function HomeView(props: {
             onToggle={(id) => change(toggleHome(layout, id))}
             onMove={(id, by) => change(move(layout, known, id, by))}
             onReset={() => change({ order: [], hidden: [] })}
+            size={layout.size ?? 'm'}
+            onSize={(size) => change({ ...layout, size })}
           />
         )}
       </AnimatePresence>
-      <div className="mt-4">
-        {shown
-          .filter((s) => s.on)
-          .map((s) => (
-            <Fragment key={s.id}>{parts.find((p) => p.id === s.id)?.node}</Fragment>
-          ))}
-      </div>
+      <CardWidth value={CARD_WIDTHS[layout.size ?? 'm']}>
+        <div className="mt-4">
+          {shown
+            .filter((s) => s.on)
+            .map((s) => (
+              <Fragment key={s.id}>{parts.find((p) => p.id === s.id)?.node}</Fragment>
+            ))}
+        </div>
+      </CardWidth>
     </div>
   )
 })
@@ -264,6 +269,8 @@ function EditHome(props: {
   onToggle: (id: string) => void
   onMove: (id: string, by: -1 | 1) => void
   onReset: () => void
+  size: CardSize
+  onSize: (s: CardSize) => void
 }) {
   return (
     <motion.section
@@ -277,6 +284,17 @@ function EditHome(props: {
       <div className="glass mt-3 rounded-2xl p-3">
         <div className="flex items-baseline gap-3 px-2 pb-2 pt-1">
           <h3 className="text-[14px] font-semibold">What Home shows, in this order</h3>
+          <Segmented
+            size="sm"
+            label="Card size"
+            value={props.size}
+            onChange={props.onSize}
+            options={[
+              { value: 's', label: 'Small' },
+              { value: 'm', label: 'Medium' },
+              { value: 'l', label: 'Large' },
+            ]}
+          />
           <button onClick={props.onReset} className="ml-auto rounded-full px-2.5 py-0.5 text-[12px] text-ink/60 hover:bg-ink/[0.08] hover:text-ink">
             As it was
           </button>

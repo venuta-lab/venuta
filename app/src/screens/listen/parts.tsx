@@ -10,7 +10,7 @@ import { useJob } from '../../lib/jobs'
 import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
 import { CoverImage, NoCover } from '../MusicScreen'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { albumFrom, coverId, smooth, spring, useNav, useNearView, useNowPlaying, type Album } from './model'
+import { albumFrom, coverId, smooth, spring, useCardWidth, useNav, useNearView, useNowPlaying, type Album } from './model'
 
 export function QualityBadge({ text }: { text: string }) {
   if (!text) return null
@@ -166,9 +166,9 @@ export function AlbumGrid({ albums, origin, subtitle }: { albums: Album[]; origi
   )
 }
 
-/** How many cards a shelf draws at first; one card and the gap after it (168 + 20 px). */
+/** How many cards a shelf draws at first. A card and the gap after it is its width + 20 px. */
 const FIRST_CARDS = 8
-const CARD_STEP = 188
+const GAP = 20
 
 /** A row of albums that scrolls sideways, with arrows on hover and a way to see them all. */
 export function Shelf(props: {
@@ -185,6 +185,8 @@ export function Shelf(props: {
   spaced?: boolean
 }) {
   const { cover, state } = useCardState()
+  const width = useCardWidth()
+  const step = width + GAP
   const row = useRef<HTMLDivElement>(null)
   // Home holds a dozen shelves; each fills in just before it scrolls into view.
   const box = useRef<HTMLElement>(null)
@@ -201,7 +203,7 @@ export function Shelf(props: {
   // Home) never mounts forty cards at once.
   const [upto, setUpto] = useState(FIRST_CARDS)
   const reach = (el: HTMLElement) => {
-    const want = Math.ceil((el.scrollLeft + el.clientWidth) / CARD_STEP) + 4
+    const want = Math.ceil((el.scrollLeft + el.clientWidth) / step) + 4
     setUpto((n) => (want > n ? Math.min(shown.length, want) : n))
   }
   const drawn = shown.slice(0, upto)
@@ -231,7 +233,8 @@ export function Shelf(props: {
       aria-label={dir < 0 ? 'Scroll left' : 'Scroll right'}
       tabIndex={-1}
       onClick={() => by(dir)}
-      className={`popover absolute top-[64px] z-10 grid h-10 w-10 place-items-center rounded-full text-ink/80 opacity-0 transition-opacity duration-200 hover:text-ink group-hover/shelf:opacity-100 focus-visible:opacity-100 ${
+      style={{ top: Math.round(width * 0.38) }}
+      className={`popover absolute z-10 grid h-10 w-10 place-items-center rounded-full text-ink/80 opacity-0 transition-opacity duration-200 hover:text-ink group-hover/shelf:opacity-100 focus-visible:opacity-100 ${
         dir < 0 ? '-left-4' : '-right-4'
       }`}
     >
@@ -253,7 +256,7 @@ export function Shelf(props: {
       </div>
       {!near ? (
         // A card's height (cover, title, line) holds the place until the row is drawn.
-        <div className="h-[218px]" />
+        <div style={{ height: width + 50 }} />
       ) : (
       <div className="group/shelf relative">
         {!ends.start && arrow(-1)}
@@ -267,13 +270,13 @@ export function Shelf(props: {
           style={{ scrollPaddingInline: 12 }}
         >
           {drawn.map(({ key, album: a, node }) => (
-            <div key={key} className="w-[168px] shrink-0 snap-start">
+            <div key={key} className="shrink-0 snap-start" style={{ width }}>
               {a ? <AlbumCard album={a} cover={cover(a.dir)} origin={props.origin} now={state(a.dir)} /> : node}
             </div>
           ))}
           {/* The room of the cards not drawn yet, so the row scrolls (and says there is more) as if they were. */}
           {shown.length > drawn.length && (
-            <div aria-hidden className="shrink-0" style={{ width: (shown.length - drawn.length) * CARD_STEP - 20 }} />
+            <div aria-hidden className="shrink-0" style={{ width: (shown.length - drawn.length) * step - GAP }} />
           )}
         </div>
         {!ends.end && arrow(1)}

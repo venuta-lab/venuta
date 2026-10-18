@@ -7,7 +7,7 @@ import { startRadio } from '../../lib/radio'
 import { current, queueKey, toRemoteItem, usePlayerValue } from '../../lib/player'
 import { statsOf, type Play } from '../../lib/stats'
 import { trackAt } from '../../lib/catalog'
-import { artistFor, useNav, type Library } from './model'
+import { artistFor, useCardWidth, useNav, type Library } from './model'
 import { OnlineShelfRow } from './OnlineCards'
 import { OnlineSongCard } from './OnlineCards'
 import { ArtistCard } from './views'
@@ -190,6 +190,7 @@ export function FamiliarArtists({ lib, plays }: { lib: Library; plays: Play[] })
     const last = Math.max(...plays.map((p) => p.at))
     return statsOf(plays, info, { from: 0, to: last, now: last }, 12).topArtists.filter((a) => a.plays >= 2)
   }, [plays])
+  const width = useCardWidth()
   if (top.length < 3) return null
   return (
     <section className="mt-10">
@@ -198,7 +199,7 @@ export function FamiliarArtists({ lib, plays }: { lib: Library; plays: Play[] })
         {top.map((a) => {
           const mine = artistFor(lib, a.name)
           return (
-            <div key={a.name} className="w-[150px] shrink-0">
+            <div key={a.name} className="shrink-0" style={{ width: Math.round(width * 0.9) }}>
               {mine.albums.length ? (
                 <ArtistCard artist={mine} />
               ) : (

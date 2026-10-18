@@ -8,7 +8,13 @@ export interface HomeLayout {
   order: string[]
   /** Sections switched off. */
   hidden: string[]
+  /** How large Home draws its cards. */
+  size?: CardSize
 }
+
+export type CardSize = 's' | 'm' | 'l'
+/** Card widths for each size, in CSS pixels (m is the size cards are everywhere else). */
+export const CARD_WIDTHS: Record<CardSize, number> = { s: 136, m: 168, l: 208 }
 
 /** The known sections in your order, each on or off. A section added since you arranged Home
  *  goes after the section it follows in its own order. */

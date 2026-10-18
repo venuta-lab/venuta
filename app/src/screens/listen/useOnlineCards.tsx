@@ -28,7 +28,7 @@ const keyOfCard = (c: OnlineSuggestion): string => {
  * The cards of an online row, each the kind it is: albums, artists and playlists open; songs and
  * videos play the row's songs from that one. `label` names the page for "Playing from".
  */
-export function useOnlineCards(items: OnlineSuggestion[], label: string, width = 168) {
+export function useOnlineCards(items: OnlineSuggestion[], label: string, width?: number) {
   const { root } = useNav()
   const songs = useMemo(() => items.flatMap((c) => (c.kind === 'song' ? [c.track] : [])), [items])
   const queue = useMemo(() => songs.map(toRemoteItem), [songs])

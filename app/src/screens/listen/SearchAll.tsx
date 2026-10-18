@@ -8,7 +8,7 @@ import { loadCovers, useCovers } from '../../lib/covers'
 import { menuFor, onlineSongWork, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From, type QueueItem } from '../../lib/player'
-import { useNav } from './model'
+import { useCardWidth, useNav } from './model'
 import { playRadioList } from '../../lib/radio'
 import { shortcutWork } from '../../lib/shortcuts'
 import { notify } from '../../lib/notify'
@@ -175,6 +175,7 @@ export function MixedSongs(props: {
 /** An online album card the size of a library one: opens its page; the round button plays it. */
 export function OnlineAlbumTile({ album: a, query }: { album: OnlineAlbum; query: string }) {
   const { root, openOnlineAlbum } = useNav()
+  const cardWidth = useCardWidth()
   const from: From = { kind: 'search', ref: query, label: `Online: ${a.title}` }
   const playIt = () => void withOnlineAlbum(a, (t) => void playItems(root, onlineItems(t), 0, from))
   const menu = () =>
@@ -204,7 +205,8 @@ export function OnlineAlbumTile({ album: a, query }: { album: OnlineAlbum; query
         onClick={playIt}
         aria-label={`Play “${a.title}”`}
         title="Play"
-        className="absolute right-2.5 top-[118px] grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent opacity-0 shadow-lg transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+        style={{ top: cardWidth - 50 }}
+        className="absolute right-2.5 grid h-10 w-10 place-items-center rounded-full bg-accent text-on-accent opacity-0 shadow-lg transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
       >
         <IconPlay width={17} height={17} />
       </button>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { playlistShelf, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from './PlaylistsHome'
+import { useCardWidth } from '../listen/model'
 
 /**
  * "Your playlists" on the Music home: the ones you changed last first, smart ones after. Hidden
@@ -9,6 +10,7 @@ import { PlaylistCard } from './PlaylistsHome'
 export function PlaylistShelf(props: { root: string; onOpen: (name: string) => void; onSeeAll: () => void }) {
   const { root } = props
   const [lists, setLists] = useState<PlaylistSummary[]>([])
+  const width = useCardWidth()
   useEffect(() => {
     let live = true
     const load = () =>
@@ -39,7 +41,7 @@ export function PlaylistShelf(props: { root: string; onOpen: (name: string) => v
       </div>
       <div className="no-scrollbar -mx-3 -my-3 flex snap-x gap-5 overflow-x-auto px-3 py-3" style={{ scrollPaddingInline: 12 }}>
         {shown.map((p) => (
-          <div key={p.name} className="w-[168px] shrink-0 snap-start">
+          <div key={p.name} className="shrink-0 snap-start" style={{ width }}>
             <PlaylistCard root={root} p={p} onOpen={() => props.onOpen(p.name)} />
           </div>
         ))}
