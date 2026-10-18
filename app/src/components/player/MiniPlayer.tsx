@@ -3,10 +3,11 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
-import { clock, songLength, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { clock, songLength, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, setRepeat, setShuffle, setVolume, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { LikeButton } from '../LikeButton'
 import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
-import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
+import { IconExpand, IconLyrics, IconMute, IconNext, IconPause, IconPlay, IconPrevious, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconVolume } from '../Icons'
 import { lineAt, useLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
@@ -317,8 +318,21 @@ export function MiniPlayer() {
             ) : (
               <Seek value={progress} duration={duration} position={s.position_ms} canSeek={!s.buffering} />
             )}
-            <div className="mt-1 flex justify-center">
+            <div className="mt-1 flex items-center justify-between">
+              {s.root ? <LikeButton root={s.root} item={song} size={16} /> : <span className="w-8" />}
+              <button onClick={() => void setShuffle(!s.shuffle)} aria-pressed={s.shuffle} aria-label="Shuffle" title={s.shuffle ? 'Shuffle is on' : 'Shuffle'} className={`${smallButton} ${s.shuffle ? '!text-accent-ink' : ''}`}>
+                <IconShuffle width={15} height={15} />
+              </button>
               <Controls playing={s.playing} />
+              <button
+                onClick={() => void setRepeat(s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off')}
+                aria-label={s.repeat === 'off' ? 'Repeat' : s.repeat === 'all' ? 'Repeat all' : 'Repeat this song'}
+                title={s.repeat === 'off' ? 'Repeat' : s.repeat === 'all' ? 'Repeating all' : 'Repeating this song'}
+                className={`${smallButton} ${s.repeat !== 'off' ? '!text-accent-ink' : ''}`}
+              >
+                {s.repeat === 'one' ? <IconRepeatOne width={15} height={15} /> : <IconRepeat width={15} height={15} />}
+              </button>
+              <MuteButton volume={s.volume} />
             </div>
           </div>
           <WindowButtons
@@ -426,6 +440,22 @@ function PlayButton({ playing, size }: { playing: boolean; size: number }) {
     >
       {playing ? <IconPause width={16} height={16} /> : <IconPlay width={16} height={16} />}
     </motion.button>
+  )
+}
+
+const smallButton = 'grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink/70 transition-colors hover:bg-ink/10 hover:text-ink'
+
+/** Mute and back to the volume it had. */
+function MuteButton({ volume }: { volume: number }) {
+  const before = useRef(volume || 1)
+  useEffect(() => {
+    if (volume > 0) before.current = volume
+  }, [volume])
+  const muted = volume === 0
+  return (
+    <button onClick={() => void setVolume(muted ? before.current : 0)} aria-pressed={muted} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'} className={smallButton}>
+      {muted ? <IconMute width={15} height={15} /> : <IconVolume width={15} height={15} />}
+    </button>
   )
 }
 

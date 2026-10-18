@@ -281,15 +281,26 @@ function Listen(props: Props) {
 
   // An artist asked for from elsewhere (Now Playing), the same way.
   const [shownArtist, setShownArtist] = useState<string | null>(null)
+  // An artist you have no music by is looked up online (after this render).
+  const [lookUp, setLookUp] = useState<string | null>(null)
   if (openArtist !== shownArtist) {
     if (!openArtist) setShownArtist(null)
     else if (lib.byDir.size) {
       setShownArtist(openArtist)
       setQuery('')
       setAsked('')
-      setStack([{ page: { kind: 'artist', name: openArtist }, scroll: 0 }])
+      if (lib.byArtist.has(artistKey(openArtist))) setStack([{ page: { kind: 'artist', name: openArtist }, scroll: 0 }])
+      else {
+        setStack([])
+        setLookUp(openArtist)
+      }
     }
   }
+  useEffect(() => {
+    if (!lookUp) return
+    setLookUp(null)
+    nav.openArtistNamed(lookUp)
+  }, [lookUp, nav])
   useEffect(() => {
     if (openArtist && shownArtist === openArtist) onOpenedArtist?.()
   }, [openArtist, shownArtist, onOpenedArtist])

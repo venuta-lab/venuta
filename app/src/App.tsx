@@ -66,6 +66,7 @@ import { ThemeImportHost } from './components/themes/ThemeImport'
 import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
 import { keepRadioGoing } from './lib/radio'
+import { listening } from './lib/listening'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
@@ -143,6 +144,14 @@ export default function App() {
   const [palette, setPalette] = useState(false)
   // Radios keep going, and a queue that runs out goes on (autoplay), from the start.
   useEffect(() => keepRadioGoing(), [])
+  // Pressing play on something opens Now Playing, when you chose that.
+  useEffect(() => {
+    const on = () => {
+      if (listening().open_player_on_play) setNowOpen(true)
+    }
+    window.addEventListener('venuta:played', on)
+    return () => window.removeEventListener('venuta:played', on)
+  }, [])
   // Your playlists, for the palette (read when it opens).
   const [shelf, setShelf] = useState<PlaylistSummary[]>([])
   useEffect(() => {

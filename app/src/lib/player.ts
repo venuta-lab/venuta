@@ -474,6 +474,8 @@ export function playItems(root: string, items: QueueItem[], index = 0, from: Fro
     return call('player_jump', { index }).then(() => call('player_seek', { ms: 0 }))
   }
   lastSet = { from: f, keys: items.map(queueKey) }
+  // Something new plays: Now Playing can open for it (Settings: "Open the player on play").
+  window.dispatchEvent(new CustomEvent('venuta:played'))
   const opening = !!row && isOnline(row)
   // Show the queue at once. Online rows stay in Opening… until the engine has real samples.
   set({

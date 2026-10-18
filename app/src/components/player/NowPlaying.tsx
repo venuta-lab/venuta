@@ -263,7 +263,7 @@ export function NowPlaying(props: {
                   onChange={(p) => (p === 'lyrics' ? props.onPanel(p) : void leaving(() => props.onPanel(p)))}
                   options={[
                     { value: 'lyrics', label: 'Lyrics' },
-                    { value: 'next', label: 'Up next' },
+                    { value: 'next', label: 'Queue' },
                     { value: 'sound', label: 'Sound' },
                     { value: 'signal', label: 'Signal' },
                   ]}

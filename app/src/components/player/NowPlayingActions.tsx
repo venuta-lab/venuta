@@ -10,7 +10,9 @@ import { isSearchCancelled } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
 import { rankOnlineTracks } from '../../lib/searchRank'
 import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
-import { goToEach, menuFor, showInFolder } from '../../lib/actions'
+import { copySongLink, goToEach, likeWork, menuFor, showInFolder } from '../../lib/actions'
+import { blockArtist, dislike, startRadio } from '../../lib/radio'
+import { LikeButton } from '../LikeButton'
 import { menuFromEvent } from '../../lib/menu'
 import { findOnlineArtist } from '../../screens/listen/onlineSearch'
 import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
@@ -243,6 +245,11 @@ export function SongActions(props: {
       { nowPlaying: true, online: remote, noArtist: !names.length },
       {
         playlist: () => askAddSongs([songItemOf(song)], song.title),
+        radio: () => void startRadio(props.root, song),
+        like: likeWork(props.root, song),
+        dislike: remote ? () => void dislike(props.root, song) : undefined,
+        block: remote ? artists.slice(0, 3).map((name) => ({ label: `Block ${name}`, run: () => void blockArtist(name) })) : undefined,
+        share: remote && song.online?.kind === 'online' ? () => copySongLink({ track_id: (song.online as { track_id: string }).track_id, title: song.title }) : undefined,
         artist: goToEach(names, props.onArtist),
         album: remote ? undefined : () => props.onAlbum(song.dir),
         moreOnline: remote && artists[0] ? [{ label: `More online by ${artists[0]}`, run: () => void moreBy(artists[0]) }] : undefined,
@@ -279,6 +286,7 @@ export function SongActions(props: {
       )}
       {props.from}
       <div className="mt-4 flex items-center justify-center gap-3">
+        <LikeButton root={props.root} item={song} size={20} />
         {!remote && props.stars}
         <div className="seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
           <IconAction label="Add to playlist" onClick={() => askAddSongs([songItemOf(song)], song.title)}>
