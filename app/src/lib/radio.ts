@@ -6,6 +6,7 @@ import { notify } from './notify'
 import { onlineProblem } from './online'
 import { ownedIndex } from './owned'
 import { rateOnAccount } from './ytmAccount'
+import { isLocalOnly } from './localOnly'
 import {
   enqueueItems,
   getPlayerState,
@@ -127,6 +128,7 @@ let asking = false
 let askedAfter = ''
 
 async function topUp() {
+  if (isLocalOnly()) return
   const s = getPlayerState()
   if (asking || s.index < 0 || !s.queue.length || s.repeat !== 'off') return
   const left = s.queue.length - 1 - s.index

@@ -18,6 +18,7 @@ const DEFAULTS: Listening = {
   lyrics_sources: [],
   song_notifications: false,
   sync_likes: false,
+  local_only: false,
   shortcuts: [],
 }
 

@@ -29,6 +29,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { albumHasGenre, catalogGenreFor, GENRE_FILTER } from '../../lib/yourMusic'
 import { useCatalogTiles } from '../../lib/catalogTiles'
+import { useLocalOnly } from '../../lib/localOnly'
 import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
@@ -142,6 +143,7 @@ export const HomeView = memo(function HomeView(props: {
   )
   // The online catalog's part: its mood chips (one picked filters its rows), Quick picks, rows.
   const [chip, setChip] = useState<string | null>(null)
+  const localOnly = useLocalOnly()
   const online = useOnlineHome(chip)
   const quick = online.shelves?.find((s) => s.kind === 'quick_picks')
   const onlineRows = (online.shelves ?? []).filter((s) => s !== quick)
@@ -168,7 +170,7 @@ export const HomeView = memo(function HomeView(props: {
       label: 'Playing now, or picked for today',
       node: (
         <AnimatePresence mode="wait" initial={false}>
-          {!playing && now.online ? (
+          {!playing && now.online && !localOnly ? (
             <OnlineHero key={queueKey(now.online)} song={now.online} playing={now.playing} />
           ) : (
             hero && <Hero key={hero.dir} album={hero} label={playing ? (now.playing ? 'Playing now' : 'Paused') : 'Picked for today'} />

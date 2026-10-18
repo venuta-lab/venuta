@@ -554,6 +554,9 @@ fn get_json(
     url: &str,
     referer: Option<&str>,
 ) -> Result<Option<Value>, String> {
+    if crate::net::is_offline() {
+        return Err("Local only is on".into());
+    }
     let mut req = agent.get(url);
     if let Some(r) = referer {
         req = req.header("Referer", r);
@@ -1369,6 +1372,19 @@ impl Kept {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_only_keeps_every_lookup_at_home() {
+        // Nothing listens on port 9: were the request sent, the error would be another one.
+        crate::net::set_offline(true);
+        let refused = get_json(&agent(), "http://127.0.0.1:9/lyrics", None);
+        crate::net::set_offline(false);
+        assert_eq!(refused, Err("Local only is on".to_owned()));
+        assert_ne!(
+            get_json(&agent(), "http://127.0.0.1:9/lyrics", None),
+            Err("Local only is on".to_owned())
+        );
+    }
 
     fn req(title: &str, artists: &[&str], secs: u64) -> LyricsRequest {
         LyricsRequest {

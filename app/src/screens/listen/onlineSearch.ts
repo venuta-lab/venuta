@@ -5,6 +5,7 @@ import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
 import { isCoverClass, rankOnlineResults, rankOnlineTracks } from '../../lib/searchRank'
 import { searchKey } from '../../lib/textsearch'
 import { onlineEntryFrom, playItems, toItem, toRemoteItem, type From, type QueueItem } from '../../lib/player'
+import { useLocalOnly } from '../../lib/localOnly'
 
 /*
   Online catalog search for the window: the search hook every search box uses (ranked once
@@ -115,6 +116,7 @@ export type OnlineSearch = OnlineSearchState & {
  *  `immediate`: words that were searched for, not typed). Keeps prior hits while loading. */
 export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', immediate = false): OnlineSearch {
   const connected = useNetworkOnline()
+  const localOnly = useLocalOnly()
   const [state, setState] = useState<OnlineSearchState>({
     query: '',
     resultsFor: '',
@@ -128,9 +130,10 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
   useEffect(() => {
     const q = query.trim()
     // Nothing typed; or offline, when nothing is asked (asked again by itself once connected).
-    if (!q || !connected) {
-      const offline = !!q && !connected
-      setState({ query: q, resultsFor: q, results: null, error: offline ? OFFLINE : '', loading: false, offline, loadingMore: false, moreError: '' })
+    // Local only: the catalog isn't asked, and nothing says it's missing.
+    if (!q || !connected || localOnly) {
+      const offline = !!q && !connected && !localOnly
+      setState({ query: q, resultsFor: q, results: null, error: offline ? OFFLINE : '', loading: false, offline: offline || (!!q && localOnly), loadingMore: false, moreError: '' })
       return
     }
     // Mark loading immediately; keep last results (resultsFor) until the new ones land.
@@ -156,7 +159,7 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
       live = false
       window.clearTimeout(t)
     }
-  }, [query, connected, searchBox, immediate])
+  }, [query, connected, searchBox, immediate, localOnly])
 
   // More songs for the words shown: the next page joins the songs already there, and the whole
   // list is ranked again (so Best and Covers split as one list, and a recording found twice

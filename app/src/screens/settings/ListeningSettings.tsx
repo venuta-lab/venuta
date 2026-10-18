@@ -89,6 +89,14 @@ export function ListeningSettings() {
     <div>
       <h2 className="title text-[22px]">Listening</h2>
 
+      <h3 className="mt-6 text-[13px] font-semibold text-ink/60">Your music and online</h3>
+      <Row
+        title="Local only"
+        hint="Only your own music: the online catalog's songs, shelves and searches are hidden, online songs in your playlists are skipped, and Venuta doesn't go online at all (no lyrics or details lookups, covers or update checks). Off: your files and the online catalog together."
+      >
+        <Switch on={l.local_only} onChange={(on) => set({ local_only: on })} label="Local only" />
+      </Row>
+
       <h3 className="mt-6 text-[13px] font-semibold text-ink/60">What plays</h3>
       <Row title="Autoplay" hint="When the queue runs out, keep playing songs like the last one, from the online catalog (yours play from your files).">
         <Switch on={l.autoplay} onChange={(on) => set({ autoplay: on })} label="Autoplay" />

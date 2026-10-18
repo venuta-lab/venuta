@@ -1,7 +1,7 @@
 // node --test tests/   (Node runs the TypeScript as is)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { planEnqueue } from '../src/lib/queueRules.ts'
+import { keepPlayable, planEnqueue } from '../src/lib/queueRules.ts'
 
 const q = ['a', 'b', 'c', 'd']
 
@@ -21,4 +21,13 @@ test('Play next on a song coming up later moves it up instead', () => {
 
 test('the same song twice in what is added goes in once', () => {
   assert.deepEqual(planEnqueue([], -1, ['x', 'x', 'y'], false).add, ['x', 'y'])
+})
+
+test('local only plays your songs, from the one you chose', () => {
+  const songs = ['mine-1', 'online-1', 'mine-2', 'online-2', 'mine-3']
+  const mine = (s: string) => s.startsWith('mine')
+  assert.deepEqual(keepPlayable(songs, 2, mine), { items: ['mine-1', 'mine-2', 'mine-3'], index: 1 })
+  assert.deepEqual(keepPlayable(songs, 0, mine), { items: ['mine-1', 'mine-2', 'mine-3'], index: 0 })
+  assert.equal(keepPlayable(songs, 1, mine), null, 'an online song chosen cannot play')
+  assert.equal(keepPlayable([], 0, mine), null)
 })

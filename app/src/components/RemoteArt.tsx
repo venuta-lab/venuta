@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { hueOf } from '../lib/onlineSong'
 import { devicePx, sizedArt } from '../lib/artSize'
+import { isLocalOnly } from '../lib/localOnly'
 
 /**
  * Cover for an online catalog row. Accepts http(s) picture URLs only; on load failure
@@ -38,6 +39,8 @@ export function RemoteArt(props: {
 
 /** A cover address cleaned (see cleanArtUrl) and asked for at the size it is drawn, `cssPx` wide. */
 export function artUrl(raw: string | null | undefined, cssPx: number): string | undefined {
+  // Local only: no picture is fetched from the catalog (the drawn cover shows instead).
+  if (isLocalOnly()) return undefined
   const url = cleanArtUrl(raw)
   return url ? sizedArt(url, devicePx(cssPx)) : undefined
 }

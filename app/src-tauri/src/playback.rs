@@ -195,6 +195,70 @@ pub struct Playback {
     output: Mutex<(Option<String>, bool)>,
     /// Catalog + session-audio access for remote items (the app factory until a real provider).
     catalog: Arc<dyn MediaAccess>,
+    /// Local only (Settings, Listening): every catalog request is refused while it's on.
+    local_only: Arc<std::sync::atomic::AtomicBool>,
+    offline: Arc<dyn MediaAccess>,
+}
+
+/// The catalog while Local only is on: it answers every request with "Local only is on", so
+/// nothing reaches the network, whichever screen asks.
+struct LocalOnlyAccess;
+
+fn local_only_refusal() -> media_access::AccessError {
+    media_access::AccessError::new(
+        media_access::AccessErrorKind::Unsupported,
+        "Local only is on: Venuta plays your own music and stays offline",
+    )
+}
+
+impl MediaAccess for LocalOnlyAccess {
+    fn search_tracks(
+        &self,
+        _: &str,
+        _: &media_access::PageRequest,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
+    fn search_albums(
+        &self,
+        _: &str,
+        _: &media_access::PageRequest,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::Page<media_access::RemoteAlbum>, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
+    fn search_artists(
+        &self,
+        _: &str,
+        _: &media_access::PageRequest,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::Page<media_access::RemoteArtist>, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
+    fn album_tracks(
+        &self,
+        _: &str,
+        _: &media_access::PageRequest,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
+    fn playlist_tracks(
+        &self,
+        _: &str,
+        _: &media_access::PageRequest,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::Page<media_access::RemoteTrack>, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
+    fn resolve_audio(
+        &self,
+        _: &str,
+        _: &media_access::CancellationToken,
+    ) -> Result<media_access::EphemeralAudio, media_access::AccessError> {
+        Err(local_only_refusal())
+    }
 }
 
 impl Default for Playback {
@@ -208,6 +272,8 @@ impl Default for Playback {
             // Bit-perfect unless you choose otherwise.
             output: Mutex::new((None, true)),
             catalog: media_access::default_media_access(),
+            local_only: Arc::default(),
+            offline: Arc::new(LocalOnlyAccess),
         }
     }
 }
@@ -229,6 +295,7 @@ impl Playback {
             let media = self.media.clone();
             let root = self.root.clone();
             let catalog = self.catalog.clone();
+            let local_only = self.local_only.clone();
             // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
             let mut warmed: Option<String> = None;
             // Plays and where you were are written to disk on a thread of their own: never on
@@ -350,6 +417,7 @@ impl Playback {
                         && !s.buffering
                         && let Some(next) = s.index.and_then(|i| queue.get(i + 1))
                         && next.is_remote()
+                        && !local_only.load(std::sync::atomic::Ordering::Relaxed)
                         && let Some(PlayableId::Online { track_id, .. }) = &next.online
                         && warmed.as_deref() != Some(track_id.as_str())
                     {
@@ -587,7 +655,7 @@ impl Playback {
             .map(|mut it| {
                 if it.is_remote() {
                     it.file = PathBuf::new();
-                    it.media = MediaRef(Some(self.catalog.clone()));
+                    it.media = MediaRef(Some(self.catalog()));
                     it.availability = Some(Availability::Online);
                 } else {
                     it.file = root.join(&it.path);
@@ -603,7 +671,23 @@ impl Playback {
     /// The catalog remote songs play from, for searching it (the same one, so what you find
     /// is what plays).
     pub fn catalog(&self) -> Arc<dyn MediaAccess> {
+        if self.local_only.load(std::sync::atomic::Ordering::Relaxed) {
+            self.offline.clone()
+        } else {
+            self.catalog.clone()
+        }
+    }
+
+    /// The catalog itself, Local only or not: for its settings (region, the sign-in), which
+    /// must hold when online comes back. Never for a request.
+    pub fn online_catalog(&self) -> Arc<dyn MediaAccess> {
         self.catalog.clone()
+    }
+
+    /// Local only on or off (Settings, Listening).
+    pub fn set_local_only(&self, on: bool) {
+        self.local_only
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

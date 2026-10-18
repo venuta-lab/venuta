@@ -98,6 +98,10 @@ mod tests {
 /// A newer version, if there is one.
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    // Local only: no asking online, not even for updates.
+    if engine::net::is_offline() {
+        return Ok(None);
+    }
     let found = updater(&app)?.check().await.map_err(|e| e.to_string())?;
     Ok(found.map(|u| UpdateInfo {
         version: u.version.clone(),

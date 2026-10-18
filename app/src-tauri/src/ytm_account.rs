@@ -40,10 +40,10 @@ fn youtube_cookies(mut cookies: Vec<tauri::webview::Cookie<'static>>) -> String 
 pub fn restore(app: &AppHandle) {
     let pb = app.state::<Playback>();
     if let Ok(Some(cookie)) = SystemVault.get(VAULT_KEY) {
-        pb.catalog().set_account_cookie(Some(&cookie));
+        pb.online_catalog().set_account_cookie(Some(&cookie));
     }
     // Google renews the cookies as the catalog answers: what is kept follows them.
-    let catalog = pb.catalog();
+    let catalog = pb.online_catalog();
     std::thread::Builder::new()
         .name("venuta-ytm-account".into())
         .spawn(move || {
@@ -109,7 +109,7 @@ fn finish_sign_in(app: AppHandle) {
                 let _ = app.emit("ytm-account-error", e);
                 return;
             }
-            pb.catalog().set_account_cookie(Some(&jar));
+            pb.online_catalog().set_account_cookie(Some(&jar));
             if let Some(w) = app.get_webview_window(WINDOW) {
                 let _ = w.close();
             }
@@ -134,7 +134,7 @@ fn ytmusic_signed_in(jar: &str) -> bool {
 #[tauri::command]
 pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(), String> {
     SystemVault.delete(VAULT_KEY)?;
-    pb.catalog().set_account_cookie(None);
+    pb.online_catalog().set_account_cookie(None);
     if let Some(main) = app.get_webview_window("main")
         && let Ok(cookies) = main.cookies()
     {

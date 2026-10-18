@@ -11,6 +11,7 @@ import { artistFor, useCardWidth, useNav, type Library } from './model'
 import { OnlineShelfRow } from './OnlineCards'
 import { OnlineSongCard } from './OnlineCards'
 import { ArtistCard } from './views'
+import { useLocalOnly } from '../../lib/localOnly'
 
 /*
   Home's parts from your listening and the online catalog: the catalog's mood chips and its
@@ -35,8 +36,9 @@ interface OnlineHomeAnswer {
 export function useOnlineHome(chip: string | null) {
   const [home, setHome] = useState<{ chip: string | null; chips: HomeChip[]; shelves: HomeShelf[]; next: string | null } | null>(null)
   const loading = useRef(false)
+  const localOnly = useLocalOnly()
   useEffect(() => {
-    if (!inApp()) return
+    if (!inApp() || localOnly) return
     let live = true
     invoke<OnlineHomeAnswer>('online_home', { params: chip, continuation: null })
       .then((h) => live && setHome((was) => ({ chip, chips: h.chips.length ? h.chips : (was?.chips ?? []), shelves: h.shelves, next: h.continuation })))
@@ -44,7 +46,7 @@ export function useOnlineHome(chip: string | null) {
     return () => {
       live = false
     }
-  }, [chip])
+  }, [chip, localOnly])
   const more = () => {
     if (!home?.next || loading.current) return
     loading.current = true
@@ -54,6 +56,8 @@ export function useOnlineHome(chip: string | null) {
       .finally(() => (loading.current = false))
   }
   const now = home && home.chip === chip ? home : null
+  // Local only: no catalog rows or chips (none asked for).
+  if (localOnly) return { chips: [], shelves: [], more: null }
   return { chips: home?.chips ?? [], shelves: now?.shelves ?? null, more: now?.next ? more : null }
 }
 
@@ -164,7 +168,9 @@ export function useRecentPlays(root: string, stamp: unknown): Play[] {
 /** Online songs you played lately, newest first, as cards for Jump back in. */
 export function useRecentOnline(plays: Play[]) {
   const nav = useNav()
+  const localOnly = useLocalOnly()
   return useMemo(() => {
+    if (localOnly) return []
     const seen = new Set<string>()
     return plays
       .filter((p) => p.file.startsWith('online:') && !seen.has(p.file) && seen.add(p.file))
@@ -174,7 +180,7 @@ export function useRecentOnline(plays: Play[]) {
         const t: OnlineTrack = { provider, track_id: id.join(':'), title: p.title ?? '', artists: p.artists, album: p.album, album_id: null, duration_ms: null, artwork_url: p.art, isrc: null }
         return { key: p.file, at: p.at, node: <OnlineSongCard track={t} now={false} onPlay={() => void startRadio(nav.root, toRemoteItem(t))} /> }
       })
-  }, [plays, nav.root])
+  }, [plays, nav.root, localOnly])
 }
 
 /** Artists you have played most lately: yours open their page, others their online one. */

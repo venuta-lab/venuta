@@ -399,11 +399,14 @@ fn apply_listening(pb: &playback::Playback, l: &engine::settings::Listening) {
         .iter()
         .map(|b| (b.artist_id.clone(), b.name.clone()))
         .collect();
-    let catalog = pb.catalog();
+    let catalog = pb.online_catalog();
     catalog.set_blocked_artists(&blocked);
     catalog.set_hide_videos(l.hide_videos);
     catalog.set_region(Some(l.catalog_region.as_str()).filter(|c| !c.is_empty()));
     catalog.set_data_saver(l.stream_quality == "low");
+    // Local only: the catalog refuses every request, and so does every other lookup.
+    pb.set_local_only(l.local_only);
+    engine::net::set_offline(l.local_only);
 }
 
 /// Remember which folder is open (your library, or music being brought in).

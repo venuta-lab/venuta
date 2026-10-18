@@ -32,3 +32,11 @@ export function planEnqueue(queue: string[], index: number, keys: string[], next
   const move = nextUp && only !== undefined && only > index + 1 ? { from: only, to: index + 1 } : null
   return { add, move, already: move ? 0 : already }
 }
+
+/** A queue with only the songs `keep` takes (Local only: your own), still starting at the one
+ *  chosen; null when the chosen one is left out (it can't play now). */
+export function keepPlayable<T>(items: T[], index: number, keep: (item: T) => boolean): { items: T[]; index: number } | null {
+  const chosen = items[index]
+  if (chosen === undefined || !keep(chosen)) return null
+  return { items: items.filter(keep), index: items.slice(0, index).filter(keep).length }
+}

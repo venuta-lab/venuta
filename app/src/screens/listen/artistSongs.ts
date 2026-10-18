@@ -5,6 +5,7 @@ import { queueKey, type From } from '../../lib/player'
 import { rankOnlineTracks } from '../../lib/searchRank'
 import type { Library } from './model'
 import { findOnlineArtist, itemOf, type MixedSong } from './onlineSearch'
+import { useLocalOnly } from '../../lib/localOnly'
 
 /*
   What an online artist page plays and shows, shared by their online page and the online part of
@@ -44,9 +45,10 @@ const NOT_AN_ARTIST = /^(various artists?|va|unknown artist|soundtrack)$/i
  */
 export function useOnlineArtistFor(name: string): OnlineArtistPage | null {
   const [found, setFound] = useState<{ name: string; page: OnlineArtistPage } | null>(null)
+  const localOnly = useLocalOnly()
   useEffect(() => {
     const wanted = name.trim()
-    if (!wanted || NOT_AN_ARTIST.test(wanted)) return
+    if (!wanted || NOT_AN_ARTIST.test(wanted) || localOnly) return
     let live = true
     findOnlineArtist(wanted, 'artist-page')
       .then(({ artist }) => (artist ? onlineArtistPage(artist.artist_id) : null))
@@ -59,8 +61,8 @@ export function useOnlineArtistFor(name: string): OnlineArtistPage | null {
     return () => {
       live = false
     }
-  }, [name])
-  return found?.name === name ? found.page : null
+  }, [name, localOnly])
+  return found?.name === name && !localOnly ? found.page : null
 }
 
 /** Every row of their page; a catalog that sends none gets the rows it does send. */

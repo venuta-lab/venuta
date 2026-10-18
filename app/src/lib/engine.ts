@@ -231,6 +231,8 @@ export interface Listening {
   song_notifications: boolean
   /** Signed in to YouTube Music: liking, unliking or disliking online does the same there. */
   sync_likes: boolean
+  /** Only your own music, and nothing online (lib/localOnly.ts). */
+  local_only: boolean
   /** What you pinned to the top of Home (lib/shortcuts.ts). */
   shortcuts: unknown[]
 }

@@ -14,6 +14,7 @@ import { keyFor, matcher } from '../../lib/textsearch'
 import { ytmPlaylists, type OnlineCollection } from '../../lib/engine'
 import { useYtmAccount } from '../../lib/ytmAccount'
 import { CollectionCard } from '../listen/OnlineCards'
+import { useLocalOnly } from '../../lib/localOnly'
 
 /** A playlist with no songs yet, small: opens it, has its menu, takes songs dropped on it. */
 function EmptyPlaylist(props: { root: string; p: PlaylistSummary; onOpen: () => void }) {
@@ -146,8 +147,9 @@ export function PlaylistsHome(props: {
   // Your YouTube Music playlists, when you are signed in (they open as online playlists).
   const account = useYtmAccount()
   const [ytm, setYtm] = useState<OnlineCollection[]>([])
+  const localOnly = useLocalOnly()
   useEffect(() => {
-    if (!account) return
+    if (!account || localOnly) return
     let live = true
     ytmPlaylists()
       .then((l) => live && setYtm(l))
@@ -155,8 +157,8 @@ export function PlaylistsHome(props: {
     return () => {
       live = false
     }
-  }, [account])
-  const ytmShown = account ? ytm.filter((c) => match({ name: c.title } as PlaylistSummary)) : []
+  }, [account, localOnly])
+  const ytmShown = account && !localOnly ? ytm.filter((c) => match({ name: c.title } as PlaylistSummary)) : []
   // Liked songs leads what you made.
   const yours = all
     .filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))

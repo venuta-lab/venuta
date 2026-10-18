@@ -5,6 +5,20 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Local only (Settings, Listening): no request leaves; answers kept from before still show.
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+
+/// Stop (or allow again) every request this client makes.
+pub fn set_offline(on: bool) {
+    OFFLINE.store(on, Ordering::Relaxed);
+}
+
+/// Whether Local only keeps requests from leaving.
+pub fn is_offline() -> bool {
+    OFFLINE.load(Ordering::Relaxed)
+}
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const USER_AGENT: &str = concat!(
@@ -115,6 +129,9 @@ impl Http {
     }
 
     fn fetch(&self, url: &str, accept: &str) -> Result<Vec<u8>, NetError> {
+        if is_offline() {
+            return Err(NetError::Failed("Local only is on".into()));
+        }
         let host = url
             .split("://")
             .nth(1)

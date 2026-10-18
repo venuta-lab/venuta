@@ -9,6 +9,7 @@ import { menuFor, onlineSongWork } from '../../lib/actions'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
 import { useCardWidth, useNav } from './model'
+import { moodArt } from '../../lib/moodArt'
 import { Shelf } from './parts'
 import { isVideo } from './onlineSearch'
 import { useOnlineCards } from './useOnlineCards'
@@ -79,13 +80,27 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
   )
 }
 
-/** A mood or genre tile: its name over a soft wash of the catalog's color for it. */
+/** A mood or genre tile: its picture (shipped with Venuta, in two tones of the tile's color)
+ *  with its name, or for a tile without one its name over a soft wash of that color. */
 export function MoodCard({ tile, onOpen }: { tile: MoodTile; onOpen: () => void }) {
   const color = /^#[0-9a-f]{6}$/i.test(tile.color) ? tile.color : 'var(--accent)'
+  const art = moodArt(tile.title)
+  if (art)
+    return (
+      <button
+        onClick={onOpen}
+        className="group relative block aspect-[16/9] overflow-hidden rounded-2xl text-left shadow-[inset_0_0_0_1px_var(--edge)] transition-transform duration-200 active:scale-[0.98]"
+        style={{ background: color }}
+      >
+        <img src={art} alt="" loading="lazy" draggable={false} className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]" />
+        <span aria-hidden className="absolute inset-0 bg-[linear-gradient(to_top,rgb(0_0_0/0.6),rgb(0_0_0/0.1)_55%,transparent)]" />
+        <span className="absolute inset-x-3.5 bottom-2.5 truncate text-[15px] font-semibold tracking-[-0.01em] text-white [text-shadow:0_1px_8px_rgb(0_0_0/0.45)]">{tile.title}</span>
+      </button>
+    )
   return (
     <button
       onClick={onOpen}
-      className="group relative flex h-[76px] items-end overflow-hidden rounded-2xl bg-ink/[0.05] px-4 pb-3 text-left shadow-[inset_0_0_0_1px_var(--edge)] transition-[background-color,transform] duration-200 hover:bg-ink/[0.08] active:scale-[0.98]"
+      className="group relative flex aspect-[16/9] items-end overflow-hidden rounded-2xl bg-ink/[0.05] px-4 pb-3 text-left shadow-[inset_0_0_0_1px_var(--edge)] transition-[background-color,transform] duration-200 hover:bg-ink/[0.08] active:scale-[0.98]"
     >
       <span
         aria-hidden

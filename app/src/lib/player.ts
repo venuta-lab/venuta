@@ -14,7 +14,8 @@ import {
   type PlaylistItem,
 } from './engine'
 import { notify } from './notify'
-import { planEnqueue } from './queueRules'
+import { keepPlayable, planEnqueue } from './queueRules'
+import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 
 /*
@@ -457,8 +458,21 @@ function offerBack(before: Kept | null, items: QueueItem[], from: string) {
   notify(`Playing ${what}.`, { label: 'Undo', run: () => void restoreQueue(before) })
 }
 
+/** Said when Local only keeps an online song from playing. */
+const LOCAL_ONLY_NOTE = "Local only is on, so online songs don't play. Switch it off in Settings, Listening."
+
 /** `play` for queue rows of any kind: library songs and online ones, mixed. */
 export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '', before: Kept | null = keep()) {
+  // Local only: your songs play, online ones are left out of the queue.
+  if (isLocalOnly()) {
+    const mine = keepPlayable(items, index, (q) => !isOnline(q))
+    if (!mine) {
+      notify(LOCAL_ONLY_NOTE)
+      return Promise.resolve()
+    }
+    items = mine.items
+    index = mine.index
+  }
   queueRoot = root
   const f = fromText(from)
   const row = items[index]
@@ -499,7 +513,8 @@ export const playAll = (root: string, tracks: CatalogTrack[], from: From | strin
 
 /** `playAll` for queue rows of any kind. */
 export async function playAllItems(root: string, items: QueueItem[], from: From | string, how: 'order' | 'shuffle' = 'order') {
-  if (!items.length) return
+  if (isLocalOnly()) items = items.filter((q) => !isOnline(q))
+  if (!items.length) return void notify(LOCAL_ONLY_NOTE)
   // What to offer back is the queue as it was before shuffle was switched for this play.
   const before = keep()
   const shuffle = how === 'shuffle'
@@ -564,6 +579,13 @@ export const enqueue = (root: string, tracks: CatalogTrack[], nextUp: boolean) =
 /** Add songs to the queue (next, or at the end), never one already coming up: Play next on a
  *  song coming up later moves it up instead (lib/queueRules.ts). */
 export function enqueueItems(root: string, items: QueueItem[], nextUp: boolean) {
+  if (isLocalOnly()) {
+    items = items.filter((q) => !isOnline(q))
+    if (!items.length) {
+      notify(LOCAL_ONLY_NOTE)
+      return Promise.resolve()
+    }
+  }
   const plan = planEnqueue(state.queue.map(queueKey), state.index, items.map(queueKey), nextUp)
   if (plan.move) return call('player_move', { from: plan.move.from, to: plan.move.to })
   const adding = new Set(plan.add)

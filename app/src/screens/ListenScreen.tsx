@@ -16,6 +16,7 @@ import { recentSearches } from '../lib/recentSearches'
 import { SearchBox, type OnlineSuggestions, type Suggestion } from '../components/search/SearchBox'
 import { createPortal } from 'react-dom'
 import { TITLE_SEARCH } from '../components/TitleBar'
+import { useLocalOnly } from '../lib/localOnly'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
@@ -163,6 +164,7 @@ function Listen(props: Props) {
   // What is typed (the dropdown follows it), and what was searched for (Enter, or a pick from
   // the dropdown): the results are for the words searched, as on the Search page.
   const [query, setQuery] = useState(kept.asked)
+  const localOnly = useLocalOnly()
   // The search lives in the title bar while Music shows (one search, top center).
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => setTitleSlot(document.getElementById(TITLE_SEARCH)), [])
@@ -601,7 +603,7 @@ function Listen(props: Props) {
               setAsked('')
             }}
             suggest={lib.tracks.length ? suggest : undefined}
-            onlineSuggest={suggestOnline}
+            onlineSuggest={localOnly ? undefined : suggestOnline}
             placeholder="Search songs, albums, artists, playlists"
             label="Search your music"
             hint={<kbd>/</kbd>}

@@ -121,6 +121,10 @@ pub struct Listening {
     /// the same on the account. Off until you switch it on.
     #[serde(default)]
     pub sync_likes: bool,
+    /// Only your own music: the online catalog's parts are hidden and Venuta makes no online
+    /// requests (catalog, lyrics and details lookups, covers, updates). Off until switched on.
+    #[serde(default)]
+    pub local_only: bool,
     /// What you pinned to the top of Home (albums, artists, playlists; yours or online), as the
     /// app keeps them.
     #[serde(default)]
@@ -156,6 +160,7 @@ impl Default for Listening {
             catalog_region: String::new(),
             song_notifications: false,
             sync_likes: false,
+            local_only: false,
             shortcuts: Vec::new(),
             lyrics_sources: Vec::new(),
         }

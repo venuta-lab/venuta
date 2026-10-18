@@ -4,6 +4,7 @@ import { onlineMoods, type MoodSection } from '../../lib/engine'
 import { recentSearches } from '../../lib/recentSearches'
 import { MoodCard } from './OnlineCards'
 import { useNav } from './model'
+import { useLocalOnly } from '../../lib/localOnly'
 
 /*
   The Search page before anything is searched: your recent searches (kept on this computer,
@@ -17,7 +18,9 @@ export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => v
   const { openMood } = useNav()
   const recent = useSyncExternalStore(recentSearches.subscribe, recentSearches.list, recentSearches.list)
   const [sections, setSections] = useState<MoodSection[] | null>(null)
+  const localOnly = useLocalOnly()
   useEffect(() => {
+    if (localOnly) return
     let live = true
     onlineMoods()
       .then((s) => live && setSections(s))
@@ -25,7 +28,9 @@ export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => v
     return () => {
       live = false
     }
-  }, [])
+  }, [localOnly])
+  // Local only: no catalog moods and genres.
+  const shown = localOnly ? [] : sections
 
   return (
     <div className="pb-16">
@@ -58,7 +63,7 @@ export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => v
         </section>
       )}
       {yours}
-      {sections === null ? (
+      {shown === null ? (
         <div className={recent.length ? 'mt-10' : ''} aria-hidden>
           <div className="shimmer mb-4 h-4 w-40 rounded-full" />
           <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-3">
@@ -68,7 +73,7 @@ export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => v
           </div>
         </div>
       ) : (
-        sections.map((s, i) => (
+        shown.map((s, i) => (
           <section key={s.title} className={i > 0 || recent.length ? 'mt-10' : ''}>
             <h2 className="title mb-3.5 text-[19px]">{s.title}</h2>
             <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-3">
@@ -79,7 +84,7 @@ export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => v
           </section>
         ))
       )}
-      {sections !== null && !sections.length && !recent.length && (
+      {shown !== null && !shown.length && !recent.length && (
         <p className="py-16 text-center text-[14px] text-ink/55">Search your music and the online catalog. Press / to start typing.</p>
       )}
     </div>
