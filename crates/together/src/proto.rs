@@ -42,6 +42,9 @@ pub struct Song {
     /// The host has it as a file and can stream it to anyone without a copy.
     #[serde(default)]
     pub host_file: bool,
+    /// The host's file's format ("flac", "mp3"…), for a guest's player to read its stream.
+    #[serde(default)]
+    pub format: Option<String>,
     /// Its cover picture (https only).
     #[serde(default)]
     pub artwork_url: Option<String>,
@@ -95,6 +98,13 @@ impl Song {
             .is_none_or(|m| m.len() == 36 && m.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
         {
             return Err("a MusicBrainz id that isn't one".into());
+        }
+        if !self
+            .format
+            .as_deref()
+            .is_none_or(|f| f.len() <= 8 && f.bytes().all(|b| b.is_ascii_alphanumeric()))
+        {
+            return Err("a format that isn't one".into());
         }
         if !self.online_id.as_deref().is_none_or(is_online_id) {
             return Err("a catalog id that isn't one".into());
@@ -340,6 +350,7 @@ mod tests {
             mbid: None,
             online_id: Some(id.into()),
             host_file: false,
+            format: None,
             artwork_url: Some("https://i.ytimg.com/vi/x/hq.jpg".into()),
             added_by: None,
         }

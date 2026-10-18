@@ -282,14 +282,6 @@ impl Room {
         self.people.iter_mut().find(|p| p.id == id)
     }
 
-    fn name(&self, id: u32) -> String {
-        self.people
-            .iter()
-            .find(|p| p.id == id)
-            .map(|p| p.name.clone())
-            .unwrap_or_default()
-    }
-
     // --- What people report -----------------------------------------------------------------
 
     pub fn hearing(&mut self, id: u32, rev: u64, index: usize, how: Hearing) -> Changes {
@@ -777,6 +769,7 @@ mod tests {
             mbid: None,
             online_id: Some(format!("song{n:07}")),
             host_file: false,
+            format: None,
             artwork_url: None,
             added_by: None,
         }
@@ -1011,7 +1004,11 @@ mod tests {
             "this one plays on meanwhile"
         );
         r.tick(ends - 1_000_000);
-        assert_eq!(r.timeline().unwrap().index, 0, "a second before the end it still plays");
+        assert_eq!(
+            r.timeline().unwrap().index,
+            0,
+            "a second before the end it still plays"
+        );
         r.tick(ends - 400_000);
         let next = r.timeline().unwrap();
         assert_eq!(

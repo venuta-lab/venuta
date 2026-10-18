@@ -20,6 +20,13 @@ use tauri::ipc::Channel;
 #[derive(Clone, Default)]
 pub struct MediaRef(Option<Arc<dyn MediaAccess>>);
 
+impl MediaRef {
+    /// A remote item's own way to its stream (listening together: the host's file, streamed).
+    pub fn new(access: Arc<dyn MediaAccess>) -> Self {
+        MediaRef(Some(access))
+    }
+}
+
 impl std::fmt::Debug for MediaRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(if self.0.is_some() {
@@ -198,6 +205,29 @@ pub struct Playback {
     /// Local only (Settings, Listening): every catalog request is refused while it's on.
     local_only: Arc<std::sync::atomic::AtomicBool>,
     offline: Arc<dyn MediaAccess>,
+    /// Listening together: the room's follower hears every status here.
+    room_tap: Arc<Mutex<Option<std::sync::mpsc::Sender<RoomTick>>>>,
+}
+
+/// What the room's follower needs of each player status.
+#[derive(Debug, Clone)]
+pub struct RoomTick {
+    pub index: Option<usize>,
+    pub duration_ms: u64,
+    pub sync: Option<player::engine::SyncStatus>,
+    /// Not a status: time passing with none (the follower looks at the clock).
+    pub idle: bool,
+}
+
+impl RoomTick {
+    pub fn idle() -> Self {
+        RoomTick {
+            index: None,
+            duration_ms: 0,
+            sync: None,
+            idle: true,
+        }
+    }
 }
 
 /// The catalog while Local only is on: it answers every request with "Local only is on", so
@@ -274,6 +304,7 @@ impl Default for Playback {
             catalog: media_access::default_media_access(),
             local_only: Arc::default(),
             offline: Arc::new(LocalOnlyAccess),
+            room_tap: Arc::default(),
         }
     }
 }
@@ -296,6 +327,7 @@ impl Playback {
             let root = self.root.clone();
             let catalog = self.catalog.clone();
             let local_only = self.local_only.clone();
+            let room_tap = self.room_tap.clone();
             // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
             let mut warmed: Option<String> = None;
             // Plays and where you were are written to disk on a thread of their own: never on
@@ -324,6 +356,16 @@ impl Playback {
                     if let Some(q) = &s.queue {
                         queue = q.clone();
                         order = s.unshuffled.clone();
+                    }
+                    if let Ok(tap) = room_tap.lock()
+                        && let Some(tx) = tap.as_ref()
+                    {
+                        let _ = tx.send(RoomTick {
+                            index: s.index,
+                            duration_ms: s.duration_ms,
+                            sync: s.sync,
+                            idle: false,
+                        });
                     }
                     let folder = root.lock().map(|r| r.clone()).unwrap_or_default();
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
@@ -682,6 +724,77 @@ impl Playback {
     /// must hold when online comes back. Never for a request.
     pub fn online_catalog(&self) -> Arc<dyn MediaAccess> {
         self.catalog.clone()
+    }
+
+    /// The output chosen (its id), or `None` for the Windows default.
+    pub fn output_id(&self) -> Option<String> {
+        self.output.lock().ok().and_then(|o| o.0.clone())
+    }
+
+    /// Listening together: every player status goes to `tap` too (`None`: no more).
+    pub fn set_room_tap(&self, tap: Option<std::sync::mpsc::Sender<RoomTick>>) {
+        if let Ok(mut t) = self.room_tap.lock() {
+            *t = tap;
+        }
+    }
+
+    /// Listening together: this song alone in the player, ready at `start_ms` (the room's plan
+    /// then says when it plays). A remote item may bring its own way to its stream.
+    pub fn room_load(
+        &self,
+        root: &str,
+        item: QueueItem,
+        start_ms: u64,
+        own: Option<Arc<dyn MediaAccess>>,
+    ) -> Result<(), String> {
+        if let Ok(mut r) = self.root.lock() {
+            *r = root.to_owned();
+        }
+        let mut items = self.resolve(root, vec![item]);
+        if let Some(access) = own {
+            for it in &mut items {
+                it.media = MediaRef::new(access.clone());
+            }
+        }
+        self.send(Cmd::Set {
+            items,
+            index: 0,
+            start_ms,
+            play: false,
+            from: "room".into(),
+        })
+    }
+
+    /// Listening together: add the next song after the one playing (ready ahead, to follow it
+    /// without a gap).
+    pub fn room_queue_next(
+        &self,
+        root: &str,
+        item: QueueItem,
+        own: Option<Arc<dyn MediaAccess>>,
+    ) -> Result<(), String> {
+        let mut items = self.resolve(root, vec![item]);
+        if let Some(access) = own {
+            for it in &mut items {
+                it.media = MediaRef::new(access.clone());
+            }
+        }
+        self.send(Cmd::Insert { items, next: true })
+    }
+
+    /// Listening together: quiet (this person can't play the room's song, or stepped out).
+    pub fn room_pause(&self) -> Result<(), String> {
+        self.send(Cmd::Pause)
+    }
+
+    /// Listening together: on to the readied next song now (this copy ran longer than the room's).
+    pub fn room_next(&self) -> Result<(), String> {
+        self.send(Cmd::Next)
+    }
+
+    /// Listening together: the room's plan for the player (`None`: on its own again).
+    pub fn room_sync(&self, plan: Option<player::sync::SyncPlan>) -> Result<(), String> {
+        self.send(Cmd::Sync(plan))
     }
 
     /// Local only on or off (Settings, Listening).

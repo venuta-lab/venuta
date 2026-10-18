@@ -31,6 +31,7 @@ mod online;
 mod phone;
 mod playback;
 mod theme_packs;
+mod together;
 mod updates;
 mod ytm_account;
 
@@ -3027,6 +3028,7 @@ pub fn run() {
     builder
         .manage(Jobs::default())
         .manage(playback::Playback::default())
+        .manage(together::Together::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
@@ -3210,6 +3212,24 @@ pub fn run() {
             clear_cache,
             get_hotkeys,
             set_hotkey,
+            together::together_view,
+            together::together_host,
+            together::together_read_invite,
+            together::together_join,
+            together::together_leave,
+            together::together_ask,
+            together::together_add,
+            together::together_undo,
+            together::together_admit,
+            together::together_deny,
+            together::together_remove,
+            together::together_role,
+            together::together_new_role,
+            together::together_same_room,
+            together::together_let_in_without_asking,
+            together::together_step_out,
+            together::together_set_name,
+            together::together_set_delay,
             ytm_account::ytm_bring_in_likes,
             diagnostics,
             restart_app,

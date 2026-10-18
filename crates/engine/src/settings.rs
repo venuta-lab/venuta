@@ -125,6 +125,19 @@ pub struct Listening {
     /// requests (catalog, lyrics and details lookups, covers, updates). Off until switched on.
     #[serde(default)]
     pub local_only: bool,
+    /// Listening together: the name others see (empty: this computer's user name).
+    #[serde(default)]
+    pub together_name: String,
+    /// Listening together through the relay only, so others never see your IP address.
+    #[serde(default)]
+    pub together_hide_ip: bool,
+    /// Listening together through your own relay (https://...), not the public ones.
+    #[serde(default)]
+    pub together_relay: Option<String>,
+    /// How much later than the device says each output is heard (Bluetooth), by output id
+    /// ("default" for the Windows default), milliseconds.
+    #[serde(default)]
+    pub together_delay: std::collections::BTreeMap<String, i32>,
     /// What you pinned to the top of Home (albums, artists, playlists; yours or online), as the
     /// app keeps them.
     #[serde(default)]
@@ -161,6 +174,10 @@ impl Default for Listening {
             song_notifications: false,
             sync_likes: false,
             local_only: false,
+            together_name: String::new(),
+            together_hide_ip: false,
+            together_relay: None,
+            together_delay: Default::default(),
             shortcuts: Vec::new(),
             lyrics_sources: Vec::new(),
         }
