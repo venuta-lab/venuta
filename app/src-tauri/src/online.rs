@@ -4,8 +4,8 @@
 
 use crate::playback::Playback;
 use media_access::{
-    AccessError, AccessErrorKind, CancellationToken, PageRequest, RemoteAlbum, RemoteArtist,
-    RemoteTrack,
+    AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RemoteAlbum,
+    RemoteArtist, RemoteCollection, RemotePlaylist, RemoteTrack, SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -28,6 +28,8 @@ const CACHE_SIZE: usize = 32;
 pub struct OnlineSearch {
     running: Mutex<HashMap<String, CancellationToken>>,
     recent: Mutex<HashMap<String, (Instant, OnlineResults)>>,
+    /// The catalog's moods and genres, asked once a session (they change rarely).
+    moods: Mutex<Option<Vec<MoodSection>>>,
 }
 
 impl OnlineSearch {
@@ -232,6 +234,149 @@ pub async fn online_search(
         running.remember(key, &results.0);
     }
     Ok(results.0)
+}
+
+/// What the catalog suggests for half-typed words: completions, and a few songs, albums,
+/// artists and playlists. A newer call from the same box stops this one (answered with
+/// [`SEARCH_CANCELLED`]); offline or unsupported, it answers nothing rather than an error.
+#[tauri::command]
+pub async fn online_suggest(
+    input: String,
+    search_box: Option<String>,
+    pb: State<'_, Playback>,
+    running: State<'_, OnlineSearch>,
+) -> Result<SearchSuggestions, String> {
+    let input = input.trim().to_owned();
+    if input.is_empty() {
+        return Ok(SearchSuggestions::default());
+    }
+    let access = pb.catalog();
+    let cancel = running.fresh(&format!("suggest:{}", box_name(search_box)));
+    let started = Instant::now();
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        let found = access.suggest(&input, &cancel);
+        if cancel.is_cancelled() {
+            return Err(SEARCH_CANCELLED.to_owned());
+        }
+        Ok(found.unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    media_access::note_timing(&format!(
+        "online suggestions answered in {} ms",
+        media_access::ms_since(started)
+    ));
+    Ok(found)
+}
+
+/// Playlists (`kind` "playlists") or podcasts (`kind` "podcasts") for these words.
+#[tauri::command]
+pub async fn online_collections(
+    query: String,
+    kind: String,
+    search_box: Option<String>,
+    pb: State<'_, Playback>,
+    running: State<'_, OnlineSearch>,
+) -> Result<Vec<RemoteCollection>, String> {
+    let query = query.trim().to_owned();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let access = pb.catalog();
+    let cancel = running.fresh(&format!("{kind}:{}", box_name(search_box)));
+    tauri::async_runtime::spawn_blocking(move || {
+        let page = access.search_collections(&query, &kind, &PageRequest::new(30, None), &cancel);
+        if cancel.is_cancelled() {
+            return Err(SEARCH_CANCELLED.to_owned());
+        }
+        Ok(page.map(|p| p.items).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Videos for these words: live sets, covers and uploads that never had a release.
+#[tauri::command]
+pub async fn online_videos(
+    query: String,
+    search_box: Option<String>,
+    pb: State<'_, Playback>,
+    running: State<'_, OnlineSearch>,
+) -> Result<Vec<RemoteTrack>, String> {
+    let query = query.trim().to_owned();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let access = pb.catalog();
+    let cancel = running.fresh(&format!("videos:{}", box_name(search_box)));
+    tauri::async_runtime::spawn_blocking(move || {
+        let page = access.search_videos(&query, &PageRequest::new(30, None), &cancel);
+        if cancel.is_cancelled() {
+            return Err(SEARCH_CANCELLED.to_owned());
+        }
+        Ok(page.map(|p| p.items).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The catalog's moods and genres to browse (asked once a session; empty when offline).
+#[tauri::command]
+pub async fn online_moods(
+    pb: State<'_, Playback>,
+    running: State<'_, OnlineSearch>,
+) -> Result<Vec<MoodSection>, String> {
+    if let Some(kept) = running.moods.lock().ok().and_then(|m| m.clone()) {
+        return Ok(kept);
+    }
+    let access = pb.catalog();
+    let found =
+        tauri::async_runtime::spawn_blocking(move || access.moods(&CancellationToken::default()))
+            .await
+            .map_err(|e| e.to_string())?;
+    match found {
+        Ok(sections) => {
+            if !sections.is_empty()
+                && let Ok(mut kept) = running.moods.lock()
+            {
+                *kept = Some(sections.clone());
+            }
+            Ok(sections)
+        }
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// One mood's or genre's playlists (`params` from its tile).
+#[tauri::command]
+pub async fn online_mood(
+    params: String,
+    pb: State<'_, Playback>,
+) -> Result<Vec<RemoteCollection>, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .mood_collections(&params, &CancellationToken::default())
+            .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A catalog playlist or podcast, opened: its name and its songs or episodes, in order.
+#[tauri::command]
+pub async fn online_collection(
+    collection_id: String,
+    pb: State<'_, Playback>,
+) -> Result<RemotePlaylist, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .playlist(&collection_id, &CancellationToken::default())
+            .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// More songs for the same words, from `cursor` (an answer's `tracks_cursor`, or a page's

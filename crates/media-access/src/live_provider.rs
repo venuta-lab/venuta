@@ -1522,6 +1522,7 @@ fn encode_cursor(cursor: Cursor) -> Result<String, AccessError> {
 }
 
 /// A playlist's page id: "VL" and its list id (as a share link has it, or already with VL).
+/// A podcast's page id ("MPSP" and its list id) opens its episode list the same way.
 fn playlist_browse_id(playlist_id: &str) -> Result<String, AccessError> {
     let id = playlist_id.trim();
     if id.is_empty() {
@@ -1530,6 +1531,10 @@ fn playlist_browse_id(playlist_id: &str) -> Result<String, AccessError> {
             "playlist id must not be empty",
         ));
     }
+    let id = id
+        .strip_prefix("MPSP")
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(id);
     Ok(if id.starts_with("VL") {
         id.to_owned()
     } else {
@@ -1624,4 +1629,18 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .filter(|token| !token.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::playlist_browse_id;
+
+    #[test]
+    fn playlists_and_podcasts_open_by_their_list() {
+        assert_eq!(playlist_browse_id("PL123").unwrap(), "VLPL123");
+        assert_eq!(playlist_browse_id("VLPL123").unwrap(), "VLPL123");
+        // A podcast's page is its episode list.
+        assert_eq!(playlist_browse_id("MPSPPL123").unwrap(), "VLPL123");
+        assert!(playlist_browse_id("  ").is_err());
+    }
 }
