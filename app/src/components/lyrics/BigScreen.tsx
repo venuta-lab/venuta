@@ -148,7 +148,7 @@ function Stage({ frame }: { frame: Frame }) {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                className="flex shrink-0 items-center gap-1 rounded-full bg-black/45 p-1 text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-xl"
+                className="flex shrink-0 items-center gap-1 rounded-full bg-black/60 p-1 text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]"
               >
                 <button onClick={() => void previous()} aria-label="Previous" className="grid h-14 w-14 place-items-center rounded-full text-white/80 hover:bg-white/15 hover:text-white">
                   <IconPrevious width={24} height={24} />

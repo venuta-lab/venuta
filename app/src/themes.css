@@ -767,15 +767,16 @@
     0 14px 30px -20px rgb(0 0 0 / 0.4);
 }
 
-/* ---- Sharp themes: corners become hard (a cap on every rounded thing, except true dots). */
-:root:is([data-style="neo-tokyo"], [data-style="sync-ratio"], [data-style="layer-zero"], [data-style="bounty"], [data-style="skin99"])
+/* ---- Sharp themes: corners become hard (a cap on every rounded thing, except true dots). Not in
+   the lyrics windows: Windows rounds their corners, and their few controls keep one shape. */
+:root:is([data-style="neo-tokyo"], [data-style="sync-ratio"], [data-style="layer-zero"], [data-style="bounty"], [data-style="skin99"]):not([data-window="stage"], [data-window="overlay"])
   :is([class*="rounded"], .btn, .btn-primary, .btn-ghost, .glass, .popover):not(.keep-round) {
   border-radius: 2px !important;
 }
-:root[data-style="thermoptic"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-["], .glass, .popover):not(.keep-round) {
+:root[data-style="thermoptic"]:not([data-window="stage"], [data-window="overlay"]) :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-["], .glass, .popover):not(.keep-round) {
   border-radius: 6px !important;
 }
-:root[data-style="thermoptic"] :is(.btn, .btn-primary, .btn-ghost, [class*="rounded-full"], [class*="rounded-xl"], [class*="rounded-lg"]):not(.keep-round) {
+:root[data-style="thermoptic"]:not([data-window="stage"], [data-window="overlay"]) :is(.btn, .btn-primary, .btn-ghost, [class*="rounded-full"], [class*="rounded-xl"], [class*="rounded-lg"]):not(.keep-round) {
   border-radius: 3px !important;
 }
 
@@ -1652,13 +1653,13 @@
 }
 
 /* ---- Shared by the four: panel corners, and the player's Play. ---------------------------- */
-:root[data-style="green-room"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round) {
+:root[data-style="green-room"]:not([data-window="stage"], [data-window="overlay"]) :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round) {
   border-radius: 8px !important;
 }
-:root[data-style="orchard"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
+:root[data-style="orchard"]:not([data-window="stage"], [data-window="overlay"]) :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
   border-radius: 12px !important;
 }
-:root[data-style="redline"] :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
+:root[data-style="redline"]:not([data-window="stage"], [data-window="overlay"]) :is([class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[2"]):not(.keep-round, .np) {
   border-radius: 12px !important;
 }
 :root[data-style="green-room"] .np-play {

@@ -202,6 +202,7 @@ pub async fn lyrics_window(
     if let Some(w) = app.get_webview_window(kind.label()) {
         apply(&app, kind, &w, &place);
         let _ = w.show();
+        bare(kind, &w);
         if !place.locked {
             let _ = w.set_focus();
         }
@@ -252,6 +253,7 @@ pub async fn lyrics_window(
     }
     lock(&app, kind, &w, place.locked);
     let _ = w.show();
+    bare(kind, &w);
     if kind == Kind::Stage {
         let _ = w.set_focus();
         // Its screen cleared: the other windows there minimized until it closes.
@@ -262,6 +264,73 @@ pub async fn lyrics_window(
     }
     tell_shown(&app, kind, true);
     Ok(())
+}
+
+/// A lyrics window is only its page. A frameless window still carries Windows' title-bar styles
+/// (the window menu, minimize, maximize), and through a see-through page Windows draws their
+/// buttons and a thin border over the words; the window's own changes (locking, on top, full
+/// screen, the blur) put them back each time. So after each, they come off again: no buttons, no
+/// border line, and the corners its job wants (the desktop lyrics rounded by Windows, so the blur,
+/// the theme and the page share one edge; the big screen square). The sizing frame stays: the
+/// desktop lyrics are sized from their edges.
+fn bare(kind: Kind, w: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE,
+            DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
+            WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+        };
+        let Ok(h) = w.hwnd() else {
+            return;
+        };
+        unsafe {
+            let style = GetWindowLongPtrW(h, GWL_STYLE);
+            let bare = style & !((WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0) as isize);
+            if bare != style {
+                SetWindowLongPtrW(h, GWL_STYLE, bare);
+                let _ = SetWindowPos(
+                    h,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE
+                        | SWP_NOSIZE
+                        | SWP_NOZORDER
+                        | SWP_NOOWNERZORDER
+                        | SWP_NOACTIVATE
+                        | SWP_FRAMECHANGED,
+                );
+            }
+            // Windows 11 only (earlier ones have neither, and say so).
+            let none = DWMWA_COLOR_NONE;
+            let _ = DwmSetWindowAttribute(
+                h,
+                DWMWA_BORDER_COLOR,
+                (&none as *const u32).cast(),
+                std::mem::size_of::<u32>() as u32,
+            );
+            let corner = if kind == Kind::Stage {
+                DWMWCP_DONOTROUND
+            } else {
+                DWMWCP_ROUND
+            };
+            let _ = DwmSetWindowAttribute(
+                h,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&corner as *const _ as *const u32).cast(),
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (kind, w);
 }
 
 /// A shown window to `place`'s ways (full screen, on top, locked), without moving it otherwise.
@@ -310,6 +379,7 @@ pub fn lyrics_window_set(
             let _ = w.set_focus();
         }
     }
+    bare(kind, &w);
     Ok(())
 }
 
@@ -328,7 +398,9 @@ pub fn lyrics_window_frost(kind: String, on: bool, app: AppHandle) -> Result<(),
             .color(tauri::window::Color(16, 16, 20, 8))
             .build()
     });
-    w.set_effects(effects).map_err(|e| e.to_string())
+    w.set_effects(effects).map_err(|e| e.to_string())?;
+    bare(kind, &w);
+    Ok(())
 }
 
 /// Whether a lyrics window is showing.
@@ -452,6 +524,7 @@ struct Pointer {
 
 fn lock(app: &AppHandle, kind: Kind, w: &WebviewWindow, locked: bool) {
     let _ = w.set_ignore_cursor_events(locked);
+    bare(kind, w);
     let locks = app.state::<Locks>();
     if !locked {
         locks.forget(kind);
@@ -510,6 +583,7 @@ fn watch(app: AppHandle) {
             let (inside, over) = pointer_on(cursor.x, cursor.y, window, scale, spot.rect);
             if over != spot.over {
                 let _ = w.set_ignore_cursor_events(!over);
+                bare(kind, &w);
             }
             if (inside, over) != (spot.inside, spot.over) {
                 let _ = w.emit_to(kind.label(), POINTER_EVENT, Pointer { inside, over });

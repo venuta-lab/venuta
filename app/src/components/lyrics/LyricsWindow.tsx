@@ -124,7 +124,7 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
   const unlocked = !s.locked
   // The unlocked desktop lyrics show their controls while the pointer is over them (or a list of
   // theirs is open): away from them, they look exactly as they will.
-  const [hover, setHover] = useState(true)
+  const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
   const awake = unlocked && (stage ? moved || panel !== null : hover || focus)
   // The bar's height, for the band.
@@ -150,8 +150,9 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
     return () => window.removeEventListener('keydown', key)
   }, [panel, stage, win])
 
-  // The frosted blur fills the window's whole rectangle, so it keeps square corners.
-  const radius = stage || bg === 'frosted' ? 0 : 14
+  // The desktop lyrics' corners are the ones Windows rounds (lyric_windows.rs: 8 px), so the
+  // blur, the theme's ground and the page share one edge; the big screen fills a screen, square.
+  const radius = stage ? 0 : 8
   return (
     <div
       className="relative h-full w-full overflow-hidden"
@@ -222,7 +223,7 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
                   exit={{ opacity: 0, y: -6, scale: 0.97 }}
                   transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                   style={{ transformOrigin: 'top right' }}
-                  className="max-h-[80vh] w-[360px] overflow-y-auto rounded-[24px] bg-black/60 p-4 text-white shadow-[0_24px_60px_-20px_rgb(0_0_0/0.9),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-2xl"
+                  className="max-h-[80vh] w-[360px] overflow-y-auto rounded-[24px] bg-[rgb(14_14_18/0.86)] p-4 text-white shadow-[0_24px_60px_-20px_rgb(0_0_0/0.9),inset_0_0_0_1px_rgb(255_255_255/0.1)]"
                 >
                   {panel === 'style' && <LookPanel win={win} ground={ground} tone="dark" coverColour={colour} indic={hasIndic(lyrics?.lines)} />}
                   {panel === 'background' && <BackgroundTiles win={win} value={bg} />}
@@ -255,12 +256,14 @@ function Behind(props: { background: LyricBackground; ground: Ground; cover: str
           className="absolute inset-0"
           style={{
             borderRadius: props.radius,
+            // A pane of glass: what's behind stays sharp under a clear tint, a sheen across its
+            // top and a bright edge; the theme's accent just tints it.
             background: light
-              ? 'linear-gradient(160deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.18) 45%, rgb(255 255 255 / 0.26))'
-              : 'linear-gradient(160deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.03) 45%, rgb(10 12 18 / 0.2))',
+              ? 'linear-gradient(172deg, rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.22) 38%, rgb(255 255 255 / 0.3)), color-mix(in oklab, var(--accent) 6%, rgb(255 255 255 / 0.18))'
+              : 'linear-gradient(172deg, rgb(255 255 255 / 0.2), rgb(255 255 255 / 0.05) 38%, rgb(255 255 255 / 0.08)), color-mix(in oklab, var(--accent) 8%, rgb(14 16 22 / 0.34))',
             boxShadow: light
-              ? 'inset 0 1px 0 rgb(255 255 255 / 0.85), inset 0 0 0 1px rgb(255 255 255 / 0.55), inset 0 -18px 30px -24px rgb(0 0 0 / 0.12)'
-              : 'inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 0 0 1px rgb(255 255 255 / 0.14), inset 0 -18px 30px -24px rgb(0 0 0 / 0.4)',
+              ? 'inset 0 1px 0 rgb(255 255 255 / 0.95), inset 0 0 0 1px rgb(255 255 255 / 0.65), inset 0 -24px 40px -30px rgb(0 0 0 / 0.14)'
+              : 'inset 0 1px 0 rgb(255 255 255 / 0.45), inset 0 0 0 1px rgb(255 255 255 / 0.22), inset 0 -24px 40px -30px rgb(0 0 0 / 0.5)',
           }}
         />
       )
@@ -404,7 +407,7 @@ function LockButton({ win }: { win: LyricWindow }) {
       onClick={() => void setLyricWindow(win, { locked: false })}
       aria-label="Unlock: move, size and change them"
       title="Unlock: move, size and change them"
-      className="absolute right-3 top-3 z-40 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-white shadow-[0_6px_20px_-6px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.15)] backdrop-blur-xl transition-[opacity,transform] duration-200"
+      className="absolute right-3 top-3 z-40 grid h-9 w-9 place-items-center rounded-full bg-[rgb(14_14_18/0.8)] text-white shadow-[0_6px_20px_-6px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.15)] transition-[opacity,transform] duration-200"
       style={{ opacity: pointer.inside ? 1 : 0, transform: pointer.over ? 'scale(1.08)' : 'scale(1)' }}
     >
       <IconLock width={16} height={16} strokeWidth={2.1} />
@@ -412,7 +415,9 @@ function LockButton({ win }: { win: LyricWindow }) {
   )
 }
 
-const BAR = 'flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[20px] bg-black/65 p-1 text-white shadow-[0_10px_30px_-10px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-xl'
+// No CSS backdrop blur in a see-through window: it samples the window's empty pixels and smears
+// them white. Near-opaque instead.
+const BAR = 'flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[20px] bg-[rgb(14_14_18/0.82)] p-1 text-white shadow-[0_10px_30px_-10px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.1)]'
 const ON = 'bg-white/20 text-white'
 /** A button in words (never icons that read as a window's own buttons). */
 const WORD = 'flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[12.5px] font-medium text-white/80 transition-colors hover:bg-white/15 hover:text-white'
