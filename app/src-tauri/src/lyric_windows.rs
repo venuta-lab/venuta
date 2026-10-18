@@ -91,7 +91,7 @@ impl Kind {
     fn min(self) -> (f64, f64) {
         match self {
             Kind::Stage => (480.0, 270.0),
-            Kind::Overlay => (320.0, 90.0),
+            Kind::Overlay => (360.0, 130.0),
         }
     }
     /// Where it goes the first time (or when its place is off every screen): the desktop lyrics
@@ -103,7 +103,8 @@ impl Kind {
         let (aw, ah) = (area.size.width as f64 / s, area.size.height as f64 / s);
         match self {
             Kind::Overlay => {
-                let (w, h) = (920.0_f64.min(aw - 40.0), 170.0);
+                // The lines, and the band above them for the bar and the lock.
+                let (w, h) = (920.0_f64.min(aw - 40.0), 200.0);
                 (ax + (aw - w) / 2.0, ay + ah - h - 40.0, w, h)
             }
             Kind::Stage => {
@@ -161,6 +162,10 @@ fn tell_shown(app: &AppHandle, kind: Kind, open: bool) {
 pub fn closed(app: &AppHandle, label: &str) {
     if let Ok(kind) = Kind::of(label) {
         app.state::<Locks>().forget(kind);
+        // The big screen gone: the windows it cleared from its screen come back.
+        if kind == Kind::Stage {
+            crate::clear_screen::on_close();
+        }
         tell_shown(app, kind, false);
     }
 }
@@ -247,8 +252,13 @@ pub async fn lyrics_window(
     }
     lock(&app, kind, &w, place.locked);
     let _ = w.show();
-    if kind == Kind::Stage && !place.locked {
+    if kind == Kind::Stage {
         let _ = w.set_focus();
+        // Its screen cleared: the other windows there minimized until it closes.
+        #[cfg(windows)]
+        if let Ok(h) = w.hwnd() {
+            crate::clear_screen::on_open(h.0 as isize);
+        }
     }
     tell_shown(&app, kind, true);
     Ok(())

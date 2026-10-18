@@ -184,22 +184,24 @@ export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColou
   const look = useLyricLook(props.win)
   const set = (change: Parameters<typeof setLyricLook>[1]) => setLyricLook(props.win, change)
   const plain = plainOf(props.ground ?? 'dark')
-  const i = LOOKS.findIndex((l) => l.id === look.look)
-  const step = (by: number) => set({ look: LOOKS[(i + by + LOOKS.length) % LOOKS.length].id })
   const s = SIZES.findIndex((x) => x.id === look.size)
   const btn = 'grid h-7 min-w-7 place-items-center rounded-full px-1.5 text-white/75 transition-colors hover:bg-white/15 hover:text-white disabled:opacity-30'
   const rule = <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
   return (
     <div className="flex items-center gap-0.5 text-[12.5px] text-white">
-      <button onClick={() => step(-1)} className={btn} aria-label="The look before">
-        ‹
-      </button>
-      <span className="w-[4.6em] text-center font-medium" title={LOOKS[i]?.line}>
-        {LOOKS[i]?.name}
-      </span>
-      <button onClick={() => step(1)} className={btn} aria-label="The next look">
-        ›
-      </button>
+      <select
+        value={look.look}
+        onChange={(e) => set({ look: e.target.value as LookId })}
+        aria-label="Look"
+        title={LOOKS.find((l) => l.id === look.look)?.line}
+        className="h-7 cursor-pointer rounded-full bg-white/10 px-2 text-[12.5px] font-medium text-white outline-none hover:bg-white/15"
+      >
+        {LOOKS.map((l) => (
+          <option key={l.id} value={l.id} className="bg-neutral-900 text-white">
+            {l.name}
+          </option>
+        ))}
+      </select>
       {rule}
       {(['cover', 'accent', 'white'] as LyricColour[]).map((c) => (
         <button
@@ -223,7 +225,7 @@ export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColou
       </button>
       {rule}
       <button onClick={() => set({ lines: look.lines === 1 ? 2 : 1 })} className={`${btn} px-2.5`} title="One line, or the next one under it">
-        {look.lines === 1 ? 'One line' : 'Two lines'}
+        {look.lines === 1 ? '1 line' : '2 lines'}
       </button>
       {props.indic && (
         <button

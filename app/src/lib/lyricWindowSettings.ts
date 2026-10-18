@@ -38,11 +38,11 @@ export interface LyricWindowSettings {
   monitor: string | null
 }
 
-/** As each window always was: the big screen over the cover's light, the desktop lyrics the
- *  clear lines on top, locked; both in Venuta's own theme. */
+/** Until chosen otherwise, both windows look like Venuta: its theme and its own scene behind
+ *  the words. The desktop lyrics start on top, locked. */
 export const WINDOW_DEFAULTS: Record<LyricWindow, LyricWindowSettings> = {
-  stage: { background: 'cover', theme: 'venuta', onTop: false, locked: false, bounds: null, monitor: null },
-  overlay: { background: 'clear', theme: 'venuta', onTop: true, locked: true, bounds: null, monitor: null },
+  stage: { background: 'theme', theme: 'venuta', onTop: false, locked: false, bounds: null, monitor: null },
+  overlay: { background: 'theme', theme: 'venuta', onTop: true, locked: true, bounds: null, monitor: null },
 }
 
 export const keyOf = (w: LyricWindow) => `lyric-window-${w}`
@@ -90,4 +90,17 @@ export function readWindow(w: LyricWindow, get: (key: string) => string | null):
   // The big screen is never locked: it fills a screen, and Esc closes it.
   if (w === 'stage') out.locked = false
   return out
+}
+
+/** Whether a CSS colour lets what's behind show (a theme's ground that relies on the window's own
+ *  blur, as Lumen's glass does): an alpha under 1, or transparent. */
+export function seeThrough(colour: string): boolean {
+  const c = colour.trim().toLowerCase()
+  if (!c || c === 'transparent') return !!c
+  const hex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/.exec(c)
+  if (hex) return hex[1].length === 4 ? hex[1][3] !== 'f' : hex[1].slice(6) !== 'ff'
+  const alpha = /\/\s*([\d.]+)(%?)\s*\)$/.exec(c) ?? /^rgba?\([^)]*,\s*([\d.]+)(%?)\s*\)$/.exec(c)
+  if (!alpha) return false
+  const a = parseFloat(alpha[1]) / (alpha[2] ? 100 : 1)
+  return a < 1
 }

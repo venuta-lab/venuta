@@ -257,6 +257,11 @@ export const IconOnTop = (p: P) => (
     <path d="M8.5 9V6.5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
   </svg>
 )
+export const IconPin = (p: P) => (
+  <svg {...base} width={16} height={16} {...p}>
+    <path d="M9 4h6l-1 5.5 3 3V14H7v-1.5l3-3zM12 14v6" />
+  </svg>
+)
 export const IconBackdrop = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
     <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />

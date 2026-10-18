@@ -20,6 +20,7 @@ use tauri::{AppHandle, Manager, State};
 
 mod accounts;
 mod app_icon;
+mod clear_screen;
 mod clipboard;
 mod desktop;
 mod hotkeys;

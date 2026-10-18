@@ -18,9 +18,10 @@ import {
   type LyricBackground,
   type LyricTheme,
 } from '../../lib/lyricWindows'
+import { seeThrough } from '../../lib/lyricWindowSettings'
 import { setWindowTheme, usePrefs } from '../../lib/prefs'
 import { Backdrop } from '../Backdrop'
-import { IconBackdrop, IconClose, IconLock, IconLyricStyle, IconOnTop, IconUnlock } from '../Icons'
+import { IconBackdrop, IconLock, IconLyricStyle, IconPin, IconUnlock } from '../Icons'
 import { ThemeFx } from '../ThemeFx'
 import { LookPanel, LookStrip } from './LookPanel'
 import { hasIndic, useLyricColour, useNowLyrics, useWindowCover } from './useNowLyrics'
@@ -41,6 +42,10 @@ type ResizeDirection = Parameters<ReturnType<typeof getCurrentWindow>['startResi
 
 /** How long the big screen's controls stay after the mouse stops. */
 const IDLE_MS = 2500
+/** The desktop lyrics' top band while locked: room for the lock. Unlocked, it fits their bar
+ *  (one row, or two on a narrow window), kept even while the bar is hidden, so the words never
+ *  move as the pointer comes and goes. */
+const BAND = 46
 
 /** What the frame tells the window inside it. */
 export interface Frame {
@@ -60,7 +65,7 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
   const stage = win === 'stage'
   const s = useLyricWindow(win)
   // A theme's light or dark mode follows Venuta's choice, so the prefs are listened to.
-  usePrefs()
+  const prefs = usePrefs()
   const look = useLyricLook(win)
   const { song, root, lyrics } = useNowLyrics()
   const ground = groundOf(s)
@@ -70,10 +75,14 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
 
   // The theme on screen here: the one chosen, or Venuta's own.
   useEffect(() => setWindowTheme(themeOf(s.theme)), [s.theme])
-  // Frosted: Windows blurs what's behind the window (the page then tints it).
+  // Frosted: Windows blurs what's behind the window (the page then tints it). A theme whose
+  // ground lets what's behind show (Lumen's glass) gets the same blur, as Venuta's window has.
   useEffect(() => {
-    if (inApp()) void invoke('lyrics_window_frost', { kind: win, on: bg === 'frosted' }).catch(() => {})
-  }, [win, bg])
+    if (!inApp()) return
+    const ground = getComputedStyle(document.documentElement).getPropertyValue('--app-bg')
+    const on = bg === 'frosted' || (bg === 'theme' && seeThrough(ground))
+    void invoke('lyrics_window_frost', { kind: win, on }).catch(() => {})
+  }, [win, bg, s.theme, prefs])
 
   // The desktop lyrics' place, kept for next time.
   useEffect(() => {
@@ -113,7 +122,22 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
     }
   }, [])
   const unlocked = !s.locked
-  const awake = unlocked && (!stage || moved || panel !== null)
+  // The unlocked desktop lyrics show their controls while the pointer is over them (or a list of
+  // theirs is open): away from them, they look exactly as they will.
+  const [hover, setHover] = useState(true)
+  const [focus, setFocus] = useState(false)
+  const awake = unlocked && (stage ? moved || panel !== null : hover || focus)
+  // The bar's height, for the band.
+  const bar = useRef<HTMLDivElement>(null)
+  const [barH, setBarH] = useState(0)
+  useLayoutEffect(() => {
+    const b = bar.current
+    if (!b) return
+    const o = new ResizeObserver(() => setBarH(b.offsetHeight))
+    o.observe(b)
+    return () => o.disconnect()
+  }, [unlocked, stage])
+  const band = unlocked && barH ? Math.max(BAND, barH + 10) : BAND
 
   // Esc closes a panel, then the big screen.
   useEffect(() => {
@@ -136,6 +160,11 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
         color: ground === 'dark' ? '#fff' : 'var(--ink)',
         borderRadius: radius,
       }}
+      onMouseEnter={() => setHover(true)}
+      onMouseMove={() => !hover && setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocus(true)}
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setFocus(false)}
       onMouseDown={(e) => {
         // The unlocked desktop lyrics: dragged from anywhere but their controls.
         if (!stage && unlocked && e.button === 0 && !(e.target as HTMLElement).closest('button,select,input,[role=slider],[role=radiogroup],[data-edge]'))
@@ -143,33 +172,34 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
       }}
     >
       <Behind background={bg} ground={ground} cover={cover?.src} radius={radius} />
-      {/* The unlocked desktop lyrics show their edge, so a clear strip can be found and sized. */}
-      {!stage && unlocked && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 z-10"
-          style={{
-            borderRadius: radius,
-            outline: `2px dashed ${ground === 'dark' ? 'rgb(255 255 255 / 0.55)' : 'rgb(0 0 0 / 0.3)'}`,
-            outlineOffset: -4,
-            background: bg === 'clear' ? 'rgb(0 0 0 / 0.28)' : undefined,
-          }}
-        />
-      )}
+      {/* Being arranged: a fine edge and its four corners, so it can be found and sized. */}
+      <AnimatePresence>{!stage && awake && <Arranging key="edge" ground={ground} radius={radius} clear={bg === 'clear'} />}</AnimatePresence>
 
-      <div className={stage ? 'relative h-full w-full' : 'relative flex h-full w-full flex-col'}>
-        {/* The desktop lyrics' controls sit above the words (the words make room). */}
-        <AnimatePresence initial={false}>
-          {!stage && awake && (
-            <motion.div key="bar" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="relative z-20 flex shrink-0 justify-center px-2 pt-2">
+      {stage ? (
+        <div className="relative h-full w-full">{props.children({ clear: bg === 'clear', ground, colour, locked: s.locked, awake })}</div>
+      ) : (
+        <>
+          {/* The top band: the bar while arranging (the lock while locked). Laid out whenever
+              unlocked, shown while the pointer is over them. */}
+          {unlocked && (
+            <motion.div
+              ref={bar}
+              initial={false}
+              animate={{ opacity: awake ? 1 : 0, y: awake ? 0 : -4 }}
+              transition={{ duration: 0.16 }}
+              className="absolute inset-x-0 top-0 z-20 flex justify-center px-2 pt-1.5"
+              style={{ pointerEvents: awake ? 'auto' : 'none' }}
+            >
               <StripBar win={win} onTop={s.onTop} background={bg} theme={s.theme}>
                 <LookStrip win={win} ground={ground} coverColour={colour} indic={hasIndic(lyrics?.lines)} />
               </StripBar>
             </motion.div>
           )}
-        </AnimatePresence>
-        <div className={stage ? 'relative h-full w-full' : 'relative min-h-0 flex-1'}>{props.children({ clear: bg === 'clear', ground, colour, locked: s.locked, awake })}</div>
-      </div>
+          <div className="absolute inset-x-0 bottom-0" style={{ top: band }}>
+            {props.children({ clear: bg === 'clear', ground, colour, locked: s.locked, awake })}
+          </div>
+        </>
+      )}
 
       {!stage && unlocked && <Edges />}
       {!stage && s.locked && <LockButton win={win} />}
@@ -285,6 +315,32 @@ function CoverLight({ src }: { src: string | undefined }) {
   )
 }
 
+/** The unlocked desktop lyrics while the pointer is over them: a fine edge, its four corners
+ *  marked (they size it), and on Clear a faint fill so the strip can be seen at all. */
+function Arranging({ ground, radius, clear }: { ground: Ground; radius: number; clear: boolean }) {
+  const line = ground === 'dark' ? 'rgb(255 255 255 / 0.35)' : 'rgb(0 0 0 / 0.2)'
+  const mark = ground === 'dark' ? 'rgb(255 255 255 / 0.9)' : 'rgb(0 0 0 / 0.55)'
+  const corner = (place: string, sides: string) => (
+    <span className={`absolute h-3.5 w-3.5 ${place}`} style={{ borderColor: mark, borderStyle: 'solid', borderWidth: sides, borderRadius: 3 }} />
+  )
+  return (
+    <motion.div
+      aria-hidden
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.16 }}
+      className="pointer-events-none absolute inset-0 z-10"
+      style={{ borderRadius: radius, boxShadow: `inset 0 0 0 1px ${line}`, background: clear ? 'rgb(0 0 0 / 0.18)' : undefined }}
+    >
+      {corner('left-1 top-1', '2px 0 0 2px')}
+      {corner('right-1 top-1', '2px 2px 0 0')}
+      {corner('bottom-1 left-1', '0 0 2px 2px')}
+      {corner('bottom-1 right-1', '0 2px 2px 0')}
+    </motion.div>
+  )
+}
+
 /** Thin zones along every edge and corner: drag one to size the window. */
 function Edges() {
   const zones: [ResizeDirection, string][] = [
@@ -357,15 +413,16 @@ function LockButton({ win }: { win: LyricWindow }) {
 }
 
 const BAR = 'flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[20px] bg-black/65 p-1 text-white shadow-[0_10px_30px_-10px_rgb(0_0_0/0.8),inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-xl'
-const BTN = 'grid h-8 w-8 place-items-center rounded-full text-white/80 transition-colors hover:bg-white/15 hover:text-white'
 const ON = 'bg-white/20 text-white'
+/** A button in words (never icons that read as a window's own buttons). */
+const WORD = 'flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[12.5px] font-medium text-white/80 transition-colors hover:bg-white/15 hover:text-white'
 const RULE = <span className="mx-1 h-4 w-px bg-white/15" aria-hidden />
 
 /** The big screen's controls: its style, background and theme, each a panel; and Close. */
 function StageBar(props: { win: LyricWindow; panel: Panel | null; setPanel: (p: Panel | null) => void }) {
   const toggle = (p: Panel) => props.setPanel(props.panel === p ? null : p)
   const tab = (p: Panel, label: string, icon: ReactNode) => (
-    <button onClick={() => toggle(p)} aria-expanded={props.panel === p} className={`${BTN} w-auto gap-1.5 px-3 text-[13px] font-medium ${props.panel === p ? ON : ''}`}>
+    <button onClick={() => toggle(p)} aria-expanded={props.panel === p} className={`${WORD} px-3 text-[13px] ${props.panel === p ? ON : ''}`}>
       {icon}
       {label}
     </button>
@@ -376,8 +433,8 @@ function StageBar(props: { win: LyricWindow; panel: Panel | null; setPanel: (p: 
       {tab('background', 'Background', <IconBackdrop width={16} height={16} />)}
       {tab('theme', 'Theme', <ThemeDot />)}
       {RULE}
-      <button onClick={() => void closeLyricWindow(props.win)} aria-label="Close the big screen" title="Close (Esc)" className={BTN}>
-        <IconClose width={15} height={15} />
+      <button onClick={() => void closeLyricWindow(props.win)} title="Esc" className={`${WORD} px-3 text-[13px]`}>
+        Close
       </button>
     </div>
   )
@@ -429,14 +486,14 @@ function StripBar(props: { win: LyricWindow; onTop: boolean; background: LyricBa
       <button
         onClick={() => void setLyricWindow(win, { onTop: !props.onTop })}
         aria-pressed={props.onTop}
-        aria-label="Over every window"
-        title={props.onTop ? 'Over every window: on' : 'Over every window: off'}
-        className={`${BTN} ${props.onTop ? ON : ''}`}
+        title="Kept over every window"
+        className={`${WORD} ${props.onTop ? ON : ''}`}
       >
-        <IconOnTop />
+        <IconPin />
+        On top
       </button>
-      <button onClick={() => void closeLyricWindow(win)} aria-label="Hide the desktop lyrics" title="Hide (Ctrl+Shift+D)" className={BTN}>
-        <IconClose width={15} height={15} />
+      <button onClick={() => void closeLyricWindow(win)} title="Ctrl+Shift+D" className={WORD}>
+        Hide
       </button>
     </div>
   )
