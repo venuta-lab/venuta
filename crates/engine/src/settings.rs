@@ -76,6 +76,9 @@ pub struct Listening {
     /// computer's own region.
     #[serde(default)]
     pub catalog_region: String,
+    /// Say each new song in a Windows notification while Venuta is in the background.
+    #[serde(default)]
+    pub song_notifications: bool,
     /// The lyrics sources in your order, "-id" for one switched off (see
     /// `lyrics_online::order`); empty: the default order, all on.
     #[serde(default)]
@@ -105,6 +108,7 @@ impl Default for Listening {
             history: true,
             stream_quality: auto(),
             catalog_region: String::new(),
+            song_notifications: false,
             lyrics_sources: Vec::new(),
         }
     }

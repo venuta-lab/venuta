@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { Segmented, Switch } from '../../components/ui'
+import { invoke } from '@tauri-apps/api/core'
 import { inApp } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
@@ -95,6 +96,9 @@ export function ListeningSettings() {
       <Row title="Open the player when you press play" hint="Now Playing opens each time something new plays.">
         <Switch on={l.open_player_on_play} onChange={(on) => set({ open_player_on_play: on })} label="Open the player when you press play" />
       </Row>
+      <Row title="Song notifications" hint="When a new song starts while Venuta is in the background, Windows says what it is.">
+        <Switch on={l.song_notifications} onChange={(on) => set({ song_notifications: on })} label="Song notifications" />
+      </Row>
       <Row title="Keep a history" hint="What you play, from your files and online, for Listening's stats and history, Home and Most played. Kept with your library, never sent anywhere.">
         <Switch on={l.history} onChange={(on) => set({ history: on })} label="Keep a history" />
       </Row>
@@ -154,11 +158,26 @@ export function ListeningSettings() {
           )
         })}
       </ol>
-      {l.lyrics_sources.length > 0 && (
-        <button onClick={() => set({ lyrics_sources: [] })} className="btn-ghost btn-sm mt-2">
-          Back to the usual order
-        </button>
-      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {l.lyrics_sources.length > 0 && (
+          <button onClick={() => set({ lyrics_sources: [] })} className="btn-ghost btn-sm">
+            Back to the usual order
+          </button>
+        )}
+        {inApp() && (
+          <button
+            onClick={() =>
+              void invoke<number>('lyrics_forget_all')
+                .then((n) => notify(n ? `Forgot the lyrics kept for ${n.toLocaleString('en-IN')} songs; they are found again as songs play.` : 'No lyrics were kept.'))
+                .catch((e) => notify(String(e)))
+            }
+            className="btn-ghost btn-sm"
+            title="Lyrics found online are kept so each song is asked about once. Your choices per song stay."
+          >
+            Forget kept lyrics
+          </button>
+        )}
+      </div>
 
       <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Never offered</h3>
       <Row

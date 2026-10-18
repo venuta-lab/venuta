@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -896,6 +897,19 @@ function About() {
           The essence of the flute. Version {v}, free and open source under the MIT licence.
         </p>
       </div>
+      <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
+        <button
+          onClick={() =>
+            void invoke<string>('diagnostics')
+              .then((t) => navigator.clipboard.writeText(t))
+              .then(() => notify('Diagnostics copied.'))
+              .catch((e) => notify(String(e)))
+          }
+          className="btn"
+        >
+          Copy diagnostics
+        </button>
+      </Row>
       <Row title="Updates" hint={line}>
         {u.at === 'found' ? (
           <button onClick={() => void installUpdate()} className="btn-primary">

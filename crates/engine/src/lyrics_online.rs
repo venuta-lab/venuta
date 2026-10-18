@@ -1353,6 +1353,11 @@ impl Kept {
         );
     }
 
+    /// Forget every kept answer (Settings: forget kept lyrics). Returns how many.
+    pub fn clear(&self) -> usize {
+        self.conn.execute("DELETE FROM lyrics", []).unwrap_or(0)
+    }
+
     /// Forget what Automatic found for a song (the sources' order changed, or a new search).
     pub fn forget(&self, song: &str) {
         let _ = self

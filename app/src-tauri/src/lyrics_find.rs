@@ -156,6 +156,12 @@ pub fn lyrics_choose(
     Ok(c)
 }
 
+/// Forget every lyrics answer kept (they are asked again as songs play). Returns how many.
+#[tauri::command]
+pub fn lyrics_forget_all() -> Result<usize, String> {
+    Ok(lo::Kept::open()?.clear())
+}
+
 /// How much earlier or later a song's lyrics run (positive: later), in ms.
 #[tauri::command]
 pub fn lyrics_offset(key: String, offset_ms: i64) -> Result<Choice, String> {

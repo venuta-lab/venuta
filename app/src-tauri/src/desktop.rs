@@ -170,6 +170,18 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     }
 }
 
+/// A new song, said in a Windows notification (Settings: song notifications).
+#[tauri::command]
+pub fn song_notification(app: AppHandle, title: String, artist: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(artist)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 /// Quit Venuta (Ctrl+Q), whatever closing the window would do.
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {

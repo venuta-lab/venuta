@@ -38,6 +38,7 @@ tauri-plugin-opener = "2"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 tauri-plugin-global-shortcut = "2"
 image = { workspace = true, features = ["ico"] }
+tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
 # The app icon you choose, on the shortcuts that open Venuta.

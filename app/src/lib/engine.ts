@@ -223,6 +223,8 @@ export interface Listening {
   catalog_region: string
   /** The lyrics sources in your order, "-id" for one switched off. */
   lyrics_sources: string[]
+  /** Say each new song in a Windows notification while Venuta is in the background. */
+  song_notifications: boolean
 }
 
 /** A radio: songs like a seed, and its own list id to ask for more of it. */

@@ -379,6 +379,45 @@ struct HomeInfo {
     suggestion: String,
 }
 
+/// What helps find a problem, as text to paste into a report: Venuta's version, the computer,
+/// how online music is set up, and the last lines of the playback log (what played, how fast
+/// online songs opened). No keys, accounts or addresses.
+#[tauri::command]
+fn diagnostics() -> String {
+    let l = engine::settings::load().listening;
+    let region = media_access::catalog_region();
+    let log = std::fs::read_to_string(paths::app_data_dir().join("logs").join("playback.log"))
+        .unwrap_or_default();
+    let tail: Vec<&str> = log.lines().rev().take(40).collect();
+    let mut out = format!(
+        "Venuta {}\n{} {}\nRegion: {} (set: {})\nStream quality: {}\nAutoplay: {}, history: {}, hide videos: {}\nLyrics sources: {}\nData folder: {}\n\nLast of the playback log:\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        region.country,
+        if l.catalog_region.is_empty() {
+            "automatic"
+        } else {
+            &l.catalog_region
+        },
+        l.stream_quality,
+        l.autoplay,
+        l.history,
+        l.hide_videos,
+        if l.lyrics_sources.is_empty() {
+            "usual order".to_owned()
+        } else {
+            l.lyrics_sources.join(", ")
+        },
+        paths::app_data_dir().display(),
+    );
+    for line in tail.into_iter().rev() {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Where your library is, and where a new one could go.
 #[tauri::command]
 fn library_home() -> HomeInfo {
@@ -2903,6 +2942,7 @@ pub fn run() {
         .manage(phone::PhoneServer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -3075,6 +3115,9 @@ pub fn run() {
             want_remove,
             desktop::set_close_action,
             desktop::quit_app,
+            diagnostics,
+            desktop::song_notification,
+            lyrics_find::lyrics_forget_all,
             desktop::set_ui_zoom,
             updates::update_check,
             accounts::spotify_status,

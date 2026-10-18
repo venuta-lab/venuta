@@ -16,6 +16,7 @@ const DEFAULTS: Listening = {
   stream_quality: 'auto',
   catalog_region: '',
   lyrics_sources: [],
+  song_notifications: false,
 }
 
 let now: Listening = DEFAULTS

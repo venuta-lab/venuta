@@ -71,6 +71,7 @@ import { listening } from './lib/listening'
 import { applyZoom, readZoom, zoomBy } from './lib/zoom'
 import { OpenLink } from './components/OpenLink'
 import { askOpenLink } from './lib/openLink'
+import { getPlayerState, onPlayer, queueKey } from './lib/player'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
@@ -155,6 +156,19 @@ export default function App() {
   }, [])
   // Radios keep going, and a queue that runs out goes on (autoplay), from the start.
   useEffect(() => keepRadioGoing(), [])
+  // A new song said in a Windows notification while the window is away (when you chose that).
+  useEffect(() => {
+    let last = ''
+    return onPlayer(() => {
+      const s = getPlayerState()
+      const song = s.queue[s.index]
+      const key = song ? queueKey(song) : ''
+      if (!song || key === last) return
+      last = key
+      if (listening().song_notifications && s.playing && (document.hidden || !document.hasFocus()))
+        void invoke('song_notification', { title: song.title, artist: song.artists.join(', ') || song.album_artist || '' }).catch(() => {})
+    })
+  }, [])
   // Pressing play on something opens Now Playing, when you chose that.
   useEffect(() => {
     const on = () => {

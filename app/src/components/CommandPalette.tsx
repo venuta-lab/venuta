@@ -61,6 +61,9 @@ function score(c: Command, words: string[], has: (key: string) => number): numbe
   return s
 }
 
+/** Nothing suggested yet. */
+const NO_SUGGESTIONS: OnlineSuggestions = { queries: [], items: [] }
+
 export function CommandPalette(props: {
   open: boolean
   onClose: () => void
@@ -72,10 +75,9 @@ export function CommandPalette(props: {
 }) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
-  const empty: OnlineSuggestions = { queries: [], items: [] }
   const [online, setOnline] = useState<{ q: string; found: OnlineSuggestions; error: string; loading: boolean }>({
     q: '',
-    found: empty,
+    found: NO_SUGGESTIONS,
     error: '',
     loading: false,
   })
@@ -87,7 +89,7 @@ export function CommandPalette(props: {
     if (props.open) {
       setQ('')
       setSel(0)
-      setOnline({ q: '', found: empty, error: '', loading: false })
+      setOnline({ q: '', found: NO_SUGGESTIONS, error: '', loading: false })
       window.setTimeout(() => input.current?.focus(), 0)
     }
   }, [props.open])
@@ -99,7 +101,7 @@ export function CommandPalette(props: {
     const query = q.trim()
     // Too short to ask, or offline (said once, under the results).
     if (query.length < 2 || !connected) {
-      setOnline({ q: query, found: empty, error: query.length < 2 ? '' : OFFLINE, loading: false })
+      setOnline({ q: query, found: NO_SUGGESTIONS, error: query.length < 2 ? '' : OFFLINE, loading: false })
       return
     }
     setOnline((s) => ({ ...s, q: query, loading: true, error: '' }))
@@ -108,7 +110,7 @@ export function CommandPalette(props: {
     const t = window.setTimeout(() => {
       onlineSuggest(query, 'palette')
         .then((found) => live && setOnline({ q: query, found, error: '', loading: false }))
-        .catch((e) => live && !isSearchCancelled(e) && setOnline({ q: query, found: empty, error: onlineProblem(e), loading: false }))
+        .catch((e) => live && !isSearchCancelled(e) && setOnline({ q: query, found: NO_SUGGESTIONS, error: onlineProblem(e), loading: false }))
     }, 150)
     return () => {
       live = false
@@ -133,7 +135,7 @@ export function CommandPalette(props: {
     const root = props.root ?? ''
     const from = { kind: 'search' as const, ref: typed, label: `Online: ${typed}` }
     const art = (url: string | null | undefined, seed: string) => <RemoteArt url={url} seed={seed} size={36} imgClassName="h-full w-full object-cover" />
-    const found = props.root && online.q === typed ? online.found : empty
+    const found = props.root && online.q === typed ? online.found : NO_SUGGESTIONS
     const musicCmds: { c: Command; s: number }[] = found.items.map((item, i): { c: Command; s: number } => {
       const s = 50 - i
       switch (item.kind) {
