@@ -123,6 +123,7 @@ pub fn resolve_with_stream_tool(track_id: &str) -> Result<EphemeralAudio, Access
         content_length,
         duration_ms,
         headers,
+        via: "stream tool",
     })
 }
 

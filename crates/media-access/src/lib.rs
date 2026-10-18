@@ -11,7 +11,11 @@ mod catalog_json;
 mod fake;
 #[cfg(feature = "live-provider")]
 mod live_provider;
+mod media_http;
 mod online;
+mod region;
+#[cfg(feature = "live-provider")]
+mod stream_pick;
 #[cfg(feature = "live-provider")]
 mod stream_resolve;
 mod types;
@@ -23,7 +27,9 @@ pub use access::{
 pub use fake::FakeMediaAccess;
 #[cfg(feature = "live-provider")]
 pub use live_provider::LiveCatalogAccess;
+pub use media_http::{media_agent, serves_to_the_end};
 pub use online::UnconfiguredOnlineAccess;
+pub use region::{CatalogRegion, catalog_region};
 #[cfg(feature = "live-provider")]
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use types::{

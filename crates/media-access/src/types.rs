@@ -233,6 +233,9 @@ pub struct EphemeralAudio {
     pub content_length: Option<u64>,
     pub duration_ms: Option<u64>,
     pub headers: Vec<MediaHeader>,
+    /// Which way found the address ("catalog", "stream tool", "fallback", "fixture"), for the
+    /// playback log's timings.
+    pub via: &'static str,
 }
 
 impl fmt::Debug for EphemeralAudio {

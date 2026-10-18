@@ -244,6 +244,7 @@ impl MediaAccess for FakeMediaAccess {
             content_length: Some(wav_bytes().len() as u64),
             duration_ms: Some(200),
             headers: Vec::new(),
+            via: "fixture",
         })
     }
 }
