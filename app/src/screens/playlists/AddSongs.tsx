@@ -271,7 +271,7 @@ function Row(props: {
     >
       <span aria-hidden className={`grid h-10 w-10 shrink-0 place-items-center overflow-hidden bg-ink/[0.07] text-ink/30 ${e.kind === 'album' ? 'rounded-lg' : 'rounded-md'}`}>
         {e.kind === 'online' ? (
-          <RemoteArt url={e.t.artwork_url} seed={e.t.album || e.t.title} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={e.t.artwork_url} seed={e.t.album || e.t.title} size={40} imgClassName="h-full w-full object-cover" />
         ) : art ? (
           <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
         ) : (

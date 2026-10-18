@@ -1266,11 +1266,10 @@ fn clean_artwork_url(raw: Option<String>) -> Option<String> {
     } else {
         s
     };
-    if url.starts_with("https://") {
-        Some(url)
-    } else {
-        None
-    }
+    // Kept at a size that looks sharp in Now Playing and the Windows media overlay; each place
+    // in the window asks for its own size from this.
+    url.starts_with("https://")
+        .then(|| crate::art_url::sized_art(&url, 544))
 }
 
 fn normalize_tracks(

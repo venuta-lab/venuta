@@ -25,7 +25,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { play, queueKey, toggle, toItem, type QueueItem } from '../../lib/player'
-import { cleanArtUrl, RemoteArt } from '../../components/RemoteArt'
+import { artUrl, RemoteArt } from '../../components/RemoteArt'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
@@ -155,7 +155,7 @@ export const HomeView = memo(function HomeView(props: {
  * cover (or the online cover), Online, and Pause/Resume. It has no page of its own to open.
  */
 function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
-  const art = cleanArtUrl(song.artwork_url)
+  const art = artUrl(song.artwork_url, 200)
   const artist = song.artists.join(', ') || song.album_artist
   return (
     <motion.section
@@ -176,7 +176,7 @@ function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
       )}
       <div className="relative flex flex-wrap items-center gap-7">
         <div className="aspect-square w-[200px] shrink-0 overflow-hidden rounded-2xl bg-ink/[0.06] shadow-2xl shadow-black/40">
-          <RemoteArt url={song.artwork_url} seed={song.album || song.title} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={song.artwork_url} seed={song.album || song.title} size={200} imgClassName="h-full w-full object-cover" />
         </div>
         <div className="min-w-[240px] flex-1">
           <p className="text-[13px] text-ink/60">{playing ? 'Playing now' : 'Paused'}</p>

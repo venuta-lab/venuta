@@ -530,7 +530,10 @@ pub fn start_media_controls(pb: &Playback, hwnd: isize) {
                     }
                     None => {
                         cover = (None, None);
-                        now.artwork_url.clone()
+                        // Asked for at a size that looks sharp in the overlay.
+                        now.artwork_url
+                            .as_deref()
+                            .map(|u| media_access::sized_art(u, 544))
                     }
                 };
                 let meta = |cover_url| MediaMetadata {

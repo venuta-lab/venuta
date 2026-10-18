@@ -1033,7 +1033,7 @@ function PlaylistRow(props: {
         </span>
       ) : remote ? (
         <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-lg bg-ink/[0.07] text-ink/30">
-          <RemoteArt url={onlineArt} seed={r.album || r.title} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={onlineArt} seed={r.album || r.title} size={44} imgClassName="h-full w-full object-cover" />
         </span>
       ) : (
         <span className="h-11 w-11 overflow-hidden rounded-lg bg-ink/[0.07]">

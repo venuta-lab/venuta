@@ -9,7 +9,7 @@ import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
 import { songLength, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
 import { IconClose } from '../Icons'
-import { cleanArtUrl, OnlineCover, RemoteArt } from '../RemoteArt'
+import { artUrl, OnlineCover, RemoteArt } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SignalPath } from './NowPlayingBar'
@@ -98,7 +98,7 @@ function UpNext() {
             <button onClick={() => void jumpTo(s.index + 1 + k)} title="Play" className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]">
               <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
                 {online ? (
-                  <RemoteArt url={remote} seed={q.album || q.title} imgClassName="h-full w-full object-cover" />
+                  <RemoteArt url={remote} seed={q.album || q.title} size={40} imgClassName="h-full w-full object-cover" />
                 ) : art ? (
                   <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
                 ) : null}
@@ -217,7 +217,7 @@ export function NowPlaying(props: {
                 className="grid aspect-square w-full max-w-[min(400px,40vh)] place-items-center overflow-hidden rounded-[28px] bg-ink/[0.08] text-[48px] text-ink/25 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)]"
               >
                 {/* Held steady across a change of song (no blank frame). */}
-                <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : art?.src} fallback={isOnline(song) ? <OnlineCover seed={song.album || song.title} /> : '♪'} />
+                <SteadyArt src={onlineArt ? artUrl(onlineArt, 400) : art?.src} fallback={isOnline(song) ? <OnlineCover seed={song.album || song.title} /> : '♪'} />
               </motion.div>
               <div className="mt-8 w-full max-w-[min(400px,40vh)] text-center">
                 <h2 className="title flex items-center justify-center gap-2 truncate text-[26px]">

@@ -7,6 +7,7 @@
 //! saved into playlists or restored queues.
 
 mod access;
+mod art_url;
 mod catalog_json;
 mod fake;
 #[cfg(feature = "live-provider")]
@@ -25,6 +26,7 @@ pub use access::{
     AccessError, AccessErrorKind, CachedAccess, CatalogHealth, MediaAccess, catalog_health,
     default_media_access, live_catalog_env_enabled,
 };
+pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;
 #[cfg(feature = "live-provider")]
 pub use live_provider::LiveCatalogAccess;

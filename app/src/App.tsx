@@ -46,7 +46,7 @@ import { catalogNow, ensureCatalog, trackAt } from './lib/catalog'
 import { albumWork, menuFor, playlistFacts, playlistWork } from './lib/actions'
 import { indexTracks } from './screens/listen/model'
 import { connectPlayer, resumePlayer } from './lib/player'
-import { cleanArtUrl } from './components/RemoteArt'
+import { artUrl } from './components/RemoteArt'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
 import { QueueDrawer } from './components/player/QueueDrawer'
 import { NowPlaying } from './components/player/NowPlaying'
@@ -103,7 +103,7 @@ const MAIN = 5
 function NowBackdrop({ covers }: { covers: string[] }) {
   const dir = player.usePlayerValue((s) => player.current(s)?.dir ?? '')
   // An online song has no album folder; its catalog picture lights the window instead.
-  const remote = player.usePlayerValue((s) => cleanArtUrl(player.remoteArtUrl(player.current(s))) ?? '')
+  const remote = player.usePlayerValue((s) => artUrl(player.remoteArtUrl(player.current(s)), 226) ?? '')
   const cover = useCovers(320)
   const art = dir ? cover(dir) : remote ? { src: remote, accent: undefined } : undefined
   // The accent follows what's playing (see lib/covers.ts).

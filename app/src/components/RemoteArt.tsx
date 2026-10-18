@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { hueOf } from '../lib/onlineSong'
+import { devicePx, sizedArt } from '../lib/artSize'
 
 /**
  * Cover for an online catalog row. Accepts http(s) picture URLs only; on load failure
@@ -14,8 +15,10 @@ export function RemoteArt(props: {
   className?: string
   /** Extra classes on the image itself. */
   imgClassName?: string
+  /** How wide it is drawn, in CSS pixels: the picture is asked for at that size. */
+  size?: number
 }) {
-  const src = cleanArtUrl(props.url)
+  const src = artUrl(props.url, props.size ?? 96)
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [src])
   if (!src || failed) {
@@ -31,6 +34,12 @@ export function RemoteArt(props: {
       className={props.imgClassName ?? props.className ?? 'h-full w-full object-cover'}
     />
   )
+}
+
+/** A cover address cleaned (see cleanArtUrl) and asked for at the size it is drawn, `cssPx` wide. */
+export function artUrl(raw: string | null | undefined, cssPx: number): string | undefined {
+  const url = cleanArtUrl(raw)
+  return url ? sizedArt(url, devicePx(cssPx)) : undefined
 }
 
 /** Keep only http(s) picture addresses; upgrade protocol-relative and bare http. */

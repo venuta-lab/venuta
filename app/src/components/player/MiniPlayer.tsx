@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
 import { clock, songLength, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, toggle, usePlayer, type PlayerState } from '../../lib/player'
-import { cleanArtUrl, OnlineCover } from '../RemoteArt'
+import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { IconExpand, IconLyrics, IconNext, IconPause, IconPlay, IconPrevious, IconQueue } from '../Icons'
 import { lineAt, useLyrics } from '../../lib/lyrics'
@@ -173,7 +173,7 @@ export function MiniPlayer() {
   useEffect(() => {
     if (root && dir) void loadCovers(root, [dir])
   }, [root, dir])
-  const remoteSrc = online ? cleanArtUrl(song?.artwork_url) : undefined
+  const remoteSrc = online ? artUrl(song?.artwork_url, 360) : undefined
   const art = online ? (remoteSrc ? { src: remoteSrc, accent: undefined } : undefined) : dir ? cover(dir) : undefined
   useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
 

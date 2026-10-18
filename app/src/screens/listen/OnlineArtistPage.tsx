@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
-import { RemoteArt, cleanArtUrl } from '../../components/RemoteArt'
+import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { onlineArtistPage, type OnlineArtistPage as Page, type OnlineTrack } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
@@ -104,10 +104,10 @@ export function OnlineArtistPage({ artist, lib, onBack }: { artist: OnlineArtist
     )
 
   return (
-    <Detail title={name} onBack={onBack} glow={cleanArtUrl(page?.artwork_url ?? artist.artwork_url)} tools={items.length ? playButton('sm') : undefined}>
+    <Detail title={name} onBack={onBack} glow={artUrl(page?.artwork_url ?? artist.artwork_url, 226)} tools={items.length ? playButton('sm') : undefined}>
       <div className="relative flex flex-wrap items-end gap-8">
         <div className="grid aspect-square w-[220px] shrink-0 place-items-center overflow-hidden rounded-full bg-ink/[0.06] text-[56px] text-ink/25 shadow-2xl shadow-black/40">
-          <RemoteArt url={page?.artwork_url ?? artist.artwork_url} fallback={name.slice(0, 1)} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={page?.artwork_url ?? artist.artwork_url} fallback={name.slice(0, 1)} size={220} imgClassName="h-full w-full object-cover" />
         </div>
         <motion.div className="min-w-[260px] flex-1 pb-1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.05 }}>
           <p className="flex items-center gap-2 text-[13px] font-medium text-ink/60">
@@ -182,7 +182,7 @@ export function OnlineArtistPage({ artist, lib, onBack }: { artist: OnlineArtist
                     className="flex items-center gap-2 rounded-full bg-ink/[0.06] py-1 pl-1 pr-3.5 text-[13px] transition-colors hover:bg-ink/[0.1] active:bg-ink/[0.14]"
                   >
                     <span className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-ink/[0.08] text-[12px] text-ink/50">
-                      <RemoteArt url={ar.artwork_url} fallback={ar.name.slice(0, 1)} imgClassName="h-full w-full object-cover" />
+                      <RemoteArt url={ar.artwork_url} fallback={ar.name.slice(0, 1)} size={28} imgClassName="h-full w-full object-cover" />
                     </span>
                     {ar.name}
                   </button>

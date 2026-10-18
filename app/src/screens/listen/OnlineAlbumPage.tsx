@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
-import { RemoteArt, cleanArtUrl } from '../../components/RemoteArt'
+import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { onlineAlbumTracks, type OnlineAlbum, type OnlineTrack } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
@@ -47,7 +47,7 @@ export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBa
   const playing = usePlayerValue((s) => s.playing)
   const nowFrom = usePlayerValue((s) => s.from)
   const isNow = fromIs(nowFrom, 'search', a.title) && (tracks ?? []).some((t) => keyOf(t) === nowKey)
-  const art = cleanArtUrl(a.artwork_url)
+  const art = artUrl(a.artwork_url, 240)
   const total = (tracks ?? []).reduce((n, t) => n + (t.duration_ms ?? 0), 0)
   const year = a.release_date?.slice(0, 4)
   const addAll = () => tracks?.length && askAddSongs(tracks.map((t) => ({ online: onlineEntryFrom(t) })), a.title)
@@ -67,7 +67,7 @@ export function OnlineAlbumPage({ album: a, onBack }: { album: OnlineAlbum; onBa
     <Detail title={a.title} onBack={onBack} glow={art} tools={items.length ? playButton('sm') : undefined}>
       <div className="relative flex flex-wrap items-end gap-8">
         <div className="grid aspect-square w-[240px] shrink-0 place-items-center overflow-hidden rounded-3xl bg-ink/[0.06] text-[56px] text-ink/25 shadow-2xl shadow-black/40">
-          <RemoteArt url={a.artwork_url} seed={a.title} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={a.artwork_url} seed={a.title} size={240} imgClassName="h-full w-full object-cover" />
         </div>
         <motion.div className="min-w-[260px] flex-1 pb-1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.05 }}>
           <p className="flex items-center gap-2 text-[13px] font-medium text-ink/60">

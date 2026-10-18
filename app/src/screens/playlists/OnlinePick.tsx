@@ -140,7 +140,7 @@ export function OnlinePick<R extends PlaylistEntry & { key: string }>(props: {
                       title="Listen"
                       className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink/[0.07] text-ink/30"
                     >
-                      <RemoteArt url={t.artwork_url} seed={t.album || t.title} imgClassName="h-full w-full object-cover" />
+                      <RemoteArt url={t.artwork_url} seed={t.album || t.title} size={40} imgClassName="h-full w-full object-cover" />
                       <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">
                         <IconPlay width={14} height={14} />
                       </span>

@@ -32,7 +32,7 @@ import {
   useWaveform,
   verifyCurrent,
 } from '../../lib/player'
-import { cleanArtUrl, OnlineCover } from '../RemoteArt'
+import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { useDropTarget } from '../../lib/drag'
 import { notify } from '../../lib/notify'
@@ -678,7 +678,7 @@ export function NowPlayingBar(props: {
               {!props.expanded && (
                 <motion.div layoutId="now-playing-cover" className="grid h-full w-full place-items-center" transition={spring}>
                   {/* Held steady across a change of song (no blank frame); online or local alike. */}
-                  <SteadyArt src={onlineArt ? cleanArtUrl(onlineArt) : localArt?.src} fallback={isOnline(song) ? <OnlineCover seed={song.album || song.title} /> : <span className="text-ink/30">♪</span>} />
+                  <SteadyArt src={onlineArt ? artUrl(onlineArt, 56) : localArt?.src} fallback={isOnline(song) ? <OnlineCover seed={song.album || song.title} /> : <span className="text-ink/30">♪</span>} />
                 </motion.div>
               )}
               <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100">

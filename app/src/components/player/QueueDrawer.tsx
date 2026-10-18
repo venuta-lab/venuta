@@ -34,7 +34,7 @@ function RowBody(props: { item: QueueItem; index: number; current: boolean; badg
     <>
       <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
         {online ? (
-          <RemoteArt url={props.item.artwork_url} seed={props.item.album || props.item.title} imgClassName="h-full w-full object-cover" />
+          <RemoteArt url={props.item.artwork_url} seed={props.item.album || props.item.title} size={36} imgClassName="h-full w-full object-cover" />
         ) : local ? (
           <img src={local.src} alt="" className="h-full w-full object-cover" draggable={false} />
         ) : null}
