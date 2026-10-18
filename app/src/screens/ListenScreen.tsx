@@ -25,6 +25,7 @@ import { OnlineCollectionPage } from './listen/OnlineCollectionPage'
 import { MoodPage } from './listen/MoodPage'
 import { OnlineShelfPage } from './listen/OnlineShelfPage'
 import { SearchHome } from './listen/SearchHome'
+import { YourMusic } from './listen/YourMusic'
 import { ListeningView } from './listen/ListeningView'
 import { SongList } from './listen/SongList'
 import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
@@ -382,6 +383,11 @@ function Listen(props: Props) {
     searchForRef.current = searchFor
   })
   const chooseTop = (t: Top) => choose(t === 'library' ? (isLibrary(tab) ? tab : kept.library) : t)
+  // Your music's tiles (Home, Search): a Library view, Albums with a filter.
+  const openLibrary = (view: 'albums' | 'artists' | 'songs', f?: string) => {
+    choose(view)
+    if (view === 'albums') setFilter(f ?? 'all')
+  }
   /** Search for these words: the Search tab, with their results. */
   const searchFor = (words: string) => {
     const w = words.trim()
@@ -519,7 +525,7 @@ function Listen(props: Props) {
       typed.trim() ? (
         <SearchResults query={typed} albums={results.albums} artists={results.artists} tracks={results.tracks} lyrics={inLyrics} />
       ) : (
-        <SearchHome onSearch={searchFor} />
+        <SearchHome onSearch={searchFor} yours={<YourMusic root={root} lib={lib} onOpen={openLibrary} className="mt-10" />} />
       )
     ) : tab === 'home' ? (
       <HomeView
@@ -527,6 +533,7 @@ function Listen(props: Props) {
         lib={lib}
         hasCover={hasCover}
         onSeeAll={seeAll}
+        onLibrary={openLibrary}
         onOpenPlaylist={props.onOpenPlaylist}
         onPlaylists={props.onPlaylists}
       />

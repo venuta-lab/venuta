@@ -27,6 +27,8 @@ import { SongList } from './SongList'
 import { albumWork, artistWork, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
+import { albumHasGenre, GENRE_FILTER } from '../../lib/yourMusic'
+import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
@@ -57,6 +59,8 @@ export const HomeView = memo(function HomeView(props: {
   lib: Library
   hasCover: (dir: string) => boolean
   onSeeAll: (filter: string) => void
+  /** Your music's tiles: a Library view, Albums with a filter. */
+  onLibrary: (view: 'albums' | 'artists' | 'songs', filter?: string) => void
   onOpenPlaylist: (name: string) => void
   onPlaylists: () => void
 }) {
@@ -209,6 +213,7 @@ export const HomeView = memo(function HomeView(props: {
     { id: 'quick', label: 'Quick picks', node: quick && <QuickPicks shelf={quick} /> },
     { id: 'familiar', label: 'Familiar artists', node: <FamiliarArtists lib={lib} plays={plays} /> },
     { id: 'playlists', label: 'Your playlists', node: <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} /> },
+    { id: 'yours', label: 'Your music', node: <YourMusic root={props.root} lib={lib} onOpen={props.onLibrary} /> },
     { id: 'most', label: 'Most played', node: top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" /> },
     { id: 'rated', label: 'Top rated', node: rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" /> },
     { id: 'rediscover', label: 'Rediscover', node: rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" /> },
@@ -470,7 +475,14 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
 export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter: string; onFilter: (f: string) => void }) {
   const { lib, filter } = props
   const shown = useMemo(
-    () => (filter === 'all' ? lib.albums : filter === HI_RES ? lib.hiRes : lib.albums.filter((a) => a.category === filter)),
+    () =>
+      filter === 'all'
+        ? lib.albums
+        : filter === HI_RES
+          ? lib.hiRes
+          : filter.startsWith(GENRE_FILTER)
+            ? lib.albums.filter((a) => albumHasGenre(a, filter.slice(GENRE_FILTER.length)))
+            : lib.albums.filter((a) => a.category === filter),
     [lib, filter],
   )
   const chip = (id: string, label: string, count: number) => (
@@ -483,6 +495,8 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
           {chip('all', 'All', lib.albums.length)}
           {lib.hiRes.length > 0 && chip(HI_RES, 'Hi-Res', lib.hiRes.length)}
           {lib.categories.map(([c, n]) => chip(c, c, n))}
+          {/* A genre opened from Your music: its own chip while it shows. */}
+          {filter.startsWith(GENRE_FILTER) && chip(filter, filter.slice(GENRE_FILTER.length), shown.length)}
         </div>
       </InBar>
       <AlbumGrid albums={shown} origin="albums" />

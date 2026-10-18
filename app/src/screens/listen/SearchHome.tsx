@@ -13,7 +13,7 @@ import { useNav } from './model'
 
 const RECENT_SHOWN = 12
 
-export function SearchHome({ onSearch }: { onSearch: (words: string) => void }) {
+export function SearchHome({ onSearch, yours }: { onSearch: (words: string) => void; /** Your music's tiles, before the catalog's. */ yours?: React.ReactNode }) {
   const { openMood } = useNav()
   const recent = useSyncExternalStore(recentSearches.subscribe, recentSearches.list, recentSearches.list)
   const [sections, setSections] = useState<MoodSection[] | null>(null)
@@ -57,12 +57,13 @@ export function SearchHome({ onSearch }: { onSearch: (words: string) => void }) 
           </div>
         </section>
       )}
+      {yours}
       {sections === null ? (
         <div className={recent.length ? 'mt-10' : ''} aria-hidden>
           <div className="shimmer mb-4 h-4 w-40 rounded-full" />
           <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-3">
             {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} className="shimmer h-[76px] rounded-2xl" style={{ animationDelay: `${i * 60}ms` }} />
+              <div key={i} className="shimmer aspect-[16/9] rounded-2xl" style={{ animationDelay: `${i * 60}ms` }} />
             ))}
           </div>
         </div>
