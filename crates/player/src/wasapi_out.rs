@@ -9,7 +9,8 @@ use crate::decode::SourceFormat;
 use crate::output::{Device, DeviceFormat, Mode, SampleKind};
 use serde::Serialize;
 use wasapi::{
-    AudioClient, AudioRenderClient, Direction, Handle, SampleType, StreamMode, WaveFormat,
+    AudioClient, AudioClock, AudioRenderClient, Direction, Handle, SampleType, StreamMode,
+    WaveFormat,
 };
 
 /// A sound output the player can use.
@@ -69,6 +70,11 @@ pub struct WasapiDevice {
     render: Option<AudioRenderClient>,
     event: Option<Handle>,
     buffer_frames: usize,
+    /// The device's clock: which frame is reaching the speakers now (for playing in step).
+    clock: Option<(AudioClock, u64)>,
+    rate: u32,
+    /// Frames written since the stream opened.
+    written: u64,
 }
 
 impl WasapiDevice {
@@ -91,6 +97,9 @@ impl WasapiDevice {
             render: None,
             event: None,
             buffer_frames: 0,
+            clock: None,
+            rate: 0,
+            written: 0,
         })
     }
 
@@ -217,6 +226,12 @@ impl WasapiDevice {
                 fmt.get_bitspersample()
             );
         }
+        self.clock = client
+            .get_audioclock()
+            .ok()
+            .and_then(|c| c.get_frequency().ok().filter(|f| *f > 0).map(|f| (c, f)));
+        self.rate = fmt.get_samplespersec();
+        self.written = 0;
         self.client = Some(client);
         self.render = Some(render);
         self.event = Some(event);
@@ -279,10 +294,18 @@ impl Device for WasapiDevice {
         }
         let r = self.render.as_ref().ok_or("The output isn't open.")?;
         r.write_to_device(frames, bytes, None)
-            .map_err(|e| format!("The sound output stopped ({e})."))
+            .map_err(|e| format!("The sound output stopped ({e})."))?;
+        self.written += frames as u64;
+        Ok(())
     }
     fn latency_frames(&self) -> usize {
         self.buffer_frames
+    }
+    fn queued_frames(&self) -> Option<usize> {
+        let (clock, freq) = self.clock.as_ref()?;
+        let (pos, _) = clock.get_position().ok()?;
+        let heard = (u128::from(pos) * u128::from(self.rate) / u128::from(*freq)) as u64;
+        Some(self.written.saturating_sub(heard) as usize)
     }
     fn start(&mut self) -> Result<(), String> {
         self.client
@@ -303,6 +326,7 @@ impl Device for WasapiDevice {
         }
         self.render = None;
         self.event = None;
+        self.clock = None;
         self.client = None;
     }
 }

@@ -53,6 +53,9 @@ pub enum Correction {
     Trim { ppm: f64, ahead: bool },
 }
 
+/// After lining up, still further off than this: one more seek, closer.
+pub const SECOND_LOOK_MS: f64 = 8.0;
+
 /// Apart: further than this, a seek (smaller drifts aren't heard by anyone).
 pub const APART_SEEK_MS: f64 = 80.0;
 /// Same room: under this, nothing to do.

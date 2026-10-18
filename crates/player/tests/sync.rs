@@ -97,7 +97,7 @@ fn a_room_start_waits_silent_then_plays_from_the_rooms_place() {
         -start.duration_since(heard_at).as_secs_f64()
     } * 1_000.0;
     assert!(
-        off_ms.abs() < 25.0,
+        off_ms.abs() < 5.0,
         "started {off_ms:.1} ms from the room's start"
     );
     let from = h[first] - 1;

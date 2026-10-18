@@ -56,6 +56,10 @@ pub trait Device {
     fn latency_frames(&self) -> usize {
         0
     }
+    /// Frames written but not heard yet, by the device's own clock (exact, where it has one).
+    fn queued_frames(&self) -> Option<usize> {
+        None
+    }
     fn start(&mut self) -> Result<(), String>;
     fn stop(&mut self) -> Result<(), String>;
     /// Let go of the device (other apps can use it).
@@ -230,6 +234,12 @@ impl Device for MemoryDevice {
         } else {
             0
         }
+    }
+    fn queued_frames(&self) -> Option<usize> {
+        // Frame k plays k/rate after the first: what's taken and not played yet.
+        let p = self.paced.as_ref()?;
+        let played = (p.since?.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
+        Some(p.taken.saturating_sub(played) as usize)
     }
     fn write(&mut self, bytes: &[u8], frames: usize) -> Result<(), String> {
         if let Some(p) = &mut self.paced {

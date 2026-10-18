@@ -323,6 +323,9 @@ struct Engine<T: Item + Serialize> {
     settle_until: Option<Instant>,
     /// A new plan whose sound hasn't come out yet: lined up exactly when it first does.
     sync_fresh: bool,
+    /// Once settled after lining up mid-song, a second look: a seek lands a few ms off, so one
+    /// more lines it up closer (no trimming needed, still bit-perfect).
+    sync_second_look: bool,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -359,6 +362,7 @@ impl<T: Item + Serialize> Engine<T> {
             sync_error_ms: None,
             settle_until: None,
             sync_fresh: false,
+            sync_second_look: false,
         }
     }
 
@@ -877,12 +881,19 @@ impl<T: Item + Serialize> Engine<T> {
             return Ok(());
         }
         // In step with a room: silent until its start, then kept where the room is.
-        if self.sync.is_some() && self.follow_room(want, &fmt)? {
-            return Ok(());
-        }
+        let lead = if self.sync.is_some() {
+            match self.follow_room(want, &fmt)? {
+                Some(lead) => lead,
+                None => return Ok(()),
+            }
+        } else {
+            0
+        };
         let src_ch = usize::from(fmt.channels.max(1));
         let mut taken: Vec<i32> = Vec::with_capacity(want * src_ch);
-        let mut frames = 0;
+        // The room starts within this period: silence up to the very frame it starts on.
+        taken.resize(lead * src_ch, 0);
+        let mut frames = lead;
         let mut reopen_after = false;
         while frames < want {
             let Some(front) = self.segs.front_mut() else {
@@ -1112,6 +1123,10 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.sync = Some(plan);
         self.sync_fresh = true;
+        // Joining mid-song (or lining up again while it plays), apart: a second look. A start
+        // from silence lines up at the first sound and never jumps just after it; in one room
+        // small gaps close by single frames instead (a jump there is heard).
+        self.sync_second_look = started && !plan.same_room;
         self.settle_until = Some(now + Duration::from_millis(600));
         // Playing (or waiting to) keeps the device going: silence until the start, which also
         // keeps the song decoding ahead. Paused: paused there.
@@ -1122,18 +1137,23 @@ impl<T: Item + Serialize> Engine<T> {
     /// for this output (Bluetooth), milliseconds.
     fn heard_delay_ms(&self, plan: &SyncPlan) -> f64 {
         let device = match (&self.device, &self.dev_fmt) {
-            (Some(d), Some(f)) => d.latency_frames() as f64 * 1_000.0 / f64::from(f.rate.max(1)),
+            (Some(d), Some(f)) => {
+                d.queued_frames().unwrap_or_else(|| d.latency_frames()) as f64 * 1_000.0
+                    / f64::from(f.rate.max(1))
+            }
             _ => 0.0,
         };
         device + f64::from(plan.extra_latency_ms)
     }
 
-    /// One device period in step with the room. True when the period was handled here (silence
-    /// before the start); false to play it normally (after any seek or trimming).
-    fn follow_room(&mut self, want: usize, fmt: &SourceFormat) -> Result<bool, String> {
+    /// One device period in step with the room. `None` when the period was handled here (silence
+    /// before the start); else play it, after that many frames of silence (the start falling
+    /// within it), and after any seek or trimming.
+    fn follow_room(&mut self, want: usize, fmt: &SourceFormat) -> Result<Option<usize>, String> {
         let Some(plan) = self.sync else {
-            return Ok(false);
+            return Ok(Some(0));
         };
+        let rate = f64::from(fmt.rate.max(1));
         let now = Instant::now();
         let delay = self.heard_delay_ms(&plan);
         let starts = plan.anchor.map(|a| {
@@ -1142,18 +1162,31 @@ impl<T: Item + Serialize> Engine<T> {
         });
         // Before the start (or not started yet): silence, the song decoding ahead meanwhile.
         if !starts.is_some_and(|s| now >= s) {
+            // The start falls within this period: its first sound on the very frame (a start
+            // from silence needs no lining up after).
+            if let Some(s) = starts
+                && plan.playing
+                && self.sync_fresh
+                && self.segs.front().is_some_and(|f| f.frames() > 0)
+            {
+                let lead = (s.duration_since(now).as_secs_f64() * rate).round() as usize;
+                if lead < want {
+                    self.sync_fresh = false;
+                    self.settle_until = Some(now + Duration::from_millis(400));
+                    return Ok(Some(lead));
+                }
+            }
             self.fill()?;
             self.write_silence(want)?;
-            return Ok(true);
+            return Ok(None);
         }
-        let rate = f64::from(fmt.rate.max(1));
         let Some(front) = self.segs.front() else {
-            return Ok(false);
+            return Ok(Some(0));
         };
         let written_ms = (front.start_frame + front.played) as f64 * 1_000.0 / rate;
         let heard_ms = written_ms - delay;
         let Some(expected) = plan.expected_ms(now) else {
-            return Ok(false);
+            return Ok(Some(0));
         };
         // The first sound of a plan: put the song exactly where the room will be when it's heard
         // (the device may have taken a moment to open since the plan came).
@@ -1164,26 +1197,35 @@ impl<T: Item + Serialize> Engine<T> {
                 self.trimmer.reset();
             }
             self.settle_until = Some(now + Duration::from_millis(400));
-            return Ok(false);
+            return Ok(Some(0));
         }
         let error = heard_ms - expected;
         self.sync_error_ms = Some(error as f32);
         let settling = self.settle_until.is_some_and(|t| now < t);
+        if !settling && self.sync_second_look {
+            self.sync_second_look = false;
+            if error.abs() > crate::sync::SECOND_LOOK_MS {
+                self.seek((expected + delay).max(0.0) as u64);
+                self.trimmer.reset();
+                self.settle_until = Some(now + Duration::from_millis(400));
+                return Ok(Some(0));
+            }
+        }
         match crate::sync::correction(error, plan.same_room, settling) {
-            Correction::None => Ok(false),
+            Correction::None => Ok(Some(0)),
             Correction::Seek => {
                 let to = (expected + delay).max(0.0) as u64;
                 self.seek(to);
                 self.trimmer.reset();
                 self.settle_until = Some(now + Duration::from_millis(600));
-                Ok(false)
+                Ok(Some(0))
             }
             Correction::Trim { ppm, ahead } => {
                 let n = self.trimmer.due(want, ppm);
                 if n > 0 {
                     self.trim_front(want, n, ahead);
                 }
-                Ok(false)
+                Ok(Some(0))
             }
         }
     }
