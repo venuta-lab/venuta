@@ -62,18 +62,26 @@ const onTabAsked = (l: () => void) => {
   }
 }
 
-/* An online artist's page asked for from outside Music (Now Playing): shown when the screen
-   shows, or at once if it is showing. */
-let askedArtist: OnlineArtistRef | null = null
-const artistListeners = new Set<() => void>()
-export function showOnlineArtist(artist: OnlineArtistRef) {
-  askedArtist = artist
-  artistListeners.forEach((l) => l())
+/* A page of Music, or a search, asked for from outside Music (Now Playing, the palette): shown
+   when the screen shows, or at once if it is showing. */
+type Asked = { page: Page } | { words: string }
+let outside: Asked | null = null
+const askedListeners = new Set<() => void>()
+const ask = (a: Asked) => {
+  outside = a
+  askedListeners.forEach((l) => l())
 }
-const onArtistAsked = (l: () => void) => {
-  artistListeners.add(l)
+/** Open a page of Music: an online artist, album, playlist or podcast, a mood. */
+export const showMusicPage = (page: MusicPage) => ask({ page })
+/** Search Music for these words (the Search tab, with their results). */
+export const searchMusic = (words: string) => ask({ words })
+export function showOnlineArtist(artist: OnlineArtistRef) {
+  showMusicPage({ kind: 'online-artist', artist })
+}
+const onAsked = (l: () => void) => {
+  askedListeners.add(l)
   return () => {
-    artistListeners.delete(l)
+    askedListeners.delete(l)
   }
 }
 
@@ -84,6 +92,8 @@ type Page =
   | { kind: 'online-artist'; artist: OnlineArtistRef }
   | { kind: 'online-collection'; collection: OnlineCollection }
   | { kind: 'mood'; tile: MoodTile }
+/** A page of Music that can be asked for from outside (see `showMusicPage`). */
+export type MusicPage = Page
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
 type Entry = { page: Page; scroll: number }
 
@@ -143,6 +153,7 @@ function Listen(props: Props) {
   // the dropdown): the results are for the words searched, as on the Search page.
   const [query, setQuery] = useState(kept.asked)
   const [asked, setAsked] = useState(kept.asked)
+  const searchForRef = useRef<(words: string) => void>(() => {})
   // The words now, for remembering a search when something found by it is played or opened.
   const words = useRef('')
   words.current = asked.trim()
@@ -276,13 +287,18 @@ function Listen(props: Props) {
     return () => window.removeEventListener('mouseup', onMouse)
   }, [stack, back])
 
-  // Asked from outside for an online artist's page (Now Playing's "More online by…").
-  const artistAsked = useSyncExternalStore(onArtistAsked, () => askedArtist)
+  // Asked from outside for a page (Now Playing's "More online by…", the palette) or a search.
+  const wanted = useSyncExternalStore(onAsked, () => outside)
   useEffect(() => {
-    if (!artistAsked) return
-    askedArtist = null
-    push({ kind: 'online-artist', artist: artistAsked })
-  }, [artistAsked, push])
+    if (!wanted) return
+    outside = null
+    if ('page' in wanted) push(wanted.page)
+    else {
+      // After this render's effects, so the search runs with this screen's state.
+      const words = wanted.words
+      window.setTimeout(() => searchForRef.current(words), 0)
+    }
+  }, [wanted, push])
 
   // Asked from outside for a view (Playlists, with a playlist open).
   const tabAsked = useSyncExternalStore(onTabAsked, () => askedTab)
@@ -322,6 +338,9 @@ function Listen(props: Props) {
     if (id === 'albums' && tab !== 'albums') setFilter('all')
     setTab(id)
   }
+  useEffect(() => {
+    searchForRef.current = searchFor
+  })
   const chooseTop = (t: Top) => choose(t === 'library' ? (isLibrary(tab) ? tab : kept.library) : t)
   /** Search for these words: the Search tab, with their results. */
   const searchFor = (words: string) => {

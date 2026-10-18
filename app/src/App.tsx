@@ -55,7 +55,7 @@ import { adoptPrefs, getPrefs, motionSetting, resolvedTheme, setPrefs, usePrefs,
 import { DeepProgressBar } from './screens/libraryParts'
 import { MissingFolder, NoLibrary, NoMusic, ReadFailed } from './components/FolderStates'
 import { MusicScreen } from './screens/MusicScreen'
-import { ListenScreen, showMusicTab, showOnlineArtist } from './screens/ListenScreen'
+import { ListenScreen, searchMusic, showMusicPage, showMusicTab, showOnlineArtist, type MusicPage } from './screens/ListenScreen'
 import { HealthScreen } from './screens/HealthScreen'
 import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { onGoToPlaylists } from './screens/playlists/ops'
@@ -311,6 +311,20 @@ export default function App() {
       setActive(id)
     },
     [active],
+  )
+  // The palette opens Music pages and searches through Music itself.
+  const paletteMusic = useMemo(
+    () => ({
+      open: (page: MusicPage) => {
+        showMusicPage(page)
+        go('listen')
+      },
+      search: (words: string) => {
+        searchMusic(words)
+        go('listen')
+      },
+    }),
+    [go],
   )
 
   // A new version: looked for quietly once a day, offered with a notice; installed only when asked.
@@ -1053,7 +1067,7 @@ export default function App() {
           />
           </div>
         </div>
-        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} root={root || undefined} />
+        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} root={root || undefined} music={paletteMusic} />
         {root && (
           <AddToPlaylist root={root} />
         )}

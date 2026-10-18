@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { IconSearch } from './Icons'
 import { AvailabilityBadge } from './AvailabilityBadge'
-import { isSearchCancelled, onlineSearch, type OnlineTrack } from '../lib/engine'
+import { RemoteArt } from './RemoteArt'
+import { isSearchCancelled, onlineSuggest, type OnlineSuggestions } from '../lib/engine'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../lib/online'
-import { rankOnlineTracks } from '../lib/searchRank'
 import { enqueueItems, playItems, songItemOf, toRemoteItem } from '../lib/player'
+import type { MusicPage } from '../screens/ListenScreen'
 import { menuFor } from '../lib/actions'
 import { menuFromEvent, openMenu, type MenuGroups } from '../lib/menu'
 import { askAddSongs } from './AddToPlaylist'
@@ -15,7 +16,9 @@ import { recentSearches } from '../lib/recentSearches'
 const RECENT_IN_PALETTE = 4
 const RECENT = 'recent:'
 /** Groups of things found by the words typed: running one means the search (remembered). */
-const FOUND = new Set(['Online', 'Albums', 'Artists', 'Songs', 'Playlists'])
+const FOUND = new Set(['Music', 'Albums', 'Artists', 'Songs', 'Playlists'])
+/** Completions of the words, offered as searches, after the things found. */
+const COMPLETIONS = 4
 import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
 
 export interface Command {
@@ -32,6 +35,11 @@ export interface Command {
   run: () => void
   /** Everything else that can be done with it (lib/actions.ts): right-click, or → when chosen. */
   menu?: () => MenuGroups
+  /** A picture beside it (music found by the words). */
+  art?: ReactNode
+  round?: boolean
+  /** From the online catalog: marked so. */
+  online?: boolean
 }
 
 /**
@@ -59,12 +67,15 @@ export function CommandPalette(props: {
   commands: Command[]
   /** Library root: when set, typed words also search the online catalog. */
   root?: string
+  /** Open a page of Music, or search it, from here (the palette closes first). */
+  music?: { open: (page: MusicPage) => void; search: (words: string) => void }
 }) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
-  const [online, setOnline] = useState<{ q: string; tracks: OnlineTrack[]; error: string; loading: boolean }>({
+  const empty: OnlineSuggestions = { queries: [], items: [] }
+  const [online, setOnline] = useState<{ q: string; found: OnlineSuggestions; error: string; loading: boolean }>({
     q: '',
-    tracks: [],
+    found: empty,
     error: '',
     loading: false,
   })
@@ -76,7 +87,7 @@ export function CommandPalette(props: {
     if (props.open) {
       setQ('')
       setSel(0)
-      setOnline({ q: '', tracks: [], error: '', loading: false })
+      setOnline({ q: '', found: empty, error: '', loading: false })
       window.setTimeout(() => input.current?.focus(), 0)
     }
   }, [props.open])
@@ -88,17 +99,17 @@ export function CommandPalette(props: {
     const query = q.trim()
     // Too short to ask, or offline (said once, under the results).
     if (query.length < 2 || !connected) {
-      setOnline({ q: query, tracks: [], error: query.length < 2 ? '' : OFFLINE, loading: false })
+      setOnline({ q: query, found: empty, error: query.length < 2 ? '' : OFFLINE, loading: false })
       return
     }
     setOnline((s) => ({ ...s, q: query, loading: true, error: '' }))
     let live = true
+    // The catalog's suggestions: a few things that match, and completions (about 0.1 s).
     const t = window.setTimeout(() => {
-      onlineSearch(query, 'palette')
-        // Ranked before the cut, so the 8 shown (and the order they play in) are the best.
-        .then((r) => live && setOnline({ q: query, tracks: rankOnlineTracks(query, r.tracks).slice(0, 8), error: '', loading: false }))
-        .catch((e) => live && !isSearchCancelled(e) && setOnline({ q: query, tracks: [], error: onlineProblem(e), loading: false }))
-    }, 320)
+      onlineSuggest(query, 'palette')
+        .then((found) => live && setOnline({ q: query, found, error: '', loading: false }))
+        .catch((e) => live && !isSearchCancelled(e) && setOnline({ q: query, found: empty, error: onlineProblem(e), loading: false }))
+    }, 150)
     return () => {
       live = false
       window.clearTimeout(t)
@@ -116,44 +127,96 @@ export function CommandPalette(props: {
       ? ranked.sort((a, b) => b.s - a.s).slice(0, 32)
       : ranked.filter((x) => x.c.group !== 'Albums')
 
-    const onlineCmds: { c: Command; s: number }[] =
-      props.root && online.q === q.trim() && online.tracks.length
-        ? online.tracks.map((t, i) => {
-            const artists = t.artists.join(', ')
-            return {
-              s: 50 - i,
-              c: {
-                id: `online:${t.provider}:${t.track_id}`,
-                group: 'Online',
-                label: t.title,
-                detail: [artists, t.album].filter(Boolean).join(' · '),
-                keywords: `online stream ${artists}`,
-                run: () => {
-                  if (!props.root) return
-                  void playItems(
-                    props.root,
-                    online.tracks.map(toRemoteItem),
-                    i,
-                    { kind: 'search', ref: q.trim(), label: `Online: ${q.trim()}` },
-                  )
-                },
-                menu: () => {
-                  const root = props.root ?? ''
-                  const item = toRemoteItem(t)
-                  return menuFor(
-                    'song',
-                    { online: true, noArtist: true },
-                    {
-                      play: () => void playItems(root, [item], 0, { kind: 'search', ref: q.trim(), label: `Online: ${q.trim()}` }),
-                      next: () => void enqueueItems(root, [item], true),
-                      queue: () => void enqueueItems(root, [item], false),
-                      playlist: () => askAddSongs([songItemOf(item)], t.title),
-                    },
-                  )
-                },
-              } satisfies Command,
-            }
-          })
+    // Music the words find in the online catalog (a song plays; the rest open in Music), then
+    // completions of the words and the words themselves, as searches of Music.
+    const typed = q.trim()
+    const root = props.root ?? ''
+    const from = { kind: 'search' as const, ref: typed, label: `Online: ${typed}` }
+    const art = (url: string | null | undefined, seed: string) => <RemoteArt url={url} seed={seed} size={36} imgClassName="h-full w-full object-cover" />
+    const found = props.root && online.q === typed ? online.found : empty
+    const musicCmds: { c: Command; s: number }[] = found.items.map((item, i): { c: Command; s: number } => {
+      const s = 50 - i
+      switch (item.kind) {
+        case 'song': {
+          const t = item.track
+          const one = toRemoteItem(t)
+          return {
+            s,
+            c: {
+              id: `music:song:${t.track_id}`,
+              group: 'Music',
+              label: t.title,
+              detail: ['Song', t.artists.join(', ')].filter(Boolean).join(' · '),
+              art: art(t.artwork_url, t.album || t.title),
+              online: true,
+              run: () => void playItems(root, [one], 0, from),
+              menu: () =>
+                menuFor(
+                  'song',
+                  { online: true, noArtist: true },
+                  {
+                    play: () => void playItems(root, [one], 0, from),
+                    next: () => void enqueueItems(root, [one], true),
+                    queue: () => void enqueueItems(root, [one], false),
+                    playlist: () => askAddSongs([songItemOf(one)], t.title),
+                  },
+                ),
+            },
+          }
+        }
+        case 'album':
+          return {
+            s,
+            c: {
+              id: `music:album:${item.album.album_id}`,
+              group: 'Music',
+              label: item.album.title,
+              detail: item.subtitle?.split('•').map((x) => x.trim()).join(' · ') ?? 'Album',
+              art: art(item.album.artwork_url, item.album.title),
+              online: true,
+              run: () => props.music?.open({ kind: 'online-album', album: item.album }),
+            },
+          }
+        case 'artist':
+          return {
+            s,
+            c: {
+              id: `music:artist:${item.artist.artist_id}`,
+              group: 'Music',
+              label: item.artist.name,
+              detail: item.subtitle?.split('•').map((x) => x.trim()).join(' · ') ?? 'Artist',
+              art: art(item.artist.artwork_url, item.artist.name),
+              round: true,
+              online: true,
+              run: () => props.music?.open({ kind: 'online-artist', artist: item.artist }),
+            },
+          }
+        case 'playlist':
+          return {
+            s,
+            c: {
+              id: `music:list:${item.collection.collection_id}`,
+              group: 'Music',
+              label: item.collection.title,
+              detail: item.collection.subtitle?.split('•').map((x) => x.trim()).join(' · ') ?? 'Playlist',
+              art: art(item.collection.artwork_url, item.collection.title),
+              online: true,
+              run: () => props.music?.open({ kind: 'online-collection', collection: item.collection }),
+            },
+          }
+      }
+    })
+    const searchCmds: { c: Command; s: number }[] =
+      typed && props.music
+        ? [typed, ...found.queries.filter((x) => x.toLowerCase() !== typed.toLowerCase()).slice(0, COMPLETIONS)].map((text, i) => ({
+            s: 0,
+            c: {
+              id: `search:${text}`,
+              group: 'Search Music',
+              label: i === 0 ? `All results for “${text}”` : text,
+              run: () => props.music?.search(text),
+            } satisfies Command,
+          }))
         : []
 
     // Opened empty: your recent searches first (choosing one types it here).
@@ -163,10 +226,16 @@ export function CommandPalette(props: {
           s: 0,
           c: { id: `${RECENT}${r.q}`, group: 'Recent searches', label: r.q, run: () => {} } satisfies Command,
         }))
-    const shown = [...recentCmds, ...local, ...onlineCmds]
+    // Music first, unless a command or one of your albums matches the words exactly ("dark",
+    // "settings", "kind of blue"): then those, then the music found online.
+    const commandFirst = !!typed && (local[0]?.s ?? 0) >= 100
+    const shown = commandFirst
+      ? [...recentCmds, ...local, ...musicCmds, ...searchCmds]
+      : [...recentCmds, ...musicCmds, ...searchCmds, ...local]
     // Show a group heading above the first command of each group.
     return shown.map((x, i) => ({ c: x.c, head: i === 0 || shown[i - 1].c.group !== x.c.group ? x.c.group : '' }))
-  }, [props.commands, props.root, q, online, recent])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.commands, props.root, props.music, q, online, recent])
 
   useEffect(() => {
     list.current?.querySelector(`[data-i="${sel}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -182,7 +251,7 @@ export function CommandPalette(props: {
       return
     }
     // Something found by the words (a song online, an album…): the search is remembered.
-    if (q.trim() && FOUND.has(c.group)) recentSearches.push(q)
+    if (q.trim() && (FOUND.has(c.group) || c.group === 'Search Music')) recentSearches.push(c.group === 'Search Music' && !c.label.startsWith('All results') ? c.label : q)
     props.onClose()
     window.setTimeout(c.run, 0)
   }
@@ -252,7 +321,7 @@ export function CommandPalette(props: {
                   setSel(0)
                 }}
                 onKeyDown={onKey}
-                placeholder={props.root ? 'Type a command, an album, an artist or an online song' : 'Type a command, an album or an artist'}
+                placeholder={props.root ? 'Search music, or type a command' : 'Type a command, an album or an artist'}
                 className="min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink/40"
                 role="combobox"
                 aria-expanded="true"
@@ -273,10 +342,10 @@ export function CommandPalette(props: {
                       : `Nothing matches “${q}”.`}
                 </p>
               )}
-              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Online') && (
-                <div className="px-3 pb-1 pt-3 text-[11.5px] font-medium text-ink/45">Online</div>
+              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Music') && (
+                <div className="px-3 pb-1 pt-3 text-[11.5px] font-medium text-ink/45">Music</div>
               )}
-              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Online') && (
+              {online.loading && q.trim().length >= 2 && results.every((r) => r.c.group !== 'Music') && (
                 <div className="grid gap-1.5 px-3 py-2" aria-busy="true">
                   {Array.from({ length: 3 }, (_, i) => (
                     <div key={i} className="flex items-center gap-3">
@@ -286,7 +355,7 @@ export function CommandPalette(props: {
                 </div>
               )}
               {results.map(({ c, head }, i) => {
-                const onlineHit = c.group === 'Online'
+                const onlineHit = !!c.online
                 return (
                   <div key={c.id}>
                     {head && <div className="px-3 pb-1 pt-3 text-[11.5px] font-medium text-ink/45">{head}</div>}
@@ -301,6 +370,12 @@ export function CommandPalette(props: {
                         i === sel ? 'palette-on bg-[color-mix(in_oklab,var(--accent)_22%,transparent)]' : ''
                       }`}
                     >
+                      {c.art !== undefined && (
+                        <span className={`grid h-9 w-9 shrink-0 place-items-center overflow-hidden bg-ink/[0.07] text-[13px] text-ink/40 ${c.round ? 'rounded-full' : 'rounded-lg'}`}>
+                          {c.art}
+                        </span>
+                      )}
+                      {c.group === 'Search Music' && <IconSearch width={15} height={15} className="shrink-0 text-ink/45" />}
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate text-[14px]">{c.label}</span>
@@ -346,10 +421,10 @@ export function CommandPalette(props: {
 export function ShortcutSheet(props: { open: boolean; onClose: () => void }) {
   const rows: [string, string][] = [
     ['Ctrl+K', 'Command palette: go anywhere, find anything, run any action'],
-    ['Ctrl+1 … Ctrl+5', 'Music, Health, Organize, Playlists, Devices'],
+    ['Ctrl+1 … Ctrl+5', 'Music, Metadata, Health, Organize, Devices'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+H', 'Activity (history and undo)'],
-    ['/', 'Search your music'],
+    ['/', 'Search music, yours and online'],
     ['Ctrl+Shift+L', 'Switch between light and dark'],
     ['1 2 3 · 0', 'On a question: answer · skip'],
     ['Enter', 'On a question: accept the recommendation'],
