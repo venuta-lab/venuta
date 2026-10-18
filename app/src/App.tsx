@@ -72,6 +72,7 @@ import { applyZoom, readZoom, zoomBy } from './lib/zoom'
 import { OpenLink } from './components/OpenLink'
 import { askOpenLink } from './lib/openLink'
 import { getPlayerState, onPlayer, queueKey } from './lib/player'
+import { loadLikes, toggleLiked } from './lib/likes'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
@@ -406,6 +407,37 @@ export default function App() {
       off?.()
     }
   }, [])
+
+  // Shortcuts from anywhere (Settings, Startup and tray), the ones this window does: the player,
+  // the volume, and liking the song playing.
+  useEffect(() => {
+    if (!inApp()) return
+    let off: (() => void) | undefined
+    let live = true
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) =>
+        listen<string>('global-hotkey', async (e) => {
+          const s = getPlayerState()
+          if (e.payload === 'play_pause') void player.toggle()
+          else if (e.payload === 'next') void player.next()
+          else if (e.payload === 'previous') void player.previous()
+          else if (e.payload === 'volume_up') void player.setVolume(Math.min(1, s.volume + 0.05))
+          else if (e.payload === 'volume_down') void player.setVolume(Math.max(0, s.volume - 0.05))
+          else if (e.payload === 'like') {
+            const song = s.queue[s.index]
+            const r = s.root || root
+            if (!song || !r) return
+            await loadLikes(r)
+            await toggleLiked(r, song)
+          }
+        }),
+      )
+      .then((u) => (live ? (off = u) : u()))
+    return () => {
+      live = false
+      off?.()
+    }
+  }, [root])
 
   // The desktop lyrics from the tray and Ctrl+Shift+D (anywhere): shown, hidden, or unlocked to
   // be moved. This window knows where they were left.

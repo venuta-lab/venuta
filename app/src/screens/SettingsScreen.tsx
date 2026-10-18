@@ -24,6 +24,7 @@ import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
 import { ProxySetting } from './settings/ProxySetting'
 import { CacheSetting } from './settings/CacheSetting'
+import { HotkeysSetting } from './settings/HotkeysSetting'
 import { readZoom, setZoom, ZOOM_EVENT } from '../lib/zoom'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
@@ -926,6 +927,7 @@ function Desktop() {
       <Row title="Start with Windows" hint="When you sign in, Venuta starts in the tray without opening a window, ready for your media keys.">
         <Switch label="Start with Windows" on={!!startup} disabled={startup === null} onChange={(on) => void setStartWithWindows(on)} />
       </Row>
+      <HotkeysSetting />
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
   )

@@ -18,6 +18,20 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+/// Show the main window, or put it away when it's in front (the Show Venuta shortcut).
+pub fn toggle_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let front = w.is_visible().unwrap_or(false)
+            && !w.is_minimized().unwrap_or(false)
+            && w.is_focused().unwrap_or(false);
+        if front {
+            let _ = w.hide();
+        } else {
+            show_main(app);
+        }
+    }
+}
+
 /// The tray icon and its menu; the tooltip and first line follow the song playing.
 pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     let now = MenuItem::with_id(app, "now", "Nothing playing", false, None::<&str>)?;

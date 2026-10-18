@@ -53,6 +53,10 @@ pub struct Settings {
     /// Which new versions are offered: "stable" (releases), or "beta" (pre-releases too).
     #[serde(default)]
     pub update_channel: Option<String>,
+    /// Shortcuts from any app you changed: action to keys ("" for off). The app adds the
+    /// defaults (app hotkeys.rs).
+    #[serde(default)]
+    pub hotkeys: BTreeMap<String, String>,
 }
 
 /// A proxy address as it may be used: `http`, `https`, `socks5` or `socks5h`, then a host and a

@@ -22,6 +22,7 @@ mod accounts;
 mod app_icon;
 mod clipboard;
 mod desktop;
+mod hotkeys;
 mod libcache;
 mod listening;
 mod lyric_windows;
@@ -181,6 +182,45 @@ async fn blocking<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// The shortcuts from anywhere: each action's keys now ("" for off), and the ones that
+/// couldn't be set and why.
+#[derive(Serialize)]
+struct HotkeysNow {
+    keys: std::collections::BTreeMap<String, String>,
+    problems: Vec<hotkeys::Problem>,
+}
+
+#[tauri::command]
+fn get_hotkeys(app: tauri::AppHandle) -> HotkeysNow {
+    let changed = engine::settings::load().hotkeys;
+    // Set again to learn what's taken now (another app may have let go, or taken some).
+    let problems = hotkeys::apply(&app, &changed);
+    HotkeysNow {
+        keys: hotkeys::effective(&changed),
+        problems,
+    }
+}
+
+/// Give one action new keys ("" switches it off), save it, and set every shortcut again.
+#[tauri::command]
+fn set_hotkey(app: tauri::AppHandle, action: String, keys: String) -> CmdResult<HotkeysNow> {
+    if !hotkeys::ACTIONS.contains(&action.as_str()) {
+        return Err(format!("no shortcut called {action}"));
+    }
+    let keys = keys.trim().to_owned();
+    if !keys.is_empty() {
+        hotkeys::usable(&keys)?;
+    }
+    let mut s = engine::settings::load();
+    s.hotkeys.insert(action, keys);
+    engine::settings::save(&s)?;
+    let problems = hotkeys::apply(&app, &s.hotkeys);
+    Ok(HotkeysNow {
+        keys: hotkeys::effective(&s.hotkeys),
+        problems,
+    })
 }
 
 /// What the caches take (Settings, Online sources).
@@ -2994,11 +3034,8 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
-                    if event.state() == ShortcutState::Pressed
-                        && shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyD)
-                    {
-                        lyric_windows::ask_main(app, "toggle");
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        hotkeys::pressed(app, shortcut);
                     }
                 })
                 .build(),
@@ -3020,14 +3057,10 @@ pub fn run() {
             }
             // The icon chosen in Settings, on the window, the tray and the shortcuts.
             app_icon::settle(app.handle());
-            // Ctrl+Shift+D shows or hides the desktop lyrics from anywhere. Another program
-            // (or a second copy of Venuta) may have it already: then only the tray does.
-            {
-                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-                let keys = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
-                if let Err(e) = app.global_shortcut().register(keys) {
-                    eprintln!("Ctrl+Shift+D: {e}");
-                }
+            // The shortcuts from anywhere (Ctrl+Shift+D for the desktop lyrics unless changed).
+            // Another program (or a second copy of Venuta) may hold some keys: Settings says so.
+            for p in hotkeys::apply(app.handle(), &engine::settings::load().hotkeys) {
+                eprintln!("shortcut {} ({}): {}", p.action, p.keys, p.reason);
             }
             // Started with Windows: stay in the tray. Otherwise show the window (it starts
             // hidden so it never flashes before this choice).
@@ -3172,6 +3205,8 @@ pub fn run() {
             ytm_account::ytm_rate,
             cache_sizes,
             clear_cache,
+            get_hotkeys,
+            set_hotkey,
             ytm_account::ytm_bring_in_likes,
             diagnostics,
             restart_app,
