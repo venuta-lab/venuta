@@ -1,7 +1,7 @@
 // Which Settings section opens next, kept apart from the Settings screen so asking for one
 // doesn't load the screen before it is opened.
 
-export type SettingsPage = 'look' | 'desktop' | 'folders' | 'online' | 'safety' | 'about'
+export type SettingsPage = 'look' | 'listening' | 'desktop' | 'folders' | 'online' | 'safety' | 'about'
 
 let asked: SettingsPage | null = null
 

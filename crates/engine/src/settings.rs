@@ -69,12 +69,13 @@ pub struct Listening {
     /// Keep a history of what you play, from your files and online.
     #[serde(default = "yes")]
     pub history: bool,
-    /// Online stream quality: "auto", "high" or "low".
+    /// Online stream quality: "auto" (the best a song offers) or "low" (data saver).
     #[serde(default = "auto")]
     pub stream_quality: String,
-    /// Even out online songs' loudness with the catalog's own measure of each.
+    /// Which country the online catalog answers for (its charts, home and search); empty: the
+    /// computer's own region.
     #[serde(default)]
-    pub online_levelling: bool,
+    pub catalog_region: String,
     /// The lyrics sources in your order, "-id" for one switched off (see
     /// `lyrics_online::order`); empty: the default order, all on.
     #[serde(default)]
@@ -103,7 +104,7 @@ impl Default for Listening {
             hide_videos: false,
             history: true,
             stream_quality: auto(),
-            online_levelling: false,
+            catalog_region: String::new(),
             lyrics_sources: Vec::new(),
         }
     }

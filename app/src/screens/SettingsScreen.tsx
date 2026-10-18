@@ -24,12 +24,14 @@ import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { takeSettingsSection, type SettingsPage } from './settingsPage'
+import { ListeningSettings } from './settings/ListeningSettings'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
 type Page = SettingsPage
 const PAGES: { id: Page; label: string }[] = [
   { id: 'look', label: 'Look and feel' },
+  { id: 'listening', label: 'Listening' },
   { id: 'desktop', label: 'Startup and tray' },
   { id: 'folders', label: 'Music folders' },
   { id: 'online', label: 'Online sources' },
@@ -87,6 +89,7 @@ export function SettingsScreen(props: {
         className="glass min-w-0 flex-1 rounded-[24px] px-7 py-6"
       >
         {page === 'look' && <LookAndFeel />}
+        {page === 'listening' && <ListeningSettings />}
         {page === 'desktop' && <Desktop />}
         {page === 'folders' && (
           <Folders

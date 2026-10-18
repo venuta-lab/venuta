@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { inApp } from '../lib/engine'
 import { ActivityIndicator } from './Activity'
 import { Brand } from './Brand'
+import { askOpenLink } from '../lib/openLink'
 import { IconSearch } from './Icons'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
@@ -34,6 +35,17 @@ export function TitleBar(props: { onPalette: () => void }) {
         <kbd>Ctrl K</kbd>
       </button>
       <div className="ml-auto flex h-full items-center">
+        <button
+          onClick={askOpenLink}
+          aria-label="Open a link"
+          title="Open a link: a song, album, artist or playlist on YouTube Music or Spotify (Ctrl+O)"
+          className="mr-1 grid h-8 w-8 place-items-center rounded-full text-ink/60 transition-colors hover:bg-ink/10 hover:text-ink"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1" />
+            <path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" />
+          </svg>
+        </button>
         <ActivityIndicator />
         <WinButton label="Minimise" onClick={() => win?.minimize()}>
           <path d="M5 12h14" />

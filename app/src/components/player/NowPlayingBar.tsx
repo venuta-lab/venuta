@@ -572,7 +572,10 @@ function Round(props: { label: string; onClick: () => void; on?: boolean; childr
 }
 
 /** Space, arrows, Ctrl+arrows, L, Q: the player from the keyboard, from any screen. */
-function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => void }) {
+/** The volume before muting with M, to go back to. */
+let lastVolume = 1
+
+function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => void; now: () => void }) {
   const ref = useRef({ s, open })
   useEffect(() => {
     ref.current = { s, open }
@@ -610,9 +613,25 @@ function useShortcuts(s: PlayerState, open: { lyrics: () => void; queue: () => v
       } else if (e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault()
         void toggleMiniPlayer()
-      } else if (e.key === 'F11' && s.queue[s.index]?.lyrics) {
+      } else if (e.key === 'F11') {
+        // The big screen finds the words online too, so every song has it.
         e.preventDefault()
         void openBigScreen()
+      } else if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        void setShuffle(!s.shuffle)
+      } else if (e.ctrlKey && !e.shiftKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault()
+        void setRepeat(s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off')
+      } else if (!e.ctrlKey && (e.key === 'm' || e.key === 'M')) {
+        // Mute, and back to the volume it had.
+        if (s.volume > 0) {
+          lastVolume = s.volume
+          void setVolume(0)
+        } else void setVolume(lastVolume || 1)
+      } else if (e.ctrlKey && !e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+        e.preventDefault()
+        open.now()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -637,7 +656,7 @@ export function NowPlayingBar(props: {
   useLikes(s.root ?? '')
   const song = current(s)
   const cover = useCovers(320)
-  useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue })
+  useShortcuts(s, { lyrics: props.onLyrics, queue: props.onQueue, now: props.onExpand })
   const info = useThemeInfo()
   const localArt = song && !isOnline(song) ? cover(song.dir) : undefined
   const onlineArt = remoteArtUrl(song)

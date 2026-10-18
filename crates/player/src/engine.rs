@@ -844,9 +844,11 @@ impl<T: Item + Serialize> Engine<T> {
             let at = taken.len();
             taken.extend(front.samples.drain(..n * src_ch));
             if front.chain.is_none() {
+                // An online song's levelling comes from the catalog's loudness, known once open.
+                let gain = front.gain.or_loudness(front.source.loudness_db);
                 front.chain = Some(Chain::new(
                     &self.sound,
-                    &front.gain,
+                    &gain,
                     fmt.rate,
                     fmt.channels,
                     dev_fmt.valid_bits,
@@ -992,9 +994,10 @@ impl<T: Item + Serialize> Engine<T> {
         }
         let mut incoming: Vec<i32> = next.samples.drain(..have * ch).collect();
         if next.chain.is_none() {
+            let gain = next.gain.or_loudness(next.source.loudness_db);
             next.chain = Some(Chain::new(
                 &self.sound,
-                &next.gain,
+                &gain,
                 fmt.rate,
                 fmt.channels,
                 out_bits,

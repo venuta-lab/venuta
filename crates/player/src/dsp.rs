@@ -58,6 +58,28 @@ impl Default for Sound {
     }
 }
 
+/// The gap between the catalog's loudness reference (about -14 LUFS) and ReplayGain's (-18).
+const CATALOG_TO_REPLAYGAIN_DB: f64 = -4.0;
+
+impl Gain {
+    /// This song's gain, or, when its tags give none (an online song), the gain from the
+    /// catalog's loudness for it, as ReplayGain would have measured it.
+    pub fn or_loudness(self, loudness_db: Option<f64>) -> Gain {
+        if self.track_db.is_some() || self.album_db.is_some() {
+            return self;
+        }
+        let Some(l) = loudness_db.filter(|l| l.is_finite()) else {
+            return self;
+        };
+        let db = (-l + CATALOG_TO_REPLAYGAIN_DB) as f32;
+        Gain {
+            track_db: Some(db),
+            album_db: Some(db),
+            ..self
+        }
+    }
+}
+
 /// ReplayGain for one song, from its tags.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Gain {
@@ -296,6 +318,24 @@ impl Chain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_online_song_is_levelled_by_the_catalogs_loudness_and_tags_win() {
+        // 6 dB louder than the catalog's reference: turned down 10 dB at ReplayGain's.
+        let g = Gain::default().or_loudness(Some(6.0));
+        assert_eq!(g.track_db, Some(-10.0));
+        assert_eq!(g.album_db, Some(-10.0));
+        let tagged = Gain {
+            track_db: Some(-7.5),
+            ..Gain::default()
+        };
+        assert_eq!(
+            tagged.or_loudness(Some(6.0)),
+            tagged,
+            "a file's own gain is kept"
+        );
+        assert_eq!(Gain::default().or_loudness(None), Gain::default());
+    }
 
     fn tone(n: usize) -> Vec<i32> {
         (0..n)

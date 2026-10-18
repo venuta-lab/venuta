@@ -263,6 +263,8 @@ export type ImportStart =
   | { kind: 'update'; name: string }
   | { kind: 'check' }
   | { kind: 'send'; names: string[] }
+  /** A playlist link pasted in Open link: read it at once. */
+  | { kind: 'link'; link: string }
 
 const pickFor = (l: PreviewPlaylist, include = l.items.length > 0 || l.source === 'Venuta backup'): Pick => ({
   include,
@@ -376,6 +378,7 @@ export function ImportSheet(props: {
       void read([], null, true, s.only)
     } else if (s.kind === 'update') void review(`Reading where “${s.name}” came from and matching every song…`, () => playlistUpdateRead(root, s.name))
     else if (s.kind === 'check') void checkAll()
+    else if (s.kind === 'link') void read([], s.link, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.start])
 

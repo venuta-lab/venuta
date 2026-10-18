@@ -214,6 +214,7 @@ fn seeking_past_what_has_arrived_waits_for_it_and_lands_there() {
         duration_ms: Some(6_000),
         headers: Vec::new(),
         via: "test",
+        loudness_db: None,
     };
     let item = RemoteItem::new(audio, "Slow song", None);
     let captured = Arc::new(Mutex::new(Captured::default()));

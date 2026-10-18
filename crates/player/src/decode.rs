@@ -86,6 +86,8 @@ pub struct Source {
     download_body: Option<Arc<GrowBody>>,
     /// True once at least one decoded packet produced samples (UI may leave Opening…).
     primed: bool,
+    /// An online song's loudness as the catalog says it (see `EphemeralAudio::loudness_db`).
+    pub loudness_db: Option<f64>,
 }
 
 struct RemoteState {
@@ -116,6 +118,7 @@ enum RemoteEvent {
         url_hint: String,
         duration_hint_ms: Option<u64>,
         size_hint: Option<u64>,
+        loudness_db: Option<f64>,
     },
     Error(String),
 }
@@ -436,6 +439,7 @@ impl Source {
             }),
             download_body: None,
             primed: false,
+            loudness_db: None,
         }
     }
 
@@ -545,6 +549,7 @@ impl Source {
             download_body: None,
             // Local files are ready immediately; progressive sets this after first samples.
             primed: true,
+            loudness_db: None,
         })
     }
 
@@ -602,16 +607,20 @@ impl Source {
                 url_hint,
                 duration_hint_ms,
                 size_hint,
-            }) => self.finish_open(
-                PendingOpen {
-                    body,
-                    mime_type,
-                    url_hint,
-                    duration_hint_ms,
-                    size_hint,
-                },
-                out,
-            ),
+                loudness_db,
+            }) => {
+                self.loudness_db = loudness_db;
+                self.finish_open(
+                    PendingOpen {
+                        body,
+                        mime_type,
+                        url_hint,
+                        duration_hint_ms,
+                        size_hint,
+                    },
+                    out,
+                )
+            }
             Ok(RemoteEvent::Error(error)) => {
                 let remote = self.remote.as_mut().expect("remote source");
                 remote.finished = true;
@@ -883,6 +892,7 @@ fn fill_grow_body(
     let started = std::time::Instant::now();
     let url_hint = audio.url.clone();
     let duration_hint_ms = audio.duration_ms;
+    let loudness_db = audio.loudness_db;
 
     let mut opened = false;
     let mut signal_open = |mime: &Option<String>, size_hint: Option<u64>| {
@@ -906,6 +916,7 @@ fn fill_grow_body(
             url_hint: url_hint.clone(),
             duration_hint_ms,
             size_hint,
+            loudness_db,
         });
     };
 

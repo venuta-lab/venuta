@@ -125,6 +125,7 @@ pub fn resolve_with_stream_tool(track_id: &str) -> Result<EphemeralAudio, Access
         duration_ms,
         headers,
         via: "stream tool",
+        loudness_db: None,
     })
 }
 

@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'motion/react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -67,6 +68,9 @@ import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
 import { keepRadioGoing } from './lib/radio'
 import { listening } from './lib/listening'
+import { applyZoom, readZoom, zoomBy } from './lib/zoom'
+import { OpenLink } from './components/OpenLink'
+import { askOpenLink } from './lib/openLink'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
@@ -142,6 +146,13 @@ export default function App() {
   // Notices from anywhere in the app (added to a playlist, removed with Undo…).
   const shared = useNotice()
   const [palette, setPalette] = useState(false)
+  // Open link (Ctrl+O, the palette, the title bar).
+  const [linkOpen, setLinkOpen] = useState(false)
+  useEffect(() => {
+    const on = () => setLinkOpen(true)
+    window.addEventListener('venuta:open-link', on)
+    return () => window.removeEventListener('venuta:open-link', on)
+  }, [])
   // Radios keep going, and a queue that runs out goes on (autoplay), from the start.
   useEffect(() => keepRadioGoing(), [])
   // Pressing play on something opens Now Playing, when you chose that.
@@ -610,6 +621,7 @@ export default function App() {
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
       { id: 'play-toggle', group: 'Player', label: 'Play or pause', keys: 'Space', keywords: 'resume stop', run: () => void player.toggle() },
       { id: 'mini', group: 'Player', label: 'Mini player', keys: 'Ctrl+M', keywords: 'small window compact on top', run: () => void player.toggleMiniPlayer() },
+      { id: 'open-link', group: 'Player', label: 'Open a link…', keys: 'Ctrl+O', keywords: 'url paste youtube spotify song album artist playlist', run: () => askOpenLink() },
       { id: 'play-next', group: 'Player', label: 'Next song', keys: 'Ctrl+→', keywords: 'skip forward', run: () => void player.next() },
       { id: 'play-prev', group: 'Player', label: 'Previous song', keys: 'Ctrl+←', keywords: 'back', run: () => void player.previous() },
       {
@@ -763,6 +775,11 @@ export default function App() {
     window.setTimeout(() => target.current?.focus(), 80)
   }
 
+  // How large the window draws, as you left it.
+  useEffect(() => {
+    void applyZoom(readZoom())
+  }, [])
+
   // Global shortcuts.
   useEffect(() => {
     const typing = (t: EventTarget | null) =>
@@ -784,6 +801,16 @@ export default function App() {
       } else if (e.ctrlKey && /^[1-5]$/.test(k)) {
         e.preventDefault()
         go(ORDER[Number(k) - 1])
+      } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
+        e.preventDefault()
+        setLinkOpen(true)
+      } else if (e.ctrlKey && !e.shiftKey && k === 'q') {
+        e.preventDefault()
+        void invoke('quit_app')
+      } else if (e.ctrlKey && (k === '=' || k === '+' || k === '-' || k === '0')) {
+        // The whole window larger or smaller, kept for next time.
+        e.preventDefault()
+        zoomBy(k === '0' ? 0 : k === '-' ? -1 : 1)
       } else if (!e.ctrlKey && !e.altKey && !typing(e.target)) {
         if (e.key === '/') {
           e.preventDefault()
@@ -1079,6 +1106,7 @@ export default function App() {
           />
           </div>
         </div>
+        <OpenLink open={linkOpen} root={root} onClose={() => setLinkOpen(false)} onOpened={(where) => where === 'music' && go('listen')} />
         <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} root={root || undefined} music={paletteMusic} />
         {root && (
           <AddToPlaylist root={root} />

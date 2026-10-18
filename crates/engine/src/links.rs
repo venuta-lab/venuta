@@ -356,9 +356,185 @@ fn clock(s: &str) -> Option<u64> {
     }
 }
 
+// --- Open a link: one song, album, artist or playlist ------------------------------------------
+
+/// What a pasted link opens: a song, album, artist or playlist on YouTube Music or Spotify.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Target {
+    /// A catalog song (its video id).
+    Song {
+        id: String,
+    },
+    /// A catalog album page (`MPRE…`).
+    Album {
+        id: String,
+    },
+    /// A catalog artist (`UC…`).
+    Artist {
+        id: String,
+    },
+    /// A catalog playlist (its list id).
+    Playlist {
+        id: String,
+    },
+    SpotifySong {
+        id: String,
+    },
+    SpotifyAlbum {
+        id: String,
+    },
+    SpotifyArtist {
+        id: String,
+    },
+    /// A playlist on another service: brought in through Import.
+    Import {
+        link: String,
+    },
+}
+
+/// What a link opens, or None when it is not one Venuta can open.
+pub fn target(link: &str) -> Option<Target> {
+    type TargetPattern = (Regex, fn(&str) -> Target);
+    static PATTERNS: LazyLock<Vec<TargetPattern>> = LazyLock::new(|| {
+        let r = |p: &str| Regex::new(p).expect("valid");
+        vec![
+            (
+                r(
+                    r"(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|shorts/)|youtu\.be/)([A-Za-z0-9_-]{11})",
+                ),
+                |id| Target::Song { id: id.into() },
+            ),
+            (r(r"youtube\.com/browse/(MPRE[A-Za-z0-9_-]+)"), |id| {
+                Target::Album { id: id.into() }
+            }),
+            (
+                r(r"youtube\.com/(?:browse|channel)/(UC[A-Za-z0-9_-]{22})"),
+                |id| Target::Artist { id: id.into() },
+            ),
+            (
+                r(r"youtube\.com/playlist\?(?:[^#\s]*&)?list=([A-Za-z0-9_-]{10,})"),
+                |id| Target::Playlist { id: id.into() },
+            ),
+            (
+                r(r"open\.spotify\.com/(?:intl-[a-z-]+/)?(?:embed/)?track/([A-Za-z0-9]{22})"),
+                |id| Target::SpotifySong { id: id.into() },
+            ),
+            (r(r"^spotify:track:([A-Za-z0-9]{22})"), |id| {
+                Target::SpotifySong { id: id.into() }
+            }),
+            (
+                r(r"open\.spotify\.com/(?:intl-[a-z-]+/)?(?:embed/)?album/([A-Za-z0-9]{22})"),
+                |id| Target::SpotifyAlbum { id: id.into() },
+            ),
+            (
+                r(r"open\.spotify\.com/(?:intl-[a-z-]+/)?(?:embed/)?artist/([A-Za-z0-9]{22})"),
+                |id| Target::SpotifyArtist { id: id.into() },
+            ),
+        ]
+    });
+    let link = link.trim();
+    PATTERNS
+        .iter()
+        .find_map(|(re, make)| {
+            re.captures(link)
+                .map(|c| make(c.get(1).map(|m| m.as_str()).unwrap_or_default()))
+        })
+        .or_else(|| {
+            parse(link)
+                .filter(|l| !matches!(l, Link::Other(_)))
+                .map(|_| Target::Import {
+                    link: link.to_owned(),
+                })
+        })
+}
+
+/// A Spotify page's name and artists (an album's or an artist's embed page).
+pub fn spotify_entity_embed(page: &str) -> Option<(String, Vec<String>)> {
+    let v = script_json(page, "__NEXT_DATA__")?;
+    let e = &v["props"]["pageProps"]["state"]["data"]["entity"];
+    let name = [s(&e["name"]), s(&e["title"])]
+        .into_iter()
+        .find(|n| !n.is_empty())?;
+    let artists = e["artists"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|x| s(&x["name"]))
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((name, artists))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_link_opens_its_song_album_artist_or_playlist() {
+        let t = |l: &str| target(l);
+        assert_eq!(
+            t("https://music.youtube.com/watch?v=fsiPzT50ZiM&list=RDAMVM"),
+            Some(Target::Song {
+                id: "fsiPzT50ZiM".into()
+            })
+        );
+        assert_eq!(
+            t("https://youtu.be/fsiPzT50ZiM?si=x"),
+            Some(Target::Song {
+                id: "fsiPzT50ZiM".into()
+            })
+        );
+        assert_eq!(
+            t("https://music.youtube.com/browse/MPREb_DbkpS1rORXk"),
+            Some(Target::Album {
+                id: "MPREb_DbkpS1rORXk".into()
+            })
+        );
+        assert_eq!(
+            t("https://music.youtube.com/channel/UCDxKh1gFWeYsqePvgVzmPoQ"),
+            Some(Target::Artist {
+                id: "UCDxKh1gFWeYsqePvgVzmPoQ".into()
+            })
+        );
+        assert_eq!(
+            t("https://music.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG"),
+            Some(Target::Playlist {
+                id: "PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG".into()
+            })
+        );
+        assert_eq!(
+            t("https://open.spotify.com/intl-de/track/3zOYmiNOuyDL0ClxJcEJ0T?si=a"),
+            Some(Target::SpotifySong {
+                id: "3zOYmiNOuyDL0ClxJcEJ0T".into()
+            })
+        );
+        assert_eq!(
+            t("https://open.spotify.com/album/4LH4d3cOWNNsVw41Gqt2kv"),
+            Some(Target::SpotifyAlbum {
+                id: "4LH4d3cOWNNsVw41Gqt2kv".into()
+            })
+        );
+        assert_eq!(
+            t("https://open.spotify.com/artist/0oSGxfWSnnOXhD2fKuz2Gy"),
+            Some(Target::SpotifyArtist {
+                id: "0oSGxfWSnnOXhD2fKuz2Gy".into()
+            })
+        );
+        // A playlist elsewhere goes through Import, as before.
+        assert!(matches!(
+            t("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"),
+            Some(Target::Import { .. })
+        ));
+        assert_eq!(t("hello"), None);
+        assert_eq!(
+            t("https://soundcloud.com/x/sets/y"),
+            None,
+            "a service whose pages can't be read"
+        );
+    }
 
     fn saved(name: &str) -> String {
         std::fs::read_to_string(

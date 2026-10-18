@@ -393,6 +393,16 @@ impl InnerTube {
         self.session.write().unwrap().locale.hl = hl.to_owned();
     }
 
+    /// Which country the catalog answers for (`gl`: its charts, home feed and search ranking).
+    /// Anything but two letters is ignored.
+    pub fn set_country(&self, gl: &str) {
+        if gl.len() != 2 || !gl.chars().all(|c| c.is_ascii_alphabetic()) {
+            tracing::warn!(gl, "ignoring an unusable country");
+            return;
+        }
+        self.session.write().unwrap().locale.gl = gl.to_ascii_uppercase();
+    }
+
     /// Build the request `context` for a client from the current session. Crate-internal — the
     /// endpoints facade calls it. Reads and drops the lock synchronously (no `.await` inside).
     pub(crate) fn context_for(&self, client: &YouTubeClient) -> crate::models::context::Context {

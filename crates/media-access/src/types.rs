@@ -400,7 +400,7 @@ impl fmt::Debug for MediaHeader {
 /// Direct HTTP audio for the current playback session only.
 ///
 /// Not serializable on purpose: playlists and restored queues must store stable ids, not URLs.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct EphemeralAudio {
     pub track_id: String,
     pub provider: String,
@@ -412,6 +412,9 @@ pub struct EphemeralAudio {
     /// Which way found the address ("catalog", "stream tool", "fallback", "fixture"), for the
     /// playback log's timings.
     pub via: &'static str,
+    /// How much louder than the catalog's reference the song is, in dB, when it says (its
+    /// `loudnessDb`): levelling turns an online song down (or up) by it.
+    pub loudness_db: Option<f64>,
 }
 
 impl fmt::Debug for EphemeralAudio {

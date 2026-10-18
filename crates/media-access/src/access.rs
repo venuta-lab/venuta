@@ -170,6 +170,16 @@ pub trait MediaAccess: Send + Sync {
         Err(unsupported("radios"))
     }
 
+    /// One catalog song by its id: what it is (for a pasted link).
+    fn track(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RemoteTrack>, AccessError> {
+        let _ = (track_id, cancel);
+        Err(unsupported("songs by id"))
+    }
+
     /// The catalog's home feed (filtered by a chip's `params`), or its next rows.
     fn home(
         &self,
@@ -199,6 +209,16 @@ pub trait MediaAccess: Send + Sync {
 
     /// Leave music videos out of what the catalog picks and lists.
     fn set_hide_videos(&self, on: bool) {
+        let _ = on;
+    }
+
+    /// Which country the catalog answers for (None: the computer's own region).
+    fn set_region(&self, country: Option<&str>) {
+        let _ = country;
+    }
+
+    /// Data saver: play the smallest stream a song offers instead of the best.
+    fn set_data_saver(&self, on: bool) {
         let _ = on;
     }
 
@@ -516,8 +536,31 @@ impl MediaAccess for CachedAccess {
         self.inner.home(params, continuation, cancel)
     }
 
+    fn track(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RemoteTrack>, AccessError> {
+        self.inner.track(track_id, cancel)
+    }
+
     fn set_hide_videos(&self, on: bool) {
         self.inner.set_hide_videos(on)
+    }
+
+    fn set_region(&self, country: Option<&str>) {
+        // Songs found for another country may not play the same: their addresses are asked again.
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+        self.inner.set_region(country)
+    }
+
+    fn set_data_saver(&self, on: bool) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+        self.inner.set_data_saver(on)
     }
 
     fn forget(&self, track_id: &str) {
@@ -706,6 +749,7 @@ mod tests {
                 duration_ms: None,
                 headers: Vec::new(),
                 via: "test",
+                loudness_db: None,
             })
         }
     }

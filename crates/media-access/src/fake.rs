@@ -245,6 +245,7 @@ impl MediaAccess for FakeMediaAccess {
             duration_ms: Some(200),
             headers: Vec::new(),
             via: "fixture",
+            loudness_db: None,
         })
     }
 }

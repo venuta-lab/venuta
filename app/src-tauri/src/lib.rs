@@ -349,6 +349,8 @@ fn apply_listening(pb: &playback::Playback, l: &engine::settings::Listening) {
     let catalog = pb.catalog();
     catalog.set_blocked_artists(&blocked);
     catalog.set_hide_videos(l.hide_videos);
+    catalog.set_region(Some(l.catalog_region.as_str()).filter(|c| !c.is_empty()));
+    catalog.set_data_saver(l.stream_quality == "low");
 }
 
 /// Remember which folder is open (your library, or music being brought in).
@@ -3072,6 +3074,8 @@ pub fn run() {
             want_add,
             want_remove,
             desktop::set_close_action,
+            desktop::quit_app,
+            desktop::set_ui_zoom,
             updates::update_check,
             accounts::spotify_status,
             accounts::spotify_connect,
@@ -3111,6 +3115,7 @@ pub fn run() {
             online::online_album_page,
             online::online_radio,
             online::online_home,
+            online::open_link,
             listening::listening_plays,
             listening::listening_forget,
             lyrics_find::lyrics_find,

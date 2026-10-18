@@ -217,8 +217,12 @@ export interface Listening {
   hide_videos: boolean
   /** Keep a history of what you play. */
   history: boolean
-  stream_quality: 'auto' | 'high' | 'low'
-  online_levelling: boolean
+  /** 'auto': the best a song offers; 'low': data saver. */
+  stream_quality: 'auto' | 'low'
+  /** The country the online catalog answers for; '' for the computer's own region. */
+  catalog_region: string
+  /** The lyrics sources in your order, "-id" for one switched off. */
+  lyrics_sources: string[]
 }
 
 /** A radio: songs like a seed, and its own list id to ask for more of it. */

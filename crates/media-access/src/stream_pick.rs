@@ -12,7 +12,13 @@ use ytmusic::{Format, StreamingData};
 pub(crate) const PLAYS_OPUS: bool = true;
 
 /// The stream to play, or none when no plain, playable audio stream is offered.
+#[cfg(test)]
 pub(crate) fn pick_audio(data: &StreamingData, opus: bool) -> Option<&Format> {
+    pick_audio_for(data, opus, false)
+}
+
+/// `pick_audio`, or with `saver` the smallest stream (data saver: the lowest bitrate offered).
+pub(crate) fn pick_audio_for(data: &StreamingData, opus: bool, saver: bool) -> Option<&Format> {
     let playable = |f: &&Format| {
         f.is_audio()
             && f.direct_url().is_some()
@@ -24,6 +30,11 @@ pub(crate) fn pick_audio(data: &StreamingData, opus: bool) -> Option<&Format> {
     }
     let original: Vec<&Format> = audio.iter().copied().filter(|f| f.is_original()).collect();
     let pool = if original.is_empty() { audio } else { original };
+    if saver {
+        return pool
+            .into_iter()
+            .min_by_key(|f| (f.bitrate, std::cmp::Reverse(codec_rank(f))));
+    }
     pool.into_iter()
         .max_by_key(|f| (quality_rank(f), codec_rank(f), f.bitrate))
 }
@@ -58,6 +69,18 @@ mod tests {
     fn opus(itag: i32, bitrate: i64, quality: &str) -> serde_json::Value {
         json!({ "itag": itag, "url": format!("https://x/{itag}"), "mimeType": "audio/webm; codecs=\"opus\"",
                 "bitrate": bitrate, "audioQuality": quality, "contentLength": "3500000" })
+    }
+
+    #[test]
+    fn data_saver_plays_the_smallest_stream() {
+        let d = data(json!([
+            opus(251, 160_000, "AUDIO_QUALITY_MEDIUM"),
+            aac(139, 48_000, "AUDIO_QUALITY_LOW"),
+            opus(249, 50_000, "AUDIO_QUALITY_LOW"),
+            aac(140, 130_000, "AUDIO_QUALITY_MEDIUM"),
+        ]));
+        assert_eq!(pick_audio_for(&d, true, true).map(|f| f.itag), Some(139));
+        assert_eq!(pick_audio_for(&d, true, false).map(|f| f.itag), Some(251));
     }
 
     #[test]

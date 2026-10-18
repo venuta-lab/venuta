@@ -364,6 +364,57 @@ pub async fn online_mood(
     .map_err(|e| e.to_string())?
 }
 
+/// What a pasted link opens, with what is needed to open it: the song (a catalog song link),
+/// or the name and artists a Spotify page gives (to find it in the catalog).
+#[derive(Serialize)]
+pub struct LinkOpen {
+    pub target: engine::links::Target,
+    pub track: Option<RemoteTrack>,
+    pub name: Option<String>,
+    pub artists: Vec<String>,
+    pub duration_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn open_link(link: String, pb: State<'_, Playback>) -> Result<LinkOpen, String> {
+    use engine::links::Target;
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = engine::links::target(&link).ok_or_else(|| {
+            "That isn't a link to a song, album, artist or playlist on YouTube Music or Spotify.".to_owned()
+        })?;
+        let mut out = LinkOpen { target: target.clone(), track: None, name: None, artists: Vec::new(), duration_ms: None };
+        let embed = |kind: &str, id: &str| -> Result<String, String> {
+            let http = engine::net::Http::open()?;
+            http.get_text(&format!("https://open.spotify.com/embed/{kind}/{id}")).map_err(|e| e.to_string())
+        };
+        match &target {
+            Target::Song { id } => {
+                out.track = access.track(id, &CancellationToken::default()).map_err(words)?;
+                if out.track.is_none() {
+                    return Err("The online catalog has no song at that link.".into());
+                }
+            }
+            Target::SpotifySong { id } => {
+                let f = engine::links::spotify_track_embed(&embed("track", id)?).ok_or("Spotify's page for that song couldn't be read.")?;
+                out.name = Some(f.title);
+                out.artists = f.artist.split(", ").filter(|a| !a.is_empty()).map(str::to_owned).collect();
+                out.duration_ms = f.duration_ms;
+            }
+            Target::SpotifyAlbum { id } | Target::SpotifyArtist { id } => {
+                let kind = if matches!(target, Target::SpotifyAlbum { .. }) { "album" } else { "artist" };
+                let (name, artists) = engine::links::spotify_entity_embed(&embed(kind, id)?).ok_or("Spotify's page couldn't be read.")?;
+                out.name = Some(name);
+                out.artists = artists;
+            }
+            _ => {}
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The catalog's home feed (filtered by a chip's `params`), or its next rows.
 #[tauri::command]
 pub async fn online_home(

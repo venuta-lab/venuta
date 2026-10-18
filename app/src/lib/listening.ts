@@ -14,7 +14,8 @@ const DEFAULTS: Listening = {
   hide_videos: false,
   history: true,
   stream_quality: 'auto',
-  online_levelling: false,
+  catalog_region: '',
+  lyrics_sources: [],
 }
 
 let now: Listening = DEFAULTS

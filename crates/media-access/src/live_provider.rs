@@ -160,6 +160,10 @@ trait LiveBackend: Send + Sync {
 
     fn set_hide_videos(&self, on: bool);
 
+    fn set_region(&self, country: Option<&str>);
+
+    fn set_data_saver(&self, on: bool);
+
     /// The cards of a page that is one grid (a row's "See all").
     fn grid(
         &self,
@@ -178,6 +182,8 @@ struct YtmBackend {
     visitor: tokio::sync::OnceCell<String>,
     /// The older resolver, started only the first time both faster ways fail.
     legacy: OnceLock<Result<LegacyResolver, AccessError>>,
+    /// Data saver: the smallest stream instead of the best.
+    saver: std::sync::atomic::AtomicBool,
 }
 
 impl YtmBackend {
@@ -214,6 +220,7 @@ impl YtmBackend {
             clients: ytmusic::Clients::bundled(),
             visitor: tokio::sync::OnceCell::new(),
             legacy: OnceLock::new(),
+            saver: std::sync::atomic::AtomicBool::new(false),
         };
         Ok(backend)
     }
@@ -308,13 +315,17 @@ impl YtmBackend {
                 "catalog returned no stream data",
             )
         })?;
-        let format = crate::stream_pick::pick_audio(data, crate::stream_pick::PLAYS_OPUS)
-            .ok_or_else(|| {
-                AccessError::new(
-                    AccessErrorKind::Unsupported,
-                    "no playable audio stream offered",
-                )
-            })?;
+        let format = crate::stream_pick::pick_audio_for(
+            data,
+            crate::stream_pick::PLAYS_OPUS,
+            self.saver.load(std::sync::atomic::Ordering::Relaxed),
+        )
+        .ok_or_else(|| {
+            AccessError::new(
+                AccessErrorKind::Unsupported,
+                "no playable audio stream offered",
+            )
+        })?;
         let url = format.direct_url().unwrap_or_default().to_owned();
         let content_length = format
             .content_length
@@ -348,6 +359,13 @@ impl YtmBackend {
                 .and_then(|d| d.parse().ok()),
             headers,
             via: "catalog",
+            loudness_db: format.loudness_db.or_else(|| {
+                response
+                    .player_config
+                    .as_ref()
+                    .and_then(|c| c.audio_config.as_ref())
+                    .and_then(|a| a.loudness_db)
+            }),
         })
     }
 
@@ -687,6 +705,17 @@ impl LiveBackend for YtmBackend {
 
     fn set_hide_videos(&self, on: bool) {
         self.it.set_hide_videos(on);
+    }
+
+    fn set_region(&self, country: Option<&str>) {
+        let gl = country
+            .and_then(crate::region::country_code)
+            .unwrap_or_else(|| crate::region::catalog_region().country);
+        self.it.set_country(&gl);
+    }
+
+    fn set_data_saver(&self, on: bool) {
+        self.saver.store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn grid(
@@ -1134,6 +1163,7 @@ async fn try_resolve_with_client(
             .and_then(|duration| duration.parse().ok()),
         headers,
         via: "fallback",
+        loudness_db: None,
     })
 }
 
@@ -1713,6 +1743,31 @@ impl MediaAccess for LiveCatalogAccess {
         self.backend.set_blocked(blocked);
     }
 
+    fn track(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RemoteTrack>, AccessError> {
+        let id = track_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which song?",
+            ));
+        }
+        // The song's own "next" answer starts with the song itself.
+        let (_, answer) = self.backend.radio(Some(id), None, cancel)?;
+        Ok(answer
+            .items
+            .iter()
+            .find(|s| s.video_id == id)
+            .and_then(crate::catalog_cards::track_of_row)
+            .map(|mut t| {
+                t.artwork_url = clean_artwork_url(t.artwork_url.take());
+                t
+            }))
+    }
+
     fn home(
         &self,
         params: Option<&str>,
@@ -1750,6 +1805,14 @@ impl MediaAccess for LiveCatalogAccess {
 
     fn set_hide_videos(&self, on: bool) {
         self.backend.set_hide_videos(on);
+    }
+
+    fn set_region(&self, country: Option<&str>) {
+        self.backend.set_region(country);
+    }
+
+    fn set_data_saver(&self, on: bool) {
+        self.backend.set_data_saver(on);
     }
 
     fn shelf_more(

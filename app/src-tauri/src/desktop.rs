@@ -170,6 +170,20 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     }
 }
 
+/// Quit Venuta (Ctrl+Q), whatever closing the window would do.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+/// How large the whole window draws (Ctrl + / - / 0): 1 is as designed.
+#[tauri::command]
+pub fn set_ui_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> {
+    window
+        .set_zoom(scale.clamp(0.6, 2.0))
+        .map_err(|e| e.to_string())
+}
+
 /// Remember what closing the window does ("tray" or "quit"), and do it now if asked.
 #[tauri::command]
 pub fn set_close_action(action: String, now: bool, app: AppHandle) -> Result<(), String> {
