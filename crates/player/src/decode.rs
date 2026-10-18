@@ -834,6 +834,7 @@ fn fill_grow_body(
     mut refresh: Option<Refresh>,
 ) -> Result<(), String> {
     let agent = media_access::media_agent();
+    let started = std::time::Instant::now();
     let url_hint = audio.url.clone();
     let duration_hint_ms = audio.duration_ms;
 
@@ -848,6 +849,11 @@ fn fill_grow_body(
             return;
         }
         opened = true;
+        media_access::note_timing(&format!(
+            "online song ready to open after {} ms ({} KB in)",
+            media_access::ms_since(started),
+            body.len() / 1024
+        ));
         let _ = sender.send(RemoteEvent::OpenReady {
             body: Arc::clone(body),
             mime_type: mime.clone(),
@@ -953,6 +959,7 @@ fn fill_grow_body(
         };
         refreshes += 1;
         *retried_here = false;
+        media_access::note_timing("online song asked for a fresh address partway");
         *audio = fresh;
         true
     };

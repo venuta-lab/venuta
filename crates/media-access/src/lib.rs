@@ -18,6 +18,7 @@ mod region;
 mod stream_pick;
 #[cfg(feature = "live-provider")]
 mod stream_resolve;
+mod timing;
 mod types;
 
 pub use access::{
@@ -32,6 +33,7 @@ pub use online::UnconfiguredOnlineAccess;
 pub use region::{CatalogRegion, catalog_region};
 #[cfg(feature = "live-provider")]
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
+pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, ONLINE_PLAYLIST_TAG, Page,
     PageRequest, Playable, PlayableId, RemoteAlbum, RemoteArtist, RemoteArtistPage, RemotePlaylist,

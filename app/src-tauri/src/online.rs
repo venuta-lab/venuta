@@ -160,6 +160,11 @@ pub fn online_catalog_status() -> OnlineCatalogStatus {
     }
 }
 
+/// What a part of a search answers when its thread stopped without answering.
+fn search_stopped() -> AccessError {
+    AccessError::new(AccessErrorKind::Transport, "search stopped")
+}
+
 /// Songs, albums and artists for these words. One kind failing doesn't cost the others.
 ///
 /// `search_box` names the box that asked ("music", "palette", "add-songs", "pick",
@@ -182,11 +187,22 @@ pub async fn online_search(
     }
     let access = pb.catalog();
     let cancel = running.fresh(&box_name(search_box));
+    let started = Instant::now();
     let results = tauri::async_runtime::spawn_blocking(move || {
-        let page = PageRequest::new(TRACKS_PER_PAGE, None);
-        let tracks = access.search_tracks(&query, &page, &cancel);
-        let albums = access.search_albums(&query, &PageRequest::new(12, None), &cancel);
-        let artists = access.search_artists(&query, &PageRequest::new(12, None), &cancel);
+        // All three asked at once: the answer takes as long as the slowest, not the sum.
+        let (tracks, albums, artists) = std::thread::scope(|s| {
+            let albums =
+                s.spawn(|| access.search_albums(&query, &PageRequest::new(12, None), &cancel));
+            let artists =
+                s.spawn(|| access.search_artists(&query, &PageRequest::new(12, None), &cancel));
+            let tracks =
+                access.search_tracks(&query, &PageRequest::new(TRACKS_PER_PAGE, None), &cancel);
+            (
+                tracks,
+                albums.join().unwrap_or_else(|_| Err(search_stopped())),
+                artists.join().unwrap_or_else(|_| Err(search_stopped())),
+            )
+        });
         if cancel.is_cancelled() {
             return Err(SEARCH_CANCELLED.to_owned());
         }
@@ -208,6 +224,10 @@ pub async fn online_search(
     })
     .await
     .map_err(|e| e.to_string())??;
+    media_access::note_timing(&format!(
+        "online search answered in {} ms",
+        media_access::ms_since(started)
+    ));
     if results.1 {
         running.remember(key, &results.0);
     }

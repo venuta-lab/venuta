@@ -324,8 +324,12 @@ impl<T: Item + Serialize> Engine<T> {
     fn run(mut self, rx: Receiver<Cmd<T>>) {
         loop {
             // Commands first; when not playing, wait for one.
+            // Playing with no device yet: the first song is still arriving, so look again soon
+            // (its first audio is noticed within 15 ms, not up to 200).
             let timeout = if self.playing && self.device.is_some() {
                 Duration::ZERO
+            } else if self.playing {
+                Duration::from_millis(15)
             } else {
                 Duration::from_millis(200)
             };

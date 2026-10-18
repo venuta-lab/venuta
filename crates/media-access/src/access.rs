@@ -277,7 +277,20 @@ impl MediaAccess for CachedAccess {
         if let Some(audio) = self.remembered(id) {
             return Ok(audio);
         }
+        let started = Instant::now();
         let result = self.inner.resolve_audio(id, cancel);
+        match &result {
+            Ok(audio) => crate::timing::note_timing(&format!(
+                "online song found in {} ms via {}",
+                crate::timing::ms_since(started),
+                audio.via
+            )),
+            Err(e) => crate::timing::note_timing(&format!(
+                "online song not found after {} ms ({:?})",
+                crate::timing::ms_since(started),
+                e.kind
+            )),
+        }
         if let Ok(mut map) = self.resolving.lock() {
             map.remove(id);
         }

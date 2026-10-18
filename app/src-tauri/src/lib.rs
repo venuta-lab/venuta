@@ -2830,6 +2830,8 @@ fn is_test_copy() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Online timings (finding a stream, first audio, searches) go to the playback log.
+    media_access::set_timing_log(|line| playback::note_play(line, "the online catalog"));
     let mut builder = tauri::Builder::default();
     // One Venuta at a time: opening it again brings the open one forward. (VENUTA_MULTI lets a
     // test copy run beside the one in use.)
