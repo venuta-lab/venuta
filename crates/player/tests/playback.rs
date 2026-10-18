@@ -171,10 +171,15 @@ fn starting_part_way_lands_on_the_exact_sample() {
     );
 }
 
+/// A folder of its own for each test. The tests run at once in one process and several write
+/// files of the same name (a.wav): the clock alone can give two of them the same folder, and one
+/// would play the other's song. A count makes each folder its own.
 fn tempdir() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let d = std::env::temp_dir().join(format!(
-        "venuta-player-{}-{}",
+        "venuta-player-{}-{}-{}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
