@@ -46,6 +46,37 @@ pub struct Settings {
     /// How listening goes: what plays next, what is never offered, what is remembered.
     #[serde(default)]
     pub listening: Listening,
+    /// A proxy every online request goes through (`http://host:port`, `socks5://host:port`),
+    /// for networks that only let traffic out that way. Used from the next start.
+    #[serde(default)]
+    pub proxy: Option<String>,
+}
+
+/// A proxy address as it may be used: `http`, `https`, `socks5` or `socks5h`, then a host and a
+/// port, with a user and password if the proxy wants them. Anything else is not used.
+pub fn proxy_address(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    let (scheme, rest) = s.split_once("://")?;
+    if !matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "socks5" | "socks5h"
+    ) {
+        return None;
+    }
+    let host_port = rest.rsplit('@').next()?.trim_end_matches('/');
+    let (host, port) = host_port.rsplit_once(':')?;
+    let port_ok = port.parse::<u16>().is_ok_and(|p| p > 0);
+    let host_ok = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '[' | ']' | ':'));
+    (port_ok && host_ok && !rest.contains(char::is_whitespace)).then(|| {
+        format!(
+            "{}://{}",
+            scheme.to_ascii_lowercase(),
+            rest.trim_end_matches('/')
+        )
+    })
 }
 
 /// How listening goes. Each choice is yours; the defaults are a music app's.
@@ -209,4 +240,34 @@ pub fn load_answers(root: &Path) -> crate::review::Answers {
 
 pub fn save_answers(root: &Path, a: &crate::review::Answers) -> Result<(), String> {
     write_json(&answers_path(root), a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_proxy_address_is_a_known_scheme_a_host_and_a_port() {
+        assert_eq!(
+            proxy_address(" http://10.0.0.2:3128/ ").as_deref(),
+            Some("http://10.0.0.2:3128")
+        );
+        assert_eq!(
+            proxy_address("SOCKS5://proxy.example.org:1080").as_deref(),
+            Some("socks5://proxy.example.org:1080")
+        );
+        assert_eq!(
+            proxy_address("http://me:secret@proxy:8080").as_deref(),
+            Some("http://me:secret@proxy:8080")
+        );
+        assert_eq!(
+            proxy_address("proxy:8080"),
+            None,
+            "a scheme says how to talk to it"
+        );
+        assert_eq!(proxy_address("ftp://proxy:21"), None);
+        assert_eq!(proxy_address("http://proxy"), None, "a port is needed");
+        assert_eq!(proxy_address("http://proxy:99999"), None);
+        assert_eq!(proxy_address("http://pro xy:80"), None);
+    }
 }

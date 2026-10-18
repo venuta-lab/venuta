@@ -380,6 +380,38 @@ struct HomeInfo {
     suggestion: String,
 }
 
+/// The proxy chosen in Settings, for every online request: the app's own (they read the usual
+/// proxy variables), the stream tool's (it is given them), and the window's (covers, sign-in).
+/// Set once, before anything starts, so it takes effect from this start.
+fn use_proxy() {
+    let Some(proxy) = engine::settings::load()
+        .proxy
+        .as_deref()
+        .and_then(engine::settings::proxy_address)
+    else {
+        return;
+    };
+    // SAFETY: the first thing the app does, before any thread starts that reads the environment.
+    unsafe {
+        for name in ["ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"] {
+            std::env::set_var(name, &proxy);
+        }
+        // The app's own local addresses (its window's dev server, the phone server) never go out.
+        std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
+        let browser = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            format!("{browser} --proxy-server={proxy} --proxy-bypass-list=localhost;127.0.0.1").trim(),
+        );
+    }
+}
+
+/// Start Venuta again (a proxy chosen in Settings is used from the next start).
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 /// What helps find a problem, as text to paste into a report: Venuta's version, the computer,
 /// how online music is set up, and the last lines of the playback log (what played, how fast
 /// online songs opened). No keys, accounts or addresses.
@@ -2925,6 +2957,7 @@ fn is_test_copy() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use_proxy();
     // Online timings (finding a stream, first audio, searches) go to the playback log.
     media_access::set_timing_log(|line| playback::note_play(line, "the online catalog"));
     let mut builder = tauri::Builder::default();
@@ -3123,6 +3156,7 @@ pub fn run() {
             ytm_account::ytm_account,
             ytm_account::ytm_playlists,
             diagnostics,
+            restart_app,
             desktop::song_notification,
             lyrics_find::lyrics_forget_all,
             desktop::set_ui_zoom,

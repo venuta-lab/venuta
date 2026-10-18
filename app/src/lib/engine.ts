@@ -202,6 +202,8 @@ export interface Settings {
   spotify_client_id?: string | null
   /** How listening goes (see lib/listening.ts). */
   listening?: Listening
+  /** A proxy for every online request, used from the next start. */
+  proxy?: string | null
 }
 
 /** How listening goes: what plays next, what is never offered, what is remembered. */

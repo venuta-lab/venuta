@@ -22,6 +22,7 @@ import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
+import { ProxySetting } from './settings/ProxySetting'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
@@ -743,6 +744,7 @@ function Online() {
       </p>
       <h3 className="mt-6 text-[15px] font-semibold">Playback catalog</h3>
       <CatalogHealth />
+      <ProxySetting />
       <h3 className="mt-8 text-[15px] font-semibold">Looking things up</h3>
       <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
         Tags, covers and lyrics for your files come from these sources. Optional keys stay on this computer.
