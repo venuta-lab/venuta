@@ -107,6 +107,12 @@ pub trait MediaAccess: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<EphemeralAudio, AccessError>;
 
+    /// Forget any remembered stream address for this song, so the next resolve asks afresh (the
+    /// old address stopped working partway). Catalogs that remember nothing ignore it.
+    fn forget(&self, track_id: &str) {
+        let _ = track_id;
+    }
+
     /// An artist's page (top songs, more songs, albums, singles, similar artists). A catalog
     /// without artist pages answers Unsupported, which is what this default does.
     fn artist_page(
@@ -157,6 +163,9 @@ pub struct CachedAccess {
     inner: Arc<dyn MediaAccess>,
     ttl: Duration,
     cache: Mutex<HashMap<String, (Instant, EphemeralAudio)>>,
+    /// One lock per song being resolved: a second ask for the same song waits for the first and
+    /// takes its answer, instead of resolving it again beside it.
+    resolving: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl CachedAccess {
@@ -165,7 +174,14 @@ impl CachedAccess {
             inner,
             ttl,
             cache: Mutex::new(HashMap::new()),
+            resolving: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn remembered(&self, id: &str) -> Option<EphemeralAudio> {
+        let cache = self.cache.lock().ok()?;
+        let (at, audio) = cache.get(id)?;
+        (at.elapsed() < self.ttl).then(|| audio.clone())
     }
 
     /// Prefetch resolve for a track (next-up warmup). Errors are ignored.
@@ -249,13 +265,23 @@ impl MediaAccess for CachedAccess {
                 "track id must not be empty",
             ));
         }
-        if let Ok(cache) = self.cache.lock()
-            && let Some((at, audio)) = cache.get(id)
-            && at.elapsed() < self.ttl
-        {
-            return Ok(audio.clone());
+        if let Some(audio) = self.remembered(id) {
+            return Ok(audio);
         }
-        let audio = self.inner.resolve_audio(id, cancel)?;
+        let lock = match self.resolving.lock() {
+            Ok(mut map) => map.entry(id.to_owned()).or_default().clone(),
+            Err(_) => Arc::new(Mutex::new(())),
+        };
+        let _turn = lock.lock();
+        // Someone else may have resolved it while this one waited.
+        if let Some(audio) = self.remembered(id) {
+            return Ok(audio);
+        }
+        let result = self.inner.resolve_audio(id, cancel);
+        if let Ok(mut map) = self.resolving.lock() {
+            map.remove(id);
+        }
+        let audio = result?;
         if let Ok(mut cache) = self.cache.lock() {
             cache.retain(|_, (at, _)| at.elapsed() < self.ttl);
             if cache.len() > 64 {
@@ -268,6 +294,13 @@ impl MediaAccess for CachedAccess {
             cache.insert(id.to_owned(), (Instant::now(), audio.clone()));
         }
         Ok(audio)
+    }
+
+    fn forget(&self, track_id: &str) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.remove(track_id.trim());
+        }
+        self.inner.forget(track_id);
     }
 }
 
@@ -372,5 +405,123 @@ pub fn catalog_health() -> CatalogHealth {
         stream_tool_kind,
         stream_tool_detail,
         summary,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A catalog whose resolve is slow and counted; everything else is unsupported.
+    struct Slow {
+        resolves: AtomicUsize,
+    }
+
+    fn nope<T>() -> Result<T, AccessError> {
+        Err(AccessError::new(
+            AccessErrorKind::Unsupported,
+            "not in this test",
+        ))
+    }
+
+    impl MediaAccess for Slow {
+        fn search_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            nope()
+        }
+        fn search_albums(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteAlbum>, AccessError> {
+            nope()
+        }
+        fn search_artists(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteArtist>, AccessError> {
+            nope()
+        }
+        fn album_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            nope()
+        }
+        fn playlist_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            nope()
+        }
+        fn resolve_audio(
+            &self,
+            track_id: &str,
+            _: &CancellationToken,
+        ) -> Result<EphemeralAudio, AccessError> {
+            self.resolves.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(150));
+            Ok(EphemeralAudio {
+                track_id: track_id.into(),
+                provider: "test".into(),
+                url: "https://example.invalid/a".into(),
+                mime_type: None,
+                content_length: None,
+                duration_ms: None,
+                headers: Vec::new(),
+                via: "test",
+            })
+        }
+    }
+
+    fn cached() -> (Arc<Slow>, Arc<CachedAccess>) {
+        let inner = Arc::new(Slow {
+            resolves: AtomicUsize::new(0),
+        });
+        let cached = Arc::new(CachedAccess::new(inner.clone(), Duration::from_secs(60)));
+        (inner, cached)
+    }
+
+    #[test]
+    fn the_same_song_asked_for_twice_at_once_is_resolved_once() {
+        let (inner, cached) = cached();
+        let threads: Vec<_> = (0..3)
+            .map(|_| {
+                let c = cached.clone();
+                std::thread::spawn(move || c.resolve_audio("abc", &CancellationToken::default()))
+            })
+            .collect();
+        for t in threads {
+            assert!(t.join().unwrap().is_ok());
+        }
+        assert_eq!(inner.resolves.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_forgotten_address_is_resolved_afresh() {
+        let (inner, cached) = cached();
+        let cancel = CancellationToken::default();
+        cached.resolve_audio("abc", &cancel).unwrap();
+        cached.resolve_audio("abc", &cancel).unwrap();
+        assert_eq!(
+            inner.resolves.load(Ordering::SeqCst),
+            1,
+            "the second came from memory"
+        );
+        cached.forget("abc");
+        cached.resolve_audio("abc", &cancel).unwrap();
+        assert_eq!(inner.resolves.load(Ordering::SeqCst), 2);
     }
 }

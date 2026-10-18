@@ -31,8 +31,9 @@ fn open_after_bytes(mime_type: Option<&str>, url: &str) -> usize {
     match media_extension(mime_type, url).as_deref() {
         Some("wav" | "aiff") => 24 * 1024,
         Some("mp3" | "ogg" | "oga") => 64 * 1024,
-        // fMP4/AAC often needs a larger window before packets decode cleanly.
-        Some("m4a" | "mp4" | "aac") => 384 * 1024,
+        // Enough for the header and the first fragment of a streamed MP4. A probe that runs
+        // short retries with more as it arrives, so a small window only ever costs a retry.
+        Some("m4a" | "mp4" | "aac") => 128 * 1024,
         Some("flac") => 128 * 1024,
         _ => OPEN_AFTER_DEFAULT,
     }
@@ -329,7 +330,7 @@ impl Source {
         let worker_cancelled = cancelled.clone();
         std::thread::Builder::new()
             .name("venuta-stream-decoder".into())
-            .spawn(move || decode_remote(audio, sender, worker_cancelled))
+            .spawn(move || decode_remote(audio, sender, worker_cancelled, None))
             .map_err(|_| "Could not start the remote stream decoder.")?;
         Ok(Self::remote_placeholder(
             receiver,
@@ -366,7 +367,14 @@ impl Source {
                 if worker_cancelled.load(Ordering::Acquire) {
                     return;
                 }
-                decode_remote(audio, sender, worker_cancelled);
+                // Partway failures ask the catalog again, past its memory of the old address.
+                let refresh: Refresh = Box::new(move || {
+                    access.forget(&track_id);
+                    access
+                        .resolve_audio(&track_id, &media_access::CancellationToken::default())
+                        .ok()
+                });
+                decode_remote(audio, sender, worker_cancelled, Some(refresh));
             })
             .map_err(|_| "Could not start the remote stream resolver.")?;
         Ok(Self::remote_placeholder(
@@ -778,10 +786,14 @@ impl Drop for Source {
     }
 }
 
+/// Asks for a fresh stream address for the same song, after the old one stopped working partway.
+type Refresh = Box<dyn FnMut() -> Option<EphemeralAudio> + Send>;
+
 fn decode_remote(
     audio: EphemeralAudio,
     sender: SyncSender<RemoteEvent>,
     cancelled: Arc<AtomicBool>,
+    refresh: Option<Refresh>,
 ) {
     let body = GrowBody::new(cancelled.clone());
     let result = (|| {
@@ -789,7 +801,7 @@ fn decode_remote(
             body.cancel();
             return Ok(());
         }
-        fill_grow_body(&audio, &body, &sender)?;
+        fill_grow_body(audio, &body, &sender, refresh)?;
         Ok(())
     })();
     if let Err(error) = result
@@ -800,26 +812,37 @@ fn decode_remote(
     }
 }
 
+/// Bytes asked for per request. Media hosts serve a bounded range at full speed, where an
+/// open-ended one may be paced to the song's own rate.
+const RANGE_BYTES: u64 = 2 * 1_048_576;
+/// Fresh addresses asked for in one song before giving up on it.
+const MAX_REFRESHES: u32 = 2;
+
 /// Download into `body`, signalling [`RemoteEvent::OpenReady`] once enough bytes (or the whole
 /// short body) are present so decode can start while the rest arrives.
+///
+/// Bytes are added as they arrive, not a whole request at a time, so the song opens as soon as
+/// its first part is in. Every song shares one connection pool (see `media_access::media_agent`),
+/// so the connection the resolver's check opened is the one this download uses.
+///
+/// When the host stops serving partway (the address expired, or was only good for its
+/// opening), a fresh address is asked for and the download carries on from the same byte.
 fn fill_grow_body(
-    audio: &EphemeralAudio,
+    mut audio: EphemeralAudio,
     body: &Arc<GrowBody>,
     sender: &SyncSender<RemoteEvent>,
+    mut refresh: Option<Refresh>,
 ) -> Result<(), String> {
-    const CHUNK: u64 = 1_048_576;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let agent = media_access::media_agent();
+    let url_hint = audio.url.clone();
+    let duration_hint_ms = audio.duration_ms;
 
     let mut opened = false;
     let mut signal_open = |mime: &Option<String>, size_hint: Option<u64>| {
         if opened {
             return;
         }
-        let need = open_after_bytes(mime.as_deref(), &audio.url);
+        let need = open_after_bytes(mime.as_deref(), &url_hint);
         // Open once we have enough bytes, or the download already finished (short tracks).
         if body.len() < need && !body.finished.load(Ordering::Acquire) {
             return;
@@ -828,8 +851,8 @@ fn fill_grow_body(
         let _ = sender.send(RemoteEvent::OpenReady {
             body: Arc::clone(body),
             mime_type: mime.clone(),
-            url_hint: audio.url.clone(),
-            duration_hint_ms: audio.duration_ms,
+            url_hint: url_hint.clone(),
+            duration_hint_ms,
             size_hint,
         });
     };
@@ -842,6 +865,7 @@ fn fill_grow_body(
             false
         }
     };
+    let mut buf = vec![0_u8; 64 * 1024];
 
     // 1) Plain GET — works for ordinary CDN URLs and fixtures.
     // Skip for googlevideo hosts: they commonly 403 bare full GETs.
@@ -872,7 +896,6 @@ fn fill_grow_body(
                     body.set_total(t);
                 }
                 let mut reader = response.into_body().into_reader();
-                let mut buf = vec![0_u8; 64 * 1024];
                 loop {
                     if sync_cancel() {
                         return Err("Remote stream cancelled.".into());
@@ -901,7 +924,7 @@ fn fill_grow_body(
         }
     }
 
-    // 2) Ranged GET fallback (and googlevideo primary path).
+    // 2) Ranged GETs (the media host's own path, and the fallback for any other).
     let mut start = 0u64;
     let mut mime_type = audio
         .mime_type
@@ -911,6 +934,28 @@ fn fill_grow_body(
     if let Some(t) = known_total {
         body.set_total(t);
     }
+    let mut refreshes = 0u32;
+    let mut retried_here = false;
+
+    // A request or a read failed partway. Try once more on the same address, then on a fresh
+    // one; `Err` when neither is left.
+    let mut recover = |audio: &mut EphemeralAudio, retried_here: &mut bool| -> bool {
+        if !*retried_here {
+            *retried_here = true;
+            std::thread::sleep(Duration::from_millis(250));
+            return true;
+        }
+        if refreshes >= MAX_REFRESHES {
+            return false;
+        }
+        let Some(fresh) = refresh.as_mut().and_then(|ask| ask()) else {
+            return false;
+        };
+        refreshes += 1;
+        *retried_here = false;
+        *audio = fresh;
+        true
+    };
 
     loop {
         if sync_cancel() {
@@ -918,39 +963,29 @@ fn fill_grow_body(
         }
         let end = match known_total {
             Some(total) if start >= total => break,
-            Some(total) => Some((start + CHUNK - 1).min(total - 1)),
-            None => Some(start + CHUNK - 1),
-        };
-        // First request only the open window so time-to-first-audio is shorter.
-        let first_need = open_after_bytes(mime_type.as_deref(), &audio.url) as u64;
-        let end = if start == 0 {
-            match known_total {
-                Some(total) => {
-                    Some((total - 1).min(first_need.saturating_sub(1).max(16 * 1024 - 1)))
-                }
-                None => Some(first_need.saturating_sub(1).max(16 * 1024 - 1)),
-            }
-        } else {
-            end
-        };
-        let range = match end {
-            Some(e) => format!("bytes={start}-{e}"),
-            None => format!("bytes={start}-"),
+            Some(total) => (start + RANGE_BYTES - 1).min(total - 1),
+            None => start + RANGE_BYTES - 1,
         };
         let mut request = agent.get(&audio.url);
         for header in &audio.headers {
             request = request.header(&header.name, &header.value);
         }
-        request = request.header("Range", &range);
-        let response = request
-            .call()
-            .map_err(|_| "Could not retrieve the remote stream.".to_owned())?;
+        request = request.header("Range", format!("bytes={start}-{end}"));
+        let response = match request.call() {
+            Ok(r) => r,
+            Err(_) if body.len() > 0 && recover(&mut audio, &mut retried_here) => continue,
+            Err(_) => return Err("Could not retrieve the remote stream.".to_owned()),
+        };
         let status = response.status().as_u16();
         if status == 416 && body.len() > 0 {
             break;
         }
         if !(200..300).contains(&status) {
             if body.len() > 0 {
+                // Refused partway: a fresh address carries on from here.
+                if recover(&mut audio, &mut retried_here) {
+                    continue;
+                }
                 break;
             }
             return Err(format!("The remote stream returned HTTP {status}."));
@@ -972,27 +1007,51 @@ fn fill_grow_body(
             known_total = Some(t);
             body.set_total(t);
         }
-        let chunk = response
-            .into_body()
-            .read_to_vec()
-            .map_err(|_| "Could not read the remote stream.".to_owned())?;
-        if chunk.is_empty() {
+        let mut reader = response.into_body().into_reader();
+        let mut got = 0u64;
+        let mut broke = false;
+        loop {
+            if sync_cancel() {
+                return Err("Remote stream cancelled.".into());
+            }
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    body.append(&buf[..n]);
+                    got += n as u64;
+                    start += n as u64;
+                    signal_open(&mime_type, known_total);
+                    if body.len() > 128 * 1024 * 1024 {
+                        return Err("Remote stream is larger than Venuta will buffer.".into());
+                    }
+                }
+                Err(_) => {
+                    broke = true;
+                    break;
+                }
+            }
+        }
+        if broke {
+            // The connection dropped mid-range: carry on from the last byte that arrived.
+            if recover(&mut audio, &mut retried_here) {
+                continue;
+            }
+            if body.len() == 0 {
+                return Err("Could not read the remote stream.".into());
+            }
             break;
         }
-        let got = chunk.len() as u64;
-        body.append(&chunk);
-        start += got;
-        signal_open(&mime_type, known_total);
+        retried_here = false;
+        if got == 0 {
+            break;
+        }
         if let Some(total) = known_total
             && start >= total
         {
             break;
         }
-        if known_total.is_none() && total_from_header.is_none() && got < CHUNK {
+        if known_total.is_none() && total_from_header.is_none() && got < RANGE_BYTES {
             break;
-        }
-        if body.len() > 128 * 1024 * 1024 {
-            return Err("Remote stream is larger than Venuta will buffer.".into());
         }
     }
 

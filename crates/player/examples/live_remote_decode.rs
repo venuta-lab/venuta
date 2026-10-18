@@ -56,6 +56,7 @@ fn main() {
     let mut samples = Vec::new();
     let mut total_samples = 0usize;
     let mut ready = false;
+    let mut first_audio_ms = None;
     // Prefer enough samples to prove more than a short preview (~30s at 44.1k stereo).
     let want_samples = 44_100usize * 2 * 30;
     loop {
@@ -69,6 +70,7 @@ fn main() {
             }
             Ok(DecodeState::Samples) => {
                 ready = true;
+                first_audio_ms.get_or_insert(started.elapsed().as_millis());
                 total_samples += samples.len();
                 samples.clear();
                 if total_samples >= want_samples {
@@ -82,6 +84,7 @@ fn main() {
             }
         }
     }
+    println!("first_audio_ms={first_audio_ms:?} (from resolved address to first decoded samples)");
     let secs = total_samples as f64 / (source.format.rate as f64 * source.format.channels as f64);
     println!(
         "decode_ok ready={ready} samples={total_samples} approx_secs={secs:.1} format={:?} frames={:?} expected_len={:?} elapsed_ms={}",
