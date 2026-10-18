@@ -755,13 +755,33 @@ pub fn exists(library_root: &Path, name: &str) -> bool {
     existing_file(library_root, name).is_file()
 }
 
+/// Whether a new playlist can't have this name: one is there under it, or under it in other
+/// capitals. Those are one file on Windows and on cards (FAT, exFAT), so they are one name
+/// everywhere, and a list never goes next to one that only looks different in case.
+fn taken(library_root: &Path, name: &str) -> bool {
+    let stem = |p: &Path| p.file_stem().map(|s| s.to_string_lossy().to_lowercase());
+    let wanted = stem(&file_for(library_root, name));
+    exists(library_root, name)
+        || std::fs::read_dir(folder(library_root))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().is_some_and(|x| {
+                    x.eq_ignore_ascii_case("m3u8") || x.eq_ignore_ascii_case("m3u")
+                })
+            })
+            .any(|p| stem(&p) == wanted)
+}
+
 /// Make a new, empty playlist (a draft given its name or its first song); never over one that
 /// exists, under that name or one that is saved as the same file.
 pub fn create(library_root: &Path, lib: &Library, name: &str) -> Result<(), String> {
     if crate::plan::sanitize(name, 100).is_empty() {
         return Err("A name needs at least one letter or number.".into());
     }
-    if exists(library_root, name) {
+    if taken(library_root, name) {
         return Err(format!("A playlist called “{name}” already exists."));
     }
     write_items(library_root, lib, name, &[], false, None)
@@ -888,7 +908,7 @@ pub fn like_many(
     let name = match liked_name(library_root) {
         Some(n) => n,
         None => {
-            let name = if exists(library_root, LIKED_NAME) {
+            let name = if taken(library_root, LIKED_NAME) {
                 free_name(library_root, LIKED_NAME_TAKEN)
             } else {
                 LIKED_NAME.to_owned()
@@ -1330,12 +1350,12 @@ pub fn rename(library_root: &Path, from: &str, to: &str) -> Result<(), String> {
 /// A name not yet taken: "Road trip", then "Road trip 2", "Road trip 3"…
 pub fn free_name(library_root: &Path, wanted: &str) -> String {
     let base = wanted.trim();
-    if !exists(library_root, base) {
+    if !taken(library_root, base) {
         return base.to_owned();
     }
     (2..)
         .map(|n| format!("{base} {n}"))
-        .find(|n| !exists(library_root, n))
+        .find(|n| !taken(library_root, n))
         .expect("some number is free")
 }
 
@@ -2851,6 +2871,15 @@ mod tests {
             "again, asked"
         );
         assert_eq!(read(root.path(), &lib, "Mix").unwrap().0.len(), 2);
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_is_taken_on_every_system() {
+        let root = tempfile::tempdir().unwrap();
+        let lib = library(vec![]);
+        create(root.path(), &lib, "Road trip").unwrap();
+        assert!(create(root.path(), &lib, "ROAD TRIP").is_err());
+        assert_eq!(free_name(root.path(), "road trip"), "road trip 2");
     }
 
     #[test]
