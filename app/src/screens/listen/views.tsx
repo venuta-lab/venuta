@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { listeningSummary, playlistShelf, type ListeningSummary, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from '../playlists/PlaylistsHome'
 import { loadCovers, useCovers } from '../../lib/covers'
@@ -24,16 +24,22 @@ import { albumWork, artistWork, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { play, queueKey, toggle, toItem, type QueueItem } from '../../lib/player'
+import { enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
-import { OnlineResults } from './OnlineResults'
-import { splitOnlineSongs, useOnlineSearch } from './onlineSearch'
+import { OnlineResults, OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
+import { fromOnline, splitOnlineSongs, useOnlineExtras, useOnlineSearch } from './onlineSearch'
 import { TopResult, type TopSources } from './TopResult'
 import { pickTop, type TopPick } from '../../lib/searchRank'
 
+import { askAddSongs } from '../../components/AddToPlaylist'
+import { ownedIndex, titleCore } from '../../lib/owned'
+import { searchKey } from '../../lib/textsearch'
+import { MixedSongs, OnlineAlbumTile, OnlineArtistCard, type MixedSong } from './SearchAll'
+import { CollectionCard } from './OnlineCards'
+import type { OnlineTrack } from '../../lib/engine'
 export const HI_RES = 'Hi-Res'
 
 // --- Home ------------------------------------------------------------------------------------
@@ -313,7 +319,7 @@ function useArtistCover(ar: Artist) {
   return undefined
 }
 
-function ArtistCard({ artist: ar }: { artist: Artist }) {
+export function ArtistCard({ artist: ar }: { artist: Artist }) {
   const nav = useNav()
   const c = useArtistCover(ar)
   return (
@@ -396,17 +402,19 @@ export interface LyricResult {
 
 /** Everything that matches, together: albums, artists, songs, then songs by their words. */
 /** Which part of the search results shows. */
-type ResultChip = 'all' | 'songs' | 'albums' | 'artists' | 'lyrics'
+type ResultChip = 'all' | 'songs' | 'albums' | 'artists' | 'playlists' | 'videos' | 'podcasts' | 'lyrics'
 
-/** Library songs on All before "See all" (a few more than that are shown rather than cut). */
-const SONGS_ON_ALL = 10
-const ALBUMS_ON_ALL = 12
+/** Songs beside the Top result. */
+const SONGS_BESIDE_TOP = 5
+const CARDS_ON_ALL = 16
+const VIDEOS_ON_ALL = 5
 
 /**
- * Music search: your library first, the online catalog below. Chips narrow it to songs, albums,
- * artists or lyrics (back to All when the words change). On All, a Top result leads: the one
- * thing the words most likely mean (see `pickTop`), chosen from the library at once and once
- * more when the online catalog answers, then held while the words stay the same.
+ * Search results, in the order a music app lays them out: the Top result with the songs beside
+ * it, then albums, artists, playlists, videos and podcasts, then songs found by their lyrics.
+ * Your library and the online catalog are one list each: what you have comes first, marked so,
+ * and plays from your file; the catalog fills in the rest, without repeating what you have.
+ * Chips narrow it to one kind (back to All when the words change).
  */
 export function SearchResults(props: {
   query: string
@@ -416,8 +424,9 @@ export function SearchResults(props: {
   lyrics: LyricResult[]
 }) {
   const q = props.query.trim()
-  // One online search for the Top result, the chips and the Online catalog section.
-  const online = useOnlineSearch(props.query)
+  // The words were searched for (not typed): asked at once.
+  const online = useOnlineSearch(props.query, 'music', true)
+  const extras = useOnlineExtras(props.query)
   const [picked, setPicked] = useState<{ q: string; chip: ResultChip }>({ q: '', chip: 'all' })
   const chip: ResultChip = picked.q === q ? picked.chip : 'all'
   const setChip = (c: ResultChip) => setPicked({ q, chip: c })
@@ -425,6 +434,22 @@ export function SearchResults(props: {
   const onlineDone = online.offline || (online.resultsFor === q && !online.loading)
   const answer = online.resultsFor === q && !online.loading ? online.results : null
   const best = useMemo(() => splitOnlineSongs(answer?.tracks ?? [], q).best, [answer, q])
+
+  // What of the catalog's you already have: it shows once, as yours.
+  const owns = useMemo(() => ownedIndex(props.tracks), [props.tracks])
+  const owned = useCallback((t: { title: string; artists: string[]; duration_ms?: number | null }) => !!owns(t), [owns])
+  const ownAlbum = useMemo(() => {
+    const mine = props.albums.map((a) => ({ key: titleCore(a.title), artist: searchKey(a.artist) }))
+    return (a: { title: string; artists: string[] }) => {
+      const key = titleCore(a.title)
+      const theirs = a.artists.map(searchKey)
+      return mine.some((m) => m.key === key && (!theirs.length || theirs.some((t) => t === m.artist)))
+    }
+  }, [props.albums])
+  const ownArtist = useMemo(() => {
+    const mine = new Set(props.artists.map((a) => searchKey(a.name)))
+    return (name: string) => mine.has(searchKey(name))
+  }, [props.artists])
 
   // The Top result: from the library now, once more when the online catalog has answered.
   const phase = `${q}|${onlineDone ? 'online' : 'library'}`
@@ -447,14 +472,31 @@ export function SearchResults(props: {
   const len = { library: { song: props.tracks.length, album: props.albums.length, artist: props.artists.length }, online: { song: best.length, album: sources.onlineAlbums.length, artist: sources.onlineArtists.length } }
   if (top && top.index >= len[top.where][top.kind]) top = null
 
-  const libraryEmpty = !props.albums.length && !props.artists.length && !props.tracks.length && !props.lyrics.length
+  // The mixed lists: yours, then the catalog's you don't have.
+  const songs: MixedSong[] = useMemo(
+    () => [
+      ...props.tracks.map((track) => ({ where: 'library' as const, track })),
+      ...best.filter((t) => !owned(t)).map((track) => ({ where: 'online' as const, track })),
+    ],
+    [props.tracks, best, owned],
+  )
+  const onlineAlbums = useMemo(() => (answer?.albums ?? []).filter((a) => !ownAlbum(a)), [answer, ownAlbum])
+  const onlineArtists = useMemo(() => (answer?.artists ?? []).filter((a) => !ownArtist(a.name)), [answer, ownArtist])
+  const fresh = extras.for === q
+  const playlists = fresh ? extras.playlists : []
+  const podcasts = fresh ? extras.podcasts : []
+  const videos = fresh ? extras.videos : []
+
   const from = { kind: 'search' as const, ref: q, label: `Search: ${q}` }
-  const none = (have: number, there: number) => !have && onlineDone && !there
+  const none = (have: number, there: number, loading = !onlineDone) => !have && !loading && !there
   const chips: { value: ResultChip; label: string; disabled?: boolean }[] = [
     { value: 'all', label: 'All' },
     { value: 'songs', label: 'Songs', disabled: none(props.tracks.length, answer?.tracks.length ?? 0) },
     { value: 'albums', label: 'Albums', disabled: none(props.albums.length, answer?.albums.length ?? 0) },
     { value: 'artists', label: 'Artists', disabled: none(props.artists.length, answer?.artists.length ?? 0) },
+    { value: 'playlists', label: 'Playlists', disabled: none(0, playlists.length, extras.loading) },
+    { value: 'videos', label: 'Videos', disabled: none(0, videos.length, extras.loading) },
+    { value: 'podcasts', label: 'Podcasts', disabled: none(0, podcasts.length, extras.loading) },
     ...(props.lyrics.length ? [{ value: 'lyrics' as const, label: 'Lyrics' }] : []),
   ]
   const eyebrow = (text: string, count?: number) => (
@@ -467,12 +509,32 @@ export function SearchResults(props: {
     props.lyrics.length > 0 && (
       <section className={spaced ? 'mt-12' : ''}>
         <div className="mb-3 flex items-baseline gap-3">
-          <h2 className="text-[19px] font-semibold tracking-[-0.02em]">In the lyrics</h2>
+          <h2 className="title text-[19px]">In the lyrics</h2>
           <span className="text-[12.5px] text-ink/50">{props.lyrics.length.toLocaleString('en-IN')}</span>
         </div>
         <LyricResults hits={props.lyrics} query={q} />
       </section>
     )
+  const cardGrid = (nodes: React.ReactNode[]) => <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-x-5 gap-y-8">{nodes}</div>
+  const videoRows = (list: OnlineTrack[]) => (
+    <>
+      <OnlineTrackHeader />
+      <div className="mt-1 grid gap-0.5">
+        {list.map((t, i) => (
+          <OnlineTrackRow
+            key={`${t.provider}:${t.track_id}`}
+            track={t}
+            onPlay={() => void playItems(nav.root, list.map(toRemoteItem), i, fromOnline(q))}
+            onQueue={(next) => void enqueueItems(nav.root, [toRemoteItem(t)], next)}
+            onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
+          />
+        ))}
+      </div>
+    </>
+  )
+  const nav = useNav()
+  const waiting = (what: string) => <p className="py-6 text-[13px] text-ink/45">Looking for {what}…</p>
+  const nothing = (what: string) => <p className="py-6 text-[13px] text-ink/55">No {what} for “{q}”.</p>
 
   let body: React.ReactNode
   if (chip === 'songs')
@@ -484,7 +546,7 @@ export function SearchResults(props: {
             <SongList tracks={props.tracks} from={from} pin />
           </section>
         )}
-        <OnlineResults query={props.query} online={online} spaced={props.tracks.length > 0} parts={{ songs: true, albums: false, artists: false }} covers="tabs" />
+        <OnlineResults query={props.query} online={online} spaced={props.tracks.length > 0} parts={{ songs: true, albums: false, artists: false }} covers="tabs" skip={owned} />
       </>
     )
   else if (chip === 'albums')
@@ -496,7 +558,13 @@ export function SearchResults(props: {
             <AlbumGrid albums={props.albums} origin="search" />
           </section>
         )}
-        <OnlineResults query={props.query} online={online} spaced={props.albums.length > 0} parts={{ songs: false, albums: true, artists: false }} />
+        {onlineAlbums.length > 0 && (
+          <section className={props.albums.length ? 'mt-12' : ''}>
+            {eyebrow('Online catalog', onlineAlbums.length)}
+            {cardGrid(onlineAlbums.map((a) => <OnlineAlbumTile key={a.album_id} album={a} query={q} />))}
+          </section>
+        )}
+        {!onlineDone && waiting('albums online')}
       </>
     )
   else if (chip === 'artists')
@@ -512,55 +580,74 @@ export function SearchResults(props: {
             </div>
           </section>
         )}
-        <OnlineResults query={props.query} online={online} spaced={props.artists.length > 0} parts={{ songs: false, albums: false, artists: true }} />
-      </>
-    )
-  else if (chip === 'lyrics') body = lyricSection(false)
-  else {
-    const songsShown = props.tracks.length > SONGS_ON_ALL + 2 ? props.tracks.slice(0, SONGS_ON_ALL) : props.tracks
-    const hasLibrary = props.albums.length > 0 || props.artists.length > 0 || props.tracks.length > 0
-    body = (
-      <>
-        {top && <TopResult pick={top} from={sources} />}
-        {hasLibrary && (
-          <section aria-label="In your library">
-            {eyebrow('In your library')}
-            {props.artists.length > 0 && <ArtistRow artists={props.artists} />}
-            <Shelf
-              title="Albums"
-              albums={props.albums}
-              origin="search"
-              limit={ALBUMS_ON_ALL}
-              onSeeAll={props.albums.length > ALBUMS_ON_ALL ? () => setChip('albums') : undefined}
-              spaced={props.artists.length > 0}
-            />
-            {props.tracks.length > 0 && (
-              <section className={props.albums.length || props.artists.length ? 'mt-10' : ''}>
-                <div className="mb-3 flex items-baseline gap-3">
-                  <h2 className="text-[19px] font-semibold tracking-[-0.02em]">Songs</h2>
-                  <span className="text-[12.5px] text-ink/50">{props.tracks.length.toLocaleString('en-IN')}</span>
-                </div>
-                {/* A few songs here; See all opens the Songs chip with every one. Its column
-                    heads stay with it: pinned, they would sit over the Top result. */}
-                <SongList tracks={songsShown} from={from} />
-                {songsShown.length < props.tracks.length && (
-                  <button onClick={() => setChip('songs')} className="btn-ghost btn-sm mt-2">
-                    See all {props.tracks.length.toLocaleString('en-IN')} songs
-                  </button>
-                )}
-              </section>
-            )}
+        {onlineArtists.length > 0 && (
+          <section className={props.artists.length ? 'mt-12' : ''}>
+            {eyebrow('Online catalog', onlineArtists.length)}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-x-5 gap-y-7">
+              {onlineArtists.map((ar) => (
+                <OnlineArtistCard key={ar.artist_id} artist={ar} />
+              ))}
+            </div>
           </section>
         )}
-        <OnlineResults
-          query={props.query}
-          online={online}
-          spaced={hasLibrary}
-          libraryEmpty={libraryEmpty}
-          covers="fold"
-          songLimit={SONGS_ON_ALL}
-          onSeeAllSongs={() => setChip('songs')}
+        {!onlineDone && waiting('artists online')}
+      </>
+    )
+  else if (chip === 'playlists')
+    body = playlists.length ? cardGrid(playlists.map((c) => <CollectionCard key={c.collection_id} collection={c} width={168} />)) : extras.loading ? waiting('playlists') : nothing('playlists')
+  else if (chip === 'podcasts')
+    body = podcasts.length ? cardGrid(podcasts.map((c) => <CollectionCard key={c.collection_id} collection={c} width={168} />)) : extras.loading ? waiting('podcasts') : nothing('podcasts')
+  else if (chip === 'videos') body = videos.length ? videoRows(videos) : extras.loading ? waiting('videos') : nothing('videos')
+  else if (chip === 'lyrics') body = lyricSection(false)
+  else {
+    const besideTop = songs.slice(0, SONGS_BESIDE_TOP)
+    const albumCards = [
+      ...props.albums.slice(0, CARDS_ON_ALL).map((a) => ({ key: a.dir, at: 2, node: null as React.ReactNode, album: a })),
+      ...onlineAlbums.slice(0, CARDS_ON_ALL).map((a) => ({ key: `online:${a.album_id}`, at: 1, node: <OnlineAlbumTile album={a} query={q} />, album: undefined })),
+    ]
+    const artistCards = [
+      ...props.artists.slice(0, CARDS_ON_ALL).map((ar) => ({ key: ar.key, at: 2, node: <ArtistCard artist={ar} /> })),
+      ...onlineArtists.slice(0, CARDS_ON_ALL).map((ar) => ({ key: `online:${ar.artist_id}`, at: 1, node: <OnlineArtistCard artist={ar} /> })),
+    ]
+    const nothingAtAll =
+      onlineDone && !extras.loading && !top && !songs.length && !albumCards.length && !artistCards.length && !playlists.length && !videos.length && !podcasts.length && !props.lyrics.length
+    body = nothingAtAll ? (
+      <p className="py-20 text-center text-[14px] text-ink/55">Nothing matches “{q}” in your library or the online catalog.</p>
+    ) : (
+      <>
+        {(top || besideTop.length > 0) && (
+          <div className="grid items-start gap-x-10 gap-y-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+            {top ? (
+              <TopResult pick={top} from={sources} />
+            ) : (
+              <div />
+            )}
+            {besideTop.length > 0 && <MixedSongs query={q} songs={besideTop} onSeeAll={songs.length > SONGS_BESIDE_TOP ? () => setChip('songs') : undefined} />}
+          </div>
+        )}
+        {!onlineDone && !top && !besideTop.length && waiting('music')}
+        <Shelf
+          title="Albums"
+          albums={props.albums.slice(0, CARDS_ON_ALL)}
+          origin="search"
+          at={() => 2}
+          more={albumCards.filter((c) => !c.album).map(({ key, at, node }) => ({ key, at, node }))}
+          onSeeAll={() => setChip('albums')}
         />
+        <Shelf title="Artists" albums={[]} origin="search" more={artistCards} onSeeAll={() => setChip('artists')} />
+        <Shelf title="Playlists" albums={[]} origin="search" more={playlists.slice(0, CARDS_ON_ALL).map((c) => ({ key: c.collection_id, at: 0, node: <CollectionCard collection={c} width={168} /> }))} onSeeAll={() => setChip('playlists')} />
+        {videos.length > 0 && (
+          <section className="mt-10">
+            <div className="mb-3 flex items-baseline gap-3">
+              <h2 className="title text-[19px]">Videos</h2>
+              <button onClick={() => setChip('videos')} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
+                See all
+              </button>
+            </div>
+            {videoRows(videos.slice(0, VIDEOS_ON_ALL))}
+          </section>
+        )}
+        <Shelf title="Podcasts" albums={[]} origin="search" more={podcasts.slice(0, CARDS_ON_ALL).map((c) => ({ key: c.collection_id, at: 0, node: <CollectionCard collection={c} width={168} /> }))} onSeeAll={() => setChip('podcasts')} />
         {lyricSection(true)}
       </>
     )
@@ -611,20 +698,5 @@ function LyricResults(props: { hits: LyricResult[]; query: string }) {
         )
       })}
     </div>
-  )
-}
-
-function ArtistRow({ artists }: { artists: Artist[] }) {
-  return (
-    <section>
-      <h2 className="mb-3.5 text-[19px] font-semibold tracking-[-0.02em]">Artists</h2>
-      <div className="no-scrollbar -mx-3 -my-3 flex gap-5 overflow-x-auto px-3 py-3">
-        {artists.slice(0, 30).map((ar) => (
-          <div key={ar.key} className="w-[128px] shrink-0">
-            <ArtistCard artist={ar} />
-          </div>
-        ))}
-      </div>
-    </section>
   )
 }

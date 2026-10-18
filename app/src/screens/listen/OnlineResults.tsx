@@ -79,6 +79,8 @@ export function OnlineResults(props: {
   covers?: 'tabs' | 'fold'
   songLimit?: number
   onSeeAllSongs?: () => void
+  /** Songs not to show (ones you have, shown as yours above). */
+  skip?: (t: OnlineTrack) => boolean
 }) {
   const { root, openOnlineAlbum, openOnlineArtist } = useNav()
   const { results, error, loading, resultsFor, offline, loadingMore, moreError, canLoadMore, loadMore } = props.online
@@ -105,7 +107,7 @@ export function OnlineResults(props: {
   // The ranked songs, split: the recordings people mean (Best), and covers, karaoke, slowed,
   // loops and uploads (Covers & other). Words that ask for covers keep them all in Best.
   const splitFor = resultsFor || q
-  const { best, covers } = splitOnlineSongs(results?.tracks ?? [], splitFor)
+  const { best, covers } = splitOnlineSongs((results?.tracks ?? []).filter((t) => !props.skip?.(t)), splitFor)
   const asked = picked.q === q ? picked.view : 'best'
   // Nothing but covers: show them rather than an empty Best (tabs), or open the fold.
   const view: SongView = asked === 'covers' || !best.length ? 'covers' : 'best'

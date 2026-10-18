@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { isSearchCancelled, onlineAlbumTracks, onlineArtistPage, onlineSearch, onlineSearchTracks, type OnlineArtistPage, type OnlineAlbum, type OnlineResults as Results, type OnlineTrack, type SearchBox } from '../../lib/engine'
+import { isSearchCancelled, onlineAlbumTracks, onlineArtistPage, onlineCollections, onlineSearch, onlineSearchTracks, onlineVideos, type OnlineArtistPage, type OnlineAlbum, type OnlineCollection, type OnlineResults as Results, type OnlineTrack, type SearchBox } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../../lib/online'
 import { isCoverClass, rankOnlineResults, rankOnlineTracks } from '../../lib/searchRank'
@@ -91,8 +91,9 @@ export type OnlineSearch = OnlineSearchState & {
   loadMore: () => void
 }
 
-/** The online search for `query` (asked a moment after typing stops). Keeps prior hits while loading. */
-export function useOnlineSearch(query: string, searchBox: SearchBox = 'music'): OnlineSearch {
+/** The online search for `query` (asked a moment after typing stops, or at once when
+ *  `immediate`: words that were searched for, not typed). Keeps prior hits while loading. */
+export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', immediate = false): OnlineSearch {
   const connected = useNetworkOnline()
   const [state, setState] = useState<OnlineSearchState>({
     query: '',
@@ -130,12 +131,12 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music'): 
             !isSearchCancelled(e) &&
             setState({ query: q, resultsFor: q, results: null, error: say(e), loading: false, offline: false, loadingMore: false, moreError: '' }),
         )
-    }, 350)
+    }, immediate ? 0 : 350)
     return () => {
       live = false
       window.clearTimeout(t)
     }
-  }, [query, connected, searchBox])
+  }, [query, connected, searchBox, immediate])
 
   // More songs for the words shown: the next page joins the songs already there, and the whole
   // list is ranked again (so Best and Covers split as one list, and a recording found twice
@@ -167,4 +168,43 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music'): 
   }, [cursor, searchBox, state.resultsFor, state.loadingMore, state.loading])
 
   return { ...state, canLoadMore: !!cursor && !state.loading, loadMore }
+}
+
+/** The rest of a search's answer: playlists, podcasts and videos, asked beside the songs. */
+export interface OnlineExtras {
+  for: string
+  playlists: OnlineCollection[]
+  podcasts: OnlineCollection[]
+  videos: OnlineTrack[]
+  loading: boolean
+}
+
+/** Playlists, podcasts and videos for the words searched, asked at once and side by side.
+ *  Each part shows when it answers; one that fails is simply empty. Offline: nothing asked. */
+export function useOnlineExtras(query: string): OnlineExtras {
+  const connected = useNetworkOnline()
+  const [extras, setExtras] = useState<OnlineExtras>({ for: '', playlists: [], podcasts: [], videos: [], loading: false })
+  useEffect(() => {
+    const q = query.trim()
+    if (!q || !connected) {
+      setExtras({ for: q, playlists: [], podcasts: [], videos: [], loading: false })
+      return
+    }
+    let live = true
+    setExtras({ for: q, playlists: [], podcasts: [], videos: [], loading: true })
+    let left = 3
+    const done = () => {
+      left -= 1
+      if (left === 0 && live) setExtras((e) => (e.for === q ? { ...e, loading: false } : e))
+    }
+    const put = <K extends 'playlists' | 'podcasts' | 'videos'>(key: K, value: OnlineExtras[K]) =>
+      live && setExtras((e) => (e.for === q ? { ...e, [key]: value } : e))
+    onlineCollections(q, 'playlists').then((v) => put('playlists', v)).catch(() => {}).finally(done)
+    onlineCollections(q, 'podcasts').then((v) => put('podcasts', v)).catch(() => {}).finally(done)
+    onlineVideos(q).then((v) => put('videos', v)).catch(() => {}).finally(done)
+    return () => {
+      live = false
+    }
+  }, [query, connected])
+  return extras
 }

@@ -233,3 +233,15 @@ test('top result: an artist named exactly, else a song (yours first), else an al
   assert.deepEqual(pickTop('wonder', none, null), null)
   assert.equal(pickTop('  ', none, online([oasis])), null)
 })
+
+test('a first name finds the artist people mean, not a small account named exactly that', () => {
+  const artist = (name: string, audience: number | null): OnlineArtist => ({ provider: 'p', artist_id: name, name, artwork_url: null, audience })
+  // As the catalog answered "arijit" (2026-10-18): a 59-subscriber profile is called just that.
+  const ranked = rankOnlineArtists('arijit', [artist('Arijit', 59), artist('Arijit Singh', 647_000_000), artist('Arijit Barman', 2_000)])
+  assert.equal(ranked[0].name, 'Arijit Singh')
+  const none = { tracks: [], albums: [], artists: [] }
+  assert.deepEqual(pickTop('arijit', none, { songs: [], albums: [], artists: ranked }), { kind: 'artist', where: 'online', index: 0 })
+  // An exact name still wins when it is the one people listen to.
+  const oasis = rankOnlineArtists('oasis', [artist('Oasis Tribute', 3_000), artist('Oasis', 30_000_000)])
+  assert.equal(oasis[0].name, 'Oasis')
+})

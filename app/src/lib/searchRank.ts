@@ -341,14 +341,22 @@ export function rankOnlineAlbums(query: string, albums: OnlineAlbum[]): OnlineAl
   })
 }
 
-/** Online artists by how well the name matches, then by how many listen to them. */
+/**
+ * Online artists by how well the name matches and how many listen to them. Both count: typing a
+ * first name ("arijit") means the artist millions play whose name starts with it, not a small
+ * account called exactly that, while a name typed in full still leads. The audience adds up to
+ * 2 on a log scale (1,000 listeners about 0.7, 600 million about 2).
+ */
 export function rankOnlineArtists(query: string, artists: OnlineArtist[]): OnlineArtist[] {
   const q = searchKey(query)
   return sortBy(artists, (a) => {
-    const audience = a.audience && a.audience > 0 ? Math.min(1, Math.log10(a.audience) / 9) : 0.3
+    const audience = a.audience && a.audience > 0 ? Math.min(2, (2 * Math.log10(a.audience)) / 9) : 0.6
     return nameScore(a.name, q) * 3 + audience
   })
 }
+
+/** Whether the words begin this artist's name and many listen to them (a Top result). */
+const widelyHeard = (a: OnlineArtist, q: string) => searchKey(a.name).startsWith(`${q} `) && (a.audience ?? 0) >= 1_000_000
 
 /** Songs, albums and artists of one search answer, each in ranked order. */
 export function rankOnlineResults<R extends { tracks: OnlineTrack[]; albums: OnlineAlbum[]; artists: OnlineArtist[] }>(query: string, r: R): R {
@@ -395,7 +403,9 @@ export function pickTop(query: string, lib: TopLibrary, online: TopOnline | null
   const libSong = lib.tracks.findIndex(isSong)
   const onSongs = online?.songs.slice(0, 3) ?? []
   const onSong = onSongs.findIndex(isSong)
-  const onArtist = (online?.artists.slice(0, 2) ?? []).findIndex((a) => same(a.name))
+  // The first of the catalog's top two that is named this, or whose name the words begin and
+  // that millions listen to ("arijit" for Arijit Singh).
+  const onArtist = (online?.artists.slice(0, 2) ?? []).findIndex((a) => same(a.name) || widelyHeard(a, q))
   // A song title only outweighs an artist's name when it is yours, or widely played.
   const strongSong = libSong >= 0 || (onSong >= 0 && (onSongs[onSong].plays ?? 0) >= 1_000_000)
   if (onArtist >= 0 && !strongSong) return { kind: 'artist', where: 'online', index: onArtist }
