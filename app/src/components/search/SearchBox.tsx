@@ -66,6 +66,8 @@ export function SearchBox(props: {
   /** A hint at the end of the field ("/"). */
   hint?: React.ReactNode
   className?: string
+  /** Slimmer, for the title bar. */
+  compact?: boolean
 }) {
   const { inputRef } = props
   const listId = useId()
@@ -205,7 +207,7 @@ export function SearchBox(props: {
             }
           }}
           placeholder={props.placeholder}
-          className="min-w-0 flex-1 bg-transparent py-2 text-[13.5px] text-ink outline-none placeholder:text-ink/45 [&::-webkit-search-cancel-button]:hidden"
+          className={`min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-ink/45 [&::-webkit-search-cancel-button]:hidden ${props.compact ? 'py-[5px] text-[12.5px]' : 'py-2 text-[13.5px]'}`}
         />
         {props.hint}
       </div>
@@ -215,7 +217,7 @@ export function SearchBox(props: {
           onMouseDown={(e) => e.preventDefault()}
           className="popover absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-y-auto overscroll-contain rounded-2xl p-1.5"
           // Never under the player bar: a long list scrolls inside the panel.
-          style={{ minWidth: 340, maxHeight: 'min(560px, calc(100vh - 260px))' }}
+          style={{ minWidth: props.compact ? 420 : 340, maxHeight: 'min(560px, calc(100vh - 260px))' }}
         >
           {!text && <div className="px-3 pb-1 pt-1.5 text-[11.5px] font-medium text-ink/45">Recent searches</div>}
           <ul id={listId} role="listbox" aria-label={text ? 'Suggestions' : 'Recent searches'} className="grid gap-0.5">

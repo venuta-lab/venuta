@@ -7,6 +7,9 @@ import { Brand } from './Brand'
 import { askOpenLink } from '../lib/openLink'
 import { IconSearch } from './Icons'
 
+/** Where a screen may put its own search in the title bar, in place of Jump to. */
+export const TITLE_SEARCH = 'title-search'
+
 // Frameless window: this strip is the drag handle and holds the window controls.
 export function TitleBar(props: { onPalette: () => void }) {
   const win = inApp() ? getCurrentWindow() : null
@@ -25,15 +28,19 @@ export function TitleBar(props: { onPalette: () => void }) {
           Test copy
         </span>
       )}
-      <button
-        onClick={props.onPalette}
-        title="Go to a place, an album or an artist, or run a command"
-        className="absolute left-1/2 top-1/2 flex w-[min(320px,32vw)] -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
-      >
-        <IconSearch width={14} height={14} />
-        <span className="flex-1 truncate text-left">Jump to…</span>
-        <kbd>Ctrl K</kbd>
-      </button>
+      {/* Music puts its search here (ListenScreen, through TITLE_SEARCH); elsewhere it's Jump to. */}
+      <div className="absolute left-1/2 top-1/2 w-[min(420px,36vw)] -translate-x-1/2 -translate-y-1/2 [&:has(>#title-search>*)>.jump]:hidden">
+        <div id={TITLE_SEARCH} />
+        <button
+          onClick={props.onPalette}
+          title="Go to a place, an album or an artist, or run a command"
+          className="jump mx-auto flex w-[min(320px,32vw)] items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
+        >
+          <IconSearch width={14} height={14} />
+          <span className="flex-1 truncate text-left">Jump to…</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+      </div>
       <div className="ml-auto flex h-full items-center">
         <button
           onClick={askOpenLink}

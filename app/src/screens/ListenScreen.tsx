@@ -14,6 +14,8 @@ import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
 import { recentSearches } from '../lib/recentSearches'
 import { SearchBox, type OnlineSuggestions, type Suggestion } from '../components/search/SearchBox'
+import { createPortal } from 'react-dom'
+import { TITLE_SEARCH } from '../components/TitleBar'
 import { Page, Segmented } from '../components/ui'
 import { Reading } from './MusicScreen'
 import { AlbumPage } from './listen/AlbumPage'
@@ -160,6 +162,9 @@ function Listen(props: Props) {
   // What is typed (the dropdown follows it), and what was searched for (Enter, or a pick from
   // the dropdown): the results are for the words searched, as on the Search page.
   const [query, setQuery] = useState(kept.asked)
+  // The search lives in the title bar while Music shows (one search, top center).
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => setTitleSlot(document.getElementById(TITLE_SEARCH)), [])
   const [asked, setAsked] = useState(kept.asked)
   const searchForRef = useRef<(words: string) => void>(() => {})
   // The words now, for remembering a search when something found by it is played or opened.
@@ -567,6 +572,36 @@ function Listen(props: Props) {
 
   return (
     <NavContext value={nav}>
+      {titleSlot &&
+        createPortal(
+          <SearchBox
+            id="listen-search"
+            inputRef={searchRef}
+            value={query}
+            onChange={(v) => {
+              setQuery(v)
+              // Cleared: back to the Search page before anything was searched.
+              if (!v.trim()) setAsked('')
+              if (stack.length) leavePages()
+              if (tab !== 'search' && v.trim()) {
+                setFadeIn(true)
+                setTab('search')
+              }
+            }}
+            onSubmit={searchFor}
+            onEscape={() => {
+              setQuery('')
+              setAsked('')
+            }}
+            suggest={lib.tracks.length ? suggest : undefined}
+            onlineSuggest={suggestOnline}
+            placeholder="Search songs, albums, artists, playlists"
+            label="Search your music"
+            hint={<kbd>/</kbd>}
+            compact
+          />,
+          titleSlot,
+        )}
       <div ref={box}>
         <Page
           title="Music"
@@ -592,32 +627,6 @@ function Listen(props: Props) {
                 options={TOPS.map(([value, label]) => ({ value, label }))}
                 onChange={chooseTop}
               />
-          <SearchBox
-            id="listen-search"
-            inputRef={searchRef}
-            value={query}
-            onChange={(v) => {
-              setQuery(v)
-              // Cleared: back to the Search page before anything was searched.
-              if (!v.trim()) setAsked('')
-              if (stack.length) leavePages()
-              if (tab !== 'search' && v.trim()) {
-                setFadeIn(true)
-                setTab('search')
-              }
-            }}
-            onSubmit={searchFor}
-            onEscape={() => {
-              setQuery('')
-              setAsked('')
-            }}
-            suggest={lib.tracks.length ? suggest : undefined}
-            onlineSuggest={suggestOnline}
-            placeholder="Search songs, albums, artists, playlists"
-            label="Search your music"
-            hint={<kbd>/</kbd>}
-            className="ml-auto min-w-[240px] max-w-[380px] flex-1"
-          />
             </>
           }
         >
