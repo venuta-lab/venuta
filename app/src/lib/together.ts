@@ -3,7 +3,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { inApp } from './engine'
 import { loadListening } from './listening'
 import { notify } from './notify'
-import { clock, getPlayerState, keepQueue, restoreQueue, type QueueItem } from './player'
+import { clock, getPlayerState, type QueueItem } from './player'
 import { setRoomRoute } from './roomRoute'
 
 /*
@@ -91,8 +91,6 @@ let view: TogetherView = OFF
 let version = 0
 let started = false
 const listeners = new Set<() => void>()
-/** Your own queue, kept aside while you're in a room (given back when you leave). */
-let yours: ReturnType<typeof keepQueue> = null
 let root = ''
 /** An invite link Venuta was opened with (a chat, the browser), until the panel takes it. */
 let invite: string | null = null
@@ -122,11 +120,9 @@ function publish(v: TogetherView) {
   view = v
   changed()
   setRoomRoute(inRoom(v) ? route : null)
-  // A room that ended (removed, the host ended it, lost): your own music back.
-  if (v.state === 'ended' && was !== 'ended') {
-    if (v.message) notify(v.message)
-    giveBack()
-  }
+  // A room that ended (removed, the host ended it, lost): why. (The app gives your own queue
+  // back, paused, once the room lets go of the player.)
+  if (v.state === 'ended' && was !== 'ended' && v.message) notify(v.message)
 }
 
 const inRoom = (v: TogetherView) => v.state === 'hosting' || v.state === 'in' || v.state === 'reconnecting'
@@ -214,17 +210,10 @@ export async function addToRoom(items: QueueItem[], next: boolean, quiet = false
   }
 }
 
-function giveBack() {
-  const k = yours
-  yours = null
-  if (k) void restoreQueue(k)
-}
-
 /** Open a room with what's playing (it goes on, now for everyone). */
 export async function startRoom(libraryRoot: string) {
   root = libraryRoot
   const s = getPlayerState()
-  yours = keepQueue()
   try {
     const v = await invoke<TogetherView>('together_host', {
       root: libraryRoot,
@@ -239,10 +228,8 @@ export async function startRoom(libraryRoot: string) {
       notify('Your room is open. The invite link is copied: send it to friends.')
     } else if (v.message) {
       notify(v.message)
-      yours = null
     }
   } catch (e) {
-    yours = null
     notify(String(e))
   }
 }
@@ -253,24 +240,18 @@ export const readInvite = (code: string) => invoke<{ host: string; open: boolean
 export async function joinRoom(libraryRoot: string, code: string) {
   dropInvite()
   root = libraryRoot
-  yours = keepQueue()
   try {
     const v = await invoke<TogetherView>('together_join', { root: libraryRoot, code })
     publish(v)
-    if (v.message && v.state !== 'waiting' && v.state !== 'in' && v.state !== 'joining') {
-      notify(v.message)
-      giveBack()
-    }
+    if (v.message && v.state !== 'waiting' && v.state !== 'in' && v.state !== 'joining') notify(v.message)
   } catch (e) {
     notify(String(e))
-    yours = null
   }
 }
 
-/** Leave (the host: end it for everyone). Your own queue comes back. */
+/** Leave (the host: end it for everyone). The app gives your own queue back, paused. */
 export async function leaveRoom() {
   await invoke('together_leave').catch(() => {})
-  giveBack()
 }
 
 export const admit = (id: number) => invoke('together_admit', { id }).catch((e) => notify(String(e)))

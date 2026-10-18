@@ -46,8 +46,22 @@ pub struct Guest {
     pub why: Mutex<Option<String>>,
     follow: Mutex<Option<Sender<follow::In>>>,
     host_stream: Mutex<Option<Arc<HostStream>>>,
+    /// The covers of the host's songs, as they come (a few asked for at a time).
+    covers: super::covers::Covers,
+    asking_covers: Arc<tokio::sync::Semaphore>,
+    /// The small server the host's files play through (stopped when the room ends).
+    server: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     app: AppHandle,
     root: String,
+}
+
+impl Drop for Guest {
+    // A join that failed partway: its server goes too.
+    fn drop(&mut self) {
+        if let Some(h) = self.server.get_mut().ok().and_then(|s| s.take()) {
+            h.abort();
+        }
+    }
 }
 
 impl Guest {
@@ -70,6 +84,9 @@ impl Guest {
             why: Mutex::default(),
             follow: Mutex::default(),
             host_stream: Mutex::default(),
+            server: Mutex::default(),
+            covers: Default::default(),
+            asking_covers: Arc::new(tokio::sync::Semaphore::new(3)),
             app: app.clone(),
             root,
         });
@@ -82,13 +99,14 @@ impl Guest {
         let hs = HostStream::new(port, token.clone());
         *g.host_stream.lock().unwrap() = Some(hs.clone());
         let weak = Arc::downgrade(&g);
-        tauri::async_runtime::spawn(async move {
+        let server = tauri::async_runtime::spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
                 let Some(g) = weak.upgrade() else { break };
                 let token = token.clone();
                 tauri::async_runtime::spawn(async move { g.proxy(tcp, &token).await });
             }
         });
+        *g.server.lock().unwrap() = Some(server);
         g.connect().await?;
         // This player follows the room, on the host's clock.
         let clock = g.clock.clone();
@@ -227,24 +245,95 @@ impl Guest {
                     && self.clock.lock().unwrap().ready()
                     && let Some(v) = self.view.lock().unwrap().clone()
                 {
-                    self.to_follower(follow::In::Room(v));
+                    self.to_follower(follow::In::Room(self.with_covers(v)));
                 }
             }
             ToGuest::Refused { why } | ToGuest::Ended { why } => {
-                *self.why.lock().unwrap() = Some(why);
-                self.set_stage(Stage::Ended);
-                self.to_follower(follow::In::Stop);
+                if self.finish(Some(why)) {
+                    let g = self.clone();
+                    tauri::async_runtime::spawn(async move { g.ep.close().await });
+                }
             }
         }
     }
 
-    fn room(&self, v: RoomView) {
+    fn room(self: &Arc<Self>, v: RoomView) {
         *self.view.lock().unwrap() = Some(v.clone());
+        self.ask_covers(&v);
         // Following needs the clock; until it's known, the view waits (sent again when it is).
         if self.clock.lock().unwrap().ready() {
-            self.to_follower(follow::In::Room(v));
+            self.to_follower(follow::In::Room(self.with_covers(v)));
         }
         emit(&self.app);
+    }
+
+    /// The room as this computer shows and plays it: the host's songs with their covers.
+    pub fn with_covers(&self, mut v: RoomView) -> RoomView {
+        self.covers.decorate(&mut v);
+        v
+    }
+
+    /// The covers of the host's songs not here yet: kept from before, or asked for.
+    fn ask_covers(self: &Arc<Self>, v: &RoomView) {
+        for s in &v.queue {
+            if !s.host_file || s.artwork_url.is_some() || !self.covers.first_ask(&s.key) {
+                continue;
+            }
+            let Some(kept) = super::covers::kept_path(&s.key) else {
+                continue;
+            };
+            if kept.exists() {
+                self.covers.put(&s.key, kept);
+                continue;
+            }
+            let g = self.clone();
+            let key = s.key.clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(_turn) = g.asking_covers.clone().acquire_owned().await else {
+                    return;
+                };
+                if let Some(bytes) = g.fetch_cover(&key).await {
+                    let k = key.clone();
+                    let kept = tauri::async_runtime::spawn_blocking(move || {
+                        super::covers::keep(&k, &bytes)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(path) = kept {
+                        g.covers.put(&key, path);
+                        emit(&g.app);
+                    }
+                }
+            });
+        }
+    }
+
+    /// One cover's bytes from the host (none: it has none, or the room's over).
+    async fn fetch_cover(&self, key: &str) -> Option<Vec<u8>> {
+        let conn = self.conn.lock().unwrap().clone()?;
+        let (mut send, recv) = conn.open_bi().await.ok()?;
+        let ask = Get {
+            get: format!("cover:{key}"),
+            from: 0,
+            to: None,
+        };
+        net::send_line(&mut send, &proto::line(&ask)).await.ok()?;
+        let _ = send.finish();
+        let mut lines = Lines::new(recv);
+        let meta: serde_json::Value = serde_json::from_slice(&lines.next().await.ok()??).ok()?;
+        let size = meta.get("size")?.as_u64()?;
+        if size == 0 || size > super::covers::MAX_BYTES {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(size as usize);
+        lines
+            .into_inner()
+            .take(super::covers::MAX_BYTES)
+            .read_to_end(&mut bytes)
+            .await
+            .ok()?;
+        Some(bytes)
     }
 
     fn set_stage(&self, s: Stage) {
@@ -268,12 +357,36 @@ impl Guest {
                 return;
             }
         }
-        *self.why.lock().unwrap() = Some(format!(
+        let why = format!(
             "Lost {}'s room. Join again with the invite.",
             self.invite.host
-        ));
-        self.set_stage(Stage::Ended);
+        );
+        if self.finish(Some(why)) {
+            self.ep.close().await;
+        }
+    }
+
+    /// The room is over for this computer (refused, ended by the host, lost, or left): the
+    /// player is on its own again and the host's files are no longer served here. False when
+    /// it was over already.
+    fn finish(&self, why: Option<String>) -> bool {
+        {
+            let mut stage = self.stage.lock().unwrap();
+            if *stage == Stage::Ended {
+                return false;
+            }
+            *stage = Stage::Ended;
+        }
+        if let Some(why) = why {
+            *self.why.lock().unwrap() = Some(why);
+        }
         self.to_follower(follow::In::Stop);
+        if let Some(h) = self.server.lock().unwrap().take() {
+            h.abort();
+        }
+        *self.out.lock().unwrap() = None;
+        emit(&self.app);
+        true
     }
 
     pub fn send(&self, m: ToHost) {
@@ -293,10 +406,10 @@ impl Guest {
     }
 
     pub async fn leave(&self) {
+        // The goodbye first, a moment to go out, then everything else.
         self.send(ToHost::Bye);
-        *self.stage.lock().unwrap() = Stage::Ended;
-        self.to_follower(follow::In::Stop);
         tokio::time::sleep(Duration::from_millis(200)).await;
+        self.finish(None);
         self.ep.close().await;
     }
 

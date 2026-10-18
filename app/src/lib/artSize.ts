@@ -8,6 +8,17 @@
 
 const SIZES = [120, 226, 360, 544, 800, 1200]
 
+/** A picture on this computer, through the app's asset protocol: a room song's cover kept with
+ *  the thumbnails (together/covers.rs). Shown as it is, and never a request online. */
+export function isLocalAsset(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'http:' && u.hostname === 'asset.localhost'
+  } catch {
+    return false
+  }
+}
+
 /** The size asked for: the smallest cached size at least `px`, at most 1200. */
 function bucket(px: number): number {
   return SIZES.find((s) => s >= px) ?? 1200

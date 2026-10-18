@@ -438,9 +438,6 @@ const keep = (): Kept | null =>
       }
     : null
 
-/** The queue as it is now, to put back later (leaving a room gives you yours back). */
-export const keepQueue = () => keep()
-
 /** Put a kept queue back. */
 export function restoreQueue(k: Kept) {
   queueRoot = k.root

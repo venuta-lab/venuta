@@ -213,6 +213,27 @@ pub struct Playback {
     /// Which room's follower has the player now (0: none), so one winding down never undoes
     /// what the next one set up.
     room_owner: std::sync::atomic::AtomicU64,
+    /// Where you are in your own queue, kept current (a room sets it aside, and gives it back).
+    here: Arc<Mutex<Here>>,
+}
+
+/// Your place in the queue: the songs, the one playing and where, and how it plays.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Here {
+    root: String,
+    items: Vec<QueueItem>,
+    index: i64,
+    position_ms: u64,
+    from: String,
+    shuffle: bool,
+    repeat: Repeat,
+    order: Option<Vec<usize>>,
+}
+
+/// Your own queue while a room has the player (in the data folder, so a Venuta closed in a room
+/// still gives it back when it opens again).
+fn aside_path() -> PathBuf {
+    engine::paths::app_data_dir().join("together-yours.json")
 }
 
 /// A press of one of the player's buttons, from wherever.
@@ -336,6 +357,7 @@ impl Default for Playback {
             room_tap: Arc::default(),
             room_buttons: Arc::default(),
             room_owner: std::sync::atomic::AtomicU64::new(0),
+            here: Arc::default(),
         }
     }
 }
@@ -359,6 +381,7 @@ impl Playback {
             let catalog = self.catalog.clone();
             let local_only = self.local_only.clone();
             let room_tap = self.room_tap.clone();
+            let here = self.here.clone();
             // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
             let mut warmed: Option<String> = None;
             // Plays and where you were are written to disk on a thread of their own: never on
@@ -401,6 +424,19 @@ impl Playback {
                     }
                     let folder = root.lock().map(|r| r.clone()).unwrap_or_default();
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
+                    if let Ok(mut h) = here.lock() {
+                        if s.queue.is_some() {
+                            h.items = queue.clone();
+                            h.order = order.clone();
+                        }
+                        if h.from != s.from {
+                            h.from = s.from.clone();
+                        }
+                        h.index = index;
+                        h.position_ms = s.position_ms;
+                        h.shuffle = s.shuffle;
+                        h.repeat = s.repeat;
+                    }
                     {
                         let song = s.index.and_then(|i| queue.get(i));
                         // An online song is counted by its id, with what it was.
@@ -597,6 +633,61 @@ impl Playback {
         self.room_owner
             .store(id, std::sync::atomic::Ordering::SeqCst);
         id
+    }
+
+    /// Listening together: the room takes the player, so your own queue as it is now is set
+    /// aside (once: a room right after another keeps the queue from before the first).
+    pub fn set_aside(&self) {
+        let path = aside_path();
+        if path.exists() {
+            return;
+        }
+        let Ok(mut h) = self.here.lock().map(|h| h.clone()) else {
+            return;
+        };
+        if h.items.is_empty() || h.index < 0 {
+            return;
+        }
+        h.root = self.root.lock().map(|r| r.clone()).unwrap_or_default();
+        if let Ok(json) = serde_json::to_vec(&h) {
+            let _ = std::fs::create_dir_all(engine::paths::app_data_dir());
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    /// Your own queue back where it was set aside, paused. True when there was one.
+    pub fn give_back(&self) -> bool {
+        let path = aside_path();
+        let Ok(bytes) = std::fs::read(&path) else {
+            return false;
+        };
+        let _ = std::fs::remove_file(&path);
+        let Ok(h) = serde_json::from_slice::<Here>(&bytes) else {
+            return false;
+        };
+        if h.items.is_empty() || h.index < 0 {
+            return false;
+        }
+        if let Ok(mut r) = self.root.lock() {
+            *r = h.root.clone();
+        }
+        let items = crate::fresh_gains(&h.root, h.items);
+        let items = self.resolve(&h.root, items);
+        let _ = self.send(Cmd::Set {
+            items,
+            index: h.index as usize,
+            start_ms: h.position_ms,
+            play: false,
+            from: h.from,
+        });
+        if let (true, Some(order)) = (h.shuffle, h.order) {
+            let _ = self.send(Cmd::RestoreOrder(order));
+        }
+        let _ = self.send(Cmd::Options {
+            shuffle: h.shuffle,
+            repeat: h.repeat,
+        });
+        true
     }
 
     /// Listening together: that follower lets go of the player, unless another room's has it
@@ -850,7 +941,8 @@ impl Playback {
             index: 0,
             start_ms,
             play: false,
-            from: "room".into(),
+            // No source of its own: the room line says whose room it is.
+            from: String::new(),
         })
     }
 
@@ -923,6 +1015,10 @@ pub fn player_resume(root: String, pb: State<'_, Playback>) -> Result<bool, Stri
 
 impl Playback {
     fn resume(&self, root: &str) -> Result<bool, String> {
+        // Closed while in a room: your own queue, not the room's song.
+        if self.give_back() {
+            return Ok(true);
+        }
         let pb = self;
         let root = root.to_owned();
         let Some((queue, place)) = crate::listening::saved_place() else {

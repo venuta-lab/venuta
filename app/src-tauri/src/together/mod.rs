@@ -5,6 +5,7 @@
 //!
 //! The window sees one view (`View`), sent as the "together" event after every change.
 
+mod covers;
 mod follow;
 mod guest;
 mod host;
@@ -264,7 +265,9 @@ fn view(t: &Together) -> View {
             v.me = Some(together::room::HOST);
             {
                 let room = h.room.lock().unwrap();
-                v.room = Some(room.view(true));
+                let mut view = room.view(true);
+                h.covers.decorate(&mut view);
+                v.room = Some(view);
                 v.let_in = room.lets_in_without_asking();
             }
             let link = h.invite.link();
@@ -286,7 +289,7 @@ fn view(t: &Together) -> View {
             }
             .into();
             v.me = *g.me.lock().unwrap();
-            v.room = g.view.lock().unwrap().clone();
+            v.room = g.view.lock().unwrap().clone().map(|r| g.with_covers(r));
             v.path = g.path();
             if let Some(why) = g.why.lock().unwrap().clone() {
                 v.message = Some(why);

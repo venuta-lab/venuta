@@ -87,10 +87,48 @@ struct State {
     /// The player stopped on an error with the room's song (since when, to try again).
     failing: Option<Instant>,
     player_error: bool,
+    /// The room has had the player (your own queue was set aside).
+    took_over: bool,
 }
 
 /// How long between tries while the player can't play (the output may be free again).
 const RETRY: Duration = Duration::from_secs(5);
+
+/// What to do about the player failing with the room's song.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnFailure {
+    Nothing,
+    /// It just failed: the room hears this person can't play it.
+    SayCannot,
+    /// Still failing, a while on: load it again where the room is.
+    TryAgain,
+    /// Playing in step again: the room hears how it's heard.
+    SayHeard,
+}
+
+/// Since when it's been failing (none: it isn't), and what to do, from the player's error now,
+/// whether it plays in step, and whether the player has the room's song at all.
+fn on_failure(
+    failing: Option<Instant>,
+    error: bool,
+    in_step: bool,
+    ours: bool,
+    now: Instant,
+) -> (Option<Instant>, OnFailure) {
+    if !ours {
+        // Not the room's song in the player (stepped out, can't get a copy): nothing to try.
+        return (if error { failing } else { None }, OnFailure::Nothing);
+    }
+    match (error, failing) {
+        (true, None) => (Some(now), OnFailure::SayCannot),
+        (true, Some(since)) if now.duration_since(since) > RETRY => {
+            (Some(now), OnFailure::TryAgain)
+        }
+        (true, Some(since)) => (Some(since), OnFailure::Nothing),
+        (false, Some(_)) if in_step => (None, OnFailure::SayHeard),
+        (false, failing) => (failing, OnFailure::Nothing),
+    }
+}
 
 impl Follower {
     fn pb(&self) -> tauri::State<'_, Playback> {
@@ -160,6 +198,11 @@ impl Follower {
 
     /// Get this entry ready at `position_ms`, silent, and wait to say so.
     fn load(&self, st: &mut State, rev: u64, index: usize, position_ms: u64) {
+        // The room takes the player from here: your own queue is set aside first.
+        if !st.took_over {
+            self.pb().set_aside();
+            st.took_over = true;
+        }
         let Some(song) = st.queue.get(index).cloned() else {
             super::trace("follow: no such song in the queue");
             return;
@@ -231,30 +274,21 @@ impl Follower {
     fn watch_failure(&self, st: &mut State, in_step: bool) {
         let Some(t) = st.timeline else { return };
         let ours = !st.stepped_out && st.now.as_ref().is_some_and(|n| n.index == t.index);
-        if !ours {
-            if !st.player_error {
-                st.failing = None;
+        let (failing, todo) =
+            on_failure(st.failing, st.player_error, in_step, ours, Instant::now());
+        st.failing = failing;
+        match todo {
+            OnFailure::Nothing => {}
+            OnFailure::SayCannot => self.report.hearing(t.rev, t.index, Hearing::Cannot),
+            OnFailure::TryAgain => {
+                st.player_error = false;
+                st.now = None;
+                self.apply_timeline(st, t);
             }
-            return;
-        }
-        if st.player_error {
-            match st.failing {
-                None => {
-                    st.failing = Some(Instant::now());
-                    self.report.hearing(t.rev, t.index, Hearing::Cannot);
+            OnFailure::SayHeard => {
+                if let Some(how) = st.queue.get(t.index).and_then(|s| st.heard.get(&s.key)) {
+                    self.report.hearing(t.rev, t.index, *how);
                 }
-                Some(since) if since.elapsed() > RETRY => {
-                    st.failing = Some(Instant::now());
-                    st.player_error = false;
-                    st.now = None;
-                    self.apply_timeline(st, t);
-                }
-                Some(_) => {}
-            }
-        } else if st.failing.is_some() && in_step {
-            st.failing = None;
-            if let Some(how) = st.queue.get(t.index).and_then(|s| st.heard.get(&s.key)) {
-                self.report.hearing(t.rev, t.index, *how);
             }
         }
     }
@@ -275,6 +309,7 @@ impl Follower {
             heard: HashMap::new(),
             failing: None,
             player_error: false,
+            took_over: false,
         };
         if self.hosting
             && let Some(lib) = &self.lib
@@ -372,6 +407,9 @@ impl Follower {
             let _ = pb.room_sync(None);
             pb.set_room_tap(None);
             pb.set_room_buttons(None);
+            // The last room's done with the player: your own queue back, paused. (A room that
+            // took it and was followed at once by another leaves it set aside for that one.)
+            pb.give_back();
         }
     }
 
@@ -389,6 +427,17 @@ impl Follower {
         if loaded_now {
             if let Some(plan) = self.plan(&t, st.same_room) {
                 self.follow_plan(st, plan);
+            }
+            // Paused while it was getting ready: no start to wait for, so how it's heard is
+            // said now (a paused player doesn't read ahead, so "ready" wouldn't come).
+            if !t.playing
+                && let Some((rev, index, false)) = st.pending
+                && index == t.index
+            {
+                st.pending = None;
+                if let Some(how) = HEARING.with(|h| h.borrow_mut().remove(&(rev, index))) {
+                    self.report.hearing(t.rev, t.index, how);
+                }
             }
         } else if loaded_next {
             // It follows the one playing at its end; the player moves on by itself then.
@@ -502,4 +551,63 @@ pub fn start(mut f: Follower) -> Sender<In> {
         .spawn(move || f.run(rx))
         .ok();
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OnFailure, RETRY, on_failure};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_failing_player_is_said_tried_again_and_said_back() {
+        let t0 = Instant::now();
+        let soon = t0 + Duration::from_secs(1);
+        let later = t0 + RETRY + Duration::from_millis(1);
+        // Fails: said once.
+        let (f, todo) = on_failure(None, true, false, true, t0);
+        assert_eq!((f, todo), (Some(t0), OnFailure::SayCannot));
+        // Still failing a moment on: nothing (not said again, not tried yet).
+        assert_eq!(
+            on_failure(f, true, false, true, soon),
+            (Some(t0), OnFailure::Nothing)
+        );
+        // Still failing a while on: tried again, the wait starting over.
+        assert_eq!(
+            on_failure(f, true, false, true, later),
+            (Some(later), OnFailure::TryAgain)
+        );
+        // The try is loading (no error, not in step yet): waits, still failing.
+        assert_eq!(
+            on_failure(Some(later), false, false, true, later),
+            (Some(later), OnFailure::Nothing)
+        );
+        // Plays in step: said how it's heard, and no longer failing.
+        assert_eq!(
+            on_failure(Some(later), false, true, true, later),
+            (None, OnFailure::SayHeard)
+        );
+        // Fine all along: nothing at all.
+        assert_eq!(
+            on_failure(None, false, true, true, t0),
+            (None, OnFailure::Nothing)
+        );
+    }
+
+    #[test]
+    fn nothing_is_tried_without_the_rooms_song_in_the_player() {
+        let t0 = Instant::now();
+        let later = t0 + RETRY * 2;
+        assert_eq!(
+            on_failure(None, true, false, false, t0),
+            (None, OnFailure::Nothing)
+        );
+        assert_eq!(
+            on_failure(Some(t0), true, false, false, later),
+            (Some(t0), OnFailure::Nothing)
+        );
+        assert_eq!(
+            on_failure(Some(t0), false, false, false, later),
+            (None, OnFailure::Nothing)
+        );
+    }
 }

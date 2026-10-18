@@ -375,11 +375,23 @@ impl Room {
                 self.prepare(t.index, t.position_ms, None, now_us)
             }
             Action::Pause => {
-                let Some(t) = self.timeline else {
-                    return Ok(Changes::default());
+                // A song getting ready stays ready, paused where it was to start (else it would
+                // start once everyone is ready); a playing one pauses where it is.
+                let paused = match (&self.preparing, self.timeline) {
+                    // The next song readied ahead (to start at this one's end): this one pauses.
+                    (Some(p), Some(t)) if p.starts_at_us.is_some() => t.paused_at(now_us),
+                    (Some(p), _) => Timeline {
+                        index: p.index,
+                        rev: p.rev,
+                        position_ms: p.position_ms,
+                        at_us: now_us,
+                        playing: false,
+                    },
+                    (None, Some(t)) => t.paused_at(now_us),
+                    (None, None) => return Ok(Changes::default()),
                 };
                 self.preparing = None;
-                self.timeline = Some(t.paused_at(now_us));
+                self.timeline = Some(paused);
                 self.note(id, "paused", false, now_us);
                 Changes::room()
             }
@@ -1096,5 +1108,47 @@ mod tests {
             r.knock("k1", "Ravi", &proof(SECRET, "k1")),
             Knock::Waiting(_)
         ));
+    }
+
+    #[test]
+    fn pausing_a_song_getting_ready_keeps_it_paused_there() {
+        // A room opened paused: its song gets ready, and stays paused once everyone is.
+        let mut r = room();
+        r.ask(HOST, Action::Jump { index: 1 }, 1_000).unwrap();
+        r.ask(HOST, Action::Pause, 2_000).unwrap();
+        let t = r.timeline().expect("a timeline to hold it");
+        assert_eq!((t.index, t.position_ms, t.playing), (1, 0, false));
+        r.ready(HOST, t.rev, 1, 3_000);
+        r.tick(3_000 + READY_WAIT_US * 2);
+        assert!(
+            !r.timeline().unwrap().playing,
+            "still paused after the wait"
+        );
+        // Playing it gets everyone ready again, then starts.
+        let c = r.ask(HOST, Action::Play, 50_000_000).unwrap();
+        assert_eq!(c.prepare.map(|p| (p.1, p.2)), Some((1, 0)));
+    }
+
+    #[test]
+    fn pausing_near_the_end_pauses_this_song_not_the_next() {
+        let mut r = room();
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        let t = r.timeline().unwrap();
+        r.set_length(200_000);
+        let ends = t.at_us + 200_000_000;
+        // The next one is getting ready ahead.
+        assert!(r.tick(ends - PREPARE_AHEAD_US).prepare.is_some());
+        let at = ends - 5_000_000;
+        r.ask(HOST, Action::Pause, at).unwrap();
+        let p = r.timeline().unwrap();
+        assert_eq!((p.index, p.playing), (0, false), "this song, paused");
+        assert_eq!(p.position_ms, 195_000, "where it was");
+        r.tick(ends + READY_WAIT_US);
+        assert_eq!(
+            r.timeline().unwrap().index,
+            0,
+            "the next one never starts by itself"
+        );
     }
 }

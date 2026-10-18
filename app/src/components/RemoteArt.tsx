@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { hueOf } from '../lib/onlineSong'
-import { devicePx, sizedArt } from '../lib/artSize'
+import { devicePx, isLocalAsset, sizedArt } from '../lib/artSize'
 import { isLocalOnly } from '../lib/localOnly'
 
 /**
@@ -39,16 +39,20 @@ export function RemoteArt(props: {
 
 /** A cover address cleaned (see cleanArtUrl) and asked for at the size it is drawn, `cssPx` wide. */
 export function artUrl(raw: string | null | undefined, cssPx: number): string | undefined {
+  // A picture on this computer (a room song's cover): as it is, Local only too.
+  if (raw && isLocalAsset(raw)) return raw
   // Local only: no picture is fetched from the catalog (the drawn cover shows instead).
   if (isLocalOnly()) return undefined
   const url = cleanArtUrl(raw)
   return url ? sizedArt(url, devicePx(cssPx)) : undefined
 }
 
-/** Keep only http(s) picture addresses; upgrade protocol-relative and bare http. */
+/** Keep only http(s) picture addresses (and pictures on this computer); upgrade protocol-relative
+ *  and bare http. */
 export function cleanArtUrl(raw?: string | null): string | undefined {
   const s = (raw ?? '').trim()
   if (!s) return undefined
+  if (isLocalAsset(s)) return s
   let url = s
   if (url.startsWith('//')) url = `https:${url}`
   else if (url.startsWith('http://')) url = `https://${url.slice('http://'.length)}`

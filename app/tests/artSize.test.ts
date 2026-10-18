@@ -2,7 +2,7 @@
 // Covers are asked for at the size they are drawn (lib/artSize.ts), the same rules as Rust's.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sizedArt } from '../src/lib/artSize.ts'
+import { isLocalAsset, sizedArt } from '../src/lib/artSize.ts'
 
 test('album art is asked for at the size shown', () => {
   assert.equal(
@@ -30,4 +30,14 @@ test('video frames, other hosts and addresses without a size are left alone', ()
   assert.equal(sizedArt('https://example.com/cover=w60-h60', 544), 'https://example.com/cover=w60-h60')
   assert.equal(sizedArt('https://lh3.googleusercontent.com/abc', 544), 'https://lh3.googleusercontent.com/abc')
   assert.equal(sizedArt('not a url', 544), 'not a url')
+})
+
+test('a cover from this computer is told from an address online', () => {
+  // A room song's cover, kept with the thumbnails (together/covers.rs asset_url).
+  assert.equal(isLocalAsset('http://asset.localhost/C%3A%5Cthumbs%5Croom-ab-320.jpg'), true)
+  assert.equal(isLocalAsset('https://lh3.googleusercontent.com/abc=w544-h544'), false)
+  assert.equal(isLocalAsset('http://asset.localhost.evil.com/x.jpg'), false)
+  assert.equal(isLocalAsset('http://example.com/?http://asset.localhost/'), false)
+  // Left as it is when sized.
+  assert.equal(sizedArt('http://asset.localhost/C%3A%5Cx.jpg', 120), 'http://asset.localhost/C%3A%5Cx.jpg')
 })

@@ -30,6 +30,9 @@ pub struct Host {
     conns: Mutex<HashMap<u32, (Out, Connection)>>,
     waiting: Mutex<HashMap<u32, (Out, Connection)>>,
     pub files: HostFiles,
+    /// The covers of the host's songs in the room (made here, served to the people in it).
+    pub covers: super::covers::Covers,
+    root: String,
     pub invite: Invite,
     follow: Mutex<Option<Sender<follow::In>>>,
     app: AppHandle,
@@ -65,10 +68,12 @@ impl Host {
         let files = HostFiles::default();
         let mut songs = Vec::new();
         let mut at = None;
+        let mut covers_of = Vec::new();
         for (i, it) in items.iter().enumerate() {
             if let Some(s) = super::sources::song_of_item(it, lib.as_deref()) {
                 if s.host_file {
                     files.add(&s.key, std::path::Path::new(&root).join(&it.path));
+                    covers_of.push((s.key.clone(), it.dir.clone()));
                 }
                 if i == index {
                     at = Some(songs.len());
@@ -94,10 +99,13 @@ impl Host {
             conns: Mutex::default(),
             waiting: Mutex::default(),
             files,
+            covers: Default::default(),
+            root: root.clone(),
             invite,
             follow: Mutex::default(),
             app: app.clone(),
         });
+        host.make_covers(covers_of);
         // The host's own player follows the room.
         let clock = host.clock;
         let catalog = app.state::<Playback>().catalog();
@@ -501,10 +509,16 @@ impl Host {
     }
 
     /// Add the host's own songs (from its library or the catalog) to the room.
-    pub fn add_items(&self, root: &str, items: &[QueueItem], next: bool) -> Result<(), String> {
+    pub fn add_items(
+        self: &Arc<Self>,
+        root: &str,
+        items: &[QueueItem],
+        next: bool,
+    ) -> Result<(), String> {
         let lib = crate::load_lib(std::path::Path::new(root))
             .ok()
             .map(|(_, l)| l);
+        let mut covers_of = Vec::new();
         let songs: Vec<_> = items
             .iter()
             .filter_map(|it| {
@@ -512,6 +526,9 @@ impl Host {
                 if s.host_file {
                     self.files
                         .add(&s.key, std::path::Path::new(root).join(&it.path));
+                    if self.covers.get(&s.key).is_none() {
+                        covers_of.push((s.key.clone(), it.dir.clone()));
+                    }
                 }
                 Some(s)
             })
@@ -519,7 +536,27 @@ impl Host {
         if songs.is_empty() {
             return Err("Those songs can't go in the room.".into());
         }
+        self.make_covers(covers_of);
         self.ask(Action::Add { songs, next })
+    }
+
+    /// The covers of these songs of the host's (key, album folder), made off the async threads;
+    /// the window shows them as they come.
+    fn make_covers(self: &Arc<Self>, songs: Vec<(String, String)>) {
+        if songs.is_empty() {
+            return;
+        }
+        let root = std::path::PathBuf::from(&self.root);
+        let weak = Arc::downgrade(self);
+        tauri::async_runtime::spawn_blocking(move || {
+            let made = super::covers::make(&root, &songs);
+            if let Some(h) = weak.upgrade() {
+                for (key, path) in made {
+                    h.covers.put(&key, path);
+                }
+                emit(&h.app);
+            }
+        });
     }
 
     /// Stream one of the host's files to someone in the room: the bytes asked for, as they are.
@@ -536,11 +573,22 @@ impl Host {
         let Ok(req) = serde_json::from_slice::<Get>(&l) else {
             return;
         };
+        // A song's file, or (`cover:` and its key) its cover: only to people in the room, and only
+        // for songs in its queue.
+        let cover = req.get.strip_prefix("cover:");
+        let key = cover.unwrap_or(&req.get);
         let allowed = {
             let r = self.room.lock().unwrap();
-            r.is_member(id) && r.queue().iter().any(|s| s.key == req.get)
+            r.is_member(id) && r.queue().iter().any(|s| s.key == key && s.host_file)
         };
-        let Some((path, format)) = allowed.then(|| self.files.get(&req.get)).flatten() else {
+        let found = if cover.is_some() {
+            self.covers.get(key).map(|p| (p, "image/jpeg"))
+        } else {
+            self.files
+                .get(key)
+                .map(|(p, format)| (p, super::sources::mime_of(&format)))
+        };
+        let Some((path, mime)) = allowed.then_some(found).flatten() else {
             let _ = net::send_line(&mut send, b"{\"error\":\"not in the room\"}\n").await;
             let _ = send.finish();
             return;
@@ -557,7 +605,7 @@ impl Host {
             .to
             .unwrap_or(size.saturating_sub(1))
             .min(size.saturating_sub(1));
-        let head = serde_json::json!({ "size": size, "mime": super::sources::mime_of(&format) });
+        let head = serde_json::json!({ "size": size, "mime": mime });
         if net::send_line(&mut send, &proto::line(&head))
             .await
             .is_err()
