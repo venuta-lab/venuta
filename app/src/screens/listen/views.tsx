@@ -27,7 +27,8 @@ import { SongList } from './SongList'
 import { albumWork, artistWork, menuFor } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
-import { albumHasGenre, GENRE_FILTER } from '../../lib/yourMusic'
+import { albumHasGenre, catalogGenreFor, GENRE_FILTER } from '../../lib/yourMusic'
+import { useCatalogTiles } from '../../lib/catalogTiles'
 import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
@@ -474,6 +475,11 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
 
 export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter: string; onFilter: (f: string) => void }) {
   const { lib, filter } = props
+  // One of your genres or categories: the catalog's genre of the same name, to go on exploring.
+  const nav = useNav()
+  const catalog = useCatalogTiles()
+  const yours = filter.startsWith(GENRE_FILTER) ? filter.slice(GENRE_FILTER.length) : filter !== 'all' && filter !== HI_RES ? filter : ''
+  const online = yours ? catalogGenreFor(catalog, yours) : undefined
   const shown = useMemo(
     () =>
       filter === 'all'
@@ -499,6 +505,14 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
           {filter.startsWith(GENRE_FILTER) && chip(filter, filter.slice(GENRE_FILTER.length), shown.length)}
         </div>
       </InBar>
+      {online && (
+        <div className="mb-5 flex items-center gap-3 text-[13px] text-ink/60">
+          <span>More {yours} in the online catalog:</span>
+          <button onClick={() => nav.openMood(online)} className="btn btn-sm">
+            {online.title}
+          </button>
+        </div>
+      )}
       <AlbumGrid albums={shown} origin="albums" />
     </div>
   )

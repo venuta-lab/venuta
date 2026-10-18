@@ -91,3 +91,49 @@ export function yourMusicTiles(
     )
   return tiles
 }
+
+/*
+  Where your music meets the catalog's genres: a catalog genre ("R&B & soul") and the words your
+  tags and categories use for it ("R&B", "Soul", "Funk"). Exact words only, so Pop never takes
+  K-Pop. Moods (Chill, Sad) have no tags to meet.
+*/
+const SAME_AS: Record<string, string[]> = {
+  'bollywood & indian': ['bollywood', 'hindi', 'indian', 'filmi', 'punjabi', 'marathi', 'tamil', 'telugu', 'bengali', 'kannada', 'malayalam', 'desi', 'indian classical', 'ghazal', 'sufi'],
+  'hip-hop': ['hip-hop', 'hip hop', 'rap', 'trap'],
+  'dance & electronic': ['dance', 'electronic', 'electronica', 'edm', 'house', 'techno', 'trance'],
+  'r&b & soul': ['r&b', 'rnb', 'soul', 'funk'],
+  'indie & alternative': ['indie', 'alternative', 'alternative rock', 'indie rock'],
+  'folk & acoustic': ['folk', 'acoustic', 'singer/songwriter', 'singer-songwriter'],
+  'country & americana': ['country', 'americana', 'bluegrass'],
+  'soundtracks & musicals': ['soundtrack', 'soundtracks', 'score', 'scores', 'musical', 'ost', 'film & series'],
+  'christian & gospel': ['christian', 'gospel', 'worship'],
+  'reggae & caribbean': ['reggae', 'caribbean', 'ska', 'dancehall'],
+  'mandopop & cantopop': ['mandopop', 'cantopop', 'c-pop'],
+  classical: ['classical', 'orchestral', 'opera', 'baroque'],
+  metal: ['metal', 'heavy metal'],
+  rock: ['rock', 'hard rock', 'classic rock'],
+  latin: ['latin', 'reggaeton', 'salsa'],
+  'k-pop': ['k-pop', 'kpop'],
+  'j-pop': ['j-pop', 'jpop'],
+  african: ['african', 'afrobeats', 'afrobeat'],
+  brazilian: ['brazilian', 'mpb', 'bossa nova', 'samba'],
+}
+
+/** The words your tags may use for a catalog genre (its own name, and its parts, at least). */
+export function wordsFor(catalogGenre: string): string[] {
+  const k = catalogGenre.trim().toLowerCase()
+  const parts = k.split(/\s+(?:&|and)\s+/).filter(Boolean)
+  return [...new Set([k, ...parts, ...(SAME_AS[k] ?? [])])]
+}
+
+/** Your albums that belong to a catalog genre: by a genre in their tags, or their category. */
+export function albumsForGenre<A extends TileAlbum>(albums: A[], catalogGenre: string): A[] {
+  const words = new Set(wordsFor(catalogGenre))
+  return albums.filter((a) => words.has(a.category.trim().toLowerCase()) || genresOf(a.genre).some((g) => words.has(g.toLowerCase())))
+}
+
+/** The catalog genre one of yours (a tag or a category) belongs to, among these tiles. */
+export function catalogGenreFor<T extends { title: string }>(tiles: T[], yours: string): T | undefined {
+  const k = yours.trim().toLowerCase()
+  return tiles.find((t) => wordsFor(t.title).includes(k))
+}

@@ -502,7 +502,7 @@ function Listen(props: Props) {
       return <OnlineArtistPage key={top.page.artist.artist_id} artist={top.page.artist} lib={lib} onBack={back} />
     if (top?.page.kind === 'online-collection')
       return <OnlineCollectionPage key={top.page.collection.collection_id} collection={top.page.collection} onBack={back} />
-    if (top?.page.kind === 'mood') return <MoodPage key={top.page.tile.params} tile={top.page.tile} onBack={back} />
+    if (top?.page.kind === 'mood') return <MoodPage key={top.page.tile.params} tile={top.page.tile} lib={lib} onBack={back} />
     if (top?.page.kind === 'online-shelf')
       return <OnlineShelfPage key={`${top.page.more.browse_id}:${top.page.more.params ?? ''}`} title={top.page.title} owner={top.page.owner} more={top.page.more} onBack={back} />
     if (!lib.tracks.length && tab !== 'search')

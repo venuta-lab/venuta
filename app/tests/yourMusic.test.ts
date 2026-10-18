@@ -2,7 +2,7 @@
 // "Your music": the tiles that open everything on this PC.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { albumHasGenre, genresOf, yourMusicTiles, type TileAlbum } from '../src/lib/yourMusic.ts'
+import { albumHasGenre, albumsForGenre, catalogGenreFor, genresOf, yourMusicTiles, type TileAlbum } from '../src/lib/yourMusic.ts'
 
 const album = (dir: string, genre: string, category = 'International'): TileAlbum => ({ dir, genre, category })
 
@@ -47,4 +47,28 @@ test('tiles open albums, artists, songs, Hi-Res, categories, then the genres you
 
 test('an empty library has no tiles', () => {
   assert.deepEqual(yourMusicTiles({ albums: [], artists: [], songs: 0, hiRes: [], categories: [] }), [])
+})
+
+test('a catalog genre finds your albums by their tags and categories, exact words only', () => {
+  const albums = [
+    album('kesariya', 'Bollywood', 'Hindi'),
+    album('punjabi', 'Punjabi; Pop'),
+    album('thriller', 'Pop'),
+    album('kpop', 'K-Pop'),
+    album('score', '', 'Scores'),
+    album('soul', 'Funk'),
+  ]
+  assert.deepEqual(albumsForGenre(albums, 'Bollywood & Indian').map((a) => a.dir), ['kesariya', 'punjabi'])
+  assert.deepEqual(albumsForGenre(albums, 'Pop').map((a) => a.dir), ['punjabi', 'thriller'], 'K-Pop is not Pop')
+  assert.deepEqual(albumsForGenre(albums, 'Soundtracks & musicals').map((a) => a.dir), ['score'])
+  assert.deepEqual(albumsForGenre(albums, 'R&B & soul').map((a) => a.dir), ['soul'])
+  assert.deepEqual(albumsForGenre(albums, 'Chill'), [], 'a mood has no tags to meet')
+})
+
+test('one of your genres finds its catalog genre', () => {
+  const tiles = [{ title: 'Pop' }, { title: 'R&B & soul' }, { title: 'Bollywood & Indian' }]
+  assert.equal(catalogGenreFor(tiles, 'Soul')?.title, 'R&B & soul')
+  assert.equal(catalogGenreFor(tiles, 'Hindi')?.title, 'Bollywood & Indian')
+  assert.equal(catalogGenreFor(tiles, 'pop')?.title, 'Pop')
+  assert.equal(catalogGenreFor(tiles, 'Polka'), undefined)
 })
