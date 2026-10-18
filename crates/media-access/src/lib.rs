@@ -42,5 +42,5 @@ pub use types::{
     Availability, CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile,
     ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAlbum, RemoteAlbumPage,
     RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRadio, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };

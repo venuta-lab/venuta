@@ -1,7 +1,7 @@
 use crate::types::{
     CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
     RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -156,6 +156,29 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<Vec<RemoteCollection>, AccessError> {
         let _ = (params, cancel);
         Err(unsupported("moods and genres"))
+    }
+
+    /// A radio: songs like `seed` (a song id), or more of the radio `playlist_id` after the song
+    /// `seed` (to keep it going).
+    fn radio(
+        &self,
+        seed: Option<&str>,
+        playlist_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let _ = (seed, playlist_id, cancel);
+        Err(unsupported("radios"))
+    }
+
+    /// Artists never to be offered by what the catalog picks (radio, autoplay, suggestions): by
+    /// their catalog id and by name. Catalogs that pick nothing ignore it.
+    fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
+        let _ = blocked;
+    }
+
+    /// Leave music videos out of what the catalog picks and lists.
+    fn set_hide_videos(&self, on: bool) {
+        let _ = on;
     }
 
     /// An album's whole page: what it is, who made it, its songs and the rows under them.
@@ -440,6 +463,23 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<RemoteAlbumPage, AccessError> {
         self.inner.album_page(album_id, cancel)
+    }
+
+    fn radio(
+        &self,
+        seed: Option<&str>,
+        playlist_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        self.inner.radio(seed, playlist_id, cancel)
+    }
+
+    fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
+        self.inner.set_blocked_artists(blocked)
+    }
+
+    fn set_hide_videos(&self, on: bool) {
+        self.inner.set_hide_videos(on)
     }
 
     fn forget(&self, track_id: &str) {

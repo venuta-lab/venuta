@@ -200,6 +200,31 @@ export interface Settings {
   close_action?: 'tray' | 'quit' | null
   /** Your Spotify app's Client ID (not a secret), for signing in. */
   spotify_client_id?: string | null
+  /** How listening goes (see lib/listening.ts). */
+  listening?: Listening
+}
+
+/** How listening goes: what plays next, what is never offered, what is remembered. */
+export interface Listening {
+  /** When the queue runs out, keep playing songs like the last one. */
+  autoplay: boolean
+  /** Open Now Playing when you press play on something. */
+  open_player_on_play: boolean
+  /** Artists radio, autoplay and suggestions never offer. */
+  blocked_artists: { name: string; artist_id: string | null }[]
+  /** Online songs you disliked (`provider:id`). */
+  disliked: string[]
+  hide_videos: boolean
+  /** Keep a history of what you play. */
+  history: boolean
+  stream_quality: 'auto' | 'high' | 'low'
+  online_levelling: boolean
+}
+
+/** A radio: songs like a seed, and its own list id to ask for more of it. */
+export interface OnlineRadio {
+  playlist_id: string | null
+  tracks: OnlineTrack[]
 }
 
 export interface HomeInfo {
@@ -1086,7 +1111,7 @@ export const playlistQueue = (root: string, name: string) => invoke<Playable[]>(
 /** Songs, albums and artists in the online catalog for these words (empty outside the app). */
 /** Which search box asks. A newer search from the same box replaces the one before it (which
  *  fails with `SearchCancelled`); other boxes' searches carry on. */
-export type SearchBox = 'music' | 'palette' | 'add-songs' | 'pick' | 'more-by' | 'artist-page'
+export type SearchBox = 'music' | 'palette' | 'add-songs' | 'pick' | 'more-by' | 'artist-page' | 'radio'
 
 /** A search replaced by a newer one from the same box: ignore it, it is not "nothing found". */
 export class SearchCancelled extends Error {
@@ -1168,6 +1193,8 @@ export const onlineVideos = (query: string, searchBox: SearchBox = 'music') =>
 export const onlineMoods = () => (inApp() ? invoke<MoodSection[]>('online_moods') : none<MoodSection[]>([]))
 /** One mood's or genre's playlists. */
 export const onlineMood = (params: string) => invoke<OnlineCollection[]>('online_mood', { params })
+/** A radio of songs like `seed` (a song id), or more of the radio `playlistId` after `seed`. */
+export const onlineRadio = (seed: string | null, playlistId: string | null = null) => invoke<OnlineRadio>('online_radio', { seed, playlistId })
 /** An online album's whole page. */
 export const onlineAlbumPage = (albumId: string) => invoke<OnlineAlbumPage>('online_album_page', { albumId })
 /** Everything in a row of an online page (its "See all"). */

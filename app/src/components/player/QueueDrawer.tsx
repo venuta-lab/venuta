@@ -13,6 +13,7 @@ import { notify } from '../../lib/notify'
 import { IconClose } from '../Icons'
 import { RemoteArt } from '../RemoteArt'
 import { PlayingFrom } from './PlayingFrom'
+import { QueueRadio } from './QueueRadio'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
 
 const spring = { type: 'spring', stiffness: 380, damping: 36 } as const
@@ -183,6 +184,7 @@ export function QueueDrawer(props: { open: boolean; onClose: () => void }) {
               <p className="mt-0.5 truncate text-[12px] text-ink/55">
                 {upcoming > 0 ? `${upcoming.toLocaleString('en-IN')} up next, ${clock(left)}` : 'Nothing after this song'}
               </p>
+              <QueueRadio className="mt-1.5" />
               {/* Shuffled, what comes next isn't the order of the list it came from: say so, with the way back. */}
               {s.shuffle && upcoming > 0 && (
                 <p className="mt-1 flex items-center gap-2 text-[12px] text-ink/55">

@@ -5,8 +5,8 @@
 use crate::playback::Playback;
 use media_access::{
     AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RemoteAlbum,
-    RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion,
-    RemoteTrack, SearchSuggestions,
+    RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteRadio,
+    RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -359,6 +359,35 @@ pub async fn online_mood(
         access
             .mood_collections(&params, &CancellationToken::default())
             .map_err(words)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A radio: songs like `seed` (a song id), or more of the radio `playlist_id` after the song
+/// `seed`. Songs you disliked are left out.
+#[tauri::command]
+pub async fn online_radio(
+    seed: Option<String>,
+    playlist_id: Option<String>,
+    pb: State<'_, Playback>,
+) -> Result<RemoteRadio, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut radio = access
+            .radio(
+                seed.as_deref(),
+                playlist_id.as_deref(),
+                &CancellationToken::default(),
+            )
+            .map_err(words)?;
+        let disliked = engine::settings::load().listening.disliked;
+        if !disliked.is_empty() {
+            radio
+                .tracks
+                .retain(|t| !disliked.contains(&format!("{}:{}", t.provider, t.track_id)));
+        }
+        Ok(radio)
     })
     .await
     .map_err(|e| e.to_string())?

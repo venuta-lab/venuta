@@ -12,8 +12,10 @@ export type ActionId =
   | 'shuffle'
   | 'next'
   | 'queue'
+  | 'radio'
   | 'like'
   | 'dislike'
+  | 'block'
   | 'share'
   | 'playlist'
   | 'open'
@@ -69,8 +71,10 @@ export const LABELS: Record<ActionId, string> = {
   shuffle: 'Shuffle',
   next: 'Play next',
   queue: 'Add to queue',
+  radio: 'Start radio',
   like: 'Add to Liked songs',
   dislike: 'Dislike',
+  block: 'Block artist',
   share: 'Copy link',
   playlist: 'Add to playlist…',
   open: 'Open',
@@ -107,9 +111,9 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
       case 'song':
         return [
           ['play', 'next', 'queue'],
-          ['like', ...when(f.online, 'dislike')],
+          ['radio', 'like', ...when(f.online, 'dislike')],
           ['playlist'],
-          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'moreOnline')],
+          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'moreOnline', 'block')],
           [
             ...when(f.nowPlaying && !f.online, 'lyrics'),
             ...when(!f.online, 'details', 'folder'),
@@ -122,7 +126,7 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
       case 'album':
         return f.online ? [PLAY, ['playlist'], ['open']] : [PLAY, ['playlist'], ['artist'], ['details', 'folder']]
       case 'artist':
-        return [PLAY, ['playlist'], ['open']]
+        return [PLAY, ['radio'], ['playlist'], ['open']]
       case 'playlist':
         return [
           PLAY,

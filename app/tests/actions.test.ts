@@ -105,11 +105,23 @@ test('a song can be liked; an online song can also be disliked and its link copi
   assert.ok(online.includes('dislike') && !local.includes('dislike'), 'dislike steers what the catalog plays next')
   assert.ok(online.includes('share') && !local.includes('share'), 'a file of yours has no link')
   // Liking sits right after playing, as in a music app's menu.
-  assert.deepEqual(actionsFor('song', { online: true })[1], ['like', 'dislike'])
+  assert.deepEqual(actionsFor('song', { online: true })[1], ['radio', 'like', 'dislike'])
 })
 
 test('an online song goes to its artist and its album, like a song of yours', () => {
   const online = ids(actionsFor('song', { online: true }))
   assert.ok(online.includes('artist') && online.includes('album'))
   assert.ok(!online.includes('details') && !online.includes('folder'), 'no file to edit or show')
+})
+
+test('a song starts a radio; an online song can block its artist', () => {
+  for (const facts of [{}, { online: true }]) assert.ok(ids(actionsFor('song', facts)).includes('radio'), JSON.stringify(facts))
+  assert.ok(ids(actionsFor('song', { online: true })).includes('block'))
+  assert.ok(!ids(actionsFor('song', { online: true, noArtist: true })).includes('block'))
+  // Radio and liking come right after the ways to play.
+  assert.deepEqual(actionsFor('song', {})[1], ['radio', 'like'])
+})
+
+test('an artist starts their radio', () => {
+  assert.ok(ids(actionsFor('artist', {})).includes('radio'))
 })

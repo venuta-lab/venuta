@@ -211,6 +211,17 @@ pub struct RemoteArtistLink {
     pub artist_id: Option<String>,
 }
 
+/// A radio: songs like a seed song (or an artist's, a mix's), endless by asking again with
+/// `playlist_id` and the last song played. Ids and what to show only, never a stream address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRadio {
+    /// The radio's own list id, to ask for more of it.
+    #[serde(default)]
+    pub playlist_id: Option<String>,
+    /// Its songs, the seed left out.
+    pub tracks: Vec<RemoteTrack>,
+}
+
 /// A titled row of cards on a catalog page, and where its "See all" leads when it has one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteShelf {

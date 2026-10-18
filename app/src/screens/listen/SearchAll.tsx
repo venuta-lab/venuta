@@ -3,12 +3,15 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconMore, IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
-import { quality, type OnlineAlbum, type OnlineArtist } from '../../lib/engine'
+import { onlineArtistPage, quality, type OnlineAlbum, type OnlineArtist } from '../../lib/engine'
 import { loadCovers, useCovers } from '../../lib/covers'
 import { menuFor, onlineSongWork, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
-import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From } from '../../lib/player'
+import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From, type QueueItem } from '../../lib/player'
 import { useNav } from './model'
+import { playRadioList } from '../../lib/radio'
+import { notify } from '../../lib/notify'
+import { onlineProblem } from '../../lib/online'
 import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
 import { QualityBadge } from './parts'
 import { LikeButton } from '../../components/LikeButton'
@@ -51,6 +54,8 @@ export function MixedSongs(props: {
   from?: From
   /** Each row's number (an album's track numbers), shown instead of its cover. */
   numbers?: number[]
+  /** What playing a row does, instead of playing the list from it (search: a radio of it). */
+  onPlay?: (item: QueueItem, i: number) => void
   /** Picking songs (Select): a click picks a row (Shift: up to it) instead of playing it. */
   pick?: { keys: string[]; onPick: (key: string, range: boolean) => void }
 }) {
@@ -91,7 +96,7 @@ export function MixedSongs(props: {
             ) : (
               <RemoteArt url={s.track.artwork_url} seed={s.track.album || s.track.title} size={40} imgClassName="h-full w-full object-cover" />
             )
-          const playIt = () => void playItems(root, items, i, from)
+          const playIt = () => (props.onPlay ? props.onPlay(item, i) : void playItems(root, items, i, from))
           const menu = () =>
             s.where === 'library'
               ? menuFor('song', songFacts(s.track), songWork(nav, s.track, playIt))
@@ -110,14 +115,14 @@ export function MixedSongs(props: {
                 if ((e.target as HTMLElement).closest('button')) return
                 if (pick) pick.onPick(key, e.shiftKey)
                 else if (now) void toggle()
-                else void playItems(root, items, i, from)
+                else playIt()
               }}
               onKeyDown={(e) => {
                 if (e.target !== e.currentTarget) return
                 if (pick && (e.key === ' ' || e.key === 'Enter')) {
                   e.preventDefault()
                   pick.onPick(key, e.shiftKey)
-                } else if (e.key === 'Enter') void playItems(root, items, i, from)
+                } else if (e.key === 'Enter') playIt()
               }}
               onContextMenu={(e) => menuFromEvent(e, menu())}
               className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_88px_32px_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''} ${picked ? 'bg-ink/[0.07]' : ''}`}
@@ -213,7 +218,17 @@ export function OnlineArtistCard({ artist: ar }: { artist: OnlineArtist }) {
     <button
       onClick={() => openOnlineArtist(ar)}
       onContextMenu={(e) =>
-        menuFromEvent(e, menuFor('artist', { online: true }, { open: () => openOnlineArtist(ar), play: () => void playOnlineArtistPage(root, ar) }))
+        menuFromEvent(
+          e,
+          menuFor('artist', { online: true }, {
+            open: () => openOnlineArtist(ar),
+            play: () => void playOnlineArtistPage(root, ar),
+            radio: () =>
+              void onlineArtistPage(ar.artist_id)
+                .then((p) => (p.radio_id ? playRadioList(root, p.radio_id, `${ar.name} radio`) : notify(`The online catalog has no radio for ${ar.name}.`)))
+                .catch((err) => notify(onlineProblem(err))),
+          }),
+        )
       }
       title={`Open ${ar.name}`}
       className="lift group block w-full min-w-0 text-center"

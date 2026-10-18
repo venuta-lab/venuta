@@ -14,6 +14,7 @@ import {
   type PlaylistItem,
 } from './engine'
 import { notify } from './notify'
+import { planEnqueue } from './queueRules'
 import { isAwake, onAwake } from './motion'
 
 /*
@@ -180,6 +181,14 @@ onAwake(() => {
 
 /** The player's state now, outside React. */
 export const getPlayerState = () => state
+
+/** Be told of every change the screens are told of (outside React). Returns the way to stop. */
+export function onPlayer(l: () => void): () => void {
+  listeners.add(l)
+  return () => {
+    listeners.delete(l)
+  }
+}
 
 /** The song's position to the millisecond: the last report plus the time since (while playing). */
 export const positionNow = () =>
@@ -349,11 +358,15 @@ let queueRoot = ''
 export const openFrom = (f: From) => window.dispatchEvent(new CustomEvent<From>('venuta:open-from', { detail: f }))
 
 export interface From {
-  kind: 'playlist' | 'album' | 'artist' | 'songs' | 'search'
+  kind: 'playlist' | 'album' | 'artist' | 'songs' | 'search' | 'radio'
   /** The playlist's name, the album's folder, the artist's name, the words searched. */
   ref: string
   /** In words: "Hindi", "Taal", "Search: rahman". */
   label: string
+  /** A radio's own list id, to keep it going (kind `radio`). */
+  radio?: string | null
+  /** The song a radio started from, to go back to it ("Back to …"). */
+  seed?: string
 }
 const fromText = (f: From | string) => (typeof f === 'string' ? f : JSON.stringify(f))
 /** What the player's `from` says (older saves are plain words: a label only). */
@@ -546,7 +559,24 @@ export const setRepeat = (repeat: Repeat) => call('player_options', { shuffle: s
 /** After the current song (next) or at the end (not next). */
 export const enqueue = (root: string, tracks: CatalogTrack[], nextUp: boolean) => enqueueItems(root, tracks.map(toItem), nextUp)
 /** `enqueue` for queue rows of any kind. */
-export const enqueueItems = (root: string, items: QueueItem[], nextUp: boolean) => call('player_enqueue', { root, items, next: nextUp })
+/** Add songs to the queue (next, or at the end), never one already coming up: Play next on a
+ *  song coming up later moves it up instead (lib/queueRules.ts). */
+export function enqueueItems(root: string, items: QueueItem[], nextUp: boolean) {
+  const plan = planEnqueue(state.queue.map(queueKey), state.index, items.map(queueKey), nextUp)
+  if (plan.move) return call('player_move', { from: plan.move.from, to: plan.move.to })
+  const adding = new Set(plan.add)
+  const fresh = items.filter((it) => {
+    const k = queueKey(it)
+    if (!adding.has(k)) return false
+    adding.delete(k)
+    return true
+  })
+  if (!fresh.length) {
+    notify(items.length === 1 ? `“${items[0].title}” is coming up already.` : 'These songs are coming up already.')
+    return Promise.resolve()
+  }
+  return call('player_enqueue', { root, items: fresh, next: nextUp })
+}
 export const removeAt = (i: number) => call('player_remove', { index: i })
 export const move = (from: number, to: number) => call('player_move', { from, to })
 export const jumpTo = (i: number) => call('player_jump', { index: i })

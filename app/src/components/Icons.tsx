@@ -96,6 +96,13 @@ export const IconShuffle = (p: P) => (
     <path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5" />
   </svg>
 )
+/** A radio: a dot sending waves both ways. */
+export const IconRadio = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="2" />
+    <path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
+  </svg>
+)
 /** Picking songs: a ticked circle beside lines. */
 export const IconSelect = (p: P) => (
   <svg {...base} {...p}>

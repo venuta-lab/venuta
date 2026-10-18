@@ -262,6 +262,17 @@ pub(crate) fn artist_extras(
     }
 }
 
+/// A radio's songs as catalog tracks: the seed left out, each song once.
+pub(crate) fn radio_of(next: &ytmusic::NextResult, seed: Option<&str>) -> Vec<RemoteTrack> {
+    let mut seen = std::collections::HashSet::new();
+    next.items
+        .iter()
+        .filter_map(track_of_row)
+        .filter(|t| Some(t.track_id.as_str()) != seed.map(str::trim))
+        .filter(|t| seen.insert(t.track_id.clone()))
+        .collect()
+}
+
 /// The client's suggestions as Venuta's: completions, then the cards it knows how to show.
 pub(crate) fn suggestions_of(s: &ytmusic::SearchSuggestions) -> SearchSuggestions {
     SearchSuggestions {
@@ -499,6 +510,39 @@ mod tests {
                 .iter()
                 .all(|i| matches!(i, RemoteSuggestion::Album { .. }))
         );
+    }
+
+    fn row(id: &str, title: &str) -> SongItem {
+        SongItem {
+            video_id: id.into(),
+            title: title.into(),
+            artists: "Someone".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_radio_leaves_out_its_seed_and_repeats() {
+        let next = ytmusic::NextResult {
+            items: vec![
+                row("seed", "Seed"),
+                row("a", "A"),
+                row("b", "B"),
+                row("a", "A again"),
+                row(" ", "No id"),
+            ],
+            continuation: None,
+            lyrics_browse_id: None,
+            automix_playlist_id: None,
+            rating: None,
+        };
+        let ids: Vec<String> = radio_of(&next, Some("seed"))
+            .into_iter()
+            .map(|t| t.track_id)
+            .collect();
+        assert_eq!(ids, ["a", "b"]);
+        // A radio of a mix has no seed: every song is in it.
+        assert_eq!(radio_of(&next, None).len(), 3);
     }
 
     #[test]

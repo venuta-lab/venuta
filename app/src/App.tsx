@@ -65,6 +65,7 @@ import { StudioHost } from './components/themes/ThemeStudio'
 import { ThemeImportHost } from './components/themes/ThemeImport'
 import { settingsSection } from './screens/settingsPage'
 import { checkAtStart } from './lib/updates'
+import { keepRadioGoing } from './lib/radio'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
@@ -140,6 +141,8 @@ export default function App() {
   // Notices from anywhere in the app (added to a playlist, removed with Undo…).
   const shared = useNotice()
   const [palette, setPalette] = useState(false)
+  // Radios keep going, and a queue that runs out goes on (autoplay), from the start.
+  useEffect(() => keepRadioGoing(), [])
   // Your playlists, for the palette (read when it opens).
   const [shelf, setShelf] = useState<PlaylistSummary[]>([])
   useEffect(() => {

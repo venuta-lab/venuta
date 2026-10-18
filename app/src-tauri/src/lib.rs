@@ -317,16 +317,37 @@ fn check_new_library(root: String, target: String) -> CmdResult<()> {
 /// Change some settings: only the fields given are written, onto what is saved now (so a
 /// screen holding an older copy can't undo a change made elsewhere).
 #[tauri::command]
-fn set_settings(change: serde_json::Value) -> CmdResult<()> {
+fn set_settings(
+    change: serde_json::Value,
+    pb: tauri::State<'_, playback::Playback>,
+) -> CmdResult<()> {
     let serde_json::Value::Object(change) = change else {
         return Err("Settings changes must be an object.".into());
     };
+    let listening = change.contains_key("listening");
     let mut now = serde_json::to_value(engine::settings::load()).map_err(|e| e.to_string())?;
     if let serde_json::Value::Object(map) = &mut now {
         map.extend(change);
     }
     let s: Settings = serde_json::from_value(now).map_err(|e| e.to_string())?;
-    engine::settings::save(&s)
+    engine::settings::save(&s)?;
+    if listening {
+        apply_listening(&pb, &s.listening);
+    }
+    Ok(())
+}
+
+/// What the online catalog must know of your listening choices: who it never offers, and
+/// whether music videos are left out.
+fn apply_listening(pb: &playback::Playback, l: &engine::settings::Listening) {
+    let blocked: Vec<(Option<String>, String)> = l
+        .blocked_artists
+        .iter()
+        .map(|b| (b.artist_id.clone(), b.name.clone()))
+        .collect();
+    let catalog = pb.catalog();
+    catalog.set_blocked_artists(&blocked);
+    catalog.set_hide_videos(l.hide_videos);
 }
 
 /// Remember which folder is open (your library, or music being brought in).
@@ -2928,6 +2949,10 @@ pub fn run() {
                 && let Ok(hwnd) = w.hwnd()
             {
                 playback::start_media_controls(&app.state::<playback::Playback>(), hwnd.0 as isize);
+                apply_listening(
+                    &app.state::<playback::Playback>(),
+                    &engine::settings::load().listening,
+                );
             }
             // Ensure the stream tool is ready before the first online play (download if needed).
             std::thread::Builder::new()
@@ -3083,6 +3108,7 @@ pub fn run() {
             online::online_mood,
             online::online_shelf_more,
             online::online_album_page,
+            online::online_radio,
             online::online_collection,
             online::online_artist,
             online::online_album_tracks,

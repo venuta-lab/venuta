@@ -2,7 +2,8 @@ import { motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
-import { IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
+import { IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
+import { playRadioList } from '../../lib/radio'
 import { RemoteArt, artUrl, cleanArtUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { onlineArtistPage, type OnlineArtistPage as Page } from '../../lib/engine'
@@ -105,6 +106,12 @@ export function OnlineArtistPage({ artist, lib, onBack }: { artist: OnlineArtist
           <IconShuffle />
           Shuffle
         </button>
+        {page?.radio_id && (
+          <button onClick={() => page.radio_id && void playRadioList(root, page.radio_id, `${name} radio`)} className="btn-ghost btn-lg" title={`Songs by ${name} and artists like them, without end`}>
+            <IconRadio width={18} height={18} />
+            Radio
+          </button>
+        )}
         <button disabled={!songs.length} onClick={addTop} className="btn-ghost btn-lg" title="Add their top songs to a playlist">
           <IconPlaylistAdd width={18} height={18} />
           Add to playlist

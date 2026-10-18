@@ -12,7 +12,8 @@ use crate::catalog_json;
 use crate::types::{
     CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page, PageRequest,
     RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
-    RemoteCollection, RemoteMore, RemotePlaylist, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteCollection, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -131,6 +132,18 @@ trait LiveBackend: Send + Sync {
         params: &str,
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError>;
+
+    /// A radio's answer, and the radio list it came from (see `MediaAccess::radio`).
+    fn radio(
+        &self,
+        seed: Option<&str>,
+        playlist_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<(Option<String>, ytmusic::NextResult), AccessError>;
+
+    fn set_blocked(&self, blocked: &[(Option<String>, String)]);
+
+    fn set_hide_videos(&self, on: bool);
 
     /// The cards of a page that is one grid (a row's "See all").
     fn grid(
@@ -558,6 +571,47 @@ impl LiveBackend for YtmBackend {
             .filter(|c| c.kind == "playlist" || c.kind == "album")
             .filter_map(|c| crate::catalog_cards::collection_of(c, "playlist"))
             .collect())
+    }
+
+    fn radio(
+        &self,
+        seed: Option<&str>,
+        playlist_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<(Option<String>, ytmusic::NextResult), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let failed = |_| AccessError::new(AccessErrorKind::Transport, "catalog radio failed");
+        self.run(cancellable(cancel.clone(), async {
+            let mut list = playlist_id
+                .map(str::to_owned)
+                .or_else(|| seed.map(|s| format!("RDAMVM{s}")));
+            let mut answer = self
+                .it
+                .next(client, seed, list.as_deref())
+                .await
+                .map_err(failed)?;
+            // A dead radio answers with the seed alone and names the live mix to ask instead.
+            if answer.items.len() <= 1
+                && let Some(mix) = answer.automix_playlist_id.clone()
+            {
+                answer = self
+                    .it
+                    .next(client, seed, Some(&mix))
+                    .await
+                    .map_err(failed)?;
+                list = Some(mix);
+            }
+            Ok((list, answer))
+        }))
+    }
+
+    fn set_blocked(&self, blocked: &[(Option<String>, String)]) {
+        self.it
+            .set_blocked(ytmusic::BlockList::new(blocked.iter().cloned()));
+    }
+
+    fn set_hide_videos(&self, on: bool) {
+        self.it.set_hide_videos(on);
     }
 
     fn grid(
@@ -1544,6 +1598,48 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         Ok(page)
+    }
+
+    fn radio(
+        &self,
+        seed: Option<&str>,
+        playlist_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let seed = seed.map(str::trim).filter(|s| !s.is_empty());
+        let list = playlist_id.map(str::trim).filter(|s| !s.is_empty());
+        if seed.is_none() && list.is_none() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "a radio needs a song or a radio to start from",
+            ));
+        }
+        let started = std::time::Instant::now();
+        let (playlist_id, answer) = self.backend.radio(seed, list, cancel)?;
+        let tracks: Vec<RemoteTrack> = crate::catalog_cards::radio_of(&answer, seed)
+            .into_iter()
+            .map(|mut t| {
+                t.artwork_url = clean_artwork_url(t.artwork_url.take());
+                t
+            })
+            .collect();
+        crate::timing::note_timing(&format!(
+            "online radio answered in {} ms ({} songs)",
+            started.elapsed().as_millis(),
+            tracks.len()
+        ));
+        Ok(RemoteRadio {
+            playlist_id,
+            tracks,
+        })
+    }
+
+    fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
+        self.backend.set_blocked(blocked);
+    }
+
+    fn set_hide_videos(&self, on: bool) {
+        self.backend.set_hide_videos(on);
     }
 
     fn shelf_more(

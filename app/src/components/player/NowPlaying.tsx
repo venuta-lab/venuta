@@ -17,6 +17,7 @@ import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
 import { Stars } from './Stars'
 import { PlayingFrom } from './PlayingFrom'
+import { QueueRadio } from './QueueRadio'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
@@ -86,8 +87,16 @@ function UpNext() {
   const s = usePlayer()
   const cover = useCovers(320)
   const rest = s.queue.slice(s.index + 1, s.index + 40)
-  if (!rest.length) return <p className="py-10 text-center text-[13px] text-ink/55">Nothing after this song.</p>
+  if (!rest.length)
+    return (
+      <div className="py-6">
+        <QueueRadio className="px-2" />
+        <p className="py-8 text-center text-[13px] text-ink/55">Nothing after this song.</p>
+      </div>
+    )
   return (
+    <>
+    <QueueRadio className="px-2 pt-2" />
     <ol className="grid gap-1 py-2">
       {rest.map((q, k) => {
         const online = isOnline(q)
@@ -116,6 +125,7 @@ function UpNext() {
         )
       })}
     </ol>
+    </>
   )
 }
 

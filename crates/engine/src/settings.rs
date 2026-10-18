@@ -43,6 +43,65 @@ pub struct Settings {
     /// Your Spotify app's Client ID (not a secret), for signing in to read playlists.
     #[serde(default)]
     pub spotify_client_id: Option<String>,
+    /// How listening goes: what plays next, what is never offered, what is remembered.
+    #[serde(default)]
+    pub listening: Listening,
+}
+
+/// How listening goes. Each choice is yours; the defaults are a music app's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Listening {
+    /// When the queue runs out, keep playing songs like the last one (a radio).
+    #[serde(default = "yes")]
+    pub autoplay: bool,
+    /// Open Now Playing when you press play on something.
+    #[serde(default)]
+    pub open_player_on_play: bool,
+    /// Artists radio, autoplay and suggestions never offer.
+    #[serde(default)]
+    pub blocked_artists: Vec<BlockedArtist>,
+    /// Online songs you disliked (`provider:id`): radio and autoplay skip them.
+    #[serde(default)]
+    pub disliked: Vec<String>,
+    /// Leave music videos out of search and of what plays next.
+    #[serde(default)]
+    pub hide_videos: bool,
+    /// Keep a history of what you play, from your files and online.
+    #[serde(default = "yes")]
+    pub history: bool,
+    /// Online stream quality: "auto", "high" or "low".
+    #[serde(default = "auto")]
+    pub stream_quality: String,
+    /// Even out online songs' loudness with the catalog's own measure of each.
+    #[serde(default)]
+    pub online_levelling: bool,
+}
+
+/// An artist never to be offered: by their catalog id when known, and by name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockedArtist {
+    pub name: String,
+    #[serde(default)]
+    pub artist_id: Option<String>,
+}
+
+fn auto() -> String {
+    "auto".into()
+}
+
+impl Default for Listening {
+    fn default() -> Self {
+        Listening {
+            autoplay: true,
+            open_player_on_play: false,
+            blocked_artists: Vec::new(),
+            disliked: Vec::new(),
+            hide_videos: false,
+            history: true,
+            stream_quality: auto(),
+            online_levelling: false,
+        }
+    }
 }
 
 /// The free online sources, each on unless switched off.

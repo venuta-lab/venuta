@@ -5,6 +5,7 @@ import { searchWeb, type CatalogTrack, type OnlineTrack, type PlaylistSummary, t
 import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
+import { blockArtist, dislike, startRadio } from './radio'
 import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
@@ -50,6 +51,7 @@ export function songWork(nav: Go, t: CatalogTrack, playIt?: () => void): Work {
     play: playIt ?? (() => void play(nav.root, [t], 0)),
     next: () => void enqueue(nav.root, [t], true),
     queue: () => void enqueue(nav.root, [t], false),
+    radio: () => void startRadio(nav.root, toItem(t)),
     like: likeWork(nav.root, toItem(t)),
     playlist: () => askAddToPlaylist([t.path], t.title),
     artist: goToEach(artists, nav.openArtist),
@@ -89,7 +91,10 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
     play: playIt ?? (() => void playItems(nav.root, [item], 0)),
     next: () => void enqueueItems(nav.root, [item], true),
     queue: () => void enqueueItems(nav.root, [item], false),
+    radio: () => void startRadio(nav.root, item),
     like: likeWork(nav.root, item),
+    dislike: () => void dislike(nav.root, item),
+    block: t.artists.slice(0, 3).map((name) => ({ label: `Block ${name}`, run: () => void blockArtist(name) })),
     playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
     artist: goToEach(t.artists, nav.openArtistNamed),
     album: albumId
@@ -132,6 +137,7 @@ export function artistWork(nav: Go, ar: Artist): Work {
     shuffle: () => void playAll(nav.root, tracks, from, 'shuffle'),
     next: () => void enqueue(nav.root, tracks, true),
     queue: () => void enqueue(nav.root, tracks, false),
+    radio: tracks[0] ? () => void startRadio(nav.root, toItem(tracks[0])) : undefined,
     playlist: () => askAddToPlaylist(tracks.map((t) => t.path), ar.name),
     open: () => nav.openArtist(ar.name),
   }

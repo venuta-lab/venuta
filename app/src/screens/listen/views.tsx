@@ -39,6 +39,7 @@ import { ownedIndex, titleCore } from '../../lib/owned'
 import { searchKey } from '../../lib/textsearch'
 import { MixedSongs, OnlineAlbumTile, OnlineArtistCard, type MixedSong } from './SearchAll'
 import { CollectionCard } from './OnlineCards'
+import { startRadio } from '../../lib/radio'
 import { OnlineArtistSections } from './OnlineArtistSections'
 import { useArtistSongs, useOnlineArtistFor } from './artistSongs'
 import type { OnlineTrack } from '../../lib/engine'
@@ -644,7 +645,14 @@ export function SearchResults(props: {
             ) : (
               <div />
             )}
-            {besideTop.length > 0 && <MixedSongs query={q} songs={besideTop} onSeeAll={songs.length > SONGS_BESIDE_TOP ? () => setChip('songs') : undefined} />}
+            {besideTop.length > 0 && (
+              <MixedSongs
+                query={q}
+                songs={besideTop}
+                onPlay={(item) => void startRadio(nav.root, item)}
+                onSeeAll={songs.length > SONGS_BESIDE_TOP ? () => setChip('songs') : undefined}
+              />
+            )}
           </div>
         )}
         {!onlineDone && !top && !besideTop.length && waiting('music')}
