@@ -182,7 +182,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn local_only_rooms_connect_on_this_network_with_the_invites_ticket() {
-        let reach = Reach { local_only: true, ..Reach::default() };
+        let reach = Reach {
+            local_only: true,
+            ..Reach::default()
+        };
         let host = endpoint(&reach, true).await.unwrap();
         let ticket = ticket(&host, &reach).await;
         let accept = tokio::spawn({
@@ -200,10 +203,13 @@ mod tests {
         });
         let guest = endpoint(&reach, false).await.unwrap();
         let t: iroh_tickets::endpoint::EndpointTicket = ticket.parse().unwrap();
-        let conn = tokio::time::timeout(Duration::from_secs(10), guest.connect(t.endpoint_addr().clone(), ALPN))
-            .await
-            .expect("connects without the internet")
-            .unwrap();
+        let conn = tokio::time::timeout(
+            Duration::from_secs(10),
+            guest.connect(t.endpoint_addr().clone(), ALPN),
+        )
+        .await
+        .expect("connects without the internet")
+        .unwrap();
         let (mut send, recv) = conn.open_bi().await.unwrap();
         send_line(&mut send, b"hello\n").await.unwrap();
         let mut lines = Lines::new(recv);
@@ -218,7 +224,10 @@ mod tests {
     #[tokio::test]
     async fn a_line_too_long_is_refused() {
         // Lines are checked as they're read; a peer can't make Venuta hold a huge message.
-        let reach = Reach { local_only: true, ..Reach::default() };
+        let reach = Reach {
+            local_only: true,
+            ..Reach::default()
+        };
         let host = endpoint(&reach, true).await.unwrap();
         let ticket = ticket(&host, &reach).await;
         let accept = tokio::spawn({
@@ -231,7 +240,10 @@ mod tests {
         });
         let guest = endpoint(&reach, false).await.unwrap();
         let t: iroh_tickets::endpoint::EndpointTicket = ticket.parse().unwrap();
-        let conn = guest.connect(t.endpoint_addr().clone(), ALPN).await.unwrap();
+        let conn = guest
+            .connect(t.endpoint_addr().clone(), ALPN)
+            .await
+            .unwrap();
         let (mut send, _recv) = conn.open_bi().await.unwrap();
         let big = vec![b'x'; together::proto::MAX_MESSAGE + 10];
         let _ = send_line(&mut send, &big).await;

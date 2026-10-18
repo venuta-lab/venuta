@@ -6,6 +6,7 @@ import { ActivityIndicator } from './Activity'
 import { Brand } from './Brand'
 import { askOpenLink } from '../lib/openLink'
 import { IconSearch } from './Icons'
+import { RoomChip } from './together/RoomChip'
 
 /** Where a screen may put its own search in the title bar, in place of Jump to. */
 export const TITLE_SEARCH = 'title-search'
@@ -42,6 +43,7 @@ export function TitleBar(props: { onPalette: () => void }) {
         </button>
       </div>
       <div className="ml-auto flex h-full items-center">
+        <RoomChip />
         <button
           onClick={askOpenLink}
           aria-label="Open a link"

@@ -18,6 +18,7 @@ use together::invite::Invite;
 use together::proto::{Action, Role, RoomView};
 
 /// A room hosted here, or joined from here.
+#[derive(Clone)]
 enum Session {
     Host(Arc<host::Host>),
     Guest(Arc<guest::Guest>),
@@ -51,6 +52,8 @@ pub struct View {
     /// Your output's delay setting (Bluetooth), milliseconds.
     pub delay_ms: i32,
     pub local_only: bool,
+    /// The host lets people with the link in without asking.
+    pub let_in: bool,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -89,6 +92,16 @@ pub fn my_delay(app: &AppHandle) -> i32 {
         .get(&out)
         .copied()
         .unwrap_or(0)
+}
+
+/// The music folder songs are under: a Venuta home's Music folder when it has one with a library
+/// (the window may pass the home or the music folder), else the folder given.
+pub fn music_root(root: &str) -> String {
+    let music = engine::paths::music_dir(std::path::Path::new(root));
+    if music.is_dir() && crate::load_lib(&music).is_ok() {
+        return music.to_string_lossy().replace('\\', "/");
+    }
+    root.to_owned()
 }
 
 pub fn unix_now() -> u64 {
@@ -133,9 +146,15 @@ fn notify_knock(app: &AppHandle, name: &str) {
     }
 }
 
+/// A step of listening together, in the playback log (to see where a room got to).
+pub fn trace(what: &str) {
+    crate::playback::note_play(what, "listening together");
+}
+
 /// Tell the window what changed.
 fn emit(app: &AppHandle) {
-    let v = view(&app.state::<Together>());
+    let mut v = view(&app.state::<Together>());
+    v.delay_ms = my_delay(app);
     let _ = app.emit("together", v);
 }
 
@@ -152,12 +171,16 @@ fn view(t: &Together) -> View {
     if let Some(b) = *t.busy.lock().unwrap() {
         v.state = b.into();
     }
-    match t.session.lock().unwrap().as_ref() {
+    match current(&t).as_ref() {
         Some(Session::Host(h)) => {
             v.state = "hosting".into();
             v.host = true;
             v.me = Some(together::room::HOST);
-            v.room = Some(h.room.lock().unwrap().view(true));
+            {
+                let room = h.room.lock().unwrap();
+                v.room = Some(room.view(true));
+                v.let_in = room.lets_in_without_asking();
+            }
             let link = h.invite.link();
             v.invite = Some(InviteView {
                 qr_svg: qr_svg(&link),
@@ -186,6 +209,12 @@ fn view(t: &Together) -> View {
         None => {}
     }
     v
+}
+
+/// The session, out of its lock: a room's work tells the window, which reads the session
+/// again, so it's never done while the lock is held.
+fn current(t: &Together) -> Option<Session> {
+    t.session.lock().unwrap().clone()
 }
 
 fn role(s: &str) -> Result<Role, String> {
@@ -220,7 +249,16 @@ pub async fn together_host(
         *t.error.lock().unwrap() = None;
     }
     emit(&app);
-    let r = host::Host::start(app.clone(), root, items, index, position_ms, playing).await;
+    trace("starting a room");
+    let r = host::Host::start(
+        app.clone(),
+        music_root(&root),
+        items,
+        index,
+        position_ms,
+        playing,
+    )
+    .await;
     let t = app.state::<Together>();
     *t.busy.lock().unwrap() = None;
     match r {
@@ -251,7 +289,7 @@ pub async fn together_join(app: AppHandle, root: String, code: String) -> Result
         *t.error.lock().unwrap() = None;
     }
     emit(&app);
-    let r = guest::Guest::join(app.clone(), root, invite).await;
+    let r = guest::Guest::join(app.clone(), music_root(&root), invite).await;
     let t = app.state::<Together>();
     *t.busy.lock().unwrap() = None;
     match r {
@@ -279,7 +317,7 @@ pub async fn together_leave(app: AppHandle) -> Result<(), String> {
 /// Something to do to the room (anyone, within their role).
 #[tauri::command]
 pub fn together_ask(t: State<'_, Together>, action: Action) -> Result<(), String> {
-    match t.session.lock().unwrap().as_ref() {
+    match current(&t).as_ref() {
         Some(Session::Host(h)) => h.ask(action),
         Some(Session::Guest(g)) => {
             g.ask(action);
@@ -297,8 +335,8 @@ pub fn together_add(
     items: Vec<QueueItem>,
     next: bool,
 ) -> Result<(), String> {
-    match t.session.lock().unwrap().as_ref() {
-        Some(Session::Host(h)) => h.add_items(&root, &items, next),
+    match current(&t).as_ref() {
+        Some(Session::Host(h)) => h.add_items(&music_root(&root), &items, next),
         Some(Session::Guest(g)) => {
             let songs: Vec<_> = items
                 .iter()
@@ -316,7 +354,7 @@ pub fn together_add(
 }
 
 fn with_host<R>(t: &Together, f: impl FnOnce(&host::Host) -> R) -> Result<R, String> {
-    match t.session.lock().unwrap().as_ref() {
+    match current(&t).as_ref() {
         Some(Session::Host(h)) => Ok(f(h)),
         _ => Err("Only the host can do that.".into()),
     }
@@ -391,7 +429,7 @@ pub fn together_step_out(t: State<'_, Together>, out: bool) -> Result<(), String
             follow::In::CatchUp
         }
     };
-    match t.session.lock().unwrap().as_ref() {
+    match current(&t).as_ref() {
         Some(Session::Host(h)) => h.to_follower(m()),
         Some(Session::Guest(g)) => g.to_follower(m()),
         None => return Err("You're not in a room.".into()),
@@ -425,10 +463,11 @@ pub fn together_set_delay(app: AppHandle, t: State<'_, Together>, ms: i32) -> Re
     let mut s = engine::settings::load();
     s.listening.together_delay.insert(out, ms);
     engine::settings::save(&s)?;
-    match t.session.lock().unwrap().as_ref() {
+    match current(&t).as_ref() {
         Some(Session::Host(h)) => h.to_follower(follow::In::Delay(ms)),
         Some(Session::Guest(g)) => g.to_follower(follow::In::Delay(ms)),
         None => {}
     }
+    emit(&app);
     Ok(())
 }

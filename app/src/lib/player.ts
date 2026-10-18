@@ -15,6 +15,7 @@ import {
 } from './engine'
 import { notify } from './notify'
 import { keepPlayable, planEnqueue } from './queueRules'
+import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 
@@ -431,6 +432,9 @@ const keep = (): Kept | null =>
       }
     : null
 
+/** The queue as it is now, to put back later (leaving a room gives you yours back). */
+export const keepQueue = () => keep()
+
 /** Put a kept queue back. */
 export function restoreQueue(k: Kept) {
   queueRoot = k.root
@@ -463,6 +467,9 @@ const LOCAL_ONLY_NOTE = "Local only is on, so online songs don't play. Switch it
 
 /** `play` for queue rows of any kind: library songs and online ones, mixed. */
 export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '', before: Kept | null = keep()) {
+  // In a room: the songs go to the room, and play there.
+  const room = roomRoute()
+  if (room) return room.play(items, index)
   // Local only: your songs play, online ones are left out of the queue.
   if (isLocalOnly()) {
     const mine = keepPlayable(items, index, (q) => !isOnline(q))
@@ -556,10 +563,13 @@ export function followItems(root: string, next: QueueItem[], from: From) {
   lastSet = { from: f, keys: items.map(queueKey) }
   return call('player_follow', { root, items, index })
 }
-export const toggle = () => call('player_toggle')
-export const next = () => call('player_next')
-export const previous = () => call('player_previous')
+// In a room (listening together), these ask the room (lib/roomRoute.ts).
+export const toggle = () => roomRoute()?.toggle() ?? call('player_toggle')
+export const next = () => roomRoute()?.next() ?? call('player_next')
+export const previous = () => roomRoute()?.previous() ?? call('player_previous')
 export const seek = (ms: number) => {
+  const room = roomRoute()
+  if (room) return room.seek(ms)
   // An online song still opening has nothing to seek in yet: every seek (bar, keys, lyrics,
   // mini player) waits until it plays.
   if (state.buffering) return Promise.resolve()
@@ -579,6 +589,8 @@ export const enqueue = (root: string, tracks: CatalogTrack[], nextUp: boolean) =
 /** Add songs to the queue (next, or at the end), never one already coming up: Play next on a
  *  song coming up later moves it up instead (lib/queueRules.ts). */
 export function enqueueItems(root: string, items: QueueItem[], nextUp: boolean) {
+  const room = roomRoute()
+  if (room) return room.enqueue(items, nextUp)
   if (isLocalOnly()) {
     items = items.filter((q) => !isOnline(q))
     if (!items.length) {

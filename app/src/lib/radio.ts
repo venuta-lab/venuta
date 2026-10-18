@@ -7,6 +7,8 @@ import { onlineProblem } from './online'
 import { ownedIndex } from './owned'
 import { rateOnAccount } from './ytmAccount'
 import { isLocalOnly } from './localOnly'
+import { roomRoute } from './roomRoute'
+import { addToRoom, togetherView } from './together'
 import {
   enqueueItems,
   getPlayerState,
@@ -37,8 +39,8 @@ import {
 const LEFT = 2
 
 /** The catalog's id for a song: its own when online, else the same song found online. */
-async function catalogIdOf(q: QueueItem): Promise<string | null> {
-  if (isOnline(q) && q.online?.kind === 'online') return q.online.track_id
+async function catalogIdOf(q: Pick<QueueItem, 'title' | 'artists' | 'album_artist' | 'duration_ms'> & { online_id?: string | null }): Promise<string | null> {
+  if (q.online_id) return q.online_id
   const found = await onlineSearch(`${q.title} ${q.artists[0] ?? q.album_artist ?? ''}`.trim(), 'radio')
   const same = ownedIndex([{ title: q.title, artists: q.artists, duration_ms: q.duration_ms }])
   return (found.tracks.find((t) => same(t)) ?? found.tracks[0])?.track_id ?? null
@@ -129,6 +131,8 @@ let askedAfter = ''
 
 async function topUp() {
   if (isLocalOnly()) return
+  // In a room the player holds only the room's song: the room's own queue is what runs out.
+  if (roomRoute()) return roomTopUp()
   const s = getPlayerState()
   if (asking || s.index < 0 || !s.queue.length || s.repeat !== 'off') return
   const left = s.queue.length - 1 - s.index
@@ -147,7 +151,7 @@ async function topUp() {
   askedAfter = lastKey
   try {
     const root = s.root ?? ''
-    const id = await catalogIdOf(last)
+    const id = await catalogIdOf({ ...last, online_id: isOnline(last) && last.online?.kind === 'online' ? last.online.track_id : null })
     if (!id && !radio) return
     const more = await onlineRadio(id, radio)
     const rows = rowsOf(root, more.tracks, new Set(getPlayerState().queue.map(queueKey)))
@@ -158,6 +162,36 @@ async function topUp() {
     asking = false
   }
 }
+
+/** Autoplay in a room: when its last song plays, the host's autoplay adds songs like it (only
+ *  the host's, so a room never gets them twice). */
+async function roomTopUp() {
+  const v = togetherView()
+  const q = v.room?.queue ?? []
+  const t = v.room?.timeline
+  if (!v.host || asking || !t || !q.length || t.index < q.length - 1) return
+  const last = q[q.length - 1]
+  if (askedAfter === last.key) return
+  await loadListening()
+  if (!listening().autoplay) return
+  asking = true
+  askedAfter = last.key
+  try {
+    const root = getPlayerState().root ?? ''
+    const id = await catalogIdOf({ title: last.title, artists: last.artists, album_artist: '', duration_ms: last.duration_ms ?? 0, online_id: last.online_id })
+    if (!id) return
+    const more = await onlineRadio(id, null)
+    const there = new Set(q.map((s) => songKey(s.title, s.artists)))
+    const rows = rowsOf(root, more.tracks, new Set()).filter((r) => !there.has(songKey(r.title, r.artists)))
+    if (rows.length) await addToRoom(rows.slice(0, 25), false, true)
+  } catch {
+    // Offline or refused: the room rests at its end; the next song asks again.
+  } finally {
+    asking = false
+  }
+}
+
+const songKey = (title: string, artists: string[]) => `${title.toLowerCase()}|${(artists[0] ?? '').toLowerCase()}`
 
 let started = false
 /** Keep radios going and autoplay on from now (once, when the window starts). */

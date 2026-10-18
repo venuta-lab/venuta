@@ -117,13 +117,17 @@ impl Follower {
     /// Get this entry ready at `position_ms`, silent, and wait to say so.
     fn load(&self, st: &mut State, rev: u64, index: usize, position_ms: u64) {
         let Some(song) = st.queue.get(index).cloned() else {
+            super::trace("follow: no such song in the queue");
             return;
         };
+        super::trace("follow: finding a copy");
         st.next = None;
         st.next_due = None;
         match self.copy_of(&song, st) {
             Some(c) => {
+                super::trace("follow: loading");
                 let _ = self.pb().room_load(&self.root, c.item, position_ms, c.own);
+                super::trace("follow: loaded");
                 let _ = self.pb().room_sync(Some(SyncPlan {
                     anchor: None,
                     position_ms,
@@ -235,6 +239,7 @@ impl Follower {
                     index,
                     position_ms,
                 } => {
+                    super::trace(&format!("follow: prepare {index} at {position_ms}"));
                     if st.stepped_out {
                         continue;
                     }
@@ -296,7 +301,12 @@ impl Follower {
             if let Some(plan) = self.plan(&t, st.same_room) {
                 let _ = self.pb().room_sync(Some(plan));
             }
-            st.pending = None;
+            // Playing at once (no start to wait for): say how it's heard now.
+            if st.pending.take().is_some()
+                && let Some(how) = HEARING.with(|h| h.borrow_mut().remove(&(t.rev, t.index)))
+            {
+                self.report.hearing(t.rev, t.index, how);
+            }
         }
     }
 

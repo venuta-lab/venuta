@@ -261,6 +261,10 @@ impl Room {
         Changes::room()
     }
 
+    pub fn lets_in_without_asking(&self) -> bool {
+        self.let_in_without_asking
+    }
+
     pub fn set_let_in_without_asking(&mut self, on: bool) {
         self.let_in_without_asking = on;
     }

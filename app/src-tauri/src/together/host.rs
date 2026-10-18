@@ -57,6 +57,7 @@ impl Host {
     ) -> Result<Arc<Host>, String> {
         let reach = net::Reach::from_settings();
         let ep = net::endpoint(&reach, true).await?;
+        super::trace("room: endpoint open");
         let name = super::my_name();
         let lib = crate::load_lib(std::path::Path::new(&root))
             .ok()
@@ -77,6 +78,7 @@ impl Host {
         }
         let secret = random_hex(16);
         let ticket = net::ticket(&ep, &reach).await;
+        super::trace("room: invite ready");
         let until = super::unix_now() + 24 * 3600;
         let invite = Invite {
             to: ticket,
@@ -112,6 +114,7 @@ impl Host {
             delay_ms: super::my_delay(&app),
         });
         *host.follow.lock().unwrap() = Some(tx);
+        super::trace("room: follower started");
         // What was playing goes on, everyone getting it ready where it is.
         if let Some(i) = at {
             let now = host.clock.now_us();
@@ -138,6 +141,7 @@ impl Host {
                 host.apply(c);
             }
         }
+        super::trace("room: playing on");
         // People come in.
         let h = host.clone();
         tauri::async_runtime::spawn(async move {
