@@ -4,6 +4,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No referrer on anything the window loads. The catalog's picture host rate-limits
+         browser requests that name a foreign page (this window's address), so with one, covers
+         failed to load in bursts; without, they load every time. Nothing here needs one. -->
+    <meta name="referrer" content="no-referrer" />
     <title>Venuta</title>
   </head>
   <body>
