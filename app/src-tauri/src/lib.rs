@@ -25,6 +25,7 @@ mod desktop;
 mod libcache;
 mod listening;
 mod lyric_windows;
+mod lyrics_find;
 mod online;
 mod phone;
 mod playback;
@@ -3111,6 +3112,10 @@ pub fn run() {
             online::online_radio,
             listening::listening_plays,
             listening::listening_forget,
+            lyrics_find::lyrics_find,
+            lyrics_find::lyrics_check,
+            lyrics_find::lyrics_choose,
+            lyrics_find::lyrics_offset,
             online::online_collection,
             online::online_artist,
             online::online_album_tracks,

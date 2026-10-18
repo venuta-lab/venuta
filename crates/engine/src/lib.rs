@@ -25,6 +25,7 @@ pub mod intake;
 pub mod library;
 pub mod links;
 pub mod lrc;
+pub mod lyrics_online;
 pub mod media;
 pub mod net;
 pub mod palette;

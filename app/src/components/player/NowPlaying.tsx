@@ -2,7 +2,8 @@ import { useEscape } from '../../lib/layers'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
-import { lineAt, useLyrics, useOnlineLyrics, type Lyrics } from '../../lib/lyrics'
+import { lineAt, useLyrics, useSongLyrics, type Lyrics } from '../../lib/lyrics'
+import { LyricsSource } from '../lyrics/LyricsSource'
 import { SyncMaker } from '../lyrics/SyncMaker'
 import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
@@ -149,9 +150,10 @@ export function NowPlaying(props: {
   const onlineArt = remoteArtUrl(song)
   // Online: LRCLIB by title/artist (display only). Local: file-backed lyrics as always.
   const remote = !!song && isOnline(song)
-  const fileLyrics = useLyrics(props.root, props.open && !remote ? song?.path : undefined)
-  const catalogLyrics = useOnlineLyrics(song, props.open && remote)
-  const lyrics = remote ? catalogLyrics : fileLyrics
+  // Your file's words when it has them, else the lyrics services' (online songs, and files
+  // without lyrics: shown, never written to the file).
+  const lyrics = useSongLyrics(props.root, song, props.open)
+  const foundOnline = !!lyrics?.found
   // The song whose lyrics are being timed. It stays its song if another one starts: the
   // maker keeps its taps and offers the way back.
   const [timing, setTiming] = useState<string | null>(null)
@@ -269,8 +271,8 @@ export function NowPlaying(props: {
                   ]}
                 />
                 <AnimatePresence>
-                  {props.panel === 'lyrics' && !remote && (
-                    <LyricsDock key="dock" root={props.root} song={song} lyrics={lyrics} timing={timingNow} onTiming={onTiming} />
+                  {props.panel === 'lyrics' && (
+                    <LyricsDock key="dock" root={props.root} song={song} lyrics={lyrics} timing={timingNow} onTiming={onTiming} canTime={!remote} />
                   )}
                 </AnimatePresence>
               </div>
@@ -289,14 +291,14 @@ export function NowPlaying(props: {
                       onDirty={(d) => (unsaved.current = d)}
                       onClose={stopTiming}
                     />
-                  ) : remote ? (
+                  ) : remote || foundOnline ? (
                     lyrics && (lyrics.lines.length > 0 || lyrics.text) ? (
                       <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => {}} />
                     ) : lyrics === null ? (
                       <p className="py-10 text-center text-[13px] text-ink/55">Looking up lyrics…</p>
                     ) : (
                       <p className="py-10 text-center text-[13px] leading-relaxed text-ink/55">
-                        No lyrics found online for this song. Timing and paste are for songs in your library.
+                        {lyrics.found?.instrumental ? 'An instrumental: no words to show.' : 'No lyrics found for this song. Look again by another name below.'}
                       </p>
                     )
                   ) : (
@@ -318,6 +320,10 @@ export function NowPlaying(props: {
                   </div>
                 )}
               </div>
+              {/* Lyrics found online: where from, and the way to choose another for this song. */}
+              {props.panel === 'lyrics' && !timingNow && (remote || foundOnline || (lyrics !== null && !lyrics.lines.length && !lyrics.text.trim())) && (
+                <LyricsSource key={song.path || song.title} song={song} lyrics={lyrics} className="mt-2 shrink-0" />
+              )}
             </div>
           </div>
         </motion.section>

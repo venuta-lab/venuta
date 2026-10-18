@@ -8,7 +8,7 @@ import { LikeButton } from '../LikeButton'
 import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { IconExpand, IconLyrics, IconMute, IconNext, IconPause, IconPlay, IconPrevious, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconVolume } from '../Icons'
-import { lineAt, useLyrics } from '../../lib/lyrics'
+import { lineAt, useSongLyrics } from '../../lib/lyrics'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
 import { useThemeInfo } from '../../lib/prefs'
@@ -178,8 +178,9 @@ export function MiniPlayer() {
   const art = online ? (remoteSrc ? { src: remoteSrc, accent: undefined } : undefined) : dir ? cover(dir) : undefined
   useEffect(() => setPlayingAccent(art?.accent), [art?.accent])
 
-  const showLyrics = lyricsOn && !!song?.lyrics && shape !== 'micro'
-  const lyrics = useLyrics(root, showLyrics ? song?.path : undefined)
+  // Your file's words, else the lyrics services' (online songs too).
+  const showLyrics = lyricsOn && !!song && shape !== 'micro'
+  const lyrics = useSongLyrics(root, song ?? undefined, showLyrics)
   const at = lineAt(lyrics, s.position_ms)
   const line = at >= 0 ? lyrics?.lines[at]?.[1] || '♪' : ''
 
@@ -266,7 +267,7 @@ export function MiniPlayer() {
             shape={shape}
             nextShape={nextShape}
             onShape={resize}
-            lyrics={song.lyrics ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
+            lyrics={{ on: lyricsOn, toggle: () => setLyricsOn((o) => !o) }}
             pin={pin}
           />
           {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} duration={seekable} />}
@@ -339,7 +340,7 @@ export function MiniPlayer() {
             shape={shape}
             nextShape={nextShape}
             onShape={resize}
-            lyrics={song.lyrics && !queueOn ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
+            lyrics={!queueOn ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
             queue={{ on: queueOn, toggle: () => setQueueOn((o) => !o) }}
             pin={pin}
             onArt={!queueOn}

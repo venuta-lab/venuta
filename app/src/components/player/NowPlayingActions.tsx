@@ -106,7 +106,7 @@ function Pop(props: { onClose: () => void; className?: string; children: ReactNo
  * What can be done with the lyrics, beside the tabs: their style, their timing, a whole
  * screen, the desktop. In the tabs' own material, so it reads as part of the same bar.
  */
-export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyrics | null; timing: boolean; onTiming: () => void }) {
+export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyrics | null; timing: boolean; onTiming: () => void; canTime?: boolean }) {
   const [open, setOpen] = useState<'style' | 'screens' | null>(null)
   const [screens, setScreens] = useState<Monitor[]>([])
   const desktop = useDesktopLyricsShown()
@@ -143,9 +143,11 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
             <IconLyricStyle width={19} height={19} />
           </IconAction>
         )}
-        <IconAction label={timed ? 'Fix the timing' : 'Time the lyrics'} on={props.timing} onClick={props.onTiming}>
-          <IconTiming width={19} height={19} />
-        </IconAction>
+        {props.canTime !== false && (
+          <IconAction label={timed ? 'Fix the timing' : 'Time the lyrics'} on={props.timing} onClick={props.onTiming}>
+            <IconTiming width={19} height={19} />
+          </IconAction>
+        )}
         {timed && (
           <>
             <span className="mx-0.5 h-4 w-px bg-ink/15" aria-hidden />

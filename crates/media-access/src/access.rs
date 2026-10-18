@@ -1,5 +1,5 @@
 use crate::types::{
-    CancellationToken, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
+    CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest, RemoteAlbum,
     RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
     RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
@@ -168,6 +168,16 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<RemoteRadio, AccessError> {
         let _ = (seed, playlist_id, cancel);
         Err(unsupported("radios"))
+    }
+
+    /// A song's lyrics as the catalog has them (timed when it can). None when it has none.
+    fn lyrics(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<CatalogLyrics>, AccessError> {
+        let _ = (track_id, cancel);
+        Err(unsupported("lyrics"))
     }
 
     /// Artists never to be offered by what the catalog picks (radio, autoplay, suggestions): by
@@ -476,6 +486,14 @@ impl MediaAccess for CachedAccess {
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
         self.inner.set_blocked_artists(blocked)
+    }
+
+    fn lyrics(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<CatalogLyrics>, AccessError> {
+        self.inner.lyrics(track_id, cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

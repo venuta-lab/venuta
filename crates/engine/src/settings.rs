@@ -75,6 +75,10 @@ pub struct Listening {
     /// Even out online songs' loudness with the catalog's own measure of each.
     #[serde(default)]
     pub online_levelling: bool,
+    /// The lyrics sources in your order, "-id" for one switched off (see
+    /// `lyrics_online::order`); empty: the default order, all on.
+    #[serde(default)]
+    pub lyrics_sources: Vec<String>,
 }
 
 /// An artist never to be offered: by their catalog id when known, and by name.
@@ -100,6 +104,7 @@ impl Default for Listening {
             history: true,
             stream_quality: auto(),
             online_levelling: false,
+            lyrics_sources: Vec::new(),
         }
     }
 }

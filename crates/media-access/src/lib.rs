@@ -39,8 +39,9 @@ pub use region::{CatalogRegion, catalog_region};
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
-    Availability, CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile,
-    ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAlbum, RemoteAlbumPage,
-    RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteRadio, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    Availability, CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection,
+    MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RemoteAlbum,
+    RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteCollection,
+    RemoteMore, RemotePlaylist, RemoteRadio, RemoteShelf, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };

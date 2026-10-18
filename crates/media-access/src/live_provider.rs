@@ -10,8 +10,8 @@
 use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
-    CancellationToken, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page, PageRequest,
-    RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
+    CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
+    PageRequest, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink, RemoteArtistPage,
     RemoteCollection, RemoteMore, RemotePlaylist, RemoteRadio, RemoteSuggestion, RemoteTrack,
     SearchSuggestions,
 };
@@ -142,6 +142,13 @@ trait LiveBackend: Send + Sync {
     ) -> Result<(Option<String>, ytmusic::NextResult), AccessError>;
 
     fn set_blocked(&self, blocked: &[(Option<String>, String)]);
+
+    /// A song's lyrics from the catalog (see `MediaAccess::lyrics`).
+    fn lyrics(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<CatalogLyrics>, AccessError>;
 
     fn set_hide_videos(&self, on: bool);
 
@@ -608,6 +615,49 @@ impl LiveBackend for YtmBackend {
     fn set_blocked(&self, blocked: &[(Option<String>, String)]) {
         self.it
             .set_blocked(ytmusic::BlockList::new(blocked.iter().cloned()));
+    }
+
+    fn lyrics(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<CatalogLyrics>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let failed = |_| AccessError::new(AccessErrorKind::Transport, "catalog lyrics failed");
+        self.run(cancellable(cancel.clone(), async {
+            self.ensure_visitor().await;
+            // The lyrics are a page of their own, named by the song's "next" answer.
+            let next = self
+                .it
+                .next(client, Some(video_id), None)
+                .await
+                .map_err(failed)?;
+            let Some(page) = next.lyrics_browse_id else {
+                return Ok(None);
+            };
+            // Timed lines come only to the mobile identity; the words alone to the web one.
+            if let Some(mobile) = self.clients.get(ytmusic::LYRICS_TIMED_CLIENT)
+                && let Ok(timed) = self.it.lyrics_timed(mobile, &page).await
+                && !timed.is_empty()
+            {
+                return Ok(Some(CatalogLyrics {
+                    lines: timed.into_iter().map(|l| (l.time_ms, l.text)).collect(),
+                    text: String::new(),
+                    credit: None,
+                }));
+            }
+            Ok(self
+                .it
+                .lyrics_plain(client, &page)
+                .await
+                .map_err(failed)?
+                .filter(|p| !p.text.trim().is_empty())
+                .map(|p| CatalogLyrics {
+                    lines: Vec::new(),
+                    text: p.text,
+                    credit: p.footer,
+                }))
+        }))
     }
 
     fn set_hide_videos(&self, on: bool) {
@@ -1636,6 +1686,21 @@ impl MediaAccess for LiveCatalogAccess {
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
         self.backend.set_blocked(blocked);
+    }
+
+    fn lyrics(
+        &self,
+        track_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<CatalogLyrics>, AccessError> {
+        let id = track_id.trim();
+        if id.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which song?",
+            ));
+        }
+        self.backend.lyrics(id, cancel)
     }
 
     fn set_hide_videos(&self, on: bool) {

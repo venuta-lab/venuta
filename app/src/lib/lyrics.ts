@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { inApp, onlineLyrics } from './engine'
+import { inApp, lyricsFind, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
 
@@ -12,6 +12,12 @@ export interface Lyrics {
   lines: [number, string][]
   /** Words without times, as written. */
   text: string
+  /** Each line's words with their times [start, end, word], when the source times words. */
+  words?: [number, number, string][][]
+  /** Each line's translation, when the source has one. */
+  translations?: (string | null)[]
+  /** Found online: the source's id and name, who wrote them down, and what you chose. */
+  found?: { key: string; source: string; label: string; credit: string | null; choice: LyricsChoice; instrumental: boolean }
 }
 
 const kept = new Map<string, Lyrics>()
@@ -32,36 +38,82 @@ if (typeof window !== 'undefined')
     heard(e.newValue.slice(e.newValue.indexOf('|') + 1))
   })
 
-/** Lyrics for an online queue row (LRCLIB by title/artist). Null while loading. */
+/** What a song is called for the lyrics services: `online:<provider>:<id>`, or its file. */
+export function lyricsKey(song: QueueItem | undefined): string {
+  if (!song) return ''
+  if (isOnline(song) && song.online?.kind === 'online') return `online:${song.online.provider}:${song.online.track_id}`
+  return song.path ? `file:${song.path}` : ''
+}
+
+/** The song as the lyrics services are asked about it. */
+export function lyricsAsk(song: QueueItem): LyricsAsk {
+  return {
+    key: lyricsKey(song),
+    video_id: isOnline(song) && song.online?.kind === 'online' ? song.online.track_id : null,
+    title: song.title,
+    artists: song.artists.length ? song.artists : song.album_artist ? [song.album_artist] : [],
+    album: song.album,
+    duration_ms: song.duration_ms,
+  }
+}
+
+/** A source's answer as lyrics to show: your offset applied to every time. */
+export function lyricsOf(key: string, a: LyricsAnswer): Lyrics {
+  const f = a.found
+  const off = a.choice.offset_ms ?? 0
+  const at = (ms: number) => Math.max(0, ms + off)
+  if (!f) return { lines: [], text: '' }
+  const timedWords = f.lines.some((l) => l.words?.length)
+  return {
+    lines: f.lines.map((l) => [at(l.ms), l.text] as [number, string]),
+    text: f.text,
+    words: timedWords ? f.lines.map((l) => (l.words ?? []).map((w) => [at(w.ms), at(w.end_ms), w.text] as [number, number, string])) : undefined,
+    translations: f.lines.some((l) => l.translation) ? f.lines.map((l) => l.translation ?? null) : undefined,
+    found: { key, source: f.source, label: a.label ?? f.source, credit: f.credit, choice: a.choice, instrumental: f.instrumental },
+  }
+}
+
+/** Ask a song's lyrics again (another source chosen, the offset moved, a new name). */
+export function lyricsChoiceChanged(key: string) {
+  heard(`found|${key}`)
+}
+
+/** Lyrics from the lyrics services for a song with none of its own (online, or a file
+ *  without lyrics): your chosen source, else Automatic. Null while loading. */
 export function useOnlineLyrics(song: QueueItem | undefined, enabled: boolean): Lyrics | null {
-  const key =
-    enabled && song && isOnline(song) && song.online?.kind === 'online'
-      ? `online:${song.online.provider}:${song.online.track_id}`
-      : ''
+  const key = enabled ? lyricsKey(song) : ''
+  const [version, setVersion] = useState(0)
+  useEffect(() => {
+    const on = (k: string) => (k === '*' || k === `found|${key}`) && setVersion((v) => v + 1)
+    changeListeners.add(on)
+    return () => {
+      changeListeners.delete(on)
+    }
+  }, [key])
   const [lyrics, setLyrics] = useState<{ key: string; value: Lyrics | null }>({ key: '', value: null })
   useEffect(() => {
     if (!key || !song || !inApp()) {
       setLyrics({ key: '', value: null })
       return
     }
-    const known = kept.get(key)
+    const known = kept.get(`found|${key}`)
     if (known) {
       setLyrics({ key, value: known })
       return
     }
     let live = true
     setLyrics({ key, value: null })
-    onlineLyrics(song.title, song.artists.join(', '), song.album, song.duration_ms)
-      .then((value) => {
-        const v: Lyrics = { lines: value.lines, text: value.text }
-        kept.set(key, v)
+    lyricsFind(lyricsAsk(song))
+      .then((a) => {
+        const v = lyricsOf(key, a)
+        kept.set(`found|${key}`, v)
         if (live) setLyrics({ key, value: v })
       })
       .catch(() => live && setLyrics({ key, value: { lines: [], text: '' } }))
     return () => {
       live = false
     }
-  }, [key, song?.title, song?.album, song?.duration_ms, song?.artists?.join(',')])
+  }, [key, version, song?.title, song?.album, song?.duration_ms, song?.artists?.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
   return lyrics.key === key ? lyrics.value : null
 }
 
@@ -95,6 +147,26 @@ export function useLyrics(root: string, path: string | undefined): Lyrics | null
     }
   }, [root, path, version])
   return lyrics.path === path ? lyrics.value : null
+}
+
+/** Words a song really has (timed lines or text). */
+const hasWords = (l: Lyrics | null) => !!l && (l.lines.length > 0 || !!l.text.trim())
+
+/**
+ * A song's words, wherever they come from: your file's (its .lrc or tags) when it has them,
+ * else the lyrics services' (online songs, and files without lyrics; shown only, never
+ * written to the file). Null while they're read.
+ */
+export function useSongLyrics(root: string, song: QueueItem | undefined, enabled = true): Lyrics | null {
+  const local = !!song && !isOnline(song) && !!song.path
+  const file = useLyrics(root, enabled && local ? song?.path : undefined)
+  // Online songs, and files that turned out to have no words of their own.
+  const fileless = !local || (file !== null && !hasWords(file))
+  const found = useOnlineLyrics(song, enabled && !!song && fileless)
+  if (!enabled || !song) return null
+  if (local && file === null) return null
+  if (local && hasWords(file)) return file
+  return found
 }
 
 /**
@@ -141,6 +213,21 @@ export function lineAt(lyrics: Lyrics | null, position: number): number {
  */
 export function lineProgress(lyrics: Lyrics | null, at: number, position: number): number {
   if (!lyrics || at < 0) return 0
+  // Timed word by word: the fill follows the singing, each word as it is sung.
+  const words = lyrics.words?.[at]
+  if (words?.length) {
+    const t = position + LEAD_MS
+    const total = words.reduce((n, w) => n + w[2].length, 0) || 1
+    let done = 0
+    for (const [s, e, w] of words) {
+      if (t >= e) done += w.length
+      else {
+        if (t > s) done += w.length * ((t - s) / Math.max(1, e - s))
+        break
+      }
+    }
+    return Math.min(1, done / total)
+  }
   const start = lyrics.lines[at][0]
   const end = lyrics.lines[at + 1]?.[0] ?? start + 5000
   // The fill finishes a little before the next line comes in.

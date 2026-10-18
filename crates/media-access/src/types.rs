@@ -211,6 +211,17 @@ pub struct RemoteArtistLink {
     pub artist_id: Option<String>,
 }
 
+/// A song's lyrics as the catalog has them: timed lines when it has them, else the words as
+/// text, and who provided them ("Source: Musixmatch").
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogLyrics {
+    /// `(start ms, line)`, in order; empty when only text is known.
+    pub lines: Vec<(u64, String)>,
+    pub text: String,
+    #[serde(default)]
+    pub credit: Option<String>,
+}
+
 /// A radio: songs like a seed song (or an artist's, a mix's), endless by asking again with
 /// `playlist_id` and the last song played. Ids and what to show only, never a stream address.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

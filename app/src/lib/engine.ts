@@ -1228,6 +1228,58 @@ export const onlineLyrics = (title: string, artist: string, album: string, durat
       }))
     : Promise.resolve<OnlineLyrics>({ lines: [], text: '' })
 
+/** One line from a lyrics source, word by word when it times words. */
+export interface FoundLine {
+  ms: number
+  text: string
+  words?: { ms: number; end_ms: number; text: string }[]
+  translation?: string | null
+}
+/** Lyrics a source gave. */
+export interface FoundLyrics {
+  source: string
+  lines: FoundLine[]
+  text: string
+  instrumental: boolean
+  credit: string | null
+}
+/** What you chose for one song's lyrics. */
+export interface LyricsChoice {
+  source?: string | null
+  offset_ms: number
+  title?: string | null
+  artists?: string[] | null
+}
+/** The song lyrics are asked for: its key and what it is. */
+export interface LyricsAsk {
+  key: string
+  video_id: string | null
+  title: string
+  artists: string[]
+  album: string
+  duration_ms: number
+}
+export interface LyricsAnswer {
+  found: FoundLyrics | null
+  label: string | null
+  choice: LyricsChoice
+}
+export interface LyricsSourceStatus {
+  source: string
+  label: string
+  status: 'synced' | 'plain' | 'none' | 'failed'
+  on: boolean
+}
+/** A song's lyrics from the lyrics services: Automatic, or `source`. */
+export const lyricsFind = (ask: LyricsAsk, source: string | null = null, fresh = false) => invoke<LyricsAnswer>('lyrics_find', { ask, source, fresh })
+/** What every lyrics source has for a song, in your order. */
+export const lyricsCheck = (ask: LyricsAsk) => invoke<LyricsSourceStatus[]>('lyrics_check', { ask })
+/** Choose a song's lyrics source (null: Automatic); `rename` sets the name to ask by too. */
+export const lyricsChoose = (key: string, source: string | null, rename?: { title: string; artists: string[] }) =>
+  invoke<LyricsChoice>('lyrics_choose', { key, source, title: rename?.title ?? null, artists: rename?.artists ?? null, rename: !!rename })
+/** How much later (positive) or earlier a song's lyrics run, in ms. */
+export const lyricsOffset = (key: string, offsetMs: number) => invoke<LyricsChoice>('lyrics_offset', { key, offsetMs })
+
 /** Playback catalog health for Settings (never includes stream URLs). */
 export interface OnlineCatalogStatus {
   live_env: boolean

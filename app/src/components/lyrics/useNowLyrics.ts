@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { loadCovers, useCovers } from '../../lib/covers'
-import { lineAt, lineProgress, useLyrics, useSmoothPosition } from '../../lib/lyrics'
+import { lineAt, lineProgress, useSmoothPosition, useSongLyrics } from '../../lib/lyrics'
 import type { LyricColour } from '../../lib/lyricLook'
 import { current, usePlayerValue } from '../../lib/player'
 import { accentRoles } from '../../lib/themes'
@@ -13,7 +13,8 @@ export function useNowLyrics() {
   const song = usePlayerValue(current)
   const root = usePlayerValue((s) => s.root ?? '')
   const playing = usePlayerValue((s) => s.playing)
-  const lyrics = useLyrics(root, song?.lyrics ? song.path : undefined)
+  // Your file's words, else the lyrics services' (online songs too).
+  const lyrics = useSongLyrics(root, song ?? undefined)
   const position = useSmoothPosition()
   const at = lineAt(lyrics, position)
   const progress = lineProgress(lyrics, at, position)
