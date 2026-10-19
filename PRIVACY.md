@@ -24,6 +24,39 @@ These requests carry only what the lookup needs (for example an album's title an
 link you pasted), plus Venuta's version in the User-Agent. Each service's own privacy policy
 applies to what it receives.
 
+## Signing in to YouTube Music (optional)
+
+You sign in in Google's own window, in **Settings › Online**; Venuta never sees your password.
+The sign-in is kept in Windows Credential Manager, never in a file, and signing out forgets it.
+
+After you sign in, Venuta asks once, for each account and channel, what it may do with it. Every
+choice can be changed later in **Settings › Online**.
+
+What Venuta reads with your account (on unless you turn them off):
+
+- **Recommendations for me**: your Home, radio, Up next and mixes come from your account. Off,
+  Venuta asks for YouTube Music's general ones.
+- **My library in Venuta**: your playlists, artists, albums, songs, uploads and podcasts show in
+  Library.
+- **Linked playlists stay in step**: a playlist you linked to YouTube Music syncs when you open
+  it and at most every 30 minutes.
+
+What Venuta tells YouTube Music (off until you turn them on):
+
+- **Count plays**: after 30 seconds of an online song, Venuta tells your account you played it,
+  so it joins your YouTube history. Your own files are never sent.
+- **How much I listened**: with Count plays, also how many seconds of each online song you heard,
+  as YouTube Music's own app reports it.
+- **Likes and dislikes**: a like or thumbs down you press in Venuta is the same on your account.
+- **Signed-in search**: the words you type in the Search box go as your account, so they appear
+  in your YouTube search history. Venuta's own look-ups (finding a song for your file, a link's
+  song) always go without your account.
+- **New YouTube likes come in**: songs you like elsewhere join Liked songs in Venuta when it
+  starts. Nothing is sent.
+
+Changes you make to your YouTube Music playlists in Venuta (renaming, adding, removing, uploading
+a file you picked) are sent only when you make them. Nothing is uploaded or deleted on its own.
+
 ## Questions
 
 Open an issue at https://github.com/venuta-lab/venuta/issues.
