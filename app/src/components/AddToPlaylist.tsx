@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { playlists as loadPlaylists, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
-import { useYtmPart, useYtmStatus } from '../lib/ytmLibrary'
+import { useYtmLibraryShown } from '../lib/ytmChoices'
+import { useYtmPart } from '../lib/ytmLibrary'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
 import { RemoteArt } from './RemoteArt'
@@ -77,7 +78,7 @@ export function AddToPlaylist({ root }: { root: string }) {
   const exact = (lists ?? []).some((p) => p.name.toLowerCase() === fresh.toLowerCase())
 
   // Your YouTube Music playlists take the online songs among these (your own files stay in Venuta).
-  const { signed_in } = useYtmStatus()
+  const signed_in = useYtmLibraryShown()
   const ytmLists = useYtmPart<OnlineSuggestion[]>('playlists', !!req).value
   const videoIds = (req?.items ?? []).flatMap((i) => ('online' in i && i.online.provider === 'remote_catalog' ? [i.online.track_id] : []))
   const onlyHere = (req?.items.length ?? 0) - videoIds.length

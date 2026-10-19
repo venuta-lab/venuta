@@ -32,7 +32,8 @@ import { useCatalogTiles } from '../../lib/catalogTiles'
 import { useLocalOnly } from '../../lib/localOnly'
 import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { useYtmCount, useYtmStatus } from '../../lib/ytmLibrary'
+import { useYtmLibraryShown } from '../../lib/ytmChoices'
+import { useYtmCount } from '../../lib/ytmLibrary'
 import { YtmGrid, YtmSongs } from './YtmLibrary'
 import { availabilityOf, enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
@@ -497,7 +498,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
 
 export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter: string; onFilter: (f: string) => void }) {
   const { lib, filter } = props
-  const { signed_in } = useYtmStatus()
+  const signed_in = useYtmLibraryShown()
   const ytmAlbums = useYtmCount('albums', signed_in)
   const ytmUploads = useYtmCount('upload_albums', signed_in)
   // One of your genres or categories: the catalog's genre of the same name, to go on exploring.
@@ -522,7 +523,7 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
   const chipMaybe = (id: string, label: string, count: number | null) => (
     <Chip key={id} group="listen-album-filter" on={filter === id} label={label} count={count ?? undefined} onClick={() => props.onFilter(id)} />
   )
-  if (filter === 'ytm:albums' || filter === 'ytm:upload_albums')
+  if (signed_in && (filter === 'ytm:albums' || filter === 'ytm:upload_albums'))
     return (
       <div>
         <InBar>
@@ -571,7 +572,7 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
 /** Your songs, and (signed in) the account's library songs and uploads beside them. The account's
  *  lists are read when chosen: they can be thousands long. */
 export const SongsView = memo(function SongsView({ tracks }: { tracks: CatalogTrack[] }) {
-  const { signed_in } = useYtmStatus()
+  const signed_in = useYtmLibraryShown()
   const [view, setView] = useState<'all' | 'songs' | 'upload_songs'>('all')
   const chip = (id: typeof view, label: string, count?: number) => (
     <Chip key={id} group="listen-song-filter" on={view === id} label={label} count={count} onClick={() => setView(id)} />
@@ -607,7 +608,7 @@ export const SongsView = memo(function SongsView({ tracks }: { tracks: CatalogTr
 // --- Artists ---------------------------------------------------------------------------------
 
 export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Artist[] }) {
-  const { signed_in } = useYtmStatus()
+  const signed_in = useYtmLibraryShown()
   const [view, setView] = useState<'all' | 'artists' | 'subscriptions'>('all')
   const ytmArtists = useYtmCount('artists', signed_in)
   const following = useYtmCount('subscriptions', signed_in)

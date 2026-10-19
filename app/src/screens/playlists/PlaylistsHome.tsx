@@ -14,6 +14,7 @@ import { keyFor, matcher } from '../../lib/textsearch'
 import type { OnlineCollection, OnlineSuggestion } from '../../lib/engine'
 import { useYtmAccount } from '../../lib/ytmAccount'
 import { CollectionCard } from '../listen/OnlineCards'
+import { useYtmLibraryShown } from '../../lib/ytmChoices'
 import { useYtmPart } from '../../lib/ytmLibrary'
 import { YtmSignInAgain } from '../listen/YtmLibrary'
 import { askOpenLink } from '../../lib/openLink'
@@ -150,8 +151,10 @@ export function PlaylistsHome(props: {
   const account = useYtmAccount()
   const collections = (v: OnlineSuggestion[] | null): OnlineCollection[] =>
     (v ?? []).flatMap((c) => (c.kind === 'playlist' ? [c.collection] : []))
-  const ytm = collections(useYtmPart<OnlineSuggestion[]>('playlists').value)
-  const podcasts = collections(useYtmPart<OnlineSuggestion[]>('podcasts').value)
+  // Only with "My library in Venuta" on for the account.
+  const shownHere = useYtmLibraryShown()
+  const ytm = collections(useYtmPart<OnlineSuggestion[]>('playlists', shownHere).value)
+  const podcasts = collections(useYtmPart<OnlineSuggestion[]>('podcasts', shownHere).value)
   const ytmShown = ytm.filter((c) => match({ name: c.title } as PlaylistSummary))
   const podcastsShown = podcasts.filter((c) => match({ name: c.title } as PlaylistSummary))
   // Liked songs leads what you made.

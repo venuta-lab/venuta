@@ -2,6 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { inApp, ytmLink, ytmLinks, ytmLinkSync, ytmLinkUndo, type YtmLinkView, type YtmPause, type YtmSyncReport } from './engine'
 import { notify } from './notify'
 import { onlineProblem } from './online'
+import { loadYtmChoices, ytmChoice } from './ytmChoices'
 import { ytmLibraryChanged, ytmReady, ytmStatusRefresh } from './ytmLibrary'
 import { due, pauseWords, syncWords } from './ytmLinkWords'
 
@@ -9,8 +10,12 @@ import { due, pauseWords, syncWords } from './ytmLinkWords'
   "Also on YouTube Music": each linked playlist's state for its page, and when it syncs. A sync
   runs when you press it, when the playlist opens (at most once a minute), a few seconds after
   you change it, once soon after start, and every half hour at most. Never in a loop, never
-  signed out or in Local only. What a sync did is said once, with Undo when yours changed.
+  signed out or in Local only. With "Linked playlists stay in step" off for the account, only
+  when you press it. What a sync did is said once, with Undo when yours changed.
 */
+
+/** Links sync on their own (on open, after a change, on the timer): the account's choice. */
+const inStep = () => ytmChoice('links_in_step')
 
 interface LinkState {
   /** undefined: not read yet; null: not linked. */
@@ -90,7 +95,7 @@ export async function syncLink(root: string, name: string, opts: { force?: boole
 export async function linkOpened(root: string, name: string) {
   await reloadLink(root, name)
   const link = stateOf(name).link
-  if (link && due(link.last_sync, nowSecs(), 'open')) void syncLink(root, name, { quiet: true })
+  if (link && inStep() && due(link.last_sync, nowSecs(), 'open')) void syncLink(root, name, { quiet: true })
 }
 
 // A change of yours goes over a few seconds after the last one (a drag, then another).
@@ -99,13 +104,13 @@ const editTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** You changed a linked playlist: it syncs a few seconds after the last change. */
 export function linkEdited(root: string, name: string) {
-  if (!stateOf(name).link) return
+  if (!stateOf(name).link || !inStep()) return
   clearTimeout(editTimers.get(name))
   editTimers.set(
     name,
     setTimeout(() => {
       editTimers.delete(name)
-      void syncLink(root, name, { quiet: true })
+      if (inStep()) void syncLink(root, name, { quiet: true })
     }, EDIT_WAIT_MS),
   )
 }
@@ -117,6 +122,8 @@ let scheduledFor = ''
 
 async function syncDue(root: string) {
   if (!ytmReady()) return
+  await loadYtmChoices()
+  if (!inStep()) return
   const links = await ytmLinks(root).catch(() => [])
   for (const l of links) {
     if (due(l.last_sync, nowSecs(), 'timer')) await syncLink(root, l.playlist, { quiet: true })
