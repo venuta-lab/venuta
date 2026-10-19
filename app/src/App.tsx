@@ -232,7 +232,7 @@ export default function App() {
   const [listenArtist, setListenArtist] = useState<string | null>(null)
   // The player's big view (and which side panel) and the queue drawer.
   const [nowOpen, setNowOpen] = useState(false)
-  const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'signal' | 'sound'>('lyrics')
+  const [nowPanel, setNowPanel] = useState<'lyrics' | 'next' | 'related' | 'signal' | 'sound'>('lyrics')
   const [queueOpen, setQueueOpen] = useState(false)
   // Counts choosing the open place again in the rail (it goes back to its start).
   const [again, setAgain] = useState(0)

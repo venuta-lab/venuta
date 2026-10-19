@@ -8,16 +8,20 @@ import { SyncMaker } from '../lyrics/SyncMaker'
 import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
-import { availabilityOf, songLength, current, isOnline, jumpTo, play, remoteArtUrl, seek, usePlayer } from '../../lib/player'
+import { availabilityOf, current, isOnline, play, remoteArtUrl, seek, usePlayer, usePlayerValue } from '../../lib/player'
 import { IconClose } from '../Icons'
-import { artUrl, OnlineCover, RemoteArt } from '../RemoteArt'
+import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
-import { PlayingFrom } from './PlayingFrom'
 import { QueueRadio } from './QueueRadio'
+import { QueueChips, QueueFrom, QueueList, QueueNote, RelatedList, SaveQueueButton } from './UpNext'
+import { useTogether } from '../../lib/together'
+import { useRadioSession } from '../../lib/radio'
+import { queueNote } from '../../lib/upNext'
+import { RoomQueue } from '../together/RoomQueue'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
@@ -83,53 +87,39 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: ()
   )
 }
 
-function UpNext() {
-  const s = usePlayer()
-  const cover = useCovers(320)
-  const rest = s.queue.slice(s.index + 1, s.index + 40)
-  if (!rest.length)
+/** Up next: the whole queue, where it plays from, Autoplay and the radio's chips; in a room,
+ *  the room's queue (the same for everyone). `onLeave`: going to an album or artist closes
+ *  Now Playing. */
+function UpNext(props: { onLeave: () => void }) {
+  const v = useTogether()
+  const room = (v.state === 'hosting' || v.state === 'in' || v.state === 'reconnecting') && v.room ? v : null
+  const last = usePlayerValue((s) => s.index >= 0 && s.index === s.queue.length - 1)
+  // Said only while nothing more is coming, and nothing says the end in other words.
+  const note = queueNote(useRadioSession())
+  if (room)
     return (
-      <div className="py-6">
-        <QueueRadio className="px-2" />
-        <p className="py-8 text-center text-[13px] text-ink/55">Nothing after this song.</p>
+      <div className="thin-scroll h-full overflow-y-auto pt-3">
+        <RoomQueue v={room} />
       </div>
     )
+  // Autoplay, Save and the chips stay in sight; the songs scroll under them.
   return (
-    <>
-    <QueueRadio className="px-2 pt-2" />
-    <ol className="grid gap-1 py-2">
-      {rest.map((q, k) => {
-        const online = isOnline(q)
-        const art = online ? null : cover(q.dir)
-        const remote = remoteArtUrl(q)
-        return (
-          <li key={`${q.path || remote || q.title}#${k}`}>
-            <button onClick={() => void jumpTo(s.index + 1 + k)} title="Play" className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]">
-              <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
-                {online ? (
-                  <RemoteArt url={remote} seed={q.album || q.title} size={40} imgClassName="h-full w-full object-cover" />
-                ) : art ? (
-                  <img src={art.src} alt="" className="h-full w-full object-cover" draggable={false} />
-                ) : null}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-[13.5px]">{q.title}</span>
-                  {online && <AvailabilityBadge availability={availabilityOf(q)} />}
-                </span>
-                <span className="block truncate text-[12px] text-ink/55">{q.artists.join(', ') || q.album_artist}</span>
-              </span>
-              <span className="text-[12px] tabular-nums text-ink/45">{songLength(q.duration_ms)}</span>
-            </button>
-          </li>
-        )
-      })}
-    </ol>
-    </>
+    <div className="flex h-full flex-col pt-3">
+      <div className="flex shrink-0 items-center gap-3 px-2">
+        <QueueRadio className="min-w-0 flex-1" />
+        <SaveQueueButton />
+      </div>
+      <QueueChips className="shrink-0 px-2 pt-2" />
+      <div className="thin-scroll mt-2 min-h-0 flex-1 overflow-y-auto">
+        <QueueList open onLeave={props.onLeave} />
+        <QueueNote className="py-3" />
+        {last && !note && <p className="pb-6 text-center text-[13px] text-ink/55">Nothing after this song.</p>}
+      </div>
+    </div>
   )
 }
 
-type Panel = 'lyrics' | 'next' | 'signal' | 'sound'
+type Panel = 'lyrics' | 'next' | 'related' | 'signal' | 'sound'
 
 /** The song, large: cover, words, what's next and how it reaches you. */
 export function NowPlaying(props: {
@@ -249,7 +239,7 @@ export function NowPlaying(props: {
                   onArtist={(name) => void leaving(() => props.onArtist(name))}
                   onOnlineArtist={(artist) => void leaving(() => props.onOnlineArtist(artist))}
                   onTiming={onTiming}
-                  from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} said={[song.album, ...song.artists, song.album_artist]} />}
+                  from={<QueueFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} said={[song.album, ...song.artists, song.album_artist]} />}
                 />
               </div>
             </div>
@@ -263,7 +253,8 @@ export function NowPlaying(props: {
                   onChange={(p) => (p === 'lyrics' ? props.onPanel(p) : void leaving(() => props.onPanel(p)))}
                   options={[
                     { value: 'lyrics', label: 'Lyrics' },
-                    { value: 'next', label: 'Queue' },
+                    { value: 'next', label: 'Up next' },
+                    { value: 'related', label: 'Related' },
                     { value: 'sound', label: 'Sound' },
                     { value: 'signal', label: 'Signal' },
                   ]}
@@ -302,9 +293,10 @@ export function NowPlaying(props: {
                   ) : (
                     <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} />
                   ))}
-                {props.panel === 'next' && (
+                {props.panel === 'next' && <UpNext onLeave={props.onClose} />}
+                {props.panel === 'related' && (
                   <div className="thin-scroll h-full overflow-y-auto pt-3">
-                    <UpNext />
+                    <RelatedList />
                   </div>
                 )}
                 {props.panel === 'sound' && (

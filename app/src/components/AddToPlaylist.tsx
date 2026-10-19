@@ -8,7 +8,7 @@ import { onlineProblem } from '../lib/online'
 import { RemoteArt } from './RemoteArt'
 import { useEscape } from '../lib/layers'
 import { addSongsTo } from '../screens/playlists/ops'
-import { nameNote, savedName } from '../lib/playlistName'
+import { nameNote, newPlaylistName } from '../lib/playlistName'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
 
@@ -16,7 +16,7 @@ import { keyFor, matcher } from '../lib/textsearch'
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
   picker for the whole app. Any code asks with askAddToPlaylist(); <AddToPlaylist> shows it.
 */
-type Request = { items: PlaylistItem[]; label: string }
+type Request = { items: PlaylistItem[]; label: string; name?: string }
 let request: Request | null = null
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
@@ -28,10 +28,11 @@ export const askAddToPlaylist = (paths: string[], label: string) =>
     label,
   )
 
-/** Open the picker for any songs: library files, and online songs by their stable id. */
-export function askAddSongs(items: PlaylistItem[], label: string) {
+/** Open the picker for any songs: library files, and online songs by their stable id. `name`:
+ *  the name a new playlist takes until one is typed (the queue's radio). */
+export function askAddSongs(items: PlaylistItem[], label: string, name?: string) {
   if (!items.length) return
-  request = { items, label }
+  request = { items, label, name }
   emit()
 }
 
@@ -73,8 +74,8 @@ export function AddToPlaylist({ root }: { root: string }) {
     return (lists ?? []).filter((p) => has(keyFor(p, () => p.name)))
   }, [lists, q])
   // A new playlist is made under the name it will be saved as (lib/playlistName.ts).
-  const fresh = savedName(q)
-  const freshNote = nameNote(q)
+  const fresh = newPlaylistName(q, req?.name)
+  const freshNote = nameNote(q.trim() ? q : (req?.name ?? ''))
   const exact = (lists ?? []).some((p) => p.name.toLowerCase() === fresh.toLowerCase())
 
   // Your YouTube Music playlists take the online songs among these (your own files stay in Venuta).
@@ -153,7 +154,9 @@ export function AddToPlaylist({ root }: { root: string }) {
                   // Enter takes the first playlist that matches, or makes a new one when none does.
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    if (shown[0]) void add(shown[0].name)
+                    // Nothing typed and a name suggested (the queue's radio): that playlist.
+                    if (!q.trim() && req.name && fresh) void add(fresh)
+                    else if (shown[0]) void add(shown[0].name)
                     else if (fresh) void add(fresh)
                   }
                 }}
@@ -177,7 +180,7 @@ export function AddToPlaylist({ root }: { root: string }) {
                 </button>
               )}
               {lists === null && <p className="px-3 py-6 text-center text-[13px] text-ink/50">Reading your playlists…</p>}
-              {lists?.length === 0 && !q.trim() && (
+              {lists?.length === 0 && !q.trim() && !req.name && (
                 <p className="px-3 py-6 text-center text-[13px] leading-relaxed text-ink/55">No playlists yet. Type a name above to make one.</p>
               )}
               {shown.map((p) => (
