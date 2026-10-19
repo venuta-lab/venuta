@@ -75,8 +75,11 @@ export function WhatPlaysRows() {
   const { l, set } = useListening()
   return (
     <>
-      <Row title="Autoplay" hint="When the queue runs out, keep playing songs like the last one, from the online catalog (yours play from your files). Also in the queue.">
+      <Row title="Autoplay" hint="When an album or playlist ends, keep playing what YouTube Music plays after it. Also in the queue.">
         <Switch on={l.autoplay} onChange={(on) => set({ autoplay: on })} label="Autoplay" />
+      </Row>
+      <Row title="Play my copy when I have it" hint="When a song YouTube Music plays next is in your library as the same song, it plays from your file, in the same place. Off: everything streams.">
+        <Switch on={l.play_my_copy} onChange={(on) => set({ play_my_copy: on })} label="Play my copy when I have it" />
       </Row>
       <Row title="Hide music videos" hint="Leave videos out of search and of what plays next, so only songs come up.">
         <Switch on={l.hide_videos} onChange={(on) => set({ hide_videos: on })} label="Hide music videos" />

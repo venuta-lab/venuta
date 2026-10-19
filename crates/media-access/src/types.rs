@@ -173,6 +173,12 @@ pub struct RemoteArtistPage {
     /// Their radio: a never-ending mix of them and artists like them.
     #[serde(default)]
     pub radio_id: Option<String>,
+    /// Their page's radio button, as the catalog put it there (`radio_id` and its params).
+    #[serde(default)]
+    pub radio: Option<RadioEndpoint>,
+    /// Their page's Shuffle button, as the catalog put it there.
+    #[serde(default)]
+    pub shuffle: Option<RadioEndpoint>,
     /// Every row of their page in the catalog's order: Albums, Singles & EPs, Videos, Live
     /// performances, Featured on, Playlists by them, Fans might also like, Appears on.
     #[serde(default)]
@@ -201,6 +207,10 @@ pub struct RemoteAlbumPage {
     pub tracks: Vec<RemoteTrack>,
     #[serde(default)]
     pub shelves: Vec<RemoteShelf>,
+    /// The album's own list in the catalog (`OLAK5uy_…`): what its queue is, and what Autoplay
+    /// asks for when it ends.
+    #[serde(default)]
+    pub playlist_id: Option<String>,
 }
 
 /// A name in a credit line, and their artist page when the catalog links one.
@@ -266,15 +276,65 @@ pub struct CatalogLyrics {
     pub credit: Option<String>,
 }
 
-/// A radio: songs like a seed song (or an artist's, a mix's), endless by asking again with
-/// `playlist_id` and the last song played. Ids and what to show only, never a stream address.
+/// Where a queue of the catalog's starts: the endpoint the catalog put on a button, a tuning chip
+/// or the end of a list, kept as it came and sent back as it is (its `params` are opaque). Built
+/// here only as a fallback, for a song with no button (`RDAMVM` and its id).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemoteRadio {
-    /// The radio's own list id, to ask for more of it.
+pub struct RadioEndpoint {
+    #[serde(default)]
+    pub video_id: Option<String>,
     #[serde(default)]
     pub playlist_id: Option<String>,
-    /// Its songs, the seed left out.
+    #[serde(default)]
+    pub params: Option<String>,
+    #[serde(default)]
+    pub index: Option<u32>,
+    #[serde(default)]
+    pub playlist_set_video_id: Option<String>,
+}
+
+/// A tuning chip over a radio's queue ("All", "Familiar", "Deep cuts", a mood…).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RadioChip {
+    pub text: String,
+    /// The one in effect, as the catalog marks it.
+    #[serde(default)]
+    pub selected: bool,
+    /// What choosing it asks for: its songs replace what is coming up.
+    pub endpoint: RadioEndpoint,
+}
+
+/// A radio, or a page of one: the catalog's queue as it sent it (its order, a song coming round
+/// again and all), and everything needed to keep that same session going: the page after this
+/// one, the chips that re-tune it, and what it goes on with when it ends. Ids and what to show
+/// only, never a stream address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRadio {
+    /// The radio's own list id.
+    #[serde(default)]
+    pub playlist_id: Option<String>,
+    /// Its songs in the catalog's order. On a radio of a song, that song leading the answer is
+    /// left out (it is the one playing); nothing else is.
     pub tracks: Vec<RemoteTrack>,
+    /// What the catalog's player calls it ("Kitni Baatein Radio").
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What was asked for (after a dead radio was swapped for the mix it named): sent again with
+    /// `continuation` for the next page.
+    #[serde(default)]
+    pub endpoint: Option<RadioEndpoint>,
+    /// The next page of the same radio; None on its last.
+    #[serde(default)]
+    pub continuation: Option<String>,
+    /// The tuning chips (a radio's first page only).
+    #[serde(default)]
+    pub chips: Vec<RadioChip>,
+    /// What Autoplay goes on with when this runs out (the list's automix marker).
+    #[serde(default)]
+    pub continue_with: Option<RadioEndpoint>,
+    /// The catalog's Related page for the song it is about (`MPTRt…`).
+    #[serde(default)]
+    pub related_id: Option<String>,
 }
 
 /// A titled row of cards on a catalog page, and where its "See all" leads when it has one.

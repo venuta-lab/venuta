@@ -1,0 +1,36 @@
+{
+  "responseContext": { "visitorData": "fixtureVisitor" },
+  "continuationContents": {
+    "playlistPanelContinuation": {
+      "playlistId": "RDAMVMseedVid0001",
+      "isInfinite": true,
+      "numItemsToShow": 25,
+      "contents": [
+        { "playlistPanelVideoRenderer": {
+          "videoId": "radioVid0004",
+          "title": { "runs": [{ "text": "Tera Mera Hai Pyar Amar" }] },
+          "longBylineText": { "runs": [{ "text": "Ahmed Jahanzeb" }] },
+          "lengthText": { "runs": [{ "text": "5:05" }] },
+          "navigationEndpoint": { "watchEndpoint": { "videoId": "radioVid0004", "playlistId": "RDAMVMseedVid0001", "index": 4 } }
+        } },
+        { "playlistPanelVideoRenderer": {
+          "videoId": "seedVid0001",
+          "title": { "runs": [{ "text": "Kitni Baatein" }] },
+          "longBylineText": { "runs": [{ "text": "Shankar Ehsaan Loy" }] },
+          "lengthText": { "runs": [{ "text": "5:01" }] },
+          "navigationEndpoint": { "watchEndpoint": { "videoId": "seedVid0001", "playlistId": "RDAMVMseedVid0001", "index": 5 } }
+        } },
+        { "playlistPanelVideoRenderer": {
+          "videoId": "radioVid0005",
+          "title": { "runs": [{ "text": "Ravi" }] },
+          "longBylineText": { "runs": [{ "text": "Sajjad Ali" }] },
+          "lengthText": { "runs": [{ "text": "4:40" }] },
+          "navigationEndpoint": { "watchEndpoint": { "videoId": "radioVid0005", "playlistId": "RDAMVMseedVid0001", "index": 6 } }
+        } }
+      ],
+      "continuations": [
+        { "nextRadioContinuationData": { "continuation": "CBQSRadioPage3Token", "clickTrackingParams": "CAEQ" } }
+      ]
+    }
+  }
+}

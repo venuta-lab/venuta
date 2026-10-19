@@ -4,7 +4,7 @@ import { jumpTo, readFrom, usePlayerValue } from '../../lib/player'
 import { Switch } from '../ui'
 
 /**
- * Under a queue's heading: Autoplay (when the queue runs out, songs like the last one go on),
+ * Under a queue's heading: Autoplay (when a list ends, what YouTube Music plays after it goes on),
  * and while a radio plays, the way back to the song it started from.
  */
 export function QueueRadio({ className = '' }: { className?: string }) {
@@ -17,7 +17,7 @@ export function QueueRadio({ className = '' }: { className?: string }) {
   const seed = from?.kind === 'radio' && from.seed && index > 0 ? from.seed : ''
   return (
     <div className={`flex items-center gap-3 text-[12px] text-ink/60 ${className}`}>
-      <label className="flex items-center gap-2" title="When the queue runs out, keep playing songs like the last one">
+      <label className="flex items-center gap-2" title="When an album or playlist ends, keep playing what YouTube Music plays after it">
         <Switch on={listening().autoplay} onChange={(on) => void updateListening({ autoplay: on })} label="Autoplay" />
         Autoplay
       </label>

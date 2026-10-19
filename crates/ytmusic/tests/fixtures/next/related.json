@@ -1,0 +1,47 @@
+{
+  "contents": {
+    "sectionListRenderer": {
+      "contents": [
+        { "musicCarouselShelfRenderer": {
+          "header": { "musicCarouselShelfBasicHeaderRenderer": { "title": { "runs": [{ "text": "You might also like" }] } } },
+          "contents": [
+            { "musicResponsiveListItemRenderer": {
+              "playlistItemData": { "videoId": "relatedVid01" },
+              "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Related One",
+                  "navigationEndpoint": { "watchEndpoint": { "videoId": "relatedVid01",
+                    "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } } }] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                  { "text": "Artist One", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCrel0001" } } }
+                ] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                  { "text": "Album One", "navigationEndpoint": { "browseEndpoint": { "browseId": "MPRErel0001" } } }
+                ] } } }
+              ],
+              "fixedColumns": [{ "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [{ "text": "3:33" }] } } }],
+              "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/rel1=w60-h60" }] } } }
+            } },
+            { "musicResponsiveListItemRenderer": {
+              "playlistItemData": { "videoId": "relatedVid02" },
+              "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Related Two" }] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Artist Two" }] } } }
+              ],
+              "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/rel2=w60-h60" }] } } }
+            } }
+          ]
+        } },
+        { "musicCarouselShelfRenderer": {
+          "header": { "musicCarouselShelfBasicHeaderRenderer": { "title": { "runs": [{ "text": "Recommended playlists" }] } } },
+          "contents": [
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "A Playlist" }] },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLPLrelated" } }
+            } }
+          ]
+        } },
+        { "musicDescriptionShelfRenderer": { "header": { "runs": [{ "text": "About the artist" }] }, "description": { "runs": [{ "text": "Words." }] } } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "responseContext": { "visitorData": "fixtureVisitor" },
+  "contents": {
+    "singleColumnMusicWatchNextResultsRenderer": {
+      "tabbedRenderer": {
+        "watchNextTabbedResultsRenderer": {
+          "tabs": [
+            {
+              "tabRenderer": {
+                "title": "Up next",
+                "content": {
+                  "musicQueueRenderer": {
+                    "content": {
+                      "playlistPanelRenderer": {
+                        "title": "Kitni Baatein Radio",
+                        "playlistId": "RDAMVMseedVid0001",
+                        "isInfinite": true,
+                        "numItemsToShow": 25,
+                        "contents": [
+                          {
+                            "playlistPanelVideoWrapperRenderer": {
+                              "primaryRenderer": {
+                                "playlistPanelVideoRenderer": {
+                                  "videoId": "seedVid0001",
+                                  "selected": true,
+                                  "title": { "runs": [{ "text": "Kitni Baatein" }] },
+                                  "longBylineText": { "runs": [
+                                    { "text": "Shankar Ehsaan Loy", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCsel0001" } } },
+                                    { "text": " • " },
+                                    { "text": "Lakshya", "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREalbum0001" } } },
+                                    { "text": " • " },
+                                    { "text": "2004" }
+                                  ] },
+                                  "lengthText": { "runs": [{ "text": "5:01" }] },
+                                  "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/seed=w60-h60" }] },
+                                  "navigationEndpoint": { "watchEndpoint": {
+                                    "videoId": "seedVid0001", "playlistId": "RDAMVMseedVid0001", "index": 0, "params": "OAHyAQIIAQ%3D%3D",
+                                    "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } }
+                                  } }
+                                }
+                              },
+                              "counterpart": [{ "counterpartRenderer": { "playlistPanelVideoRenderer": {
+                                "videoId": "seedVideoOMV",
+                                "title": { "runs": [{ "text": "Kitni Baatein" }] },
+                                "longBylineText": { "runs": [{ "text": "Shankar Ehsaan Loy" }] },
+                                "lengthText": { "runs": [{ "text": "5:20" }] },
+                                "navigationEndpoint": { "watchEndpoint": { "videoId": "seedVideoOMV",
+                                  "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_OMV" } } } }
+                              } } }]
+                            }
+                          },
+                          {
+                            "playlistPanelVideoRenderer": {
+                              "videoId": "radioVid0002",
+                              "title": { "runs": [{ "text": "Maand" }] },
+                              "longBylineText": { "runs": [{ "text": "Bayaan", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCbay0002" } } }] },
+                              "lengthText": { "runs": [{ "text": "4:12" }] },
+                              "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/maand=w60-h60" }] },
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "radioVid0002", "playlistId": "RDAMVMseedVid0001", "index": 1, "params": "OAHyAQIIAQ%3D%3D" } }
+                            }
+                          },
+                          {
+                            "playlistPanelVideoRenderer": {
+                              "videoId": "radioVid0003",
+                              "title": { "runs": [{ "text": "Bewajah" }] },
+                              "longBylineText": { "runs": [{ "text": "Nabeel Shaukat Ali" }] },
+                              "lengthText": { "runs": [{ "text": "3:58" }] },
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "radioVid0003", "playlistId": "RDAMVMseedVid0001", "index": 2 } }
+                            }
+                          },
+                          {
+                            "playlistPanelVideoRenderer": {
+                              "videoId": "radioVid0002",
+                              "title": { "runs": [{ "text": "Maand" }] },
+                              "longBylineText": { "runs": [{ "text": "Bayaan" }] },
+                              "lengthText": { "runs": [{ "text": "4:12" }] },
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "radioVid0002", "playlistId": "RDAMVMseedVid0001", "index": 3 } }
+                            }
+                          }
+                        ],
+                        "continuations": [
+                          { "nextRadioContinuationData": { "continuation": "CBQSRadioPage2Token", "clickTrackingParams": "CAEQ" } }
+                        ]
+                      }
+                    },
+                    "hack": true,
+                    "header": {
+                      "musicQueueHeaderRenderer": {
+                        "title": { "runs": [{ "text": "Up next" }] },
+                        "subtitle": { "runs": [{ "text": "Kitni Baatein Radio" }] }
+                      }
+                    },
+                    "subHeaderChipCloud": {
+                      "chipCloudRenderer": {
+                        "chips": [
+                          { "chipCloudChipRenderer": {
+                            "text": { "runs": [{ "text": "All" }] },
+                            "isSelected": true,
+                            "uniqueId": "All",
+                            "navigationEndpoint": { "clickTrackingParams": "CAIQ", "queueUpdateCommand": {
+                              "queueUpdateSection": "QUEUE_UPDATE_SECTION_QUEUE",
+                              "fetchContentsCommand": { "clickTrackingParams": "CAIQ", "watchEndpoint": {
+                                "playlistId": "RDAMVMseedVid0001", "params": "wAEB8gECGAE%3D", "index": 0 } },
+                              "dedupeAgainstLocalQueue": false } }
+                          } },
+                          { "chipCloudChipRenderer": {
+                            "text": { "runs": [{ "text": "Familiar" }] },
+                            "uniqueId": "Familiar",
+                            "navigationEndpoint": { "queueUpdateCommand": {
+                              "fetchContentsCommand": { "watchEndpoint": {
+                                "videoId": "seedVid0001", "playlistId": "RDATiYvseedVid0001", "params": "wAEB8gECKAE%3D" } } } }
+                          } },
+                          { "chipCloudChipRenderer": {
+                            "text": { "runs": [{ "text": "Deep cuts" }] },
+                            "navigationEndpoint": { "queueUpdateCommand": {
+                              "fetchContentsCommand": { "watchEndpoint": { "playlistId": "RDATpXvseedVid0001" } } } }
+                          } }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "tabRenderer": {
+                "title": "Lyrics",
+                "endpoint": { "browseEndpoint": { "browseId": "MPLYt_seedLyrics",
+                  "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_TRACK_LYRICS" } } } }
+              }
+            },
+            {
+              "tabRenderer": {
+                "title": "Related",
+                "endpoint": { "browseEndpoint": { "browseId": "MPTRt_seedRelated",
+                  "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_TRACK_RELATED" } } } }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "currentVideoEndpoint": { "watchEndpoint": { "videoId": "seedVid0001", "playlistId": "RDAMVMseedVid0001", "index": 0 } },
+  "queueContextParams": "fixtureQueueContext"
+}

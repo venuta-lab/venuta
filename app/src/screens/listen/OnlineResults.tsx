@@ -7,11 +7,12 @@ import { Segmented } from '../../components/ui'
 import type { OnlineAlbum, OnlineTrack } from '../../lib/engine'
 import { OFFLINE } from '../../lib/online'
 import { songLength, enqueueItems, playItems, toRemoteItem } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { useNav } from './model'
 import { menuFor, onlineSongWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
-import { fromOnline, onlineSongs, splitOnlineSongs, withOnlineAlbum, type OnlineSearch } from './onlineSearch'
+import { onlineSongs, splitOnlineSongs, withOnlineAlbum, type OnlineSearch } from './onlineSearch'
 
 /*
   The online catalog under your library's search results: songs, albums and artists for the
@@ -102,7 +103,6 @@ export function OnlineResults(props: {
     !(show.songs && results.tracks.length) &&
     !(show.albums && results.albums.length) &&
     !(show.artists && results.artists.length)
-  const from = fromOnline(q)
 
   // The ranked songs, split: the recordings people mean (Best), and covers, karaoke, slowed,
   // loops and uploads (Covers & other). Words that ask for covers keep them all in Best.
@@ -196,13 +196,12 @@ export function OnlineResults(props: {
                 </div>
                 {capped.length > 0 && <OnlineTrackHeader />}
                 <div className="mt-1 grid gap-0.5">
-                  {/* Play goes through the list as shown: its order, from this row (on, past a
-                      "See all" cut, through the same list). */}
-                  {capped.map((t, i) => (
+                  {/* Play is that song, then its radio, as in YouTube Music. */}
+                  {capped.map((t) => (
                     <OnlineTrackRow
                       key={`${t.provider}:${t.track_id}`}
                       track={t}
-                      onPlay={() => void playItems(root, items(shown), i, from)}
+                      onPlay={() => void playWithRadio(root, items([t])[0])}
                       onQueue={(next) => void enqueueItems(root, items([t]), next)}
                       onAdd={() => askAddSongs(songs([t]), t.title)}
                     />
@@ -245,11 +244,11 @@ export function OnlineResults(props: {
                     </button>
                     {foldOpen && (
                       <div className="mt-1 grid gap-0.5">
-                        {covers.map((t, i) => (
+                        {covers.map((t) => (
                           <OnlineTrackRow
                             key={`${t.provider}:${t.track_id}`}
                             track={t}
-                            onPlay={() => void playItems(root, items(covers), i, from)}
+                            onPlay={() => void playWithRadio(root, items([t])[0])}
                             onQueue={(next) => void enqueueItems(root, items([t]), next)}
                             onAdd={() => askAddSongs(songs([t]), t.title)}
                           />

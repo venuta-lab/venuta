@@ -1,8 +1,8 @@
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest,
-    RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistPage, RemoteCollection,
-    RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteRating, RemoteSuggestion,
-    RemoteTrack, SearchSuggestions,
+    RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistPage,
+    RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteRating,
+    RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -180,6 +180,42 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<RemoteRadio, AccessError> {
         let _ = (seed, playlist_id, cancel);
         Err(unsupported("radios"))
+    }
+
+    /// A queue the catalog named (a button's, a tuning chip's, a list's automix marker), asked
+    /// for as it came. `playing`: the song playing, left out when the answer opens with it.
+    fn radio_at(
+        &self,
+        endpoint: &RadioEndpoint,
+        playing: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let _ = (endpoint, playing, cancel);
+        Err(unsupported("radios"))
+    }
+
+    /// The next page of the same radio: `endpoint` as the page before answered it, with that
+    /// page's `continuation`.
+    fn radio_more(
+        &self,
+        endpoint: &RadioEndpoint,
+        continuation: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let _ = (endpoint, continuation, cancel);
+        Err(unsupported("radios"))
+    }
+
+    /// The catalog's Related songs for a song (its Related page: `related_id` when known, else
+    /// the one its own answer names).
+    fn related_songs(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteTrack>, AccessError> {
+        let _ = (track_id, related_id, cancel);
+        Err(unsupported("related songs"))
     }
 
     /// Sign in to the catalog with a browser's cookies for it (None: signed out). Searches,
@@ -586,6 +622,33 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<RemoteRadio, AccessError> {
         self.inner.radio(seed, playlist_id, cancel)
+    }
+
+    fn radio_at(
+        &self,
+        endpoint: &RadioEndpoint,
+        playing: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        self.inner.radio_at(endpoint, playing, cancel)
+    }
+
+    fn radio_more(
+        &self,
+        endpoint: &RadioEndpoint,
+        continuation: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        self.inner.radio_more(endpoint, continuation, cancel)
+    }
+
+    fn related_songs(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteTrack>, AccessError> {
+        self.inner.related_songs(track_id, related_id, cancel)
     }
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {

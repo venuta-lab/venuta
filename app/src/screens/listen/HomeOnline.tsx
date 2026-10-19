@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import { inApp, type OnlineShelf, type OnlineTrack } from '../../lib/engine'
-import { startRadio } from '../../lib/radio'
+import { playWithRadio } from '../../lib/radio'
 import { current, queueKey, toRemoteItem, usePlayerValue } from '../../lib/player'
 import { statsOf, type Play } from '../../lib/stats'
 import { trackAt } from '../../lib/catalog'
@@ -102,7 +102,7 @@ export function QuickPicks({ shelf }: { shelf: OnlineShelf }) {
           const now = queueKey(item) === nowKey
           return (
             <li key={t.track_id}>
-              <button onClick={() => void startRadio(root, item)} className={`group grid h-[54px] w-full grid-cols-[22px_42px_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-left hover:bg-ink/[0.05] ${now ? 'text-accent-ink' : ''}`} title={`Play “${t.title}” and songs like it`}>
+              <button onClick={() => void playWithRadio(root, item)} className={`group grid h-[54px] w-full grid-cols-[22px_42px_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-left hover:bg-ink/[0.05] ${now ? 'text-accent-ink' : ''}`} title={`Play “${t.title}” and songs like it`}>
                 <span className="text-right text-[12.5px] tabular-nums text-ink/45">{i + 1}</span>
                 <span className="relative h-[42px] w-[42px] overflow-hidden rounded-lg bg-ink/[0.06]">
                   <RemoteArt url={t.artwork_url} seed={t.album || t.title} size={42} imgClassName="h-full w-full object-cover" />
@@ -178,7 +178,7 @@ export function useRecentOnline(plays: Play[]) {
       .map((p) => {
         const [, provider, ...id] = p.file.split(':')
         const t: OnlineTrack = { provider, track_id: id.join(':'), title: p.title ?? '', artists: p.artists, album: p.album, album_id: null, duration_ms: null, artwork_url: p.art, isrc: null }
-        return { key: p.file, at: p.at, node: <OnlineSongCard track={t} now={false} onPlay={() => void startRadio(nav.root, toRemoteItem(t))} /> }
+        return { key: p.file, at: p.at, node: <OnlineSongCard track={t} now={false} onPlay={() => void playWithRadio(nav.root, toRemoteItem(t))} /> }
       })
   }, [plays, nav.root, localOnly])
 }

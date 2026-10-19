@@ -213,6 +213,9 @@ export interface Settings {
 export interface Listening {
   /** When the queue runs out, keep playing songs like the last one. */
   autoplay: boolean
+  /** Hybrid: a song YouTube Music queues that is in your library as the same song plays from
+   *  your file, in the same place. Off: everything streams. */
+  play_my_copy: boolean
   /** Open Now Playing when you press play on something. */
   open_player_on_play: boolean
   /** Artists radio, autoplay and suggestions never offer. */
@@ -248,16 +251,48 @@ export interface Listening {
   together_delay: Record<string, number>
   /** What you pinned to the top of Home (lib/shortcuts.ts). */
   shortcuts: unknown[]
-  /** Hybrid: when an online song is one you have, play your file in its place. */
-  play_my_copy: boolean
   /** Artists you blocked stay out of what the catalog picks; off, they can come again (the list is kept). */
   hide_blocked: boolean
 }
 
-/** A radio: songs like a seed, and its own list id to ask for more of it. */
+/** Where a queue of the catalog's starts: the endpoint it put on a button, a tuning chip or the
+ *  end of a list, kept as it came and sent back as it is (its `params` are opaque). */
+export interface RadioEndpoint {
+  video_id?: string | null
+  playlist_id?: string | null
+  params?: string | null
+  index?: number | null
+  playlist_set_video_id?: string | null
+}
+
+/** A tuning chip over a radio's queue ("All", "Familiar", "Deep cuts", a mood…). */
+export interface RadioChip {
+  text: string
+  /** The one in effect, as the catalog marks it. */
+  selected: boolean
+  /** What choosing it asks for: its songs replace what is coming up. */
+  endpoint: RadioEndpoint
+}
+
+/** A radio, or a page of one: the catalog's queue as it sent it (its order, repeats and all),
+ *  and what keeps the same session going (see lib/radioSession.ts). */
 export interface OnlineRadio {
+  /** The radio's own list id. */
   playlist_id: string | null
+  /** Its songs; on a radio of a song, the song it opens with is left out (it is playing). */
   tracks: OnlineTrack[]
+  /** What the catalog's player calls it ("Kitni Baatein Radio"). */
+  title?: string | null
+  /** What was asked for: sent again with `continuation` for the next page. */
+  endpoint?: RadioEndpoint | null
+  /** The next page of the same radio; null on its last. */
+  continuation?: string | null
+  /** The tuning chips (a radio's first page only). */
+  chips?: RadioChip[]
+  /** What Autoplay goes on with when this runs out. */
+  continue_with?: RadioEndpoint | null
+  /** The catalog's Related page for the song it is about. */
+  related_id?: string | null
 }
 
 export interface HomeInfo {
@@ -903,6 +938,10 @@ export interface OnlineArtistPage {
   banner_url?: string | null
   /** Their radio (a mix of them and artists like them). */
   radio_id?: string | null
+  /** Their page's radio button, as the catalog put it there. */
+  radio?: RadioEndpoint | null
+  /** Their page's Shuffle button, as the catalog put it there. */
+  shuffle?: RadioEndpoint | null
   /** Every row of their page in the catalog's order (Albums, Singles & EPs, Videos…). */
   shelves?: OnlineShelf[]
 }
@@ -920,6 +959,8 @@ export interface OnlineAlbumPage {
   explicit: boolean
   tracks: OnlineTrack[]
   shelves: OnlineShelf[]
+  /** The album's own list in the catalog (`OLAK5uy_…`): what Autoplay asks for when it ends. */
+  playlist_id?: string | null
 }
 
 /** A titled row of cards on an online page, and where its "See all" leads. */
@@ -1227,8 +1268,15 @@ export const onlineVideos = (query: string, searchBox: SearchBox = 'music') =>
 export const onlineMoods = () => (inApp() ? invoke<MoodSection[]>('online_moods') : none<MoodSection[]>([]))
 /** One mood's or genre's playlists. */
 export const onlineMood = (params: string) => invoke<OnlineCollection[]>('online_mood', { params })
-/** A radio of songs like `seed` (a song id), or more of the radio `playlistId` after `seed`. */
+/** A radio of `seed` (a song id), or of the radio `playlistId`, for one with no button to replay. */
 export const onlineRadio = (seed: string | null, playlistId: string | null = null) => invoke<OnlineRadio>('online_radio', { seed, playlistId })
+/** The queue the catalog put on a button, a chip or a list's end, asked for as it came.
+ *  `playing`: the song playing, left out when the answer opens with it. */
+export const onlineRadioAt = (endpoint: RadioEndpoint, playing: string | null = null) => invoke<OnlineRadio>('online_radio_at', { endpoint, playing })
+/** The next page of the same radio (`endpoint` and `continuation` from the page before). */
+export const onlineRadioMore = (endpoint: RadioEndpoint, continuation: string) => invoke<OnlineRadio>('online_radio_more', { endpoint, continuation })
+/** The catalog's Related songs for a song (`relatedId`: its Related page, when known). */
+export const onlineRelated = (trackId: string, relatedId: string | null = null) => invoke<OnlineTrack[]>('online_related', { trackId, relatedId })
 /** An online album's whole page. */
 export const onlineAlbumPage = (albumId: string) => invoke<OnlineAlbumPage>('online_album_page', { albumId })
 /** Everything in a row of an online page (its "See all"). */

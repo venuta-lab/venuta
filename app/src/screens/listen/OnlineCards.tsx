@@ -5,6 +5,7 @@ import { onlineCollection, type MoodTile, type OnlineCollection, type OnlineShel
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
+import { isRadioList, listIdOf, playRadioAt } from '../../lib/radio'
 import { menuFor, onlineSongWork } from '../../lib/actions'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
@@ -40,8 +41,10 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
   const shelfWidth = useCardWidth()
   const width = asked ?? shelfWidth
   const { root, openOnlineCollection } = useNav()
-  const from = { kind: 'search' as const, ref: c.title, label: `Online: ${c.title}` }
-  const play = () => void withCollection(c, (items) => void playAllItems(root, items, from))
+  const list = c.kind === 'podcast' ? null : listIdOf(c.collection_id)
+  const from = { kind: 'search' as const, ref: c.title, label: `Online: ${c.title}`, list }
+  // One of YouTube Music's own mixes plays as the radio it is; a playlist plays its songs.
+  const play = () => (isRadioList(list) ? void playRadioAt(root, { playlist_id: list }, c.title) : void withCollection(c, (items) => void playAllItems(root, items, from)))
   const menu = () =>
     menuFor(
       'album',

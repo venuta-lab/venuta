@@ -60,8 +60,10 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
     [page, owns],
   )
   const items = useMemo(() => songs.map(itemOf), [songs])
-  // "Playing from" names the album; choosing it there searches for it again.
-  const from: From = useMemo(() => ({ kind: 'search', ref: title, label: `Online: ${title}` }), [title])
+  // "Playing from" names the album; choosing it there searches for it again. Its own list in the
+  // catalog is what Autoplay asks YouTube Music to go on with when it ends.
+  const list = page?.playlist_id ?? null
+  const from: From = useMemo(() => ({ kind: 'search', ref: title, label: `Online: ${title}`, list }), [title, list])
   // The songs that hold the words typed in "Search this album", with their album numbers.
   const shown = useMemo(() => {
     const all = songs.map((s, i) => ({ s, n: i + 1 }))

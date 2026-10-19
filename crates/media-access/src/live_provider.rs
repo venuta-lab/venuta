@@ -11,9 +11,9 @@ use crate::access::{AccessError, AccessErrorKind, MediaAccess};
 use crate::catalog_json;
 use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
-    PageRequest, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink,
-    RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio,
-    RemoteRating, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    PageRequest, RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist,
+    RemoteArtistLink, RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist,
+    RemoteRadio, RemoteRating, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -141,13 +141,21 @@ trait LiveBackend: Send + Sync {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteCollection>, AccessError>;
 
-    /// A radio's answer, and the radio list it came from (see `MediaAccess::radio`).
-    fn radio(
+    /// The catalog's queue for an endpoint, as it answers (`continuation`: the page after the one
+    /// that issued it). One request, nothing followed.
+    fn watch(
         &self,
-        seed: Option<&str>,
-        playlist_id: Option<&str>,
+        endpoint: &ytmusic::WatchEndpoint,
+        continuation: Option<&str>,
         cancel: &CancellationToken,
-    ) -> Result<(Option<String>, ytmusic::NextResult), AccessError>;
+    ) -> Result<ytmusic::NextResult, AccessError>;
+
+    /// The songs of a Related page (`MPTRt…`).
+    fn related(
+        &self,
+        browse_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::SongItem>, AccessError>;
 
     fn set_blocked(&self, blocked: &[(Option<String>, String)]);
 
@@ -687,35 +695,31 @@ impl LiveBackend for YtmBackend {
             .collect())
     }
 
-    fn radio(
+    fn watch(
         &self,
-        seed: Option<&str>,
-        playlist_id: Option<&str>,
+        endpoint: &ytmusic::WatchEndpoint,
+        continuation: Option<&str>,
         cancel: &CancellationToken,
-    ) -> Result<(Option<String>, ytmusic::NextResult), AccessError> {
+    ) -> Result<ytmusic::NextResult, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
-        let failed = |_| AccessError::new(AccessErrorKind::Transport, "catalog radio failed");
         self.run(cancellable(cancel.clone(), async {
-            let mut list = playlist_id
-                .map(str::to_owned)
-                .or_else(|| seed.map(|s| format!("RDAMVM{s}")));
-            let mut answer = self
-                .it
-                .next(client, seed, list.as_deref())
+            self.it
+                .next_watch(client, endpoint, continuation)
                 .await
-                .map_err(failed)?;
-            // A dead radio answers with the seed alone and names the live mix to ask instead.
-            if answer.items.len() <= 1
-                && let Some(mix) = answer.automix_playlist_id.clone()
-            {
-                answer = self
-                    .it
-                    .next(client, seed, Some(&mix))
-                    .await
-                    .map_err(failed)?;
-                list = Some(mix);
-            }
-            Ok((list, answer))
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog radio failed"))
+        }))
+    }
+
+    fn related(
+        &self,
+        browse_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::SongItem>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.run(cancellable(cancel.clone(), async {
+            self.it.related_songs(client, browse_id).await.map_err(|_| {
+                AccessError::new(AccessErrorKind::Transport, "catalog related songs failed")
+            })
         }))
     }
 
@@ -1009,6 +1013,7 @@ fn album_page_of(page: &ytmusic::AlbumPage, album_id: &str) -> RemoteAlbumPage {
             .iter()
             .filter_map(crate::catalog_cards::shelf_of)
             .collect(),
+        playlist_id: text(&page.playlist_id),
     }
 }
 
@@ -1842,6 +1847,52 @@ impl LiveCatalogAccess {
             backend: Arc::new(YtmBackend::new()?),
         })
     }
+
+    /// `next` for an endpoint, and the endpoint that answered. One request, except a first
+    /// answer holding nothing but the song it opens on (a dead `RDAMVM` radio): that one names
+    /// the live mix in its automix marker, which is asked instead, opening on the same song.
+    fn answer(
+        &self,
+        endpoint: &ytmusic::WatchEndpoint,
+        continuation: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<(ytmusic::WatchEndpoint, ytmusic::NextResult), AccessError> {
+        let answer = self.backend.watch(endpoint, continuation, cancel)?;
+        if continuation.is_none()
+            && answer.items.len() <= 1
+            && let Some(mut mix) = answer.automix.clone()
+        {
+            if mix.video_id.is_none() {
+                mix.video_id = endpoint.video_id.clone();
+            }
+            let live = self.backend.watch(&mix, None, cancel)?;
+            return Ok((mix, live));
+        }
+        Ok((endpoint.clone(), answer))
+    }
+
+    /// A radio page as Venuta keeps it (see `catalog_cards::radio_page_of`). `seed`: the song
+    /// playing, left out when the answer opens with it.
+    fn radio_page(
+        &self,
+        endpoint: &ytmusic::WatchEndpoint,
+        continuation: Option<&str>,
+        seed: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let started = std::time::Instant::now();
+        let (asked, answer) = self.answer(endpoint, continuation, cancel)?;
+        let mut radio = crate::catalog_cards::radio_page_of(&answer, &asked, seed);
+        for t in &mut radio.tracks {
+            t.artwork_url = clean_artwork_url(t.artwork_url.take());
+        }
+        crate::timing::note_timing(&format!(
+            "online radio answered in {} ms ({} songs)",
+            started.elapsed().as_millis(),
+            radio.tracks.len()
+        ));
+        Ok(radio)
+    }
 }
 
 impl MediaAccess for LiveCatalogAccess {
@@ -2180,6 +2231,8 @@ impl MediaAccess for LiveCatalogAccess {
             subscribers: extras.subscribers,
             banner_url: extras.banner_url,
             radio_id: extras.radio_id,
+            radio: extras.radio,
+            shuffle: extras.shuffle,
             shelves: extras.shelves,
         })
     }
@@ -2350,24 +2403,85 @@ impl MediaAccess for LiveCatalogAccess {
                 "a radio needs a song or a radio to start from",
             ));
         }
-        let started = std::time::Instant::now();
-        let (playlist_id, answer) = self.backend.radio(seed, list, cancel)?;
-        let tracks: Vec<RemoteTrack> = crate::catalog_cards::radio_of(&answer, seed)
-            .into_iter()
+        // Built only here, for a song or a list with no button to replay: YouTube's own "Start
+        // radio" shape (`RDAMVM` + the song, the radio's params).
+        let endpoint = match (seed, list) {
+            (Some(seed), None) => ytmusic::WatchEndpoint::song_radio(seed),
+            (seed, list) => ytmusic::WatchEndpoint {
+                video_id: seed.map(str::to_owned),
+                playlist_id: list.map(str::to_owned),
+                params: Some(ytmusic::RADIO_PARAMS.to_owned()),
+                ..Default::default()
+            },
+        };
+        self.radio_page(&endpoint, None, seed, cancel)
+    }
+
+    fn radio_at(
+        &self,
+        endpoint: &RadioEndpoint,
+        playing: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let endpoint = crate::catalog_cards::watch_of(endpoint);
+        if endpoint.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "a radio needs a song or a radio to start from",
+            ));
+        }
+        self.radio_page(&endpoint, None, playing, cancel)
+    }
+
+    fn radio_more(
+        &self,
+        endpoint: &RadioEndpoint,
+        continuation: &str,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteRadio, AccessError> {
+        let token = continuation.trim();
+        if token.is_empty() {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "which page of the radio?",
+            ));
+        }
+        let endpoint = crate::catalog_cards::watch_of(endpoint);
+        self.radio_page(&endpoint, Some(token), None, cancel)
+    }
+
+    fn related_songs(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteTrack>, AccessError> {
+        let id = track_id.trim();
+        let page = match related_id.map(str::trim).filter(|r| !r.is_empty()) {
+            Some(page) => Some(page.to_owned()),
+            // The song's own answer names its Related page.
+            None if !id.is_empty() => {
+                let plain = ytmusic::WatchEndpoint {
+                    video_id: Some(id.to_owned()),
+                    ..Default::default()
+                };
+                self.backend.watch(&plain, None, cancel)?.related_browse_id
+            }
+            None => None,
+        };
+        let Some(page) = page else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .backend
+            .related(&page, cancel)?
+            .iter()
+            .filter_map(crate::catalog_cards::track_of_row)
             .map(|mut t| {
                 t.artwork_url = clean_artwork_url(t.artwork_url.take());
                 t
             })
-            .collect();
-        crate::timing::note_timing(&format!(
-            "online radio answered in {} ms ({} songs)",
-            started.elapsed().as_millis(),
-            tracks.len()
-        ));
-        Ok(RemoteRadio {
-            playlist_id,
-            tracks,
-        })
+            .collect())
     }
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
@@ -2387,7 +2501,7 @@ impl MediaAccess for LiveCatalogAccess {
             ));
         }
         // The song's own "next" answer starts with the song itself.
-        let (_, answer) = self.backend.radio(Some(id), None, cancel)?;
+        let (_, answer) = self.answer(&ytmusic::WatchEndpoint::song_radio(id), None, cancel)?;
         Ok(answer
             .items
             .iter()

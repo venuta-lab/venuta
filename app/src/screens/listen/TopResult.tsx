@@ -5,10 +5,11 @@ import { RemoteArt } from '../../components/RemoteArt'
 import { loadCovers, useCovers } from '../../lib/covers'
 import type { CatalogTrack, OnlineAlbum, OnlineArtist, OnlineTrack } from '../../lib/engine'
 import { play, playItems } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { recentSearches } from '../../lib/recentSearches'
 import type { TopPick } from '../../lib/searchRank'
 import { albumFrom, plural, useNav, type Album, type Artist } from './model'
-import { fromOnline, onlineItems, playOnlineArtistPage, withOnlineAlbum } from './onlineSearch'
+import { onlineItems, playOnlineArtistPage, withOnlineAlbum } from './onlineSearch'
 import { Art } from './parts'
 
 /*
@@ -80,8 +81,8 @@ export function TopResult({ pick, from }: { pick: TopPick; from: TopSources }) {
     line = [t.artists.join(', '), t.album].filter(Boolean).join(' · ')
     online = true
     art = <RemoteArt url={t.artwork_url} fallback="♪" imgClassName="h-full w-full object-cover" />
-    // From here down the Best list, the order the Online catalog section shows.
-    onPlay = () => void playItems(root, onlineItems(from.songs), pick.index, fromOnline(q))
+    // That song, then its radio, as in YouTube Music.
+    onPlay = () => void playWithRadio(root, onlineItems([t])[0])
     if (t.album_id)
       onOpen = () =>
         nav.openOnlineAlbum({

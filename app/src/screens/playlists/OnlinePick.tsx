@@ -5,7 +5,8 @@ import { IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import type { OnlineEntry, OnlineTrack, PlaylistEntry } from '../../lib/engine'
 import { useEscape } from '../../lib/layers'
-import { clock, songLength, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
+import { clock, songLength, onlineEntryFrom, toRemoteItem } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { useOnlineSearch } from '../listen/onlineSearch'
 import { rankOnlineTracks } from '../../lib/searchRank'
 import { plural } from './common'
@@ -72,12 +73,12 @@ export function OnlinePick<R extends PlaylistEntry & { key: string }>(props: {
   }
   const choose = (t: OnlineTrack) => {
     if (props.mode === 'play') {
-      void playItems(props.root, [toRemoteItem(t)], 0, { kind: 'search', ref: q.trim(), label: `Online: ${t.title}` })
+      void playWithRadio(props.root, toRemoteItem(t))
       return props.onClose()
     }
     next([...chosen, [row, onlineEntryFrom(t)]])
   }
-  const listen = (t: OnlineTrack) => void playItems(props.root, [toRemoteItem(t)], 0, { kind: 'search', ref: q.trim(), label: `Online: ${t.title}` })
+  const listen = (t: OnlineTrack) => void playWithRadio(props.root, toRemoteItem(t))
 
   return (
     <motion.div

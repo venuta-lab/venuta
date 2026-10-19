@@ -9,7 +9,7 @@ import { menuFor, onlineSongWork, songFacts, songWork } from '../../lib/actions'
 import { menuFromEvent } from '../../lib/menu'
 import { enqueueItems, onlineEntryFrom, playItems, queueKey, songLength, toggle, usePlayerValue, current, type From, type QueueItem } from '../../lib/player'
 import { useCardWidth, useNav } from './model'
-import { playRadioList } from '../../lib/radio'
+import { playRadioAt, playRadioList, playWithRadio } from '../../lib/radio'
 import { shortcutWork } from '../../lib/shortcuts'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
@@ -97,7 +97,8 @@ export function MixedSongs(props: {
             ) : (
               <RemoteArt url={s.track.artwork_url} seed={s.track.album || s.track.title} size={40} imgClassName="h-full w-full object-cover" />
             )
-          const playIt = () => (props.onPlay ? props.onPlay(item, i) : void playItems(root, items, i, from))
+          // An online song plays, then its radio (as in YouTube Music); yours plays through the list.
+          const playIt = () => (props.onPlay ? props.onPlay(item, i) : s.where === 'online' ? void playWithRadio(root, item) : void playItems(root, items, i, from))
           const menu = () =>
             s.where === 'library'
               ? menuFor('song', songFacts(s.track), songWork(nav, s.track, playIt))
@@ -230,7 +231,13 @@ export function OnlineArtistCard({ artist: ar }: { artist: OnlineArtist }) {
             play: () => void playOnlineArtistPage(root, ar),
             radio: () =>
               void onlineArtistPage(ar.artist_id)
-                .then((p) => (p.radio_id ? playRadioList(root, p.radio_id, `${ar.name} radio`) : notify(`The online catalog has no radio for ${ar.name}.`)))
+                .then((p) =>
+                  p.radio
+                    ? playRadioAt(root, p.radio, `${ar.name} radio`)
+                    : p.radio_id
+                      ? playRadioList(root, p.radio_id, `${ar.name} radio`)
+                      : notify(`The online catalog has no radio for ${ar.name}.`),
+                )
                 .catch((err) => notify(onlineProblem(err))),
           }),
         )

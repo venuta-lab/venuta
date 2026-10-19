@@ -33,7 +33,8 @@ pub use models::comments::{
 pub use models::context::Locale;
 pub use models::lyrics::{PlainLyrics, TimedLyricLine};
 pub use models::metadata::{
-    AccountIdentity, AccountInfo, ArtistRun, NextResult, Rating, SearchResult, SongItem,
+    AccountIdentity, AccountInfo, ArtistRun, NextResult, QueueChip, Rating, SearchResult, SongItem,
+    WatchEndpoint, RADIO_PARAMS,
 };
 pub use models::player::{
     find_format, find_video_format, AudioQuality, Format, PlaybackTracking, PlayerResponse,

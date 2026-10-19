@@ -8,6 +8,7 @@ import { getSettings, inApp, setSettings, type Listening } from './engine'
 
 const DEFAULTS: Listening = {
   autoplay: true,
+  play_my_copy: true,
   open_player_on_play: false,
   blocked_artists: [],
   disliked: [],
@@ -26,7 +27,6 @@ const DEFAULTS: Listening = {
   together_relay: null,
   together_delay: {},
   shortcuts: [],
-  play_my_copy: true,
   hide_blocked: true,
 }
 

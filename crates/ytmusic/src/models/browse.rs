@@ -15,7 +15,7 @@ use super::metadata::{
     find_first_str, first_artist_id, flex_column_text, flex_runs, is_explicit, is_upload_endpoint,
     is_upload_row, is_video_endpoint, is_video_row, is_video_type, last_thumbnail,
     list_item_video_id, parse_episode_item, parse_list_item, play_count, runs_text, runs_text_opt,
-    ArtistRun, SongItem,
+    ArtistRun, SongItem, WatchEndpoint,
 };
 
 /// One clickable card in a home carousel or library grid. Flat + `kind`-tagged so the UI can
@@ -277,6 +277,12 @@ pub struct ArtistPage {
     /// supplied: unlike a song or a playlist, an artist radio id can't be built client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub radio_playlist_id: Option<String>,
+    /// The header's radio ("Mix") button's endpoint, to replay as it is (`RDEM…` + its params).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radio: Option<WatchEndpoint>,
+    /// The header's Shuffle button's endpoint (`RDAO…` + its params).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shuffle: Option<WatchEndpoint>,
     /// Top songs shelf (usually 5).
     pub top_songs: Vec<SongItem>,
     /// The shelf's "Show all" target: a `VL…` playlist of the artist's songs, pageable like any
@@ -1105,7 +1111,23 @@ pub fn parse_artist(root: &Value, browse_id: &str) -> ArtistPage {
         }
     }
 
-    let radio_playlist_id = header.and_then(radio_playlist_id);
+    // Each button by its own key: serde_json keeps keys sorted, so "the first `RD…` id in the
+    // header" is the Shuffle button's `RDAO…`, which is not the radio.
+    let button = |key: &str| {
+        header
+            .and_then(|h| h.get(key))
+            .and_then(WatchEndpoint::within)
+    };
+    let radio = button("startRadioButton");
+    let shuffle = button("playButton").filter(|e| {
+        e.playlist_id
+            .as_deref()
+            .is_some_and(|p| p.starts_with("RD"))
+    });
+    let radio_playlist_id = radio
+        .as_ref()
+        .and_then(|e| e.playlist_id.clone())
+        .or_else(|| header.and_then(radio_playlist_id));
 
     ArtistPage {
         name,
@@ -1117,6 +1139,8 @@ pub fn parse_artist(root: &Value, browse_id: &str) -> ArtistPage {
         channel_id,
         subscribed,
         radio_playlist_id,
+        radio,
+        shuffle,
         top_songs,
         top_songs_id,
         sections,
@@ -1462,6 +1486,41 @@ mod tests {
             "title": { "runs": [{ "text": "An Artist" }] }
         } } });
         assert_eq!(parse_artist(&bare, "UCx").radio_playlist_id, None);
+        assert_eq!(parse_artist(&bare, "UCx").radio, None);
+    }
+
+    // The header's two buttons as YouTube put them there, each its own endpoint with its own
+    // params: the Shuffle button is `RDAO…` (it used to be read as the radio, being the first
+    // `RD…` id in the header), the Mix/Radio button `RDEM…`. Both play as sent.
+    #[test]
+    fn the_artist_buttons_keep_their_endpoints() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../media-access/tests/fixtures/ytm/artist-arijit.json");
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(file).expect("fixture")).expect("json");
+        let page = parse_artist(&root, "UCmiIXlBaJCp9HDHTjh2SwtA");
+        assert_eq!(
+            page.radio_playlist_id.as_deref(),
+            Some("RDEMmiIXlBaJCp9HDHTjh2SwtA")
+        );
+        assert_eq!(
+            page.radio,
+            Some(WatchEndpoint {
+                video_id: Some("MWcFzrvzi6k".into()),
+                playlist_id: Some("RDEMmiIXlBaJCp9HDHTjh2SwtA".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            page.shuffle,
+            Some(WatchEndpoint {
+                video_id: Some("9m-JugvbgKA".into()),
+                playlist_id: Some("RDAOmiIXlBaJCp9HDHTjh2SwtA".into()),
+                params: Some("wAEB8gECGAE%3D".into()),
+                ..Default::default()
+            })
+        );
     }
 
     // A channel YouTube Music doesn't treat as an artist comes back with a visual header, not an

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { OnlineSuggestion } from '../../lib/engine'
-import { current, playItems, queueKey, toRemoteItem, usePlayerValue, type From } from '../../lib/player'
+import { current, queueKey, toRemoteItem, usePlayerValue } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { useNav } from './model'
 import { CollectionCard, OnlineSongCard } from './OnlineCards'
 import { isVideo } from './onlineSearch'
@@ -38,14 +39,13 @@ export function useOnlineCards(items: OnlineSuggestion[], label: string, width?:
     const c = current(st)
     return c ? queueKey(c) : ''
   })
-  const from: From = { kind: 'search', ref: label, label: `Online: ${label}` }
   return items.map((c) => {
     const key = keyOfCard(c)
     let node: React.ReactNode
     switch (c.kind) {
       case 'song': {
         const at = songs.indexOf(c.track)
-        node = <OnlineSongCard track={c.track} width={width} now={queueKey(queue[at]) === nowKey} onPlay={() => void playItems(root, queue, at, from)} />
+        node = <OnlineSongCard track={c.track} width={width} now={queueKey(queue[at]) === nowKey} onPlay={() => void playWithRadio(root, queue[at])} />
         break
       }
       case 'album':

@@ -1,0 +1,52 @@
+{
+  "responseContext": { "visitorData": "fixtureVisitor" },
+  "contents": {
+    "singleColumnMusicWatchNextResultsRenderer": {
+      "tabbedRenderer": {
+        "watchNextTabbedResultsRenderer": {
+          "tabs": [
+            {
+              "tabRenderer": {
+                "title": "Up next",
+                "content": {
+                  "musicQueueRenderer": {
+                    "content": {
+                      "playlistPanelRenderer": {
+                        "contents": [
+                          { "playlistPanelVideoRenderer": {
+                            "videoId": "albumVid0009",
+                            "selected": true,
+                            "title": { "runs": [{ "text": "Last Song" }] },
+                            "longBylineText": { "runs": [{ "text": "An Artist" }] },
+                            "lengthText": { "runs": [{ "text": "3:00" }] },
+                            "navigationEndpoint": { "watchEndpoint": { "videoId": "albumVid0009", "playlistId": "OLAK5uy_fixtureAlbum", "index": 8 } }
+                          } },
+                          { "automixPreviewVideoRenderer": { "content": { "automixPlaylistVideoRenderer": {
+                            "navigationEndpoint": { "clickTrackingParams": "CAMQ", "watchPlaylistEndpoint": {
+                              "playlistId": "RDAMPLOLAK5uy_fixtureAlbum", "params": "OAHyAQIIAQ%3D%3D" } },
+                            "trackingParams": "CAMQ"
+                          } } } }
+                        ],
+                        "playlistId": "OLAK5uy_fixtureAlbum",
+                        "title": "Fixture Album",
+                        "numItemsToShow": 25
+                      }
+                    },
+                    "header": { "musicQueueHeaderRenderer": {
+                      "title": { "runs": [{ "text": "Up next" }] },
+                      "subtitle": { "runs": [{ "text": "Fixture Album" }] }
+                    } }
+                  }
+                }
+              }
+            },
+            { "tabRenderer": { "title": "Lyrics", "unselectable": true, "endpoint": { "browseEndpoint": { "browseId": "MPLYt_lastLyrics",
+              "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_TRACK_LYRICS" } } } } } },
+            { "tabRenderer": { "title": "Related", "endpoint": { "browseEndpoint": { "browseId": "MPTRt_lastRelated",
+              "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_TRACK_RELATED" } } } } } }
+          ]
+        }
+      }
+    }
+  }
+}

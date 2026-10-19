@@ -12,6 +12,7 @@ import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmP
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
+import { isRadioList, listIdOf, playRadioAt } from '../../lib/radio'
 import { useYtmStatus, ytmLibraryChanged } from '../../lib/ytmLibrary'
 import { movesBetween } from '../../lib/ytmMoves'
 import { minutes, plural, spring, useNav } from './model'
@@ -78,7 +79,9 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   const title = mine?.title || c.title
 
   const items = useMemo(() => (tracks ?? []).map(toRemoteItem), [tracks])
-  const from: From = useMemo(() => ({ kind: 'search', ref: c.title, label: `Online: ${c.title}` }), [c.title])
+  // Its own list in the catalog: what Autoplay asks YouTube Music to go on with when it ends.
+  const list = c.kind === 'podcast' ? null : listIdOf(playlistId)
+  const from: From = useMemo(() => ({ kind: 'search', ref: c.title, label: `Online: ${c.title}`, list }), [c.title, list])
   const nowKey = usePlayerValue((s) => {
     const now = current(s)
     return now ? queueKey(now) : ''
@@ -137,7 +140,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   const playButton = (size: 'sm' | 'lg') => (
     <button
       disabled={!items.length}
-      onClick={() => (isNow ? void toggle() : void playAllItems(root, items, from))}
+      onClick={() => (isNow ? void toggle() : isRadioList(list) ? void playRadioAt(root, { playlist_id: list }, title) : void playAllItems(root, items, from))}
       className={size === 'lg' ? 'btn-primary btn-lg play-main' : 'btn-primary btn-sm'}
     >
       {isNow && playing ? <IconPause width={size === 'sm' ? 15 : undefined} height={size === 'sm' ? 15 : undefined} /> : <IconPlay width={size === 'sm' ? 15 : undefined} height={size === 'sm' ? 15 : undefined} />}
