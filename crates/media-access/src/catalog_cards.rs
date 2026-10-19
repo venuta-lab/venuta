@@ -18,8 +18,8 @@ fn audience(line: &str) -> Option<u64> {
     parse_audience(line.rsplit('•').next().unwrap_or(line))
 }
 use crate::types::{
-    RemoteAlbum, RemoteArtist, RemoteCollection, RemoteMore, RemoteShelf, RemoteSuggestion,
-    RemoteTrack, SearchSuggestions,
+    RadioChip, RadioEndpoint, RemoteAlbum, RemoteArtist, RemoteCollection, RemoteMore, RemoteRadio,
+    RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use ytmusic::{ArtistRun, BrowseItem, SongItem};
 
@@ -205,6 +205,8 @@ pub(crate) struct ArtistExtras {
     pub subscribers: Option<String>,
     pub banner_url: Option<String>,
     pub radio_id: Option<String>,
+    pub radio: Option<RadioEndpoint>,
+    pub shuffle: Option<RadioEndpoint>,
     pub shelves: Vec<RemoteShelf>,
 }
 
@@ -258,6 +260,8 @@ pub(crate) fn artist_extras(
             u.starts_with("https://").then(|| u.to_owned())
         }),
         radio_id: text(page.radio_playlist_id),
+        radio: page.radio.as_ref().map(endpoint_of),
+        shuffle: page.shuffle.as_ref().map(endpoint_of),
         shelves,
     }
 }
@@ -294,15 +298,82 @@ pub(crate) fn home_of(page: &ytmusic::HomePage) -> crate::types::RemoteHome {
     }
 }
 
-/// A radio's songs as catalog tracks: the seed left out, each song once.
+/// A radio's songs as catalog tracks, in the catalog's order, a song coming round again and all.
+/// `seed` is the song playing: an answer that opens with it (its audio row, or the row whose
+/// music-video twin it is) has that first row left out, since it is already there. Nothing else
+/// is left out.
 pub(crate) fn radio_of(next: &ytmusic::NextResult, seed: Option<&str>) -> Vec<RemoteTrack> {
-    let mut seen = std::collections::HashSet::new();
-    next.items
+    let seed = seed.map(str::trim).filter(|s| !s.is_empty());
+    let mut rows = next
+        .items
         .iter()
-        .filter_map(track_of_row)
-        .filter(|t| Some(t.track_id.as_str()) != seed.map(str::trim))
-        .filter(|t| seen.insert(t.track_id.clone()))
-        .collect()
+        .filter(|s| !s.video_id.trim().is_empty())
+        .peekable();
+    if let (Some(seed), Some(first)) = (seed, rows.peek())
+        && (first.video_id.trim() == seed || first.counterpart.as_deref() == Some(seed))
+    {
+        rows.next();
+    }
+    rows.filter_map(track_of_row).collect()
+}
+
+/// An endpoint as Venuta keeps it.
+pub(crate) fn endpoint_of(e: &ytmusic::WatchEndpoint) -> RadioEndpoint {
+    RadioEndpoint {
+        video_id: e.video_id.clone(),
+        playlist_id: e.playlist_id.clone(),
+        params: e.params.clone(),
+        index: e.index,
+        playlist_set_video_id: e.playlist_set_video_id.clone(),
+    }
+}
+
+/// An endpoint as the client sends it again: exactly what came.
+pub(crate) fn watch_of(e: &RadioEndpoint) -> ytmusic::WatchEndpoint {
+    let s = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+    };
+    ytmusic::WatchEndpoint {
+        video_id: s(&e.video_id),
+        playlist_id: s(&e.playlist_id),
+        params: s(&e.params),
+        index: e.index,
+        playlist_set_video_id: s(&e.playlist_set_video_id),
+    }
+}
+
+/// A `next` answer as a radio page: its songs (see [`radio_of`]) and its session, `asked` being
+/// the endpoint it answered.
+pub(crate) fn radio_page_of(
+    next: &ytmusic::NextResult,
+    asked: &ytmusic::WatchEndpoint,
+    seed: Option<&str>,
+) -> RemoteRadio {
+    RemoteRadio {
+        playlist_id: next
+            .playlist_id
+            .clone()
+            .or_else(|| asked.playlist_id.clone()),
+        tracks: radio_of(next, seed),
+        title: next.title.clone(),
+        endpoint: Some(endpoint_of(asked)),
+        continuation: next.continuation.clone(),
+        chips: next
+            .chips
+            .iter()
+            .filter(|c| !c.text.trim().is_empty())
+            .map(|c| RadioChip {
+                text: c.text.trim().to_owned(),
+                selected: c.selected,
+                endpoint: endpoint_of(&c.endpoint),
+            })
+            .collect(),
+        continue_with: next.automix.as_ref().map(endpoint_of),
+        related_id: next.related_browse_id.clone(),
+    }
 }
 
 /// The client's suggestions as Venuta's: completions, then the cards it knows how to show.
@@ -553,28 +624,96 @@ mod tests {
         }
     }
 
+    // The catalog's queue as it sent it: a song coming round again stays, and the seed leading
+    // the answer (the song playing) is the only row left out. Later on, the seed is a repeat
+    // like any other and stays too.
     #[test]
-    fn a_radio_leaves_out_its_seed_and_repeats() {
+    fn a_radio_leaves_out_only_the_seed_it_opens_with() {
         let next = ytmusic::NextResult {
             items: vec![
                 row("seed", "Seed"),
                 row("a", "A"),
                 row("b", "B"),
                 row("a", "A again"),
+                row("seed", "Seed again"),
                 row(" ", "No id"),
             ],
-            continuation: None,
-            lyrics_browse_id: None,
-            automix_playlist_id: None,
-            rating: None,
+            ..Default::default()
         };
         let ids: Vec<String> = radio_of(&next, Some("seed"))
             .into_iter()
             .map(|t| t.track_id)
             .collect();
-        assert_eq!(ids, ["a", "b"]);
-        // A radio of a mix has no seed: every song is in it.
-        assert_eq!(radio_of(&next, None).len(), 3);
+        assert_eq!(ids, ["a", "b", "a", "seed"]);
+        // A radio of a mix, or a later page, has no seed: every song is in it.
+        assert_eq!(radio_of(&next, None).len(), 5);
+        // Opened on the seed's music video, the audio row is still the seed.
+        let mut wrapped = next.clone();
+        wrapped.items[0].video_id = "seedAudio".into();
+        wrapped.items[0].counterpart = Some("seed".into());
+        assert_eq!(radio_of(&wrapped, Some("seed")).len(), 4);
+    }
+
+    // Everything a radio session needs comes through: the endpoint asked, the next page's token,
+    // the chips with theirs, what it goes on with, and the Related page.
+    #[test]
+    fn a_radio_page_carries_its_session() {
+        let next = ytmusic::NextResult {
+            items: vec![row("seed", "Seed"), row("a", "A")],
+            continuation: Some("TOKEN2".into()),
+            playlist_id: Some("RDAMVMseed".into()),
+            title: Some("Seed Radio".into()),
+            chips: vec![ytmusic::QueueChip {
+                text: "Familiar".into(),
+                selected: false,
+                endpoint: ytmusic::WatchEndpoint {
+                    playlist_id: Some("RDATiYvseed".into()),
+                    params: Some("P".into()),
+                    ..Default::default()
+                },
+            }],
+            automix: Some(ytmusic::WatchEndpoint {
+                playlist_id: Some("RDAMPLmix".into()),
+                ..Default::default()
+            }),
+            related_browse_id: Some("MPTRt_seed".into()),
+            ..Default::default()
+        };
+        let asked = ytmusic::WatchEndpoint::song_radio("seed");
+        let radio = radio_page_of(&next, &asked, Some("seed"));
+        assert_eq!(radio.tracks.len(), 1);
+        assert_eq!(radio.playlist_id.as_deref(), Some("RDAMVMseed"));
+        assert_eq!(radio.title.as_deref(), Some("Seed Radio"));
+        assert_eq!(radio.continuation.as_deref(), Some("TOKEN2"));
+        assert_eq!(
+            radio.endpoint,
+            Some(crate::types::RadioEndpoint {
+                video_id: Some("seed".into()),
+                playlist_id: Some("RDAMVMseed".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(radio.chips.len(), 1);
+        assert_eq!(radio.chips[0].text, "Familiar");
+        assert_eq!(
+            radio.chips[0].endpoint.playlist_id.as_deref(),
+            Some("RDATiYvseed")
+        );
+        assert_eq!(radio.chips[0].endpoint.params.as_deref(), Some("P"));
+        assert_eq!(
+            radio
+                .continue_with
+                .as_ref()
+                .and_then(|e| e.playlist_id.as_deref()),
+            Some("RDAMPLmix")
+        );
+        assert_eq!(radio.related_id.as_deref(), Some("MPTRt_seed"));
+        // And back: what is sent again is exactly what came.
+        assert_eq!(
+            watch_of(radio.endpoint.as_ref().unwrap()),
+            ytmusic::WatchEndpoint::song_radio("seed")
+        );
     }
 
     #[test]
