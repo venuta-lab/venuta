@@ -83,3 +83,14 @@ test('the account card never says search is yours while it goes anonymous', () =
   assert.match(accountLine({ ...SAFE, personal: false }), /general ones/)
   assert.match(accountLine({ ...SAFE, library: false }), /library stays out of Venuta/)
 })
+
+test('what Venuta tells YouTube Music is said plainly, as it is sent', () => {
+  const line = (name: string) => GROUPS.flatMap((g) => g.rows).find((r) => r.name === name)!.line
+  // Count plays: what goes (that you played it), when (30 seconds in) and what never does.
+  assert.match(line('Count plays'), /After 30 seconds of an online song, Venuta tells YouTube Music you played it/)
+  assert.match(line('Count plays'), /Your files are never sent\./)
+  // How much I listened: the seconds heard, while it plays and when it ends or is skipped.
+  assert.match(line('How much I listened'), /how many seconds of each online song you heard/)
+  assert.match(line('How much I listened'), /skip/)
+  for (const n of ['Count plays', 'How much I listened']) assert.doesNotMatch(line(n), /—/, 'no em dashes')
+})

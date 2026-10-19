@@ -13,6 +13,7 @@ import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
 import { isRadioList, listIdOf, playRadioAt } from '../../lib/radio'
+import { radioOfCard } from '../../lib/mixes'
 import { listRadio } from '../../lib/radioSession'
 import { useYtmStatus, ytmLibraryChanged } from '../../lib/ytmLibrary'
 import { movesBetween } from '../../lib/ytmMoves'
@@ -151,7 +152,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   const playButton = (size: 'sm' | 'lg') => (
     <button
       disabled={!items.length}
-      onClick={() => (isNow ? void toggle() : isRadioList(list) ? void playRadioAt(root, { playlist_id: list }, title) : void playAllItems(root, items, from))}
+      onClick={() => (isNow ? void toggle() : isRadioList(list) ? void playRadioAt(root, radioOfCard(c) ?? { playlist_id: list }, title) : void playAllItems(root, items, from))}
       className={size === 'lg' ? 'btn-primary btn-lg play-main' : 'btn-primary btn-sm'}
     >
       {isNow && playing ? <IconPause width={size === 'sm' ? 15 : undefined} height={size === 'sm' ? 15 : undefined} /> : <IconPlay width={size === 'sm' ? 15 : undefined} height={size === 'sm' ? 15 : undefined} />}

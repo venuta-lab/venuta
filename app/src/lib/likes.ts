@@ -74,8 +74,10 @@ export function useLiked(q: QueueItem | null | undefined): boolean {
   return !!q && isLiked(q)
 }
 
-/** Like or unlike a song, everywhere at once; says so, and says when it could not. */
-export async function setLiked(r: string, q: QueueItem, liked: boolean) {
+/** Like or unlike a song, everywhere at once; says so, and says when it could not. `account`:
+ *  false when the caller rates it on the account itself (a thumbs down replaces the like there
+ *  in one rating, never an unlike first). */
+export async function setLiked(r: string, q: QueueItem, liked: boolean, opts: { account?: boolean } = {}) {
   if (!r || !inApp()) return
   // Shown at once; put right from the answer.
   const key = isOnline(q) ? onlineKey(q) : q.path
@@ -88,7 +90,7 @@ export async function setLiked(r: string, q: QueueItem, liked: boolean) {
     const now = await invoke<LikedSet>('like_song', { root: r, item: songItemOf(q), liked })
     publish(r, now)
     notify(liked ? `Added to ${now.name ?? 'Liked songs'}.` : `Removed from ${name ?? 'Liked songs'}.`)
-    await rateOnAccount(q, liked ? 'like' : 'none')
+    if (opts.account !== false) await rateOnAccount(q, liked ? 'like' : 'none')
   } catch (e) {
     notify(`Couldn't ${liked ? 'like' : 'unlike'} “${q.title}”: ${String(e)}`)
     root = ''

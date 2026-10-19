@@ -368,8 +368,8 @@ pub async fn ytm_playlists(pb: State<'_, Playback>) -> Result<Vec<RemoteCollecti
     .map_err(|e| e.to_string())?
 }
 
-/// Rate an online song on the account (Settings: like on YouTube Music too). False when no one
-/// is signed in, so nothing was sent.
+/// Rate an online song on the account (Likes and dislikes, the account in use's own switch).
+/// False when no one is signed in or the switch is off for that account: nothing was sent.
 #[tauri::command]
 pub async fn ytm_rate(
     pb: State<'_, Playback>,
@@ -381,6 +381,11 @@ pub async fn ytm_rate(
         return Ok(false);
     }
     tauri::async_runtime::spawn_blocking(move || {
+        // The window asks only with the switch on; said again here, so nothing reaches the
+        // account on a stale or wrong account's choice.
+        if !crate::ytm_choices::rates_on_account(access.as_ref()) {
+            return Ok(false);
+        }
         access
             .rate_on_account(&track_id, rating, &CancellationToken::default())
             .map(|()| true)

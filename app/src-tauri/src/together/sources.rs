@@ -155,10 +155,8 @@ pub fn close_online(song: &Song, catalog: &Arc<dyn MediaAccess>) -> Option<Strin
     let page = catalog
         .search_tracks(
             &q,
-            &PageRequest {
-                limit: 10,
-                cursor: None,
-            },
+            // A room's own look-up, never a search the person typed.
+            &PageRequest::new(10, None),
             &CancellationToken::default(),
         )
         .ok()?;

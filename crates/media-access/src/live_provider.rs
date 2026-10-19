@@ -67,11 +67,14 @@ const STREAM_CLIENT: &str = "VISIONOS";
 const VISITOR_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 trait LiveBackend: Send + Sync {
+    /// `typed`: the person typed it (see `PageRequest::typed`); only then may it go as the
+    /// account.
     fn search(
         &self,
         query: &str,
         filter: MusicSearchFilter,
         continuation: Option<String>,
+        typed: bool,
         cancel: &CancellationToken,
     ) -> Result<SearchPage, AccessError>;
 
@@ -80,6 +83,7 @@ trait LiveBackend: Send + Sync {
     fn search_songs_with_mix(
         &self,
         query: &str,
+        typed: bool,
         cancel: &CancellationToken,
     ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError>;
 
@@ -336,15 +340,16 @@ impl YtmBackend {
         query: &str,
         params: Option<&str>,
         continuation: Option<&str>,
+        typed: bool,
     ) -> Result<Value, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
         let result = match continuation {
             Some(token) => {
                 self.it
-                    .search_continuation_json(client, query, params, token)
+                    .search_continuation_json(client, query, params, token, typed)
                     .await
             }
-            None => self.it.search_json(client, query, params).await,
+            None => self.it.search_json(client, query, params, typed).await,
         };
         result.map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog search failed"))
     }
@@ -487,11 +492,17 @@ impl LiveBackend for YtmBackend {
         query: &str,
         filter: MusicSearchFilter,
         continuation: Option<String>,
+        typed: bool,
         cancel: &CancellationToken,
     ) -> Result<SearchPage, AccessError> {
         let raw = self.run(cancellable(
             cancel.clone(),
-            self.search_raw(query, Some(search_params(filter)), continuation.as_deref()),
+            self.search_raw(
+                query,
+                Some(search_params(filter)),
+                continuation.as_deref(),
+                typed,
+            ),
         ))?;
         parse_search(query, filter, raw)
     }
@@ -499,12 +510,13 @@ impl LiveBackend for YtmBackend {
     fn search_songs_with_mix(
         &self,
         query: &str,
+        typed: bool,
         cancel: &CancellationToken,
     ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError> {
         let (songs, mix) = self.run(cancellable(cancel.clone(), async {
             let (songs, mix) = tokio::join!(
-                self.search_raw(query, Some(SONGS_PARAMS), None),
-                self.search_raw(query, None, None),
+                self.search_raw(query, Some(SONGS_PARAMS), None, typed),
+                self.search_raw(query, None, None, typed),
             );
             Ok((songs?, mix))
         }))?;
@@ -1732,6 +1744,56 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, "the play", self.it.report_play(client, video_id))
     }
 
+    fn start_listen(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::account::Listen, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let tracking = self.account_call(
+            cancel,
+            "the listen",
+            self.it.listen_tracking(client, video_id),
+        )?;
+        Ok(crate::account::Listen {
+            video_id: video_id.to_owned(),
+            tracking,
+        })
+    }
+
+    fn report_listen_play(
+        &self,
+        listen: &crate::account::Listen,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the play",
+            self.it.report_tracked_play(client, &listen.tracking),
+        )
+    }
+
+    fn report_heard(
+        &self,
+        listen: &crate::account::Listen,
+        heard: &crate::account::Heard,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let watched = ytmusic::Watched {
+            segments: heard.segments.clone(),
+            at_ms: heard.at_ms,
+            length_ms: heard.length_ms,
+            playing: heard.playing,
+        };
+        self.account_call(
+            cancel,
+            "how much was heard",
+            self.it.report_watchtime(client, &listen.tracking, &watched),
+        )
+    }
+
     fn upload(
         &self,
         file_name: &str,
@@ -1933,13 +1995,16 @@ impl MediaAccess for LiveCatalogAccess {
             // The first page also asks the unfiltered search, for the catalog's top result and
             // each song's place there. If that one fails, the songs alone are still the answer.
             let (result, mix) = if cursor.continuation.is_none() {
-                let (songs, mix) = self.backend.search_songs_with_mix(query, cancel)?;
+                let (songs, mix) = self
+                    .backend
+                    .search_songs_with_mix(query, page.typed, cancel)?;
                 (songs, mix.ok())
             } else {
                 let songs = self.backend.search(
                     query,
                     MusicSearchFilter::Songs,
                     cursor.continuation.clone(),
+                    page.typed,
                     cancel,
                 )?;
                 (songs, None)
@@ -2019,6 +2084,7 @@ impl MediaAccess for LiveCatalogAccess {
             query,
             MusicSearchFilter::Albums,
             cursor.continuation.clone(),
+            page.typed,
             cancel,
         )?;
         // innertube-rs reads no album rows of a real Albums shelf (rows without a video id),
@@ -2088,6 +2154,7 @@ impl MediaAccess for LiveCatalogAccess {
             query,
             MusicSearchFilter::Artists,
             cursor.continuation.clone(),
+            page.typed,
             cancel,
         )?;
         // As for albums: the response's own artist rows, innertube-rs's parse as a fallback.

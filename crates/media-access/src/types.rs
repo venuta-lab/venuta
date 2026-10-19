@@ -387,6 +387,10 @@ pub struct RemoteCollection {
     pub artwork_url: Option<String>,
     /// "playlist" or "podcast".
     pub kind: String,
+    /// What the card's own play button plays (a mix's endpoint, `params` and all): played
+    /// as it came, rather than a radio rebuilt from the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play: Option<RadioEndpoint>,
 }
 
 /// One thing the catalog suggests while words are typed: a song to play, or an album, artist
@@ -439,6 +443,10 @@ pub struct MoodSection {
 pub struct PageRequest {
     pub limit: usize,
     pub cursor: Option<String>,
+    /// A search the person typed (the Search box). Only such a search may go as the account,
+    /// and only with Signed-in search on; Venuta's own look-ups (a file's song for its radio,
+    /// link matching, More by, find online, imports) leave it false and stay anonymous.
+    pub typed: bool,
 }
 
 impl Default for PageRequest {
@@ -446,6 +454,7 @@ impl Default for PageRequest {
         Self {
             limit: 25,
             cursor: None,
+            typed: false,
         }
     }
 }
@@ -455,6 +464,15 @@ impl PageRequest {
         Self {
             limit: limit.clamp(1, 100),
             cursor,
+            typed: false,
+        }
+    }
+
+    /// The same request, for a search the person typed.
+    pub fn typed(self) -> Self {
+        Self {
+            typed: true,
+            ..self
         }
     }
 }

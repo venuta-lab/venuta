@@ -114,6 +114,7 @@ pub(crate) fn collection_of(item: &BrowseItem, kind: &str) -> Option<RemoteColle
         subtitle: item.subtitle.clone().filter(|s| !s.trim().is_empty()),
         artwork_url: art(item.thumbnail.as_deref()),
         kind: kind.to_owned(),
+        play: item.play.as_ref().map(endpoint_of),
     })
 }
 
@@ -407,7 +408,41 @@ mod tests {
             is_video: false,
             is_upload: false,
             explicit: false,
+            play: None,
         }
+    }
+
+    // A mix card on Home keeps the endpoint its play button names, so playing it replays that
+    // (a mix's own `params` and all) instead of a radio rebuilt from its id.
+    #[test]
+    fn a_mix_card_carries_its_play_endpoint() {
+        let mut c = card("playlist", "VLRDTMAK5uy_super", "My Supermix", "Mix");
+        c.play = Some(ytmusic::WatchEndpoint {
+            playlist_id: Some("RDTMAK5uy_super".into()),
+            params: Some("wAEB8gECKAE%3D".into()),
+            ..Default::default()
+        });
+        let Some(RemoteSuggestion::Playlist { collection }) = suggestion_of(&c) else {
+            panic!("a playlist")
+        };
+        assert_eq!(
+            collection.play,
+            Some(RadioEndpoint {
+                playlist_id: Some("RDTMAK5uy_super".into()),
+                params: Some("wAEB8gECKAE%3D".into()),
+                ..Default::default()
+            })
+        );
+        let plain = card("playlist", "VLPL1", "Hits", "Playlist");
+        let Some(RemoteSuggestion::Playlist { collection }) = suggestion_of(&plain) else {
+            panic!("a playlist")
+        };
+        assert_eq!(collection.play, None);
+        let json = serde_json::to_value(&collection).unwrap();
+        assert!(
+            json.get("play").is_none(),
+            "nothing said when there is none"
+        );
     }
 
     #[test]

@@ -168,18 +168,57 @@ fn search_stopped() -> AccessError {
     AccessError::new(AccessErrorKind::Transport, "search stopped")
 }
 
+/// How a search asks for its page: as typed by the person, or as Venuta's own look-up.
+fn page(limit: usize, cursor: Option<String>, typed: bool) -> PageRequest {
+    let page = PageRequest::new(limit, cursor);
+    if typed { page.typed() } else { page }
+}
+
+type Parts = (
+    Result<media_access::Page<RemoteTrack>, AccessError>,
+    Result<media_access::Page<RemoteAlbum>, AccessError>,
+    Result<media_access::Page<RemoteArtist>, AccessError>,
+);
+
+/// The three parts of a search, asked at once: the answer takes as long as the slowest, not the
+/// sum. `typed`: the person typed these words (see `PageRequest::typed`).
+fn search_parts(
+    access: &dyn media_access::MediaAccess,
+    query: &str,
+    typed: bool,
+    cancel: &CancellationToken,
+) -> Parts {
+    std::thread::scope(|s| {
+        let albums = s.spawn(|| access.search_albums(query, &page(12, None, typed), cancel));
+        let artists = s.spawn(|| access.search_artists(query, &page(12, None, typed), cancel));
+        let tracks = access.search_tracks(query, &page(TRACKS_PER_PAGE, None, typed), cancel);
+        (
+            tracks,
+            albums.join().unwrap_or_else(|_| Err(search_stopped())),
+            artists.join().unwrap_or_else(|_| Err(search_stopped())),
+        )
+    })
+}
+
 /// Songs, albums and artists for these words. One kind failing doesn't cost the others.
 ///
 /// `search_box` names the box that asked ("music", "palette", "add-songs", "pick",
 /// "more-by"…; "music" when left out): a newer search from the same box stops this one, which
 /// then fails with [`SEARCH_CANCELLED`] for the window to ignore. Other boxes are untouched.
+///
+/// `typed`: the person typed these words in the Search box. Only then may the search go as the
+/// YouTube Music account (with Signed-in search on). Left out it is false: Venuta's own
+/// look-ups (a file's song for its radio, a link's song, More by, find online) never go as the
+/// account.
 #[tauri::command]
 pub async fn online_search(
     query: String,
     search_box: Option<String>,
+    typed: Option<bool>,
     pb: State<'_, Playback>,
     running: State<'_, OnlineSearch>,
 ) -> Result<OnlineResults, String> {
+    let typed = typed.unwrap_or(false);
     let query = query.trim().to_owned();
     if query.is_empty() {
         return Ok(OnlineResults::default());
@@ -192,20 +231,7 @@ pub async fn online_search(
     let cancel = running.fresh(&box_name(search_box));
     let started = Instant::now();
     let results = tauri::async_runtime::spawn_blocking(move || {
-        // All three asked at once: the answer takes as long as the slowest, not the sum.
-        let (tracks, albums, artists) = std::thread::scope(|s| {
-            let albums =
-                s.spawn(|| access.search_albums(&query, &PageRequest::new(12, None), &cancel));
-            let artists =
-                s.spawn(|| access.search_artists(&query, &PageRequest::new(12, None), &cancel));
-            let tracks =
-                access.search_tracks(&query, &PageRequest::new(TRACKS_PER_PAGE, None), &cancel);
-            (
-                tracks,
-                albums.join().unwrap_or_else(|_| Err(search_stopped())),
-                artists.join().unwrap_or_else(|_| Err(search_stopped())),
-            )
-        });
+        let (tracks, albums, artists) = search_parts(access.as_ref(), &query, typed, &cancel);
         if cancel.is_cancelled() {
             return Err(SEARCH_CANCELLED.to_owned());
         }
@@ -582,15 +608,18 @@ pub async fn online_collection(
 }
 
 /// More songs for the same words, from `cursor` (an answer's `tracks_cursor`, or a page's
-/// `next_cursor`). Same search boxes and cancelling as [`online_search`]; not remembered.
+/// `next_cursor`). Same search boxes, cancelling and `typed` as [`online_search`]; not
+/// remembered.
 #[tauri::command]
 pub async fn online_search_tracks(
     query: String,
     cursor: String,
     search_box: Option<String>,
+    typed: Option<bool>,
     pb: State<'_, Playback>,
     running: State<'_, OnlineSearch>,
 ) -> Result<OnlineTrackPage, String> {
+    let typed = typed.unwrap_or(false);
     let query = query.trim().to_owned();
     if query.is_empty() || cursor.trim().is_empty() {
         return Ok(OnlineTrackPage::default());
@@ -598,11 +627,8 @@ pub async fn online_search_tracks(
     let access = pb.catalog();
     let cancel = running.fresh(&box_name(search_box));
     tauri::async_runtime::spawn_blocking(move || {
-        let page = access.search_tracks(
-            &query,
-            &PageRequest::new(TRACKS_PER_PAGE, Some(cursor)),
-            &cancel,
-        );
+        let page =
+            access.search_tracks(&query, &page(TRACKS_PER_PAGE, Some(cursor), typed), &cancel);
         if cancel.is_cancelled() {
             return Err(SEARCH_CANCELLED.to_owned());
         }
@@ -732,5 +758,99 @@ fn parse_lrc(synced: &str) -> OnlineLyrics {
     OnlineLyrics {
         lines,
         text: plain.join("\n"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use media_access::{EphemeralAudio, MediaAccess, Page};
+
+    /// A catalog that keeps how each search was asked.
+    #[derive(Default)]
+    struct Asked(Mutex<Vec<(&'static str, bool)>>);
+
+    impl Asked {
+        fn note<T>(&self, kind: &'static str, page: &PageRequest) -> Result<Page<T>, AccessError> {
+            self.0.lock().unwrap().push((kind, page.typed));
+            Ok(Page {
+                items: Vec::new(),
+                next_cursor: None,
+            })
+        }
+    }
+
+    impl MediaAccess for Asked {
+        fn search_tracks(
+            &self,
+            _: &str,
+            page: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            self.note("tracks", page)
+        }
+        fn search_albums(
+            &self,
+            _: &str,
+            page: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteAlbum>, AccessError> {
+            self.note("albums", page)
+        }
+        fn search_artists(
+            &self,
+            _: &str,
+            page: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteArtist>, AccessError> {
+            self.note("artists", page)
+        }
+        fn album_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            unreachable!()
+        }
+        fn playlist_tracks(
+            &self,
+            _: &str,
+            _: &PageRequest,
+            _: &CancellationToken,
+        ) -> Result<Page<RemoteTrack>, AccessError> {
+            unreachable!()
+        }
+        fn resolve_audio(
+            &self,
+            _: &str,
+            _: &CancellationToken,
+        ) -> Result<EphemeralAudio, AccessError> {
+            unreachable!()
+        }
+    }
+
+    fn asked(typed: bool) -> Vec<(&'static str, bool)> {
+        let access = Asked::default();
+        let _ = search_parts(&access, "road", typed, &CancellationToken::default());
+        let mut seen = access.0.into_inner().unwrap();
+        seen.sort();
+        seen
+    }
+
+    // Words typed in the Search box are asked as typed, every part of them; Venuta's own
+    // look-ups (the window leaves `typed` out) never are, so they never go as the account.
+    #[test]
+    fn only_a_typed_search_is_asked_as_typed() {
+        assert_eq!(
+            asked(true),
+            [("albums", true), ("artists", true), ("tracks", true)]
+        );
+        assert_eq!(
+            asked(false),
+            [("albums", false), ("artists", false), ("tracks", false)]
+        );
+        assert!(!page(20, Some("c".into()), false).typed);
+        assert!(page(20, Some("c".into()), true).typed);
     }
 }

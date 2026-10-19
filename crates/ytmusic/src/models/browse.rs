@@ -63,6 +63,11 @@ pub struct BrowseItem {
     /// YouTube marks this card explicit ([`is_explicit`]) — a track, or an album whose tracks are.
     #[serde(default)]
     pub explicit: bool,
+    /// A playlist card's own play button: the endpoint YouTube plays it with, a mix's `params`
+    /// and all (My Supermix, My Mix, Discover, Replay), so playing the card replays exactly that
+    /// rather than a radio rebuilt from its id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub play: Option<WatchEndpoint>,
 }
 
 /// A titled row of cards on the home feed.
@@ -841,6 +846,7 @@ fn list_item_to_browse_item(node: &Value) -> Option<BrowseItem> {
             is_video: false,
             is_upload: false,
             explicit: is_explicit(node),
+            play: None,
         });
     }
     let vid = list_item_video_id(node)?;
@@ -861,6 +867,7 @@ fn list_item_to_browse_item(node: &Value) -> Option<BrowseItem> {
         is_video: is_video_row(node),
         is_upload: is_upload_row(node),
         explicit: is_explicit(node),
+        play: None,
     })
 }
 
@@ -903,6 +910,7 @@ fn card_shelf_main(card: &Value) -> Option<BrowseItem> {
             is_video: nav.is_some_and(is_video_endpoint),
             is_upload: nav.is_some_and(is_upload_endpoint),
             explicit: is_explicit(card),
+            play: None,
         });
     }
     let bid = nav
@@ -923,6 +931,7 @@ fn card_shelf_main(card: &Value) -> Option<BrowseItem> {
         is_video: false,
         is_upload: false,
         explicit: is_explicit(card),
+        play: None,
     })
 }
 
@@ -1218,6 +1227,7 @@ pub fn appears_on(songs: &[SongItem], artist_id: &str) -> Vec<BrowseItem> {
                 is_video: false,
                 is_upload: false,
                 explicit: false,
+                play: None,
                 id,
             })
         })
@@ -1303,6 +1313,7 @@ fn parse_carousel_item(node: &Value) -> Option<BrowseItem> {
         is_video: song.is_video,
         is_upload: song.is_upload,
         explicit: song.explicit,
+        play: None,
     })
 }
 
@@ -1341,6 +1352,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
             is_video: is_video_row(node),
             is_upload: is_upload_row(node),
             explicit: is_explicit(node),
+            play: None,
         });
     }
     // Playlist via watchPlaylistEndpoint (some carousels expose the raw playlistId).
@@ -1362,6 +1374,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
             is_video: false,
             is_upload: false,
             explicit: is_explicit(node),
+            play: card_play(node).or_else(|| nav.and_then(WatchEndpoint::within)),
         });
     }
     // Otherwise a browseEndpoint → playlist/album/artist by browseId prefix.
@@ -1391,7 +1404,13 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
         is_video: false,
         is_upload: false,
         explicit: is_explicit(node),
+        play: (kind == "playlist").then(|| card_play(node)).flatten(),
     })
+}
+/// A card's own play button (`thumbnailOverlay`): the endpoint YouTube plays it with.
+/// A card's own play button (): the endpoint YouTube plays it with.
+fn card_play(node: &Value) -> Option<WatchEndpoint> {
+    node.get("thumbnailOverlay").and_then(WatchEndpoint::within)
 }
 
 /// Classify a browseId: albums are `MPRE…`, artist/user channels are `UC…`, everything else
@@ -2828,6 +2847,83 @@ mod tests {
         let root = json!({ "musicPlaylistShelfRenderer": { "contents": [] } });
         assert!(sort_menu(&root).is_none());
         assert!(parse_playlist(&root).sort_menu.is_none());
+    }
+
+    // A mix on Home (or in Mixed for you) is played the way its own play button plays it: the
+    // button's endpoint, `params` and all, kept with the card. Shape trimmed from signed-in Home
+    // cards (My Supermix opens as a page and plays from a `watchPlaylistEndpoint`).
+    #[test]
+    fn a_mix_card_keeps_its_play_button() {
+        let card = |title: &str, browse: &str, play: Value| {
+            json!({ "musicTwoRowItemRenderer": {
+                "title": { "runs": [{ "text": title }] },
+                "subtitle": { "runs": [{ "text": "Mix" }] },
+                "navigationEndpoint": { "browseEndpoint": { "browseId": browse } },
+                "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": {
+                    "musicPlayButtonRenderer": { "playNavigationEndpoint": play } } } }
+            } })
+        };
+        let root = json!({ "contents": { "sectionListRenderer": { "contents": [
+            { "musicCarouselShelfRenderer": {
+                "header": { "musicCarouselShelfBasicHeaderRenderer": {
+                    "title": { "runs": [{ "text": "Mixed for you" }] },
+                    "moreContentButton": { "buttonRenderer": { "navigationEndpoint": {
+                        "browseEndpoint": { "browseId": "FEmusic_mixed_for_you" } } } }
+                } },
+                "contents": [
+                    card("My Supermix", "VLRDTMAK5uy_super", json!({ "watchPlaylistEndpoint": {
+                        "playlistId": "RDTMAK5uy_super", "params": "wAEB8gECKAE%3D" } })),
+                    card("My Mix 1", "VLRDTMAK5uy_mix1", json!({ "watchEndpoint": {
+                        "videoId": "seedvideo01", "playlistId": "RDTMAK5uy_mix1", "params": "wAEB" } })),
+                    // A plain playlist card: its button plays the list, kept the same way.
+                    card("Hits", "VLPLhits", json!({ "watchPlaylistEndpoint": { "playlistId": "PLhits" } })),
+                ]
+            } }
+        ] } } });
+        let home = parse_home(&root);
+        let items = &home.sections[0].items;
+        let plays: Vec<_> = items
+            .iter()
+            .map(|i| (i.kind, i.id.as_str(), i.play.clone()))
+            .collect();
+        assert_eq!(
+            plays,
+            [
+                (
+                    "playlist",
+                    "VLRDTMAK5uy_super",
+                    Some(WatchEndpoint {
+                        playlist_id: Some("RDTMAK5uy_super".into()),
+                        params: Some("wAEB8gECKAE%3D".into()),
+                        ..Default::default()
+                    })
+                ),
+                (
+                    "playlist",
+                    "VLRDTMAK5uy_mix1",
+                    Some(WatchEndpoint {
+                        video_id: Some("seedvideo01".into()),
+                        playlist_id: Some("RDTMAK5uy_mix1".into()),
+                        params: Some("wAEB".into()),
+                        ..Default::default()
+                    })
+                ),
+                (
+                    "playlist",
+                    "VLPLhits",
+                    Some(WatchEndpoint {
+                        playlist_id: Some("PLhits".into()),
+                        ..Default::default()
+                    })
+                ),
+            ]
+        );
+        // A card with no play button has nothing kept.
+        let bare = json!({ "musicTwoRowItemRenderer": {
+            "title": { "runs": [{ "text": "Bare" }] },
+            "navigationEndpoint": { "browseEndpoint": { "browseId": "VLPLbare" } }
+        } });
+        assert_eq!(parse_carousel_item(&bare).unwrap().play, None);
     }
 
     // A podcast show page (`MPSP…`) lists its episodes as multi-row items, not track rows; reading

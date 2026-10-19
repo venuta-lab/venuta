@@ -151,6 +151,7 @@ mod tests {
             is_video: false,
             is_upload: false,
             explicit: false,
+            play: None,
         }
     }
 

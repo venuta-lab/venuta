@@ -1089,26 +1089,31 @@ impl InnerTube {
 
     /// The raw `search` / `browse` responses, for callers that read the JSON with their own
     /// parsers (Venuta's catalog reader) and for the live smoke tests. A search sent this way is
-    /// written to the account's search history only when "Signed-in search" is on; off (the
-    /// default), it goes with no account at all.
+    /// written to the account's search history only when the person typed it (`typed`) and
+    /// "Signed-in search" is on. Venuta's own look-ups (a file's song, link matching, imports)
+    /// pass `typed: false` and always go with no account at all, as everything does with the
+    /// switch off (the default).
     pub async fn search_json(
         &self,
         client: &YouTubeClient,
         query: &str,
         params: Option<&str>,
+        typed: bool,
     ) -> Result<serde_json::Value, Error> {
-        self.search_raw(client, query, params, self.signed_search())
+        self.search_raw(client, query, params, typed && self.signed_search())
             .await
     }
 
     /// The next page of a raw search, from the continuation token its last page gave. The query
-    /// and filter go with it, as YouTube Music's own client sends them.
+    /// and filter go with it, as YouTube Music's own client sends them; as the account under the
+    /// same rule as [`InnerTube::search_json`].
     pub async fn search_continuation_json(
         &self,
         client: &YouTubeClient,
         query: &str,
         params: Option<&str>,
         token: &str,
+        typed: bool,
     ) -> Result<serde_json::Value, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -1118,7 +1123,7 @@ impl InnerTube {
             #[serde(skip_serializing_if = "Option::is_none")]
             params: Option<String>,
         }
-        let signed = self.signed_search();
+        let signed = typed && self.signed_search();
         let body = ContinuationBody {
             context: self.context_as(client, signed),
             query: query.to_owned(),
@@ -1783,14 +1788,91 @@ impl InnerTube {
     /// `/player` answer's `videostatsPlaybackUrl`, fetched once with a fresh playback nonce.
     /// That is what puts the song in the account's history and lets its recommendations learn.
     pub async fn report_play(&self, client: &YouTubeClient, video_id: &str) -> Result<(), Error> {
+        let listen = self.listen_tracking(client, video_id).await?;
+        self.report_tracked_play(client, &listen).await
+    }
+
+    /// One listen of a song, ready to be told: the signed-in `/player` answer's tracking
+    /// addresses (the play's and the listening time's) with a fresh playback nonce, which every
+    /// report of this listen shares, as YouTube's own player does. Asked once per listen; nothing
+    /// is sent by asking. Signed out there is no listen to tell.
+    pub async fn listen_tracking(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+    ) -> Result<ListenTracking, Error> {
+        if !self.is_logged_in() {
+            return Err(Error::Other("signed out: no listen to tell".into()));
+        }
         let player = self.player(client, video_id, None, None, None).await?;
-        let url = player
-            .playback_tracking
-            .and_then(|t| t.videostats_playback_url)
-            .and_then(|u| u.base_url)
+        let tracking = player.playback_tracking;
+        let url = |pick: fn(
+            &crate::models::player::PlaybackTracking,
+        ) -> Option<&crate::models::player::BaseUrl>| {
+            tracking
+                .as_ref()
+                .and_then(pick)
+                .and_then(|u| u.base_url.clone())
+                .filter(|u| !u.trim().is_empty())
+        };
+        Ok(ListenTracking {
+            playback_url: url(|t| t.videostats_playback_url.as_ref()),
+            watchtime_url: url(|t| t.videostats_watchtime_url.as_ref()),
+            cpn: crate::transport::generate_cpn(),
+        })
+    }
+
+    /// Tell the account the listen was a play (its history), through the listen's own address.
+    pub async fn report_tracked_play(
+        &self,
+        client: &YouTubeClient,
+        listen: &ListenTracking,
+    ) -> Result<(), Error> {
+        let url = listen
+            .playback_url
+            .as_deref()
             .ok_or_else(|| Error::Other("no playback address to report the play to".into()))?;
-        self.register_playback(client, &url, &crate::transport::generate_cpn(), None)
-            .await
+        self.register_playback(client, url, &listen.cpn, None).await
+    }
+
+    /// Tell the account how much of the listen was heard since the last report.
+    pub async fn report_watchtime(
+        &self,
+        client: &YouTubeClient,
+        listen: &ListenTracking,
+        heard: &crate::transport::Watched,
+    ) -> Result<(), Error> {
+        let url = listen
+            .watchtime_url
+            .as_deref()
+            .ok_or_else(|| Error::Other("no listening-time address to report to".into()))?;
+        self.ping_watchtime(client, url, &listen.cpn, heard).await
+    }
+}
+
+/// One listen of a song as YouTube's player tracks it ([`InnerTube::listen_tracking`]). The
+/// addresses carry the session's own ids, so they never appear in a log line (`Debug` leaves
+/// them out).
+#[derive(Clone)]
+pub struct ListenTracking {
+    playback_url: Option<String>,
+    watchtime_url: Option<String>,
+    cpn: String,
+}
+
+impl ListenTracking {
+    /// The answer gave a listening-time address.
+    pub fn has_watchtime(&self) -> bool {
+        self.watchtime_url.is_some()
+    }
+}
+
+impl std::fmt::Debug for ListenTracking {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListenTracking")
+            .field("playback", &self.playback_url.is_some())
+            .field("watchtime", &self.watchtime_url.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -3131,6 +3213,135 @@ mod report_play {
         );
         assert!(ping.header("cookie").is_some(), "as the account");
     }
+
+    fn tracked_server() -> MockServer {
+        MockServer::start(|req| {
+            if req.path.contains("/youtubei/v1/player") {
+                let host = req.header("host").unwrap_or_default().to_owned();
+                (200, json!({ "playabilityStatus": { "status": "OK" }, "playbackTracking": {
+                    "videostatsPlaybackUrl": {
+                        "baseUrl": format!("http://{host}/api/stats/playback?docid=vid&ns=yt")
+                    },
+                    "videostatsWatchtimeUrl": {
+                        "baseUrl": format!("http://{host}/api/stats/watchtime?docid=vid&ns=yt&len=200")
+                    }
+                } }).to_string())
+            } else {
+                (204, String::new())
+            }
+        })
+    }
+
+    fn signed_in(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn param<'a>(path: &'a str, key: &str) -> Option<&'a str> {
+        path.split_once('?')?
+            .1
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+    }
+
+    // One listen, one player answer: the play and every listening-time report of it go to the
+    // addresses that answer gave, with one playback nonce, as the account.
+    #[tokio::test]
+    async fn a_listen_is_told_through_one_player_answer_with_one_nonce() {
+        let server = tracked_server();
+        let it = signed_in(&server);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        let listen = it.listen_tracking(&client, "vid").await.unwrap();
+        assert!(
+            !format!("{listen:?}").contains("http"),
+            "no address in a log line"
+        );
+        let heard = |segments: Vec<(u64, u64)>, at_ms| crate::transport::Watched {
+            segments,
+            at_ms,
+            length_ms: 200_000,
+            playing: true,
+        };
+        it.report_watchtime(&client, &listen, &heard(vec![(0, 10_000)], 10_000))
+            .await
+            .unwrap();
+        it.report_tracked_play(&client, &listen).await.unwrap();
+        it.report_watchtime(&client, &listen, &heard(vec![(10_000, 50_000)], 50_000))
+            .await
+            .unwrap();
+        let seen = server.requests();
+        let paths: Vec<&str> = seen.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            seen.len(),
+            4,
+            "one player answer for the whole listen: {paths:?}"
+        );
+        assert!(paths[0].contains("/youtubei/v1/player"));
+        assert!(paths[1].starts_with("/api/stats/watchtime?docid=vid"));
+        assert!(paths[2].starts_with("/api/stats/playback?docid=vid"));
+        assert!(paths[3].starts_with("/api/stats/watchtime?docid=vid"));
+        let cpn = param(paths[1], "cpn").unwrap();
+        assert_eq!(cpn.len(), 16);
+        assert!(paths[1..].iter().all(|p| param(p, "cpn") == Some(cpn)));
+        for (p, st, et) in [(paths[1], "0", "10"), (paths[3], "10", "50")] {
+            assert_eq!(param(p, "st"), Some(st), "{p}");
+            assert_eq!(param(p, "et"), Some(et), "{p}");
+            assert_eq!(param(p, "cmt"), Some(et), "{p}");
+            assert_eq!(param(p, "len"), Some("200"), "{p}");
+            assert_eq!(param(p, "state"), Some("playing"), "{p}");
+            assert_eq!(param(p, "ver"), Some("2"), "{p}");
+            assert_eq!(param(p, "c"), Some("WEB_REMIX"), "{p}");
+        }
+        assert!(
+            seen.iter().all(|r| r.header("cookie").is_some()),
+            "as the account"
+        );
+    }
+
+    // A player answer without a listening-time address: the listen still has its play, and a
+    // report has nowhere to go (an error, nothing sent).
+    #[tokio::test]
+    async fn no_watchtime_address_no_report() {
+        let server = MockServer::start(|req| {
+            if req.path.contains("/youtubei/v1/player") {
+                let host = req.header("host").unwrap_or_default().to_owned();
+                (200, json!({ "playabilityStatus": { "status": "OK" }, "playbackTracking": {
+                    "videostatsPlaybackUrl": { "baseUrl": format!("http://{host}/api/stats/playback?docid=vid") }
+                } }).to_string())
+            } else {
+                (204, String::new())
+            }
+        });
+        let it = signed_in(&server);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        let listen = it.listen_tracking(&client, "vid").await.unwrap();
+        let heard = crate::transport::Watched {
+            segments: vec![(0, 10_000)],
+            at_ms: 10_000,
+            length_ms: 0,
+            playing: true,
+        };
+        assert!(it.report_watchtime(&client, &listen, &heard).await.is_err());
+        it.report_tracked_play(&client, &listen).await.unwrap();
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    // Signed out there is no listen to tell: the player is never asked for one.
+    #[tokio::test]
+    async fn signed_out_no_listen() {
+        let server = tracked_server();
+        let mut it = InnerTube::new(Session::default(), None).unwrap();
+        it.set_base_url(&server.base_url);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        assert!(it.listen_tracking(&client, "vid").await.is_err());
+        assert!(server.requests().is_empty());
+    }
 }
 
 // The account's choices: recommendations as the account, or YouTube's general ones; searches
@@ -3200,8 +3411,8 @@ mod choices {
     async fn searches_stay_anonymous_until_signed_in_search_is_on() {
         let server = MockServer::start(|_| (200, "{}".to_owned()));
         let it = signed_in(&server);
-        it.search_json(&web(), "road", None).await.unwrap();
-        it.search_continuation_json(&web(), "road", None, "more")
+        it.search_json(&web(), "road", None, true).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", true)
             .await
             .unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
@@ -3210,13 +3421,32 @@ mod choices {
         assert!(sent.iter().all(|r| !as_account(r)), "anonymous by default");
 
         it.set_signed_search(true);
-        it.search_json(&web(), "road", None).await.unwrap();
-        it.search_continuation_json(&web(), "road", None, "more")
+        it.search_json(&web(), "road", None, true).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", true)
             .await
             .unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
         let sent = server.requests();
         assert!(sent[3..].iter().all(as_account));
+    }
+
+    // Venuta's own look-ups (a file's song for its radio, link matching, More by, find online,
+    // imports) are searches nobody typed: they never go as the account, Signed-in search or not.
+    #[tokio::test]
+    async fn venutas_own_look_ups_never_go_as_the_account() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = signed_in(&server);
+        it.set_signed_search(true);
+        it.search_json(&web(), "road", None, false).await.unwrap();
+        it.search_json(&web(), "road", Some("EgWKAQIIAWoMEA4QChADEAQQCRAF"), false)
+            .await
+            .unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", false)
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(|r| !as_account(r)), "{sent:?}");
     }
 
     #[tokio::test]
@@ -3226,7 +3456,7 @@ mod choices {
         it.set_base_url(&server.base_url);
         it.set_signed_search(true);
         it.home(&web(), None).await.unwrap();
-        it.search_json(&web(), "road", None).await.unwrap();
+        it.search_json(&web(), "road", None, true).await.unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
         assert!(server.requests().iter().all(|r| !as_account(r)));
     }

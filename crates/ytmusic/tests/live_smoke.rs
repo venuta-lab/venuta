@@ -774,6 +774,7 @@ async fn song_rows_carry_library_tokens() {
             client,
             "daft punk",
             Some("EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"),
+            false,
         )
         .await;
     let search = it

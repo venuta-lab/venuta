@@ -113,8 +113,10 @@ export type OnlineSearch = OnlineSearchState & {
 }
 
 /** The online search for `query` (asked a moment after typing stops, or at once when
- *  `immediate`: words that were searched for, not typed). Keeps prior hits while loading. */
-export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', immediate = false): OnlineSearch {
+ *  `immediate`: words that were searched for, not typed). Keeps prior hits while loading.
+ *  `typed`: the person's own words in the Search box, the one search that may go as the
+ *  YouTube Music account (with Signed-in search on); every other box is Venuta's look-up. */
+export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', immediate = false, typed = false): OnlineSearch {
   const connected = useNetworkOnline()
   const localOnly = useLocalOnly()
   const [state, setState] = useState<OnlineSearchState>({
@@ -140,7 +142,7 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
     setState((s) => ({ ...s, query: q, loading: true, error: '', offline: false, loadingMore: false, moreError: '' }))
     let live = true
     const t = window.setTimeout(() => {
-      onlineSearch(q, searchBox)
+      onlineSearch(q, searchBox, typed)
         // Ranked once here, for every box that searches through this hook.
         .then(
           (results) =>
@@ -159,7 +161,7 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
       live = false
       window.clearTimeout(t)
     }
-  }, [query, connected, searchBox, immediate, localOnly])
+  }, [query, connected, searchBox, immediate, localOnly, typed])
 
   // More songs for the words shown: the next page joins the songs already there, and the whole
   // list is ranked again (so Best and Covers split as one list, and a recording found twice
@@ -169,7 +171,7 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
     const q = state.resultsFor
     if (!cursor || !q || state.loadingMore || state.loading) return
     setState((s) => ({ ...s, loadingMore: true, moreError: '' }))
-    onlineSearchTracks(q, cursor, searchBox)
+    onlineSearchTracks(q, cursor, searchBox, typed)
       .then((page) =>
         setState((s) => {
           // Other words by now, or already given: this page is for nothing shown.
@@ -188,7 +190,7 @@ export function useOnlineSearch(query: string, searchBox: SearchBox = 'music', i
           s.resultsFor !== q ? s : { ...s, loadingMore: false, moreError: isSearchCancelled(e) ? '' : say(e) },
         ),
       )
-  }, [cursor, searchBox, state.resultsFor, state.loadingMore, state.loading])
+  }, [cursor, searchBox, typed, state.resultsFor, state.loadingMore, state.loading])
 
   return { ...state, canLoadMore: !!cursor && !state.loading, loadMore }
 }

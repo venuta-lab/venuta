@@ -89,11 +89,18 @@ pub async fn ytm_set_choices(
     .await
 }
 
-/// Count plays is on for the account in use. Off whenever it can't be told which account that
-/// is: nothing is sent on a guess. Asks who is signed in only the first time (then kept).
-pub fn counts_plays(catalog: &dyn MediaAccess) -> bool {
-    crate::ytm_links::account_key(catalog)
-        .is_ok_and(|k| engine::settings::load().ytm_choices_for(&k).count_plays)
+/// The account in use (`email#channel`) and its choices; None whenever it can't be told which
+/// account that is, so nothing is sent on a guess. Asks who is signed in only the first time
+/// (then kept).
+pub fn choices_in_use(catalog: &dyn MediaAccess) -> Option<(String, YtmChoices)> {
+    let key = crate::ytm_links::account_key(catalog).ok()?;
+    let choices = engine::settings::load().ytm_choices_for(&key);
+    Some((key, choices))
+}
+
+/// Likes and dislikes is on for the account in use (off when it can't be told which that is).
+pub fn rates_on_account(catalog: &dyn MediaAccess) -> bool {
+    choices_in_use(catalog).is_some_and(|(_, c)| c.likes)
 }
 
 /// The artists the catalog leaves out of what it picks: the ones you blocked while "Hide

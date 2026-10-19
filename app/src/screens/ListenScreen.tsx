@@ -9,7 +9,7 @@ import { notify } from '../lib/notify'
 import { useLikes } from '../lib/likes'
 import { onlineProblem } from '../lib/online'
 import { useCatalog } from '../lib/catalog'
-import { current, isOnline, play, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
+import { current, isOnline, queueKey, readFrom, songItemOf, toItem, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
 import { playWithRadio } from '../lib/radio'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
@@ -452,7 +452,6 @@ function Listen(props: Props) {
   const suggest = useCallback(
     (text: string): Suggestion[] => {
       const r = search(lib, text)
-      const from = { kind: 'search' as const, ref: text, label: `Search: ${text}` }
       return [
         ...r.artists.slice(0, 1).map((a) => ({
           key: `artist:${a.key}`,
@@ -475,7 +474,7 @@ function Listen(props: Props) {
           where: 'library' as const,
           onPick: () => nav.openAlbum(a.dir),
         })),
-        ...r.tracks.slice(0, 2).map((t, i) => ({
+        ...r.tracks.slice(0, 2).map((t) => ({
           key: `song:${t.path}`,
           kind: 'Song' as const,
           label: t.title,
@@ -483,7 +482,9 @@ function Listen(props: Props) {
           value: t.title,
           art: <LocalCover dir={t.dir} />,
           where: 'library' as const,
-          onPick: () => void play(root, r.tracks.slice(0, 2), i, from),
+          // Your song plays as YouTube Music plays a song found: it, then its radio (Autoplay on,
+          // and only when it is the same song there).
+          onPick: () => void playWithRadio(root, toItem(t)),
         })),
       ]
     },
