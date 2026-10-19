@@ -72,3 +72,12 @@ export function standWords(there: number, onlyHere: number): string {
     ? `${line} YouTube Music holds up to ${n(YTM_PLAYLIST_LIMIT)} songs in a playlist; past that, songs stay here only.`
     : line
 }
+
+/** Checking matches: files whose song there changes (another song, an upload, or kept here only)
+ *  take the song chosen before out of the playlist on YouTube Music. Said before it happens. */
+export function takenOutThere(files: number): string {
+  if (!files) return ''
+  return files === 1
+    ? 'The song chosen before for 1 file is taken out of the playlist on YouTube Music.'
+    : `The songs chosen before for ${files.toLocaleString('en-IN')} files are taken out of the playlist on YouTube Music.`
+}

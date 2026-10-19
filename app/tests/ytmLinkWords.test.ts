@@ -3,7 +3,7 @@
 // is due (on open at most once a minute, otherwise every half hour at most).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { syncWords, pauseWords, due, standWords } from '../src/lib/ytmLinkWords.ts'
+import { syncWords, pauseWords, due, standWords, takenOutThere } from '../src/lib/ytmLinkWords.ts'
 
 const note = (n: Partial<Record<'pulled' | 'dropped' | 'pushed' | 'removed' | 'moved', number>>) => ({
   at: 0,
@@ -60,4 +60,10 @@ test('how a linked playlist stands, and the 5,000-song limit there', () => {
   assert.equal(standWords(1, 0), 'The 1 song there.')
   assert.equal(standWords(0, 2), 'None of its 2 songs there yet; 2 only here.')
   assert.match(standWords(4950, 10), /holds up to 5,000 songs/)
+})
+
+test('changing a file matched before says its song goes from the playlist there', () => {
+  assert.equal(takenOutThere(0), '')
+  assert.equal(takenOutThere(1), 'The song chosen before for 1 file is taken out of the playlist on YouTube Music.')
+  assert.equal(takenOutThere(3), 'The songs chosen before for 3 files are taken out of the playlist on YouTube Music.')
 })

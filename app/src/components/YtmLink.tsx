@@ -6,7 +6,7 @@ import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
 import { useYtmPart, useYtmStatus, ytmLibraryChanged } from '../lib/ytmLibrary'
-import { pauseWords, standWords, syncWords } from '../lib/ytmLinkWords'
+import { pauseWords, standWords, syncWords, takenOutThere } from '../lib/ytmLinkWords'
 import { clearPause, reloadLink, syncLink, useYtmLinkState } from '../lib/ytmLinks'
 import { confirmAsk } from './Confirm'
 import { RemoteArt } from './RemoteArt'
@@ -178,6 +178,8 @@ function YtmLinkDialog(props: { root: string; name: string; mode: Mode; onClose:
     for (const v of Object.values(choice)) c[v]++
     return c
   }, [choice])
+  // Files matched before whose song there changes now: that song leaves the playlist there.
+  const replaced = (rows ?? []).filter((r) => r.current_id && choice[r.key] !== 'current').length
 
   const go = async () => {
     if (!rows) return
@@ -234,7 +236,7 @@ function YtmLinkDialog(props: { root: string; name: string; mode: Mode; onClose:
         </h2>
         <p className="mt-1.5 text-[13px] leading-relaxed text-ink/60">
           {mode === 'link'
-            ? 'From now on, songs you add or take out here change there too, and changes made there come here. Your files never leave your library.'
+            ? 'From now on, songs you add or take out here change there too, and changes made there come here. Your files stay in your library; only the ones you choose to upload are sent.'
             : mode === 'review'
               ? 'Choose, file by file, what each one is on YouTube Music.'
               : 'Each file of yours, and the song it is on YouTube Music. Change one that’s wrong; a file you keep here only is taken out there.'}
@@ -308,6 +310,7 @@ function YtmLinkDialog(props: { root: string; name: string; mode: Mode; onClose:
                 ))}
               </ul>
               {counts.upload > 0 && <p className="mt-2 text-[12px] leading-relaxed text-ink/50">Uploads are yours alone on YouTube Music; it takes a while before each one shows up and joins the playlist there.</p>}
+              {replaced > 0 && <p className="mt-2 text-[12px] leading-relaxed text-ink/65">{takenOutThere(replaced)}</p>}
             </>
           )}
         </div>
