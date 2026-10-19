@@ -14,8 +14,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, PhysicalPosition,
-    WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 #[derive(Serialize)]
@@ -94,33 +94,112 @@ impl Kind {
             Kind::Overlay => (360.0, 130.0),
         }
     }
-    /// Where it goes the first time (or when its place is off every screen): the desktop lyrics
-    /// along the bottom of the screen, the big screen as a window in its middle.
-    fn first_place(self, m: &Monitor) -> (f64, f64, f64, f64) {
-        let area = m.work_area();
-        let s = m.scale_factor();
-        let (ax, ay) = (area.position.x as f64 / s, area.position.y as f64 / s);
-        let (aw, ah) = (area.size.width as f64 / s, area.size.height as f64 / s);
+    /// Where it goes the first time (or when its place is off every screen), in that screen's
+    /// own pixels: the desktop lyrics along the bottom, the big screen as a window in its middle.
+    fn first_place(self, s: &Screen) -> Px {
+        let px = |logical: f64| (logical * s.scale).round() as i32;
         match self {
             Kind::Overlay => {
                 // The lines, and the band above them for the bar and the lock.
-                let (w, h) = (920.0_f64.min(aw - 40.0), 200.0);
-                (ax + (aw - w) / 2.0, ay + ah - h - 40.0, w, h)
+                let (w, h) = (px(920.0).min(s.w - px(40.0)), px(200.0));
+                (s.x + (s.w - w) / 2, s.y + s.h - h - px(40.0), w, h)
             }
             Kind::Stage => {
-                let (w, h) = ((aw * 0.6).max(640.0), (ah * 0.6).max(360.0));
-                (ax + (aw - w) / 2.0, ay + (ah - h) / 2.0, w, h)
+                let (w, h) = ((s.w * 6 / 10).max(px(640.0)), (s.h * 6 / 10).max(px(360.0)));
+                (s.x + (s.w - w) / 2, s.y + (s.h - h) / 2, w, h)
             }
         }
     }
+}
+
+/// A window's place in screen pixels (x, y, width, height), the same across every screen
+/// whatever each one's scale: the one way a place means the same thing everywhere.
+type Px = (i32, i32, i32, i32);
+
+/// A screen, as placing needs it: its work area (screen pixels, without the taskbar) and scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Screen {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    scale: f64,
+}
+
+impl Screen {
+    fn of(m: &Monitor) -> Screen {
+        let a = m.work_area();
+        Screen {
+            x: a.position.x,
+            y: a.position.y,
+            w: a.size.width as i32,
+            h: a.size.height as i32,
+            scale: m.scale_factor(),
+        }
+    }
+    /// How much of `p` is on this screen (pixels across, pixels down).
+    fn overlap(&self, p: Px) -> (i32, i32) {
+        let across = (p.0 + p.2).min(self.x + self.w) - p.0.max(self.x);
+        let down = (p.1 + p.3).min(self.y + self.h) - p.1.max(self.y);
+        (across.max(0), down.max(0))
+    }
+}
+
+/// Enough of a window on a screen to see it and take hold of it.
+const ENOUGH: (i32, i32) = (120, 48);
+
+/// Where a lyrics window goes: where it was kept, if enough of it is on a screen connected now
+/// (brought fully onto that screen, and no bigger than it); else its first place on `target`, the
+/// screen the player is on. None with no screens known.
+fn place_px(kind: Kind, screens: &[Screen], kept: Option<Px>, target: usize) -> Option<Px> {
+    let on = kept.and_then(|p| {
+        screens
+            .iter()
+            .map(|s| (s, s.overlap(p)))
+            .filter(|(_, (a, d))| *a >= ENOUGH.0 && *d >= ENOUGH.1)
+            .max_by_key(|(_, (a, d))| i64::from(*a) * i64::from(*d))
+            .map(|(s, _)| (s, p))
+    });
+    if let Some((s, (x, y, w, h))) = on {
+        let (w, h) = (w.min(s.w), h.min(s.h));
+        let x = x.clamp(s.x, s.x + s.w - w);
+        let y = y.clamp(s.y, s.y + s.h - h);
+        return Some((x, y, w, h));
+    }
+    let s = screens.get(target).or(screens.first())?;
+    Some(kind.first_place(s))
+}
+
+/// The screens connected now, and which of them the player is on.
+fn screens_now(app: &AppHandle) -> (Vec<Screen>, usize) {
+    let (all, _, current) = screens(app);
+    let at = current
+        .and_then(|c| all.iter().position(|m| m.position() == c.position()))
+        .unwrap_or(0);
+    (all.iter().map(Screen::of).collect(), at)
+}
+
+/// Put a window at `p`, in screen pixels. Moving onto a screen of another scale makes Windows
+/// resize it for that screen, so the size is set after the move, and the place once more after.
+fn put(w: &WebviewWindow, (x, y, width, height): Px) {
+    let _ = w.set_position(PhysicalPosition::new(x, y));
+    let _ = w.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
+    let _ = w.set_position(PhysicalPosition::new(x, y));
+}
+
+/// Where a shown window is now, in screen pixels.
+fn where_now(w: &WebviewWindow) -> Option<Px> {
+    let p = w.outer_position().ok()?;
+    let s = w.outer_size().ok()?;
+    Some((p.x, p.y, s.width as i32, s.height as i32))
 }
 
 /// How a lyrics window is placed and behaves (the page keeps these per window).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Place {
-    /// Where it was as a window, logical pixels (x, y, width, height).
-    pub bounds: Option<(f64, f64, f64, f64)>,
+    /// Where it was as a window, in screen pixels (x, y, width, height).
+    pub px: Option<Px>,
     /// Filling a screen.
     pub full: bool,
     /// Over every other window.
@@ -186,7 +265,7 @@ pub async fn lyrics_window(
         return Ok(());
     }
     let mut place = place.unwrap_or(Place {
-        bounds: None,
+        px: None,
         full: kind == Kind::Stage,
         on_top: kind == Kind::Overlay,
         locked: kind == Kind::Overlay,
@@ -201,6 +280,16 @@ pub async fn lyrics_window(
     }
     if let Some(w) = app.get_webview_window(kind.label()) {
         apply(&app, kind, &w, &place);
+        // Still on a screen? (One may have gone, or changed its scale, since.)
+        if !place.full {
+            let (all, at) = screens_now(&app);
+            let now = where_now(&w);
+            if let Some(p) = place_px(kind, &all, now, at)
+                && Some(p) != now
+            {
+                put(&w, p);
+            }
+        }
         let _ = w.show();
         bare(kind, &w);
         if !place.locked {
@@ -234,14 +323,16 @@ pub async fn lyrics_window(
     .build()
     .map_err(|e| e.to_string())?;
     crate::app_icon::apply(&app);
-    // Its place as a window: where it was, if that's still on a screen; else the first place.
-    let bounds = place
-        .bounds
-        .filter(|b| on_screen(&all, *b))
-        .or_else(|| target.as_ref().map(|m| kind.first_place(m)));
-    if let Some((x, y, width, height)) = bounds {
-        let _ = w.set_position(LogicalPosition::new(x, y));
-        let _ = w.set_size(LogicalSize::new(width, height));
+    // Its place as a window, in screen pixels: where it was, if that's still on a screen; else
+    // its first place on the screen the player is on.
+    let (screens, at) = screens_now(&app);
+    let at = target
+        .as_ref()
+        .and_then(|t| all.iter().position(|m| m.position() == t.position()))
+        .unwrap_or(at);
+    let spot = place_px(kind, &screens, place.px, at);
+    if let Some(p) = spot {
+        put(&w, p);
     }
     if place.full {
         // Placed in the screen's own pixels (screens can scale differently), then made full.
@@ -253,6 +344,13 @@ pub async fn lyrics_window(
     }
     lock(&app, kind, &w, place.locked);
     let _ = w.show();
+    // A window hidden until now may take its new screen's scale only as it shows: placed again.
+    if !place.full
+        && let Some(p) = spot
+        && where_now(&w) != Some(p)
+    {
+        put(&w, p);
+    }
     bare(kind, &w);
     if kind == Kind::Stage {
         let _ = w.set_focus();
@@ -336,23 +434,22 @@ fn bare(kind: Kind, w: &WebviewWindow) {
 /// A shown window to `place`'s ways (full screen, on top, locked), without moving it otherwise.
 fn apply(app: &AppHandle, kind: Kind, w: &WebviewWindow, place: &Place) {
     let _ = w.set_always_on_top(place.on_top);
-    set_full(w, place.full, place.bounds);
+    set_full(w, place.full, place.px);
     lock(app, kind, w, place.locked);
 }
 
-fn set_full(w: &WebviewWindow, full: bool, bounds: Option<(f64, f64, f64, f64)>) {
+fn set_full(w: &WebviewWindow, full: bool, px: Option<Px>) {
     if w.is_fullscreen().unwrap_or(false) == full {
         return;
     }
     let _ = w.set_fullscreen(full);
     // Back to a window: where it was as one.
-    if !full && let Some((x, y, width, height)) = bounds {
-        let _ = w.set_position(LogicalPosition::new(x, y));
-        let _ = w.set_size(LogicalSize::new(width, height));
+    if !full && let Some(p) = px {
+        put(w, p);
     }
 }
 
-/// Change a shown lyrics window: full screen or not (back to `bounds` as a window), on top or
+/// Change a shown lyrics window: full screen or not (back to `px` as a window), on top or
 /// not, locked or not. What isn't given stays.
 #[tauri::command]
 pub fn lyrics_window_set(
@@ -360,7 +457,7 @@ pub fn lyrics_window_set(
     full: Option<bool>,
     on_top: Option<bool>,
     locked: Option<bool>,
-    bounds: Option<(f64, f64, f64, f64)>,
+    px: Option<Px>,
     app: AppHandle,
 ) -> Result<(), String> {
     let kind = Kind::of(&kind)?;
@@ -368,7 +465,7 @@ pub fn lyrics_window_set(
         return Ok(());
     };
     if let Some(full) = full {
-        set_full(&w, full, bounds);
+        set_full(&w, full, px);
     }
     if let Some(on_top) = on_top {
         w.set_always_on_top(on_top).map_err(|e| e.to_string())?;
@@ -434,7 +531,7 @@ pub async fn lyrics_stage(
     app: AppHandle,
 ) -> Result<(), String> {
     let place = Place {
-        bounds: None,
+        px: None,
         full: true,
         on_top: false,
         locked: false,
@@ -449,17 +546,17 @@ pub fn desktop_lyrics_open(app: AppHandle) -> bool {
     app.get_webview_window("overlay").is_some()
 }
 
-/// Show the desktop lyrics where they were (`bounds`: x, y, width, height in logical pixels),
+/// Show the desktop lyrics where they were (`px`: x, y, width, height in screen pixels),
 /// or along the bottom of the screen Venuta is on; or close them.
 #[tauri::command]
 pub async fn desktop_lyrics(
     open: bool,
-    bounds: Option<(f64, f64, f64, f64)>,
+    px: Option<Px>,
     locked: bool,
     app: AppHandle,
 ) -> Result<(), String> {
     let place = Place {
-        bounds,
+        px,
         full: false,
         on_top: true,
         locked,
@@ -482,18 +579,6 @@ pub fn ask_main(app: &AppHandle, what: &str) {
 }
 
 // --- Locked windows and their lock button ----------------------------------------------------
-
-/// A saved place is still usable when its middle is on one of the screens (a monitor may have
-/// gone since).
-fn on_screen(all: &[Monitor], (x, y, w, h): (f64, f64, f64, f64)) -> bool {
-    all.iter().any(|m| {
-        let s = m.scale_factor();
-        let (mx, my) = (m.position().x as f64 / s, m.position().y as f64 / s);
-        let (mw, mh) = (m.size().width as f64 / s, m.size().height as f64 / s);
-        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-        cx >= mx && cx <= mx + mw && cy >= my && cy <= my + mh
-    })
-}
 
 /// A locked window: where its lock button is, and what the pointer was last doing.
 #[derive(Default)]
@@ -610,6 +695,101 @@ fn pointer_on(
             lx >= bx && lx < bx + bw && ly >= by && ly < by + bh
         });
     (inside, over)
+}
+
+#[cfg(test)]
+mod placing {
+    use super::{Kind, Screen, place_px};
+
+    // A 4K primary at 150 %, and a 1080p screen to its right at 100 %.
+    const BIG: Screen = Screen {
+        x: 0,
+        y: 0,
+        w: 3840,
+        h: 2100,
+        scale: 1.5,
+    };
+    const SIDE: Screen = Screen {
+        x: 3840,
+        y: 0,
+        w: 1920,
+        h: 1040,
+        scale: 1.0,
+    };
+    // A 1080p screen to the left of the primary, at 125 % (negative coordinates).
+    const LEFT: Screen = Screen {
+        x: -1920,
+        y: 0,
+        w: 1920,
+        h: 1040,
+        scale: 1.25,
+    };
+
+    fn inside(p: (i32, i32, i32, i32), s: &Screen) -> bool {
+        p.0 >= s.x && p.1 >= s.y && p.0 + p.2 <= s.x + s.w && p.1 + p.3 <= s.y + s.h
+    }
+
+    #[test]
+    fn the_first_place_is_on_the_players_screen_in_its_own_pixels() {
+        for (i, s) in [BIG, SIDE, LEFT].iter().enumerate() {
+            let p = place_px(Kind::Overlay, &[BIG, SIDE, LEFT], None, i).unwrap();
+            assert!(inside(p, s), "{p:?} on screen {i}");
+            // 920 x 200 at that screen's scale, along its bottom, in the middle.
+            assert_eq!(p.2, (920.0 * s.scale).round() as i32);
+            assert_eq!(p.3, (200.0 * s.scale).round() as i32);
+            assert_eq!(p.0 - s.x, s.w - p.0 + s.x - p.2, "centred");
+        }
+    }
+
+    #[test]
+    fn a_kept_place_on_a_connected_screen_is_used_as_it_was() {
+        let kept = (4000, 700, 900, 200);
+        assert_eq!(
+            place_px(Kind::Overlay, &[BIG, SIDE], Some(kept), 0),
+            Some(kept)
+        );
+        let left = (-1800, 300, 1000, 240);
+        assert_eq!(
+            place_px(Kind::Overlay, &[BIG, LEFT], Some(left), 0),
+            Some(left)
+        );
+    }
+
+    #[test]
+    fn a_place_on_a_screen_no_longer_there_moves_to_the_players_screen() {
+        // Kept on the side screen, which is unplugged now.
+        let p = place_px(Kind::Overlay, &[BIG], Some((4000, 700, 900, 200)), 0).unwrap();
+        assert!(inside(p, &BIG), "{p:?}");
+        assert_eq!(p.2, 1380, "sized for the screen it's on now");
+    }
+
+    #[test]
+    fn a_place_partly_off_its_screen_is_brought_fully_onto_it() {
+        // Mostly below the side screen's bottom, and wider than it.
+        let p = place_px(Kind::Overlay, &[BIG, SIDE], Some((4500, 980, 2400, 200)), 0).unwrap();
+        assert!(inside(p, &SIDE), "{p:?}");
+        assert_eq!(p.2, SIDE.w, "no wider than the screen");
+        // Across the seam between two screens: onto the one holding most of it.
+        let p = place_px(Kind::Overlay, &[BIG, SIDE], Some((3700, 600, 900, 200)), 0).unwrap();
+        assert!(inside(p, &SIDE), "{p:?}");
+    }
+
+    #[test]
+    fn a_sliver_on_a_screen_is_not_enough_to_keep() {
+        // Only 40 pixels of it on any screen: too little to see or grab.
+        let p = place_px(Kind::Overlay, &[BIG], Some((3800, 500, 900, 200)), 0).unwrap();
+        assert!(inside(p, &BIG));
+        assert_ne!(p.0, 3800);
+    }
+
+    #[test]
+    fn no_screens_known_means_no_place_to_set() {
+        assert_eq!(place_px(Kind::Overlay, &[], None, 0), None);
+        assert_eq!(
+            place_px(Kind::Overlay, &[], Some((1, 2, 300, 100)), 0),
+            None
+        );
+    }
 }
 
 #[cfg(test)]

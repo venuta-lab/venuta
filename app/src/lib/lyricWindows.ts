@@ -14,7 +14,7 @@ import { resolvedTheme, themeInfo, usePrefs, venutaPrefs } from './prefs'
 import { STYLES, type Style } from './themes'
 
 export type { LyricWindow } from './lyricLook'
-export { BACKGROUNDS, WINDOW_DEFAULTS, isBackground, isTheme, readWindow, type Bounds, type LyricBackground, type LyricTheme, type LyricWindowSettings } from './lyricWindowSettings'
+export { BACKGROUNDS, WINDOW_DEFAULTS, isBackground, isTheme, readWindow, type Px, type LyricBackground, type LyricTheme, type LyricWindowSettings } from './lyricWindowSettings'
 
 export interface Monitor {
   name: string
@@ -101,7 +101,7 @@ const SHOWN = 'venuta:lyrics-window-shown'
 const told = <T,>(p: Promise<T>) => p.finally(() => window.dispatchEvent(new Event(SHOWN)))
 
 // The big screen fills a screen; the desktop lyrics are a window of their own.
-const placeOf = (w: LyricWindow, s: LyricWindowSettings) => ({ bounds: s.bounds, full: w === 'stage', onTop: s.onTop, locked: s.locked, monitor: s.monitor })
+const placeOf = (w: LyricWindow, s: LyricWindowSettings) => ({ px: s.px, full: w === 'stage', onTop: s.onTop, locked: s.locked, monitor: s.monitor })
 
 /** Show a lyrics window as it was left (or bring it forward). */
 export const openLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: true, place: placeOf(w, current[w]) }))
@@ -118,7 +118,7 @@ export async function setLyricWindow(w: LyricWindow, change: Partial<LyricWindow
     full: null,
     onTop: change.onTop ?? null,
     locked: change.locked ?? null,
-    bounds: null,
+    px: null,
   })
 }
 

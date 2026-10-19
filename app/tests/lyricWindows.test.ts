@@ -15,23 +15,25 @@ test('nothing kept: both windows look like Venuta (its theme and its own scene)'
   assert.equal(WINDOW_DEFAULTS.overlay.theme, 'venuta')
 })
 
-test('the desktop lyrics keep the place and lock they had before', () => {
+test('the desktop lyrics keep the lock they had before; a place kept by each screen\'s own scale starts fresh', () => {
   const kept = from({ 'desktop-lyrics-bounds': '[100,800,900,160]', 'desktop-lyrics-locked': 'false' })
   const o = readWindow('overlay', kept)
-  assert.deepEqual(o.bounds, [100, 800, 900, 160])
+  assert.equal(o.px, null, 'such a place lands somewhere else on a screen of another scale')
   assert.equal(o.locked, false)
-  assert.equal(readWindow('stage', kept).bounds, null, 'not the big screen\'s')
+  assert.equal(readWindow('stage', kept).px, null, 'not the big screen\'s')
+  const old = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ bounds: [5, 6, 700, 200] }) }))
+  assert.equal(old.px, null)
 })
 
 test('a window keeps its own background, theme and place', () => {
   const kept = from({
-    'lyric-window-overlay': JSON.stringify({ background: 'frosted', theme: 'style:neo-tokyo', bounds: [5, 6, 700, 200], locked: true, onTop: false }),
+    'lyric-window-overlay': JSON.stringify({ background: 'frosted', theme: 'style:neo-tokyo', px: [-1900, 6, 1150, 250], locked: true, onTop: false }),
     'lyric-window-stage': JSON.stringify({ background: 'glass', theme: 'pack:my-theme', monitor: 'DELL' }),
   })
   const o = readWindow('overlay', kept)
   assert.equal(o.background, 'frosted')
   assert.equal(o.theme, 'style:neo-tokyo')
-  assert.deepEqual(o.bounds, [5, 6, 700, 200])
+  assert.deepEqual(o.px, [-1900, 6, 1150, 250], 'screen pixels, a screen left of the main one too')
   assert.equal(o.onTop, false)
   const s = readWindow('stage', kept)
   assert.equal(s.background, 'glass')
@@ -52,10 +54,13 @@ test('the big screen is never locked', () => {
 })
 
 test('what is not of its kind is left out, field by field', () => {
-  const o = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ background: 'smoke', theme: 'style:../x', bounds: [1, 2, 'x', 4], onTop: false }) }))
+  const o = readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ background: 'smoke', theme: 'style:../x', px: [1, 2, 'x', 4], onTop: false }) }))
   assert.equal(o.background, 'theme')
   assert.equal(o.theme, 'venuta')
-  assert.equal(o.bounds, null)
+  assert.equal(o.px, null)
+  const px = (p: unknown) => readWindow('overlay', from({ 'lyric-window-overlay': JSON.stringify({ px: p }) })).px
+  assert.equal(px([1.5, 2, 300, 100]), null, 'whole pixels')
+  assert.equal(px([1, 2, 0, 100]), null, 'some size')
   assert.equal(o.onTop, false, 'what was fine is kept')
   assert.deepEqual(readWindow('stage', from({ 'lyric-window-stage': '{not json' })), WINDOW_DEFAULTS.stage)
 })

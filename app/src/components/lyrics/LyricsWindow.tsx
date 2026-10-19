@@ -18,7 +18,7 @@ import {
   type LyricBackground,
   type LyricTheme,
 } from '../../lib/lyricWindows'
-import { seeThrough } from '../../lib/lyricWindowSettings'
+import { seeThrough, type Px } from '../../lib/lyricWindowSettings'
 import { setWindowTheme, usePrefs } from '../../lib/prefs'
 import { Backdrop } from '../Backdrop'
 import { IconBackdrop, IconLock, IconLyricStyle, IconPin, IconUnlock } from '../Icons'
@@ -92,8 +92,9 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
     const keep = () => {
       window.clearTimeout(t)
       t = window.setTimeout(async () => {
-        const [pos, size, scale] = await Promise.all([w.outerPosition(), w.outerSize(), w.scaleFactor()])
-        keepWindowSettings(win, { bounds: [pos.x / scale, pos.y / scale, size.width / scale, size.height / scale] })
+        // Screen pixels as they are: the same spot on every screen, whatever its scale.
+        const [pos, size] = await Promise.all([w.outerPosition(), w.outerSize()])
+        keepWindowSettings(win, { px: [pos.x, pos.y, size.width, size.height].map(Math.round) as Px })
       }, 250)
     }
     const off = [w.onMoved(keep), w.onResized(keep)]
