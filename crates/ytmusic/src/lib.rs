@@ -19,7 +19,7 @@ pub use clients::{
     STREAM_FALLBACK_ORDER, UPLOAD_FALLBACK_ORDER,
 };
 pub use comments_session::{ActionError, CommentsSession, Provenance};
-pub use endpoints::{invite_playlist, invite_token};
+pub use endpoints::{invite_playlist, invite_token, ListenTracking};
 pub use models::browse::{
     AlbumPage, ArtistCarousel, ArtistPage, BrowseItem, HistoryGroup, HomePage, Mood, MoodSection,
     PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, QuerySuggestion,
@@ -41,6 +41,6 @@ pub use models::player::{
     StreamingData,
 };
 pub use transport::{
-    cookie_sapisid, generate_cpn, without_healing, Error, Healing, InnerTube, Session,
+    cookie_sapisid, generate_cpn, without_healing, Error, Healing, InnerTube, Session, Watched,
 };
 pub use transport::{UPLOAD_EXTENSIONS, UPLOAD_MAX_BYTES};

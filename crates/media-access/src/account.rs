@@ -133,6 +133,35 @@ pub struct FollowState {
     pub subscribed: bool,
 }
 
+/// One listen of an online song, as the account is told about it: the catalog's own tracking for
+/// that listen (one signed-in player answer, one playback nonce), shared by the play and every
+/// listening-time report of it. Only ever held in memory; its addresses never reach a log line.
+#[derive(Clone)]
+pub struct Listen {
+    pub video_id: String,
+    #[cfg(feature = "live-provider")]
+    pub(crate) tracking: ytmusic::ListenTracking,
+}
+
+impl std::fmt::Debug for Listen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Listen")
+            .field("video_id", &self.video_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How much of a listen was heard since its last report: each stretch from where it started to
+/// where it stopped (a seek starts a new one), where the song is now, its length (0: not known),
+/// and whether it is playing. Milliseconds of the song.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heard {
+    pub segments: Vec<(u64, u64)>,
+    pub at_ms: u64,
+    pub length_ms: u64,
+    pub playing: bool,
+}
+
 pub trait AccountAccess: Send + Sync {
     /// Signed in at all.
     fn signed_in(&self) -> bool;
@@ -220,6 +249,44 @@ pub trait AccountAccess: Send + Sync {
 
     /// Tell the account a song was played (history, and what its recommendations learn from).
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError>;
+
+    /// Begin telling one listen of a song (How much I listened): the catalog is asked, as the
+    /// account, how its own player would track it. Nothing is told by asking.
+    fn start_listen(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Listen, AccessError> {
+        let _ = (video_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "listening time",
+        ))
+    }
+
+    /// Tell the account the listen was a play, as [`AccountAccess::report_play`] does, through
+    /// the listen's own tracking (so the play and its listening time are one listen there).
+    fn report_listen_play(
+        &self,
+        listen: &Listen,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        self.report_play(&listen.video_id, cancel)
+    }
+
+    /// Tell the account how much of the listen was heard since the last report.
+    fn report_heard(
+        &self,
+        listen: &Listen,
+        heard: &Heard,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (listen, heard, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "listening time",
+        ))
+    }
 
     /// Send a file to the account's uploads.
     fn upload(

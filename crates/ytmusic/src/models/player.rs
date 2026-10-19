@@ -532,6 +532,9 @@ mod tests {
 pub struct PlaybackTracking {
     #[serde(default)]
     pub videostats_playback_url: Option<BaseUrl>,
+    /// Where YouTube's own player reports how much of the song was heard, as it plays.
+    #[serde(default)]
+    pub videostats_watchtime_url: Option<BaseUrl>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

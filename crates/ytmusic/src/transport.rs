@@ -811,6 +811,30 @@ impl InnerTube {
         Ok(())
     }
 
+    /// Report how much of a song was heard: GET the response's
+    /// `playbackTracking.videostatsWatchtimeUrl.baseUrl` with the stretches heard since the last
+    /// report (see [`Watched`]), the client and the listen's own nonce, and the authed client
+    /// headers. Sent once: a report that fails is not sent again.
+    pub(crate) async fn ping_watchtime(
+        &self,
+        client: &YouTubeClient,
+        base_url: &str,
+        cpn: &str,
+        heard: &Watched,
+    ) -> Result<(), Error> {
+        let url = build_watchtime_url(base_url, &client.client_name, cpn, heard);
+        let headers = self.headers(client, true);
+        let resp = self
+            .http
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?
+            .error_for_status()?;
+        self.absorb_cookies(resp.headers());
+        Ok(())
+    }
+
     #[cfg(any(test, feature = "integration-tests"))]
     pub fn http(&self) -> &reqwest::Client {
         &self.http
@@ -898,6 +922,64 @@ fn build_playback_url(
         url.push_str(&format!("&list={enc}&referrer={enc}"));
     }
     url
+}
+
+/// What one listening-time report says: the stretches of the song heard since the last report,
+/// each from where it started to where it stopped (a seek starts a new one), where the song is
+/// now, how long it is (0: not known) and whether it is playing. Milliseconds of the song.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watched {
+    pub segments: Vec<(u64, u64)>,
+    pub at_ms: u64,
+    pub length_ms: u64,
+    pub playing: bool,
+}
+
+/// Seconds as YouTube's player writes them: up to three decimals, no trailing zeros.
+fn seconds(ms: u64) -> String {
+    let s = format!("{}.{:03}", ms / 1000, ms % 1000);
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// Build the listening-time GET URL: the base URL with `ver`/`c`/`cpn`, `cmt` (where the song is),
+/// `st`/`et` (each stretch's start and end, in order, comma-separated), `len` and `state`. Any of
+/// those already in the base URL is replaced rather than sent twice; YouTube's own `len` stays
+/// when the length isn't known here. Pure — unit-tested.
+fn build_watchtime_url(base_url: &str, client_name: &str, cpn: &str, heard: &Watched) -> String {
+    let (path, query) = base_url.split_once('?').unwrap_or((base_url, ""));
+    let ours: &[&str] = if heard.length_ms > 0 {
+        &["ver", "c", "cpn", "cmt", "st", "et", "len", "state"]
+    } else {
+        &["ver", "c", "cpn", "cmt", "st", "et", "state"]
+    };
+    let mut parts: Vec<String> = query
+        .split('&')
+        .filter(|kv| !kv.is_empty())
+        .filter(|kv| !ours.contains(&kv.split('=').next().unwrap_or_default()))
+        .map(str::to_owned)
+        .collect();
+    let list = |pick: fn(&(u64, u64)) -> u64| {
+        heard
+            .segments
+            .iter()
+            .map(|s| seconds(pick(s)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    parts.push("ver=2".into());
+    parts.push(format!("c={}", urlencoding::encode(client_name)));
+    parts.push(format!("cpn={}", urlencoding::encode(cpn)));
+    parts.push(format!("cmt={}", seconds(heard.at_ms)));
+    parts.push(format!("st={}", list(|s| s.0)));
+    parts.push(format!("et={}", list(|s| s.1)));
+    if heard.length_ms > 0 {
+        parts.push(format!("len={}", seconds(heard.length_ms)));
+    }
+    parts.push(format!(
+        "state={}",
+        if heard.playing { "playing" } else { "paused" }
+    ));
+    format!("{path}?{}", parts.join("&"))
 }
 
 /// CPN alphabet — 64 URL-safe chars, exactly 6 bits each. context/01.
@@ -1008,6 +1090,46 @@ mod tests {
         // No existing query → first param uses `?`, no playlist params.
         let u2 = build_playback_url("https://s.youtube.com/x", "IOS", "abc", None);
         assert_eq!(u2, "https://s.youtube.com/x?c=IOS&cpn=abc&ver=2");
+    }
+
+    // What a listening-time report says: the seconds heard since the last one (each stretch from
+    // where it started to where it stopped), where the song is now, how long it is and whether it
+    // plays, with the client and the listen's own nonce. YouTube's own values of those names in
+    // the address are replaced, never sent twice.
+    #[test]
+    fn a_watchtime_report_says_the_stretches_heard() {
+        let heard = Watched {
+            segments: vec![(0, 10_000)],
+            at_ms: 10_000,
+            length_ms: 213_061,
+            playing: true,
+        };
+        let u = build_watchtime_url(
+            "https://s.youtube.com/api/stats/watchtime?cl=1&docid=abc&len=212&ns=yt",
+            "WEB_REMIX",
+            "CPN1234567890AB",
+            &heard,
+        );
+        assert_eq!(
+            u,
+            "https://s.youtube.com/api/stats/watchtime?cl=1&docid=abc&ns=yt&ver=2&c=WEB_REMIX\
+             &cpn=CPN1234567890AB&cmt=10&st=0&et=10&len=213.061&state=playing"
+        );
+        // A seek in between: two stretches, in order; paused when the report went.
+        let heard = Watched {
+            segments: vec![(10_000, 22_500), (95_000, 100_250)],
+            at_ms: 100_250,
+            length_ms: 0,
+            playing: false,
+        };
+        let u = build_watchtime_url("https://s.youtube.com/x?len=212", "WEB_REMIX", "c", &heard);
+        assert!(u.contains("&st=10,95&et=22.5,100.25&"), "{u}");
+        assert!(u.ends_with("&state=paused"), "{u}");
+        assert!(
+            u.contains("len=212"),
+            "no length known: YouTube's own stays"
+        );
+        assert_eq!(u.matches("len=").count(), 1);
     }
 
     #[test]

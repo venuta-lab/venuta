@@ -392,29 +392,10 @@ impl Playback {
                 .name("venuta-listening".into())
                 .spawn(move || {
                     let mut tracker = crate::listening::Tracker::default();
-                    // Plays told to the YouTube Music account, when the account in use has Count
-                    // plays on; off the listening thread, so a slow answer never holds the next
-                    // write.
-                    tracker.reporter = Some(Box::new(move |video_id: &str| {
-                        if offline.load(std::sync::atomic::Ordering::Relaxed) {
-                            return;
-                        }
-                        let Some(account) = reporting.account_access().filter(|a| a.signed_in())
-                        else {
-                            return;
-                        };
-                        let (id, catalog) = (video_id.to_owned(), reporting.clone());
-                        let _ = std::thread::Builder::new()
-                            .name("venuta-play-report".into())
-                            .spawn(move || {
-                                if crate::ytm_choices::counts_plays(catalog.as_ref()) {
-                                    let _ = account.report_play(
-                                        &id,
-                                        &media_access::CancellationToken::default(),
-                                    );
-                                }
-                            });
-                    }));
+                    // Plays (Count plays) and how much was heard (How much I listened) told to
+                    // the YouTube Music account, as the account in use's switches allow; off the
+                    // listening thread, so a slow answer never holds the next write.
+                    tracker.reporter = Some(crate::ytm_signals::reporter(reporting, offline));
                     for k in kept {
                         k.write(&mut tracker);
                     }

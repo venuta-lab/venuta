@@ -1730,6 +1730,56 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, "the play", self.it.report_play(client, video_id))
     }
 
+    fn start_listen(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::account::Listen, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let tracking = self.account_call(
+            cancel,
+            "the listen",
+            self.it.listen_tracking(client, video_id),
+        )?;
+        Ok(crate::account::Listen {
+            video_id: video_id.to_owned(),
+            tracking,
+        })
+    }
+
+    fn report_listen_play(
+        &self,
+        listen: &crate::account::Listen,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the play",
+            self.it.report_tracked_play(client, &listen.tracking),
+        )
+    }
+
+    fn report_heard(
+        &self,
+        listen: &crate::account::Listen,
+        heard: &crate::account::Heard,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let watched = ytmusic::Watched {
+            segments: heard.segments.clone(),
+            at_ms: heard.at_ms,
+            length_ms: heard.length_ms,
+            playing: heard.playing,
+        };
+        self.account_call(
+            cancel,
+            "how much was heard",
+            self.it.report_watchtime(client, &listen.tracking, &watched),
+        )
+    }
+
     fn upload(
         &self,
         file_name: &str,

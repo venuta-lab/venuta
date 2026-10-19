@@ -39,6 +39,7 @@ mod ytm_accounts;
 mod ytm_choices;
 mod ytm_library;
 mod ytm_links;
+mod ytm_signals;
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
