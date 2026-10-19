@@ -217,8 +217,6 @@ struct YtmBackend {
     legacy: OnceLock<Result<LegacyResolver, AccessError>>,
     /// Data saver: the smallest stream instead of the best.
     saver: std::sync::atomic::AtomicBool,
-    /// YouTube stopped taking the sign-in; cleared by the next sign-in.
-    expired: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl YtmBackend {
@@ -256,21 +254,17 @@ impl YtmBackend {
             visitor: tokio::sync::OnceCell::new(),
             legacy: OnceLock::new(),
             saver: std::sync::atomic::AtomicBool::new(false),
-            expired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
-        // No cookie can be minted again from here: a rejected sign-in is told to the person, who
-        // signs in again. The heal is declared over at once, so a request waiting on it ends now
-        // instead of after the transport's long timeout, and says the session expired.
+        // No cookie can be minted again from here: the heal is declared over at once, so a
+        // request waiting on it is sent once more now instead of after the transport's long
+        // timeout. Only a request refused again after that marks the session expired (the
+        // transport keeps that), so one refusal never asks the person to sign in again.
         {
             let it = backend.it.clone();
-            let expired = backend.expired.clone();
             let rejected = it.session_rejected();
             backend.runtime.get().spawn(async move {
                 loop {
                     rejected.notified().await;
-                    if it.is_logged_in() {
-                        expired.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
                     drop(it.begin_heal());
                 }
             });
@@ -794,8 +788,6 @@ impl LiveBackend for YtmBackend {
     }
 
     fn set_cookie(&self, cookie: Option<&str>) {
-        self.expired
-            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.it.set_cookie(
             cookie
                 .map(str::to_owned)
@@ -817,6 +809,8 @@ impl LiveBackend for YtmBackend {
                 AccessError::new(AccessErrorKind::Transport, "the account didn't answer")
             })
         }))?;
+        // The account answered as itself: whatever was refused before, the sign-in works.
+        self.it.session_accepted();
         Ok(Some(RemoteAccount {
             name: info.name,
             email: info.email,
@@ -1394,14 +1388,15 @@ impl YtmBackend {
         if !self.it.is_logged_in() {
             return Err(signed_out());
         }
-        let expired = self.expired.clone();
+        let it = self.it.clone();
         self.run(cancellable(cancel.clone(), async move {
-            call.await.map_err(|e| {
-                if matches!(e, ytmusic::Error::SessionExpired) {
-                    expired.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                account_error(e, what)
-            })
+            let got = call.await;
+            // Answered as the account (its library, its playlists): the sign-in works again, even
+            // if something was refused before. A refusal after the retry is the transport's to mark.
+            if got.is_ok() {
+                it.session_accepted();
+            }
+            got.map_err(|e| account_error(e, what))
         }))
     }
 }
@@ -1412,7 +1407,7 @@ impl crate::account::AccountAccess for YtmBackend {
     }
 
     fn session_expired(&self) -> bool {
-        self.it.is_logged_in() && self.expired.load(std::sync::atomic::Ordering::Relaxed)
+        self.it.session_refused()
     }
 
     fn library(
@@ -2750,6 +2745,20 @@ mod tests {
             "album rows carry their plays"
         );
         assert_eq!(page.album.track_count, Some(page.tracks.len() as u32));
+    }
+
+    // The transport tells the healer about the first refusal, before its one retry. That alone
+    // must not say "Sign in again": only a request that is refused after the retry does.
+    #[test]
+    fn one_refusal_told_to_the_healer_is_not_an_expired_session() {
+        use super::LiveBackend;
+        use crate::account::AccountAccess;
+        let b = super::YtmBackend::new().unwrap();
+        b.set_cookie(Some("SAPISID=fixture; PREF=x"));
+        b.it.session_rejected().notify_one();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(b.signed_in());
+        assert!(!b.session_expired());
     }
 
     #[test]

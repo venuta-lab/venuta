@@ -219,6 +219,12 @@ pub struct InnerTube {
     /// Pinged when a response's `Set-Cookie` actually changed the stored jar, so the app can
     /// write the rotated cookie back to disk. See [`InnerTube::absorb_cookies`].
     cookie_changed: Arc<Notify>,
+    /// YouTube went on refusing the sign-in after the heal and the retry: the session is gone.
+    /// One refusal is not enough (a hiccup, or a page that isn't yours, answers 403 too), so it
+    /// is set only where a request finally gives up (`reject_session`), and cleared by a new
+    /// sign-in or by a signed-in answer the caller knows to be the account's own
+    /// ([`InnerTube::session_accepted`]).
+    refused: Arc<AtomicBool>,
     /// Where `post` sends to: [`BASE_URL`], except in tests, which point it at a local server.
     base_url: String,
     /// Where a song goes up to the account's uploads: [`UPLOAD_SONG_URL`], or the test server.
@@ -257,6 +263,7 @@ impl InnerTube {
             session_rejected: Arc::new(Notify::new()),
             heal: Arc::new(watch::Sender::new(HealState::default())),
             cookie_changed: Arc::new(Notify::new()),
+            refused: Arc::new(AtomicBool::new(false)),
             base_url: BASE_URL.to_owned(),
             upload_url: UPLOAD_SONG_URL.to_owned(),
         })
@@ -341,8 +348,20 @@ impl InnerTube {
     /// The session no longer authenticates. Both callers (transport 401/403 and the logged-out
     /// browse payload) route through here so the healer hears about either one.
     pub(crate) fn reject_session(&self) -> Error {
+        self.refused.store(true, Ordering::Relaxed);
         self.session_rejected.notify_one();
         Error::SessionExpired
+    }
+
+    /// YouTube went on refusing the sign-in (see the field). False when signed out.
+    pub fn session_refused(&self) -> bool {
+        self.is_logged_in() && self.refused.load(Ordering::Relaxed)
+    }
+
+    /// A signed-in answer came back as the account's own (its library, its menu): whatever was
+    /// refused before, the session works.
+    pub fn session_accepted(&self) {
+        self.refused.store(false, Ordering::Relaxed);
     }
 
     /// Merge a response's `Set-Cookie` into the stored jar.
@@ -422,6 +441,8 @@ impl InnerTube {
 
     pub fn set_cookie(&self, cookie: Option<String>) {
         self.session.write().unwrap().cookie = cookie;
+        // A new sign-in (or none) starts with nothing refused.
+        self.refused.store(false, Ordering::Relaxed);
     }
 
     pub fn set_data_sync_id(&self, id: Option<String>) {
@@ -800,6 +821,7 @@ impl InnerTube {
             }
             if waited.is_err() && now.active == 0 {
                 tracing::warn!("no answer from the session healer within {HEAL_TIMEOUT:?}");
+                self.refused.store(true, Ordering::Relaxed);
                 return Err(Error::SessionExpired);
             }
             if waited.is_err() {
@@ -1425,6 +1447,77 @@ mod tests {
             .await
             .expect("post() raises session_rejected on a 401");
         parked.abort();
+    }
+
+    /// A healer that declares each heal over at once, as the app's does (it can mint nothing).
+    fn heal_at_once(it: &InnerTube) -> tokio::task::JoinHandle<()> {
+        let healer = it.clone();
+        let rejected = it.session_rejected();
+        tokio::spawn(async move {
+            loop {
+                rejected.notified().await;
+                drop(healer.begin_heal());
+            }
+        })
+    }
+
+    // One 401 that the retry gets past is a hiccup, not a dead session: nothing says "sign in
+    // again" for it.
+    #[tokio::test]
+    async fn one_refusal_the_retry_gets_past_does_not_end_the_session() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = calls.clone();
+        let server = crate::test_server::MockServer::start(move |_| {
+            if n.fetch_add(1, Ordering::SeqCst) == 0 {
+                (401, "{}".into())
+            } else {
+                (200, "{}".into())
+            }
+        });
+        let it = signed_in_against(&server);
+        let healer = heal_at_once(&it);
+        let clients = crate::clients::Clients::bundled();
+        let web = clients.get(crate::clients::METADATA_CLIENT).unwrap();
+
+        let got = it.post("browse", web, &serde_json::json!({}), true).await;
+        assert!(got.is_ok(), "the retry went through: {got:?}");
+        assert!(
+            !it.session_refused(),
+            "one refusal is not an expired session"
+        );
+        healer.abort();
+    }
+
+    // Refused again after the heal: the session really is gone, until a new sign-in or a
+    // signed-in answer that worked says otherwise.
+    #[tokio::test]
+    async fn refused_again_after_the_heal_is_an_expired_session_until_it_answers_again() {
+        let server = crate::test_server::MockServer::start(|_| (403, "{}".into()));
+        let it = signed_in_against(&server);
+        let healer = heal_at_once(&it);
+        let clients = crate::clients::Clients::bundled();
+        let web = clients.get(crate::clients::METADATA_CLIENT).unwrap();
+
+        let got = it.post("browse", web, &serde_json::json!({}), true).await;
+        assert!(matches!(got, Err(Error::SessionExpired)), "{got:?}");
+        assert_eq!(
+            server.requests().len(),
+            2,
+            "sent once, then once after the heal"
+        );
+        assert!(it.session_refused());
+
+        it.session_accepted();
+        assert!(
+            !it.session_refused(),
+            "a signed-in answer that worked clears it"
+        );
+
+        let _ = it.post("browse", web, &serde_json::json!({}), true).await;
+        assert!(it.session_refused());
+        it.set_cookie(Some("SAPISID=new; PREF=x".into()));
+        assert!(!it.session_refused(), "a new sign-in starts fresh");
+        healer.abort();
     }
 
     #[test]
