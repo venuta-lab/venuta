@@ -1089,26 +1089,31 @@ impl InnerTube {
 
     /// The raw `search` / `browse` responses, for callers that read the JSON with their own
     /// parsers (Venuta's catalog reader) and for the live smoke tests. A search sent this way is
-    /// written to the account's search history only when "Signed-in search" is on; off (the
-    /// default), it goes with no account at all.
+    /// written to the account's search history only when the person typed it (`typed`) and
+    /// "Signed-in search" is on. Venuta's own look-ups (a file's song, link matching, imports)
+    /// pass `typed: false` and always go with no account at all, as everything does with the
+    /// switch off (the default).
     pub async fn search_json(
         &self,
         client: &YouTubeClient,
         query: &str,
         params: Option<&str>,
+        typed: bool,
     ) -> Result<serde_json::Value, Error> {
-        self.search_raw(client, query, params, self.signed_search())
+        self.search_raw(client, query, params, typed && self.signed_search())
             .await
     }
 
     /// The next page of a raw search, from the continuation token its last page gave. The query
-    /// and filter go with it, as YouTube Music's own client sends them.
+    /// and filter go with it, as YouTube Music's own client sends them; as the account under the
+    /// same rule as [`InnerTube::search_json`].
     pub async fn search_continuation_json(
         &self,
         client: &YouTubeClient,
         query: &str,
         params: Option<&str>,
         token: &str,
+        typed: bool,
     ) -> Result<serde_json::Value, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -1118,7 +1123,7 @@ impl InnerTube {
             #[serde(skip_serializing_if = "Option::is_none")]
             params: Option<String>,
         }
-        let signed = self.signed_search();
+        let signed = typed && self.signed_search();
         let body = ContinuationBody {
             context: self.context_as(client, signed),
             query: query.to_owned(),
@@ -3142,8 +3147,8 @@ mod choices {
     async fn searches_stay_anonymous_until_signed_in_search_is_on() {
         let server = MockServer::start(|_| (200, "{}".to_owned()));
         let it = signed_in(&server);
-        it.search_json(&web(), "road", None).await.unwrap();
-        it.search_continuation_json(&web(), "road", None, "more")
+        it.search_json(&web(), "road", None, true).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", true)
             .await
             .unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
@@ -3152,13 +3157,32 @@ mod choices {
         assert!(sent.iter().all(|r| !as_account(r)), "anonymous by default");
 
         it.set_signed_search(true);
-        it.search_json(&web(), "road", None).await.unwrap();
-        it.search_continuation_json(&web(), "road", None, "more")
+        it.search_json(&web(), "road", None, true).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", true)
             .await
             .unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
         let sent = server.requests();
         assert!(sent[3..].iter().all(as_account));
+    }
+
+    // Venuta's own look-ups (a file's song for its radio, link matching, More by, find online,
+    // imports) are searches nobody typed: they never go as the account, Signed-in search or not.
+    #[tokio::test]
+    async fn venutas_own_look_ups_never_go_as_the_account() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = signed_in(&server);
+        it.set_signed_search(true);
+        it.search_json(&web(), "road", None, false).await.unwrap();
+        it.search_json(&web(), "road", Some("EgWKAQIIAWoMEA4QChADEAQQCRAF"), false)
+            .await
+            .unwrap();
+        it.search_continuation_json(&web(), "road", None, "more", false)
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(|r| !as_account(r)), "{sent:?}");
     }
 
     #[tokio::test]
@@ -3168,7 +3192,7 @@ mod choices {
         it.set_base_url(&server.base_url);
         it.set_signed_search(true);
         it.home(&web(), None).await.unwrap();
-        it.search_json(&web(), "road", None).await.unwrap();
+        it.search_json(&web(), "road", None, true).await.unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
         assert!(server.requests().iter().all(|r| !as_account(r)));
     }

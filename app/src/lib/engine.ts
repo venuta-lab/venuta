@@ -1201,15 +1201,17 @@ const cancelled = (e: unknown) => {
   throw String(e) === 'online-search-cancelled' ? new SearchCancelled() : e
 }
 
-export const onlineSearch = (query: string, searchBox: SearchBox = 'music') =>
+/** `typed`: the person typed these words in the Search box. Only such a search may go as the
+ *  YouTube Music account (with Signed-in search on); Venuta's own look-ups leave it false. */
+export const onlineSearch = (query: string, searchBox: SearchBox = 'music', typed = false) =>
   inApp()
-    ? invoke<OnlineResults>('online_search', { query, searchBox }).catch(cancelled)
+    ? invoke<OnlineResults>('online_search', { query, searchBox, typed }).catch(cancelled)
     : Promise.resolve<OnlineResults>({ tracks: [], albums: [], artists: [] })
 
 /** More online songs for the same words, from a cursor the last answer gave. */
-export const onlineSearchTracks = (query: string, cursor: string, searchBox: SearchBox = 'music') =>
+export const onlineSearchTracks = (query: string, cursor: string, searchBox: SearchBox = 'music', typed = false) =>
   inApp()
-    ? invoke<OnlineTrackPage>('online_search_tracks', { query, cursor, searchBox }).catch(cancelled)
+    ? invoke<OnlineTrackPage>('online_search_tracks', { query, cursor, searchBox, typed }).catch(cancelled)
     : Promise.resolve<OnlineTrackPage>({ tracks: [], next_cursor: null })
 /** A playlist or podcast in the online catalog: its name, owner line and cover. */
 export interface OnlineCollection {

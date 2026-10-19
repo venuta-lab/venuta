@@ -787,8 +787,9 @@ export function SearchResults(props: {
   lyrics: LyricResult[]
 }) {
   const q = props.query.trim()
-  // The words were searched for (not typed): asked at once.
-  const online = useOnlineSearch(props.query, 'music', true)
+  // The words were searched for (not typed): asked at once. Your own words, so with Signed-in
+  // search on they go as your account.
+  const online = useOnlineSearch(props.query, 'music', true, true)
   const extras = useOnlineExtras(props.query)
   const [picked, setPicked] = useState<{ q: string; chip: ResultChip }>({ q: '', chip: 'all' })
   const chip: ResultChip = picked.q === q ? picked.chip : 'all'
