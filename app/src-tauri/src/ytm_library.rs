@@ -193,6 +193,7 @@ pub async fn ytm_identities(pb: State<'_, Playback>) -> Result<Vec<AccountIdenti
 pub fn ytm_use_identity(pb: State<'_, Playback>, id: Option<String>) -> Result<(), String> {
     let a = account(&pb)?;
     a.use_identity(id.as_deref());
+    crate::ytm_links::forget_account_key();
     remember_identity(id.as_deref())
 }
 
@@ -250,5 +251,12 @@ pub fn restore_identity(pb: &Playback) {
 
 /// Signing out forgets the identity chosen too.
 pub fn forget_identity() {
+    crate::ytm_links::forget_account_key();
     let _ = remember_identity(None);
+}
+
+/// The identity chosen (None: the sign-in's own).
+pub fn chosen_identity() -> Option<String> {
+    use engine::accounts::{SystemVault, Vault};
+    SystemVault.get(IDENTITY_KEY).ok().flatten()
 }

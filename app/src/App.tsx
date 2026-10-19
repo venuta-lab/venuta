@@ -7,6 +7,7 @@ import { ThemeFx } from './components/ThemeFx'
 import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
 import { YtmWelcome } from './components/YtmWelcome'
+import { scheduleLinks } from './lib/ytmLinks'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
 import { Toast } from './components/Toast'
 import { IconCards, IconFind, IconHealth, IconHome, IconInbox, IconLibrary, IconSettings, IconStats } from './components/Icons'
@@ -150,6 +151,10 @@ export default function App() {
   // Your albums live in the library's Music folder; playlists, new music and set-aside copies
   // sit beside it.
   const libMusic = home ? `${home.replace(/[\\/]+$/, '')}/Music` : null
+  // Playlists linked to YouTube Music stay the same there: soon after start, then half-hourly.
+  useEffect(() => {
+    if (libMusic) scheduleLinks(libMusic)
+  }, [libMusic])
   const [suggestion, setSuggestion] = useState('C:/Music Library')
   const [ready, setReady] = useState(!inApp())
   const [missing, setMissing] = useState('')

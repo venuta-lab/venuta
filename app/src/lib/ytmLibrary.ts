@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useEffect, useSyncExternalStore } from 'react'
 import { inApp, ytmLibrary, ytmLibrarySongs, ytmStatus, type OnlineSuggestion, type YtmShelf, type YtmStatus, type YtmTrack } from './engine'
 import { onlineProblem } from './online'
-import { useLocalOnly } from './localOnly'
+import { isLocalOnly, useLocalOnly } from './localOnly'
 
 /*
   The signed-in YouTube Music account's library, as Library shows it beside your own music: each
@@ -108,3 +108,11 @@ export function useYtmCount(part: YtmPart, wanted = true): number | null {
   const { value } = useYtmPart(part, wanted)
   return value ? value.length : null
 }
+
+/** Signed in, the sign-in still taken, and not in Local only: account work can go ahead. */
+export function ytmReady(): boolean {
+  return status.signed_in && !status.expired && !isLocalOnly()
+}
+
+/** Ask again whether the sign-in still works (after a request said it doesn't). */
+export const ytmStatusRefresh = () => refreshStatus()

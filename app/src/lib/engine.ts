@@ -1403,6 +1403,74 @@ export const ytmInvite = (playlistId: string) => invoke<string>('ytm_invite', { 
 export const ytmCloseToCollaborators = (playlistId: string, closed: boolean) => invoke<void>('ytm_close_to_collaborators', { playlistId, closed })
 export const ytmJoin = (link: string) => invoke<string>('ytm_join', { link })
 
+/** What one sync of a linked playlist did. */
+export interface YtmSyncNote {
+  at: number
+  pulled: number
+  dropped: number
+  pushed: number
+  removed: number
+  moved: number
+  /** Yours as it was before, when this sync changed it (for Undo). */
+  undo?: string
+  problem?: string
+}
+/** A playlist of yours linked to one on YouTube Music ("Also on YouTube Music"). */
+export interface YtmLink {
+  playlist: string
+  account: string
+  playlist_id: string
+  title: string
+  base: string[]
+  matches: Record<string, string>
+  local_only: string[]
+  last_sync: number
+  held?: boolean
+  uploading?: Record<string, { title: string; artist: string; at: number }>
+  history?: YtmSyncNote[]
+}
+export interface YtmLinkView extends YtmLink {
+  /** Files of yours not asked about yet. */
+  unmatched: number
+}
+export type YtmPause =
+  | { kind: 'unread' }
+  | { kind: 'held' }
+  | { kind: 'other_account'; account: string }
+  | { kind: 'many_gone'; side: 'venuta' | 'youtube_music'; gone: number; of: number }
+export interface YtmSyncReport {
+  paused: YtmPause | null
+  busy: boolean
+  note: YtmSyncNote
+  uploaded: number
+  upload_problems: string[]
+}
+/** A file of yours the matching review asks about. */
+export interface YtmReviewRow {
+  key: string
+  path: string
+  title: string
+  artist: string
+  album: string
+  duration_ms: number
+  found: OnlineEntry | null
+  uploadable: boolean
+}
+export interface YtmChoices {
+  matches?: [string, string][]
+  local_only?: string[]
+  upload?: string[]
+}
+export const ytmLink = (root: string, name: string) => invoke<YtmLinkView | null>('ytm_link', { root, name })
+export const ytmLinks = () => invoke<YtmLink[]>('ytm_links')
+export const ytmLinkReview = (root: string, name: string) => invoke<YtmReviewRow[]>('ytm_link_review', { root, name })
+export const ytmLinkStart = (root: string, name: string, target: string | null, privacy: string, choices: YtmChoices) =>
+  invoke<YtmSyncReport>('ytm_link_start', { root, name, target, privacy, choices })
+export const ytmLinkChoose = (root: string, name: string, choices: YtmChoices) => invoke<YtmSyncReport>('ytm_link_choose', { root, name, choices })
+export const ytmLinkSync = (root: string, name: string, force = false) => invoke<YtmSyncReport>('ytm_link_sync', { root, name, force })
+export const ytmUnlink = (name: string) => invoke<void>('ytm_unlink', { name })
+export const ytmLinkUndo = (root: string, name: string, copy: string) => invoke<void>('ytm_link_undo', { root, name, copy })
+
 /** Playback catalog health for Settings (never includes stream URLs). */
 export interface OnlineCatalogStatus {
   live_env: boolean

@@ -46,6 +46,7 @@ pub mod text;
 pub mod themes;
 pub mod tidy;
 pub mod volumes;
+pub mod ytm_links;
 
 pub use error::{Error, Result};
 pub use index::Index;

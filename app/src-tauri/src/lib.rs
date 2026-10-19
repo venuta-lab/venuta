@@ -36,6 +36,7 @@ mod together;
 mod updates;
 mod ytm_account;
 mod ytm_library;
+mod ytm_links;
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
@@ -1924,7 +1925,9 @@ fn playlist_undelete(root: String, name: String, aside: String, was: String) -> 
 
 #[tauri::command]
 fn playlist_rename(root: String, from: String, to: String) -> CmdResult<()> {
-    engine::playlists::rename(Path::new(&root), &from, &to)
+    engine::playlists::rename(Path::new(&root), &from, &to)?;
+    // "Also on YouTube Music" follows the new name.
+    ytm_links::renamed(&from, &to)
 }
 
 /// Save a smart rule and write its playlist (and the other smart ones) into the library.
@@ -3221,6 +3224,14 @@ pub fn run() {
             ytm_library::ytm_invite,
             ytm_library::ytm_close_to_collaborators,
             ytm_library::ytm_join,
+            ytm_links::ytm_link,
+            ytm_links::ytm_links,
+            ytm_links::ytm_link_review,
+            ytm_links::ytm_link_start,
+            ytm_links::ytm_link_choose,
+            ytm_links::ytm_link_sync,
+            ytm_links::ytm_unlink,
+            ytm_links::ytm_link_undo,
             diagnostics,
             restart_app,
             desktop::song_notification,

@@ -65,6 +65,8 @@ import { entryAvailability, fromWhere, length, onlineId, playlistFrom, plural, q
 import { OnlinePick } from './OnlinePick'
 import { describeRule, SmartRules } from './SmartRules'
 import { WindowedList, type Grab, type Line } from '../../components/WindowedList'
+import { YtmLinkBar } from '../../components/YtmLink'
+import { linkEdited } from '../../lib/ytmLinks'
 
 type Row = PlaylistEntry & { key: string }
 let keySeq = 0
@@ -220,6 +222,7 @@ export function PlaylistPage(props: {
         await playlistSaveItems(root, name, next.map(itemOf))
         setExists(true)
         props.onChanged()
+        linkEdited(root, name)
         if (message)
           notify(
             message,
@@ -231,6 +234,7 @@ export function PlaylistPage(props: {
                       saved.current = orderOf(before)
                       setRows(before)
                       props.onChanged()
+                      linkEdited(root, name)
                     })
                   },
                 }
@@ -670,6 +674,7 @@ export function PlaylistPage(props: {
               <IconMore />
             </button>
           </div>
+          {!smart && exists && !props.summary?.liked && <YtmLinkBar root={root} name={name} />}
         </div>
       </div>
 
