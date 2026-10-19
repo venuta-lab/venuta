@@ -121,6 +121,13 @@ pub struct Listening {
     /// the same on the account. Off until you switch it on.
     #[serde(default)]
     pub sync_likes: bool,
+    /// Tell the YouTube Music account what is played here (after 30 seconds of a song), so its
+    /// history and recommendations learn from Venuta too. Off until switched on.
+    #[serde(default)]
+    pub report_plays: bool,
+    /// The sign-in's three offers (likes in, likes out, plays) were made once already.
+    #[serde(default)]
+    pub ytm_offered: bool,
     /// Only your own music: the online catalog's parts are hidden and Venuta makes no online
     /// requests (catalog, lyrics and details lookups, covers, updates). Off until switched on.
     #[serde(default)]
@@ -173,6 +180,8 @@ impl Default for Listening {
             catalog_region: String::new(),
             song_notifications: false,
             sync_likes: false,
+            report_plays: false,
+            ytm_offered: false,
             local_only: false,
             together_name: String::new(),
             together_hide_ip: false,
@@ -285,6 +294,13 @@ mod tests {
         let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
         assert!(!old.sync_likes, "settings from before stay as they were");
         assert!(!Listening::default().sync_likes);
+    }
+
+    #[test]
+    fn plays_reach_youtube_music_only_once_switched_on() {
+        let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
+        assert!(!old.report_plays && !old.ytm_offered);
+        assert!(!Listening::default().report_plays);
     }
 
     #[test]

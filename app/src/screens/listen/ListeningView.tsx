@@ -14,6 +14,8 @@ import { notify } from '../../lib/notify'
 import { play, playItems, toRemoteItem } from '../../lib/player'
 import { statsOf, type Play, type SongInfo, type Stats } from '../../lib/stats'
 import { spring, type Library } from './model'
+import { useYtmStatus } from '../../lib/ytmLibrary'
+import { YtmHistory } from './YtmHistory'
 
 /*
   Listening: what you have played, your files and online songs alike. Stats over a range (how
@@ -22,7 +24,7 @@ import { spring, type Library } from './model'
 */
 
 type Range = '7' | '30' | 'year' | 'all'
-type Part = 'stats' | 'history'
+type Part = 'stats' | 'history' | 'ytm'
 
 function rangeOf(r: Range, now: number) {
   const today = new Date(now)
@@ -47,6 +49,7 @@ const plural = (n: number, one: string) => `${n.toLocaleString('en-IN')} ${one}$
 export function ListeningView({ lib, root }: { lib: Library; root: string }) {
   const [range, setRange] = useState<Range>('30')
   const [part, setPart] = useState<Part>('stats')
+  const { signed_in } = useYtmStatus()
   // The plays read, and the moment they were read (what "today" is for them).
   const [read, setRead] = useState<{ plays: Play[]; now: number } | null>(null)
   const [stamp, setStamp] = useState(0)
@@ -95,6 +98,7 @@ export function ListeningView({ lib, root }: { lib: Library; root: string }) {
           options={[
             { value: 'stats', label: 'Stats' },
             { value: 'history', label: 'History' },
+            ...(signed_in ? [{ value: 'ytm' as const, label: 'YouTube Music' }] : []),
           ]}
         />
         {part === 'stats' && (
@@ -122,7 +126,9 @@ export function ListeningView({ lib, root }: { lib: Library; root: string }) {
         )}
       </div>
 
-      {plays === null ? (
+      {part === 'ytm' && signed_in ? (
+        <YtmHistory />
+      ) : plays === null ? (
         <p className="mt-10 text-[13px] text-ink/45">Reading what you have played…</p>
       ) : !plays.length ? (
         <div className="mt-10 rounded-2xl border border-dashed border-edge px-6 py-12 text-center">

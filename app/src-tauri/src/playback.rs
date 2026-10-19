@@ -387,10 +387,31 @@ impl Playback {
             // Plays and where you were are written to disk on a thread of their own: never on
             // the player's, where a slow disk or a busy database would starve the sound.
             let (keep, kept) = std::sync::mpsc::channel::<Keep>();
+            let (reporting, offline) = (catalog.clone(), local_only.clone());
             std::thread::Builder::new()
                 .name("venuta-listening".into())
                 .spawn(move || {
                     let mut tracker = crate::listening::Tracker::default();
+                    // Plays told to the YouTube Music account, when switched on and signed in;
+                    // off the listening thread, so a slow answer never holds the next write.
+                    tracker.reporter = Some(Box::new(move |video_id: &str| {
+                        if offline.load(std::sync::atomic::Ordering::Relaxed)
+                            || !engine::settings::load().listening.report_plays
+                        {
+                            return;
+                        }
+                        let Some(account) = reporting.account_access().filter(|a| a.signed_in())
+                        else {
+                            return;
+                        };
+                        let id = video_id.to_owned();
+                        let _ = std::thread::Builder::new()
+                            .name("venuta-play-report".into())
+                            .spawn(move || {
+                                let _ = account
+                                    .report_play(&id, &media_access::CancellationToken::default());
+                            });
+                    }));
                     for k in kept {
                         k.write(&mut tracker);
                     }

@@ -1,10 +1,9 @@
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { inApp, libraryHome, ytmBringInLikes, ytmSignIn, ytmSignOut } from '../lib/engine'
-import { loadLikes } from '../lib/likes'
+import { inApp, ytmSignIn, ytmSignOut } from '../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../lib/listening'
 import { Switch } from './ui'
-import { useYtmAccount } from '../lib/ytmAccount'
+import { bringInYtmLikes, useYtmAccount } from '../lib/ytmAccount'
 import { confirmAsk } from './Confirm'
 import { notify } from '../lib/notify'
 import { RemoteArt } from './RemoteArt'
@@ -93,21 +92,7 @@ function YtmLikes() {
   const bringIn = async () => {
     setBringing(true)
     try {
-      const root = (await libraryHome()).library
-      if (!root) return notify('Choose your library first.')
-      const r = await ytmBringInLikes(root)
-      await loadLikes(root, true)
-      window.dispatchEvent(new Event('venuta:playlists-changed'))
-      const list = r.name ?? 'Liked songs'
-      notify(
-        !r.found
-          ? 'Your Liked Music on YouTube Music is empty.'
-          : r.added
-            ? `Added ${r.added.toLocaleString('en-IN')} of ${r.found.toLocaleString('en-IN')} songs to ${list}.`
-            : `All ${r.found.toLocaleString('en-IN')} are in ${list} already.`,
-      )
-    } catch (e) {
-      notify(`Couldn't bring in your likes: ${String(e)}`)
+      notify(await bringInYtmLikes())
     } finally {
       setBringing(false)
     }
@@ -120,6 +105,15 @@ function YtmLikes() {
           <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">Online songs you like, unlike or dislike in Venuta get the same on your account. Your own files stay in Venuta.</div>
         </div>
         <Switch on={l.sync_likes} onChange={(on) => void updateListening({ sync_likes: on }).catch((e) => notify(String(e)))} label="Like on YouTube Music too" />
+      </div>
+      <div className="mt-3 flex items-center gap-4">
+        <div className="min-w-[200px] flex-1">
+          <div className="text-[13.5px] font-medium">Count plays on YouTube Music</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">
+            After 30 seconds of an online song, your account is told it was played, as YouTube Music&rsquo;s own app does. Your history and recommendations then learn from Venuta too. Skips and your own files are never sent.
+          </div>
+        </div>
+        <Switch on={l.report_plays} onChange={(on) => void updateListening({ report_plays: on }).catch((e) => notify(String(e)))} label="Count plays on YouTube Music" />
       </div>
       <div className="mt-3 flex items-center gap-4">
         <div className="min-w-[200px] flex-1">

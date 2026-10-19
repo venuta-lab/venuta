@@ -18,6 +18,8 @@ const DEFAULTS: Listening = {
   lyrics_sources: [],
   song_notifications: false,
   sync_likes: false,
+  report_plays: false,
+  ytm_offered: false,
   local_only: false,
   together_name: '',
   together_hide_ip: false,

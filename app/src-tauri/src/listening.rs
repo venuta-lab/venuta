@@ -86,6 +86,23 @@ pub fn record_play(root: &str, file: &str, heard_ms: u64) {
     }
 }
 
+/// How long an online song is heard before its play is told to the YouTube Music account (as
+/// YouTube Music's own app does); a shorter song, nearly all of it. A skip is never told.
+pub const REPORT_AFTER_MS: u64 = 30_000;
+
+/// Whether this much heard of a song this long is a play to tell the account.
+pub fn worth_reporting(heard_ms: u64, duration_ms: u64) -> bool {
+    let needed = if duration_ms > 0 {
+        REPORT_AFTER_MS.min(duration_ms * 9 / 10)
+    } else {
+        REPORT_AFTER_MS
+    };
+    needed > 0 && heard_ms >= needed
+}
+
+/// Tells the account an online song (its catalog id) was played; decides itself whether to.
+pub type Reporter = Box<dyn Fn(&str) + Send>;
+
 /// Counts plays as they happen, from the player's status.
 #[derive(Default)]
 pub struct Tracker {
@@ -94,6 +111,10 @@ pub struct Tracker {
     heard_ms: u64,
     last_pos: u64,
     counted: bool,
+    /// This play of the song was told to the account already.
+    reported: bool,
+    /// Tells the account (Settings: count plays on YouTube Music).
+    pub reporter: Option<Reporter>,
 }
 
 impl Tracker {
@@ -115,6 +136,7 @@ impl Tracker {
             self.song = id;
             self.heard_ms = 0;
             self.counted = false;
+            self.reported = false;
             self.last_pos = position_ms;
             return;
         }
@@ -126,6 +148,17 @@ impl Tracker {
             }
         }
         self.last_pos = position_ms;
+        // An online song heard long enough: told to the YouTube Music account, once a play.
+        if !self.reported
+            && worth_reporting(self.heard_ms, duration_ms)
+            && let Some((file, _)) = song
+            && let Some(id) = file.strip_prefix("online:remote_catalog:")
+        {
+            self.reported = true;
+            if let Some(r) = &self.reporter {
+                r(id);
+            }
+        }
         let enough = (duration_ms / 2).clamp(15_000, 240_000);
         if !self.counted
             && self.heard_ms >= enough
@@ -391,6 +424,49 @@ pub async fn listening_forget(root: String, since: Option<i64>) -> Result<usize,
 #[cfg(test)]
 mod tests {
     use super::Tracker;
+    use super::worth_reporting;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_play_is_told_after_thirty_seconds_and_a_short_song_near_its_end() {
+        assert!(!worth_reporting(29_000, 240_000), "a skip is never told");
+        assert!(worth_reporting(30_000, 240_000));
+        // A 20-second song: most of it.
+        assert!(!worth_reporting(15_000, 20_000));
+        assert!(worth_reporting(18_000, 20_000));
+        // No length known: thirty seconds.
+        assert!(worth_reporting(30_000, 0));
+    }
+
+    #[test]
+    fn an_online_song_is_told_once_a_play_and_a_file_never() {
+        let told = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = told.clone();
+        let mut t = Tracker {
+            reporter: Some(Box::new(move |id: &str| {
+                seen.lock().unwrap().push(id.to_owned())
+            })),
+            ..Default::default()
+        };
+        let online = Some(("online:remote_catalog:vid1", ""));
+        // The song starts, then plays a second at a time for 40 seconds.
+        t.update("", online, None, true, 0, 200_000, "");
+        for s in 1..=40 {
+            t.update("", online, None, true, s * 1_000, 200_000, "");
+        }
+        assert_eq!(
+            *told.lock().unwrap(),
+            ["vid1"],
+            "told once, not every second after"
+        );
+        // A file of yours: never told.
+        let file = Some(("Album/01.flac", "Album"));
+        t.update("", file, None, true, 0, 200_000, "");
+        for s in 1..=40 {
+            t.update("", file, None, true, s * 1_000, 200_000, "");
+        }
+        assert_eq!(told.lock().unwrap().len(), 1);
+    }
 
     const FROM: &str = r#"{"kind":"playlist","ref":"Hindi","label":"Hindi"}"#;
 

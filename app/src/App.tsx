@@ -6,6 +6,7 @@ import { Backdrop } from './components/Backdrop'
 import { ThemeFx } from './components/ThemeFx'
 import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
+import { YtmWelcome } from './components/YtmWelcome'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
 import { Toast } from './components/Toast'
 import { IconCards, IconFind, IconHealth, IconHome, IconInbox, IconLibrary, IconSettings, IconStats } from './components/Icons'
@@ -1249,6 +1250,7 @@ export default function App() {
         <ThemeImportHost />
         <ConfirmHost />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />
+        <YtmWelcome />
       </div>
     </MotionConfig>
   )

@@ -231,6 +231,10 @@ export interface Listening {
   song_notifications: boolean
   /** Signed in to YouTube Music: liking, unliking or disliking online does the same there. */
   sync_likes: boolean
+  /** Tell the YouTube Music account what is played here (after 30 s of a song). Off until switched on. */
+  report_plays: boolean
+  /** The sign-in's three offers were made once already. */
+  ytm_offered: boolean
   /** Only your own music, and nothing online (lib/localOnly.ts). */
   local_only: boolean
   /** Listening together: the name others see ('' for this computer's user name). */
