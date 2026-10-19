@@ -515,7 +515,9 @@ impl LiveBackend for YtmBackend {
     ) -> Result<(SearchPage, Result<Value, AccessError>), AccessError> {
         let (songs, mix) = self.run(cancellable(cancel.clone(), async {
             let (songs, mix) = tokio::join!(
-                self.search_raw(query, Some(SONGS_PARAMS), None, typed),
+                // Your words go as the account once, on the unfiltered search, as YouTube Music's
+                // own app asks: the songs filter beside it stays anonymous.
+                self.search_raw(query, Some(SONGS_PARAMS), None, false),
                 self.search_raw(query, None, None, typed),
             );
             Ok((songs?, mix))

@@ -189,8 +189,10 @@ fn search_parts(
     cancel: &CancellationToken,
 ) -> Parts {
     std::thread::scope(|s| {
-        let albums = s.spawn(|| access.search_albums(query, &page(12, None, typed), cancel));
-        let artists = s.spawn(|| access.search_artists(query, &page(12, None, typed), cancel));
+        // Albums and artists beside the songs stay anonymous: your words go as the account once
+        // (the songs search's unfiltered half), not once for each kind.
+        let albums = s.spawn(|| access.search_albums(query, &page(12, None, false), cancel));
+        let artists = s.spawn(|| access.search_artists(query, &page(12, None, false), cancel));
         let tracks = access.search_tracks(query, &page(TRACKS_PER_PAGE, None, typed), cancel);
         (
             tracks,
@@ -838,13 +840,14 @@ mod tests {
         seen
     }
 
-    // Words typed in the Search box are asked as typed, every part of them; Venuta's own
-    // look-ups (the window leaves `typed` out) never are, so they never go as the account.
+    // Words typed in the Search box are asked as typed once, through the songs search (its
+    // unfiltered half, as YouTube Music's app asks), never once per kind; Venuta's own look-ups
+    // (the window leaves `typed` out) never are, so they never go as the account.
     #[test]
-    fn only_a_typed_search_is_asked_as_typed() {
+    fn only_a_typed_search_is_asked_as_typed_and_only_once() {
         assert_eq!(
             asked(true),
-            [("albums", true), ("artists", true), ("tracks", true)]
+            [("albums", false), ("artists", false), ("tracks", true)]
         );
         assert_eq!(
             asked(false),
