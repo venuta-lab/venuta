@@ -897,6 +897,9 @@ export function SearchResults(props: {
     </>
   )
   const nav = useNav()
+  // A song of yours found here plays as YouTube Music plays a song found: it, then (Autoplay on,
+  // and only when it is the same song there) its YouTube Music radio.
+  const playFound = (t: CatalogTrack) => void playWithRadio(nav.root, toItem(t))
   const waiting = (what: string) => <p className="py-6 text-[13px] text-ink/45">Looking for {what}…</p>
   const nothing = (what: string) => <p className="py-6 text-[13px] text-ink/55">No {what} for “{q}”.</p>
 
@@ -907,7 +910,7 @@ export function SearchResults(props: {
         {props.tracks.length > 0 && (
           <section>
             {eyebrow('In your library', props.tracks.length)}
-            <SongList tracks={props.tracks} from={from} pin />
+            <SongList tracks={props.tracks} from={from} pin onPlay={playFound} />
           </section>
         )}
         <OnlineResults query={props.query} online={online} spaced={props.tracks.length > 0} parts={{ songs: true, albums: false, artists: false }} covers="tabs" skip={owned} />

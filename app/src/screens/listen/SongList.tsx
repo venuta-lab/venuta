@@ -50,6 +50,9 @@ export const SongList = memo(function SongList(props: {
   sortBy?: SortKey
   /** Keep the column heads in the page's pinned bar while the list scrolls. */
   pin?: boolean
+  /** What playing a row does, instead of playing the list from it (search: the song, then its
+   *  radio, as YouTube Music plays a song found). */
+  onPlay?: (t: CatalogTrack) => void
 }) {
   const { root } = useNav()
   const now = useNowPlaying()
@@ -87,7 +90,8 @@ export const SongList = memo(function SongList(props: {
     }
   }, [sorted.length])
 
-  const onPlay = useCallback((i: number) => void play(root, sorted, i, props.from), [root, sorted, props.from])
+  const playOne = props.onPlay
+  const onPlay = useCallback((i: number) => (playOne ? playOne(sorted[i]) : void play(root, sorted, i, props.from)), [root, sorted, props.from, playOne])
   const onMove = useCallback(
     (i: number, by: number) => {
       const to = Math.min(sorted.length - 1, Math.max(0, i + by))

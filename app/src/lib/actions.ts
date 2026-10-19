@@ -7,7 +7,7 @@ import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
 import { blockArtist, dislike, playWithRadio, startRadio } from './radio'
 import { shortcutWork } from './shortcuts'
-import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
+import { enqueue, enqueueItems, onlineEntryFrom, playAll, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
 import { deletePlaylist, duplicatePlaylist, exportPlaylist, goToPlaylists, renamePlaylist } from '../screens/playlists/ops'
@@ -45,11 +45,13 @@ type Go = Pick<Nav, 'root' | 'openAlbum' | 'openArtist' | 'editDetails'>
 
 const artistsOf = (t: CatalogTrack) => (t.artists.length ? t.artists : t.album_artist ? [t.album_artist] : [])
 
-/** A song in your library. `playIt`: play it within the list it is in (from that song on). */
+/** A song in your library. `playIt`: play it within the list it is in (from that song on).
+ *  Played on its own, it plays as YouTube Music plays one song: it, then (Autoplay on, and only
+ *  when it is the same song there) its YouTube Music radio. */
 export function songWork(nav: Go, t: CatalogTrack, playIt?: () => void): Work {
   const artists = artistsOf(t)
   return {
-    play: playIt ?? (() => void play(nav.root, [t], 0)),
+    play: playIt ?? (() => void playWithRadio(nav.root, toItem(t))),
     next: () => void enqueue(nav.root, [t], true),
     queue: () => void enqueue(nav.root, [t], false),
     radio: () => void startRadio(nav.root, toItem(t)),

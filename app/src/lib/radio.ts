@@ -258,6 +258,13 @@ export async function startRadio(root: string, seed: QueueItem, opts: { quiet?: 
     if (opts.quiet) return void playItems(root, [seed], 0)
     return notify("Local only is on, so there's no radio from YouTube Music. Switch it off in Settings, Online.")
   }
+  // A file of yours played on its own plays at once. With Autoplay on it then goes on with the
+  // same song's YouTube Music radio: at once when that song is remembered, else once it is found
+  // (Autoplay's next step, `run`'s marker). No same song there: it plays alone, nothing guessed.
+  if (opts.quiet && !onlineIdOf(seed)) {
+    const known = seed.path ? matches.get(seed.path) : undefined
+    if (!known || !listening().autoplay) return void playItems(root, [seed], 0)
+  }
   if (!opts.quiet) notify(`Starting a radio of “${seed.title}”…`)
   try {
     const id = onlineIdOf(seed) ?? (await catalogIdOf(rowInfo(seed)))
@@ -428,6 +435,17 @@ async function run(step: Step, room: boolean, root: string, key: string, last: S
         if (!s) return
         // A file with no song of its own on YouTube Music: nothing to ask what comes after it.
         if (!id) return put({ ...s, loading: false, markerRead: true, relatedUsed: true }, room)
+        // A list with no list of its own there (your files, a song played on its own): it goes on
+        // with its last song's radio, as Start radio on that song would play it.
+        if (!s.list) {
+          const radio = await onlineRadio(id)
+          const now = live()
+          if (!now) return
+          const songRadio: RadioEndpoint = { video_id: id, playlist_id: `RDAMVM${id}`, params: 'wAEB' }
+          put(afterContinue({ ...now, continueWith: songRadio }, radio), room)
+          await add(root, rowsOf(root, radio.tracks), room)
+          return
+        }
         const asked: RadioEndpoint = { video_id: id, playlist_id: s.list }
         const answer = await onlineRadioAt(asked, id)
         const now = live()
