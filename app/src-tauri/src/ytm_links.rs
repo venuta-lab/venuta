@@ -46,8 +46,9 @@ pub fn forget_account_key() {
     }
 }
 
-/// Who is signed in, as a link remembers it: the account, and which of its channels.
-fn account_key(catalog: &dyn MediaAccess) -> Result<String, String> {
+/// Who is signed in, as a link remembers it: the account, and which of its channels. Your
+/// YouTube Music choices are kept by the same key (`crate::ytm_choices`).
+pub(crate) fn account_key(catalog: &dyn MediaAccess) -> Result<String, String> {
     if let Some(k) = ACCOUNT_KEY.lock().ok().and_then(|k| k.clone()) {
         return Ok(k);
     }

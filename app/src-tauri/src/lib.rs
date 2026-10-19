@@ -36,6 +36,7 @@ mod together;
 mod updates;
 mod ytm_account;
 mod ytm_accounts;
+mod ytm_choices;
 mod ytm_library;
 mod ytm_links;
 
@@ -396,14 +397,11 @@ fn set_settings(
     Ok(())
 }
 
-/// What the online catalog must know of your listening choices: who it never offers, and
-/// whether music videos are left out.
+/// What the online catalog must know of your listening choices: who it never offers (none
+/// while "Hide artists I blocked" is off; the list itself is kept), and whether music videos
+/// are left out.
 fn apply_listening(pb: &playback::Playback, l: &engine::settings::Listening) {
-    let blocked: Vec<(Option<String>, String)> = l
-        .blocked_artists
-        .iter()
-        .map(|b| (b.artist_id.clone(), b.name.clone()))
-        .collect();
+    let blocked = ytm_choices::blocked_for_catalog(l);
     let catalog = pb.online_catalog();
     catalog.set_blocked_artists(&blocked);
     catalog.set_hide_videos(l.hide_videos);
@@ -3208,6 +3206,9 @@ pub fn run() {
             together::together_set_delay,
             ytm_account::ytm_bring_in_likes,
             ytm_library::ytm_status,
+            ytm_choices::ytm_choices,
+            ytm_choices::ytm_set_choices,
+            ytm_choices::ytm_new_likes_in,
             ytm_library::ytm_library,
             ytm_library::ytm_library_songs,
             ytm_library::ytm_playlist,
