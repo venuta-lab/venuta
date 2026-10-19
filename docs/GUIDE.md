@@ -47,8 +47,11 @@ FLAC or AAC for players that need it; a gift card adds a tracklist and a list of
 **Test this player** puts a short test album on the card to check what your player reads.
 
 **Activity** (in the title bar, or Ctrl+H) lists every build, edit, timing and answer, each with
-Undo; while work runs, the same button shows it. **Settings** holds the
-look, startup and the tray, folders, online sources and keys, safety, and updates.
+Undo; while work runs, the same button shows it. **Settings** has six pages,
+one subject each: Look and feel, Playback (where the sound goes, levelling, crossfade, what plays),
+Lyrics (sources and the lyrics windows), Library (folders, where details come from, your backup),
+Online (Local only, accounts, region, listen together) and System (closing and startup, shortcuts,
+history and cache, updates).
 
 **The app icon** is yours to choose: Settings, Look and feel, App icon offers the Venuta mark (a V
 with a peacock feather and a flute's holes) in 33 materials. Your choice is on the taskbar, the
@@ -67,8 +70,8 @@ tray, the windows and the shortcuts that open Venuta; the program file keeps Dus
 - **Background, theme and style**, for each window on its own: Clear (nothing but the words),
   Glass, Frosted, the cover's light, or the theme's own scene; Venuta's theme or any other; and
   Clean, Karaoke, Glow, Outline, Serif or the theme's type, in the cover's colour, the accent or
-  white, in four sizes. Both start out looking like Venuta. **Settings > Listening > Lyrics
-  windows** has the same, for when nothing is playing.
+  white, in four sizes. Both start out looking like Venuta. **Settings > Lyrics** has
+  the same, for when nothing is playing.
 - **Time lyrics yourself**: for words with no timing, play the song and press Space as each
   line begins; Backspace steps back, B marks a break, ← → nudge a line by a tenth of a second.
   The timing is saved as a `.lrc` beside the song (the song itself is never changed) and can be
@@ -90,7 +93,7 @@ you let them in.
 - **Step out** pauses just for you; **Catch up** brings you back to where the room is.
 - **Same room** (for speakers that hear each other) keeps every player within a millisecond or
   two, at the cost of bit-perfect playback while it corrects.
-- **Settings > Listening > Listen together**: the name others see, hiding your IP address (the
+- **Settings > Online > Listen together**: the name others see, hiding your IP address (the
   connection goes through a relay), and your own relay.
 
 ## Search

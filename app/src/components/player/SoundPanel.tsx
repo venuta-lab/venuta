@@ -160,8 +160,8 @@ export function SoundPanel() {
         }
       >
         <p className="text-[12px] text-ink/55">
-          Evens out loudness using ReplayGain values in the files. Per album keeps the differences within an album. Songs without values
-          play as they are; the quality check in Health measures them.
+          Evens out loudness: your files by their ReplayGain values, online songs by the catalog's own loudness for each. Per album
+          keeps the differences within an album. Files without values play as they are; the quality check in Health measures them.
         </p>
         {draft.leveling !== 'off' && (
           <div className="mt-2">

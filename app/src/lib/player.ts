@@ -465,7 +465,7 @@ function offerBack(before: Kept | null, items: QueueItem[], from: string) {
 }
 
 /** Said when Local only keeps an online song from playing. */
-const LOCAL_ONLY_NOTE = "Local only is on, so online songs don't play. Switch it off in Settings, Listening."
+const LOCAL_ONLY_NOTE = "Local only is on, so online songs don't play. Switch it off in Settings, Online."
 
 /** `play` for queue rows of any kind: library songs and online ones, mixed. */
 export function playItems(root: string, items: QueueItem[], index = 0, from: From | string = '', before: Kept | null = keep()) {

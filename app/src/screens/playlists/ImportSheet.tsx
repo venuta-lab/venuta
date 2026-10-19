@@ -695,11 +695,11 @@ export function ImportSheet(props: {
                               onClick={() => void read([], null, true)}
                               disabled={!props.appleReady}
                               className="btn"
-                              title={props.appleReady ? undefined : 'Enter your library key in Settings, Online sources, first'}
+                              title={props.appleReady ? undefined : 'Enter your library key in Settings, Online, first'}
                             >
                               Read my Apple Music library
                             </button>
-                            {!props.appleReady && <span className="text-[12.5px] text-ink/50">It needs the library's key, in Settings, Online sources.</span>}
+                            {!props.appleReady && <span className="text-[12.5px] text-ink/50">It needs the library's key, in Settings, Online.</span>}
                           </>
                         ) : w.action === 'spotify' ? (
                           <div className="w-full">

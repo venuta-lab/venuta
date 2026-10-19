@@ -30,19 +30,23 @@ import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { takeSettingsSection, type SettingsPage } from './settingsPage'
-import { ListeningSettings } from './settings/ListeningSettings'
+import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
+import { PlaybackSettings } from './settings/PlaybackSettings'
+import { LyricWindowsSettings } from './settings/LyricWindowsSettings'
+import { Group, More, PageHead, Row } from './settings/parts'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
 type Page = SettingsPage
-const PAGES: { id: Page; label: string }[] = [
-  { id: 'look', label: 'Look and feel' },
-  { id: 'listening', label: 'Listening' },
-  { id: 'desktop', label: 'Startup and tray' },
-  { id: 'folders', label: 'Music folders' },
-  { id: 'online', label: 'Online sources' },
-  { id: 'safety', label: 'Safety and undo' },
-  { id: 'about', label: 'About' },
+// One subject a page: how it looks, what plays, where lyrics come from, where your music lives,
+// what goes online, and how Venuta runs on Windows.
+const PAGES: { id: Page; label: string; line: string }[] = [
+  { id: 'look', label: 'Look and feel', line: 'Theme, colour, size' },
+  { id: 'playback', label: 'Playback', line: 'Sound, what plays' },
+  { id: 'lyrics', label: 'Lyrics', line: 'Sources and windows' },
+  { id: 'library', label: 'Library', line: 'Folders and details' },
+  { id: 'online', label: 'Online', line: 'Accounts and rooms' },
+  { id: 'system', label: 'System', line: 'Windows, updates, about' },
 ]
 
 export function SettingsScreen(props: {
@@ -52,6 +56,10 @@ export function SettingsScreen(props: {
   onChooseLibrary: () => void
   onOpenLibrary: () => void
   onChooseHome: (path: string) => Promise<void>
+  /** Now Playing's Sound (the equalizer and tone). */
+  onOpenSound: () => void
+  /** The sheet of every keyboard shortcut. */
+  onShortcuts: () => void
   page?: Page
 }) {
   const [page, setPage] = useState<Page>(() => {
@@ -60,7 +68,7 @@ export function SettingsScreen(props: {
     return p
   })
   return (
-    <Frame title="Settings" line="Set up once: how it looks, where your music lives, and where details come from.">
+    <Frame title="Settings" line="Set up once: how it looks, what plays, where your music lives.">
       <div className="flex items-start gap-6">
       <aside className="sticky top-[68px] w-[220px] shrink-0">
         <nav aria-label="Settings sections" className="grid gap-0.5">
@@ -82,10 +90,12 @@ export function SettingsScreen(props: {
                   }}
                 />
               )}
-              <span className="relative">{p.label}</span>
+              <span className="relative block">{p.label}</span>
+              <span className="relative block text-[11.5px] text-ink/45">{p.line}</span>
             </button>
           ))}
         </nav>
+        <p className="mt-3 px-3 text-[12px] leading-relaxed text-ink/45">Ctrl+K finds any setting by its name.</p>
       </aside>
       <motion.section
         key={page}
@@ -95,10 +105,10 @@ export function SettingsScreen(props: {
         className="glass min-w-0 flex-1 rounded-[24px] px-7 py-6"
       >
         {page === 'look' && <LookAndFeel />}
-        {page === 'listening' && <ListeningSettings />}
-        {page === 'desktop' && <Desktop />}
-        {page === 'folders' && (
-          <Folders
+        {page === 'playback' && <PlaybackSettings onOpenSound={props.onOpenSound} />}
+        {page === 'lyrics' && <LyricsPage />}
+        {page === 'library' && (
+          <LibraryPage
             root={props.root}
             home={props.home}
             music={props.music}
@@ -107,9 +117,8 @@ export function SettingsScreen(props: {
             onChooseHome={props.onChooseHome}
           />
         )}
-        {page === 'online' && <Online />}
-        {page === 'safety' && <Safety />}
-        {page === 'about' && <About />}
+        {page === 'online' && <OnlinePage />}
+        {page === 'system' && <SystemPage onShortcuts={props.onShortcuts} />}
       </motion.section>
       </div>
     </Frame>
@@ -135,18 +144,6 @@ function BetaRow() {
         }}
       />
     </Row>
-  )
-}
-
-function Row(props: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-4 border-b border-edge py-4 last:border-b-0">
-      <div className="min-w-[220px] flex-1">
-        <div className="text-[14px] font-medium">{props.title}</div>
-        {props.hint && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">{props.hint}</div>}
-      </div>
-      {props.children}
-    </div>
   )
 }
 
@@ -567,7 +564,34 @@ function useSettings() {
   return { s, save, saved }
 }
 
-function Folders(props: {
+/** Where lyrics come from, and the two windows that show them away from Venuta. */
+function LyricsPage() {
+  return (
+    <div>
+      <PageHead title="Lyrics" line="Where lyrics come from, and the two windows that show them away from Venuta." />
+      <Group
+        title="Sources, in the order they are asked"
+        line="For songs without lyrics of their own, the first source with timed lyrics is used. Any song can use another one (Now Playing, under its lyrics)."
+      >
+        <LyricsSources />
+      </Group>
+      <LyricWindowsSettings />
+      <p className="mt-6 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/50">
+        Each window's own toolbar changes the same settings while it is open. Lyrics found online are kept so each song is
+        asked once; Clear cache in System empties them with the rest.
+      </p>
+    </div>
+  )
+}
+
+const DETAIL_SOURCES = [
+  ['musicbrainz', 'MusicBrainz', 'Original years, composers and lyricists, release types. Free and open (CC0).'],
+  ['apple', "Apple's catalogue", 'Sharper covers (up to 3000 px), genres and release dates.'],
+  ['deezer', 'Deezer', 'Covers, labels and recording codes.'],
+  ['lrclib', 'LRCLIB, into your files', "Timed lyrics saved inside your files' tags, checked for timing and script first. (Lyrics while playing: the Lyrics page.)"],
+] as const
+
+function LibraryPage(props: {
   root: string
   home: string | null
   music: string | null
@@ -587,64 +611,137 @@ function Folders(props: {
   }
   const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
   const showingLibrary = !!props.music && norm(props.root) === norm(props.music)
+  const keys = [s?.acoustid_key, s?.discogs_token].filter(Boolean).length
   return (
     <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Music folders</h2>
-      <Row
-        title="Your library"
-        hint={
-          props.home
-            ? `${props.home}. Your albums are in its Music folder, with Playlists, Add music here and Set aside beside it; everything Venuta knows (settings, answers, history, covers) is kept with it in ${info?.data_dir ?? '.venuta'}. Move or back up the folder and it all goes along.`
-            : 'Not chosen yet.'
-        }
-      >
-        <div className="flex gap-2">
-          {props.home && !showingLibrary && (
-            <button onClick={props.onOpenLibrary} className="btn">
-              Open
+      <PageHead title="Library" line="Where your music lives, where its details come from, and how it is kept safe." />
+      <Group title="Folders">
+        <Row
+          title="Your library"
+          hint={
+            props.home
+              ? `${props.home}. Your albums are in its Music folder, with Playlists, Add music here and Set aside beside it; everything Venuta knows (settings, answers, history, covers) is kept with it in ${info?.data_dir ?? '.venuta'}. Move or back up the folder and it all goes along.`
+              : 'Not chosen yet.'
+          }
+        >
+          <div className="flex gap-2">
+            {props.home && !showingLibrary && (
+              <button onClick={props.onOpenLibrary} className="btn">
+                Open
+              </button>
+            )}
+            <button
+              onClick={async () => {
+                const p = await pick('Choose your library (a new, empty folder or one Venuta made)')
+                if (!p) return
+                try {
+                  await checkHome(p)
+                  await props.onChooseHome(p)
+                  setError('')
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                }
+              }}
+              className="btn"
+            >
+              {props.home ? 'Use another library' : 'Choose'}
+            </button>
+          </div>
+        </Row>
+        <Row
+          title="Music to bring in"
+          hint={
+            !props.root || showingLibrary
+              ? 'A folder of music you already have. Venuta only reads it and builds a tidy copy in your library. Also in Organize, New music.'
+              : `${props.root}. Only read, never changed; Organize builds a tidy copy of it in your library.`
+          }
+        >
+          <button onClick={props.onChooseLibrary} className="btn">
+            Choose a folder
+          </button>
+        </Row>
+      </Group>
+      <Group title="Where details come from" line="Tags, covers and lyrics for your files. Optional keys stay on this computer.">
+        {DETAIL_SOURCES.map(([key, title, hint]) => (
+          <Row key={key} title={title} hint={hint}>
+            <Switch
+              label={title}
+              on={s?.sources?.[key] ?? true}
+              onChange={(on) =>
+                save({
+                  sources: {
+                    musicbrainz: s?.sources?.musicbrainz ?? true,
+                    apple: s?.sources?.apple ?? true,
+                    deezer: s?.sources?.deezer ?? true,
+                    lrclib: s?.sources?.lrclib ?? true,
+                    [key]: on,
+                  },
+                })
+              }
+            />
+          </Row>
+        ))}
+        <More
+          title="Sources that need a key"
+          hint={`AcoustID recognises untagged files by their sound; Discogs fills credits MusicBrainz lacks. ${keys ? `${keys} added.` : 'None added.'}`}
+        >
+          <KeyField
+            id="acoustid"
+            title="AcoustID"
+            hint="Identifies files without tags by their sound. Free for open-source apps. Only an acoustic fingerprint is sent, never the audio."
+            where="acoustid.org/new-application"
+            value={s?.acoustid_key}
+            onSave={(v) => save({ acoustid_key: v }, v ? 'AcoustID key saved.' : 'AcoustID key removed.')}
+          />
+          <KeyField
+            id="discogs"
+            title="Discogs"
+            hint="Credits and original release years for albums MusicBrainz doesn't have, common for Indian releases. Free personal token."
+            where="discogs.com/settings/developers"
+            value={s?.discogs_token}
+            onSave={(v) => save({ discogs_token: v }, v ? 'Discogs token saved.' : 'Discogs token removed.')}
+          />
+        </More>
+      </Group>
+      <Group title="Keeping it safe">
+        <Row
+          title="Your backup"
+          hint={
+            s?.backup_confirmed
+              ? 'You told Venuta you have a copy of your music elsewhere. Editing tags changes your files, safely, and each change can be undone.'
+              : 'Not confirmed yet. Editing tags changes your files (safely, and each change can be undone); Venuta asks once, before its first edit.'
+          }
+        >
+          {s?.backup_confirmed ? (
+            <button onClick={() => save({ backup_confirmed: false })} className="btn-ghost btn-sm">
+              I don't have one any more
+            </button>
+          ) : (
+            <button onClick={() => save({ backup_confirmed: true })} className="btn">
+              I have a backup
             </button>
           )}
-          <button
-            onClick={async () => {
-              const p = await pick('Choose your library (a new, empty folder or one Venuta made)')
-              if (!p) return
-              try {
-                await checkHome(p)
-                await props.onChooseHome(p)
-                setError('')
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e))
-              }
-            }}
-            className="btn"
-          >
-            {props.home ? 'Use another library' : 'Choose'}
-          </button>
-        </div>
-      </Row>
-      <Row
-        title="Music to bring in"
-        hint={
-          !props.root || showingLibrary
-            ? 'A folder of music you already have. It is only read, never changed; Venuta builds a clean copy in your library.'
-            : `${props.root}. Only read, never changed; Organize builds a clean copy of it in your library.`
-        }
-      >
-        <button onClick={props.onChooseLibrary} className="btn">
-          Choose a folder
-        </button>
-      </Row>
-      <Row title="Organising rules" hint={(s?.rules_dir ?? '') + '. Artist names, categories, folder layout and genres, as plain text files.'}>
-        <button
-          onClick={async () => {
-            const p = await pick('Folder for your organising rules')
-            if (p) await save({ rules_dir: p })
-          }}
-          className="btn"
-        >
-          Choose
-        </button>
-      </Row>
+        </Row>
+        <p className="mt-2 max-w-[66ch] rounded-2xl bg-ink/[0.04] px-4 py-3 text-[12.5px] leading-relaxed text-ink/60">
+          Nothing is ever deleted. Duplicates and removed playlists go to the Set aside folder beside your music, and every
+          change is recorded in Activity, where it can be undone.
+        </p>
+      </Group>
+      <Group title="More">
+        <More title="Organising rules" hint={`Artist names, categories, folder layout and genres, as plain text files you can edit. ${s?.rules_dir ?? ''}`}>
+          <Row title="Rules folder" hint={s?.rules_dir ?? ''}>
+            <button
+              onClick={async () => {
+                const p = await pick('Folder for your organising rules')
+                if (p) await save({ rules_dir: p })
+              }}
+              className="btn"
+            >
+              Choose
+            </button>
+          </Row>
+        </More>
+      </Group>
       {error && <p className="mt-3 text-[13px] text-problem">{error}</p>}
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
@@ -809,86 +906,51 @@ function CatalogHealth() {
   )
 }
 
-function Online() {
+function OnlinePage() {
   const { s, save, saved } = useSettings()
   return (
     <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Online sources</h2>
-      <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
-        The <strong className="font-medium text-ink/70">online catalog</strong> lets you search and play songs you don't
-        have as files yet: the same player, queue and playlists as your own music, and your file always plays first when you
-        have the song. Venuta shows no ads, and playlists keep only each song's id, never an address to stream it from.
-      </p>
-      <h3 className="mt-6 text-[15px] font-semibold">Playback catalog</h3>
-      <CatalogHealth />
-      <ProxySetting />
-      <CacheSetting />
-      <h3 className="mt-8 text-[15px] font-semibold">Looking things up</h3>
-      <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
-        Tags, covers and lyrics for your files come from these sources. Optional keys stay on this computer.
-      </p>
-      <h3 className="mt-6 text-[15px] font-semibold">Accounts</h3>
-      <YtmAccount />
-      <SpotifyAccount />
-      {(
-        [
-          ['musicbrainz', 'MusicBrainz', 'Original years, composers and lyricists, release types. Free and open (CC0).'],
-          ['apple', "Apple's catalogue", 'Sharper covers (up to 3000 px), genres and release dates.'],
-          ['deezer', 'Deezer', 'Covers, labels and recording codes.'],
-          ['lrclib', 'LRCLIB', 'Synced lyrics, checked for timing and script before use.'],
-        ] as const
-      ).map(([key, title, hint]) => (
-        <Row key={key} title={title} hint={hint}>
-          <Switch
-            label={title}
-            on={s?.sources?.[key] ?? true}
-            onChange={(on) =>
-              save({
-                sources: {
-                  musicbrainz: s?.sources?.musicbrainz ?? true,
-                  apple: s?.sources?.apple ?? true,
-                  deezer: s?.sources?.deezer ?? true,
-                  lrclib: s?.sources?.lrclib ?? true,
-                  [key]: on,
-                },
-              })
-            }
+      <PageHead
+        title="Online"
+        line="The online catalog plays songs you don't have as files yet, in the same player, queue and playlists. Your file always plays first when you have the song. No ads; playlists keep only each song's id."
+      />
+      <Group title="Your music and online">
+        <LocalOnlyRow />
+        <CatalogHealth />
+      </Group>
+      <Group title="Accounts">
+        <YtmAccount />
+        <SpotifyAccount />
+        <More title="Apple Music" hint={`Bring playlists over from your Apple Music library, with a library key. ${s?.apple_key ? 'Key added.' : 'Not added.'}`}>
+          <KeyField
+            id="apple"
+            title="Apple Music library key"
+            hint="Reads your own Apple Music library to bring your playlists over. 16 characters; published in open-source Apple Music tools and not included with this app."
+            where="open-source Apple Music library readers"
+            value={s?.apple_key}
+            length={16}
+            onSave={(v) => save({ apple_key: v }, v ? 'Apple Music key saved.' : 'Apple Music key removed.')}
           />
-        </Row>
-      ))}
-      <h3 className="mt-8 text-[15px] font-semibold">Optional keys</h3>
-      <KeyField
-        id="acoustid"
-        title="AcoustID"
-        hint="Identifies files without tags by their sound. Free for open-source apps. Only an acoustic fingerprint is sent, never the audio."
-        where="acoustid.org/new-application"
-        value={s?.acoustid_key}
-        onSave={(v) => save({ acoustid_key: v }, v ? 'AcoustID key saved.' : 'AcoustID key removed.')}
-      />
-      <KeyField
-        id="discogs"
-        title="Discogs"
-        hint="Credits and original release years for albums MusicBrainz doesn't have, common for Indian releases. Free personal token."
-        where="discogs.com/settings/developers"
-        value={s?.discogs_token}
-        onSave={(v) => save({ discogs_token: v }, v ? 'Discogs token saved.' : 'Discogs token removed.')}
-      />
-      <KeyField
-        id="apple"
-        title="Apple Music library key"
-        hint="Reads your own Apple Music library to bring your playlists over. 16 characters; published in open-source Apple Music tools and not included with this app."
-        where="open-source Apple Music library readers"
-        value={s?.apple_key}
-        length={16}
-        onSave={(v) => save({ apple_key: v }, v ? 'Apple Music key saved.' : 'Apple Music key removed.')}
-      />
+        </More>
+      </Group>
+      <Group title="The catalog">
+        <RegionRow />
+      </Group>
+      <Group title="Listen together">
+        <TogetherRows />
+      </Group>
+      <Group title="More">
+        <More title="Network" hint="Your own relay for rooms, and a proxy for networks that need one.">
+          <RelayRow />
+          <ProxySetting />
+        </More>
+      </Group>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
   )
 }
 
-/** What closing the window does, and starting with Windows. */
-function Desktop() {
+function SystemPage(props: { onShortcuts: () => void }) {
   const { s, save, saved } = useSettings()
   const [startup, setStartup] = useState<boolean | null>(null)
   useEffect(() => {
@@ -903,56 +965,6 @@ function Desktop() {
     await (on ? a.enable() : a.disable())
     setStartup(await a.isEnabled())
   }
-  return (
-    <div>
-      <h2 className="title text-[22px]">Startup and tray</h2>
-      <Row
-        title="When you close the window"
-        hint={
-          s && !s.close_action
-            ? 'Not chosen yet: Venuta asks the first time you close it.'
-            : 'In the tray, Venuta keeps playing and answers your media keys. Click its icon by the clock to come back; right-click it for play, next and quit.'
-        }
-      >
-        <Segmented
-          id="close"
-          value={(s?.close_action ?? '') as 'tray' | 'quit'}
-          onChange={(close_action) => save({ close_action }, close_action === 'tray' ? 'Closing keeps music playing in the tray.' : 'Closing quits Venuta.')}
-          options={[
-            { value: 'tray', label: 'Keep playing in the tray' },
-            { value: 'quit', label: 'Quit Venuta' },
-          ]}
-        />
-      </Row>
-      <Row title="Start with Windows" hint="When you sign in, Venuta starts in the tray without opening a window, ready for your media keys.">
-        <Switch label="Start with Windows" on={!!startup} disabled={startup === null} onChange={(on) => void setStartWithWindows(on)} />
-      </Row>
-      <HotkeysSetting />
-      {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
-    </div>
-  )
-}
-
-function Safety() {
-  const { s, save, saved } = useSettings()
-  return (
-    <div>
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Safety and undo</h2>
-      <Row
-        title="I have a backup of my music"
-        hint="Editing tags changes your music files (safely, and each change can be undone). This confirms you have a copy elsewhere."
-      >
-        <Switch label="I have a backup of my music" on={!!s?.backup_confirmed} onChange={(on) => save({ backup_confirmed: on })} />
-      </Row>
-      <Row title="Nothing is ever deleted" hint="Duplicates and removed playlists go to the Set aside folder beside your music, and every change is recorded in Activity, where it can be undone.">
-        <span />
-      </Row>
-      {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
-    </div>
-  )
-}
-
-function About() {
   const [v, setV] = useState('')
   useEffect(() => {
     engineVersion().then(setV)
@@ -972,62 +984,97 @@ function About() {
               ? u.message
               : 'New versions are signed, and installed only when you choose.'
   return (
-    <div className="select-text">
-      <h2 className="sr-only">About</h2>
-      <div className="flex flex-col items-start gap-4 py-2">
-        <Brand size={96} word={62} />
-        <p className="text-[13.5px] text-ink/70">
-          The essence of the flute. Version {v}, free and open source under the MIT licence.
+    <div>
+      <PageHead title="System" line="How Venuta runs on Windows, what it keeps, and its updates." />
+      <Group title="On Windows">
+        <Row
+          title="When you close the window"
+          hint={
+            s && !s.close_action
+              ? 'Not chosen yet: Venuta asks the first time you close it.'
+              : 'In the tray, Venuta keeps playing and answers your media keys. Click its icon by the clock to come back; right-click it for play, next and quit.'
+          }
+        >
+          <Segmented
+            id="close"
+            value={(s?.close_action ?? '') as 'tray' | 'quit'}
+            onChange={(close_action) => save({ close_action }, close_action === 'tray' ? 'Closing keeps music playing in the tray.' : 'Closing quits Venuta.')}
+            options={[
+              { value: 'tray', label: 'Keep playing in the tray' },
+              { value: 'quit', label: 'Quit Venuta' },
+            ]}
+          />
+        </Row>
+        <Row title="Start with Windows" hint="When you sign in, Venuta starts in the tray without opening a window, ready for your media keys.">
+          <Switch label="Start with Windows" on={!!startup} disabled={startup === null} onChange={(on) => void setStartWithWindows(on)} />
+        </Row>
+      </Group>
+      <HotkeysSetting />
+      <Group title="History and storage">
+        <HistoryRow />
+        <CacheSetting />
+      </Group>
+      <Group title="Updates">
+        <Row title="Updates" hint={line}>
+          {u.at === 'found' ? (
+            <button onClick={() => void installUpdate()} className="btn-primary">
+              Install and restart
+            </button>
+          ) : (
+            <button onClick={() => void checkForUpdate()} disabled={u.at === 'checking' || u.at === 'downloading'} className="btn">
+              {u.at === 'checking' ? 'Checking…' : 'Check for updates'}
+            </button>
+          )}
+        </Row>
+        {u.at === 'downloading' && (
+          <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
+            <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }} />
+          </div>
+        )}
+        {(u.at === 'found' || u.at === 'downloading') && u.info.notes && (
+          <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{u.info.notes}</div>
+        )}
+        <Row title="Check when Venuta starts" hint="At most once a day, it asks GitHub whether there is a new version. Nothing else is sent.">
+          <Switch
+            label="Check for updates when Venuta starts"
+            on={auto}
+            onChange={(on) => {
+              setAuto(on)
+              remember({ auto: on })
+            }}
+          />
+        </Row>
+        <BetaRow />
+      </Group>
+      <Group title="Help">
+        <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
+          <button
+            onClick={() =>
+              void invoke<string>('diagnostics')
+                .then((t) => navigator.clipboard.writeText(t))
+                .then(() => notify('Diagnostics copied.'))
+                .catch((e) => notify(String(e)))
+            }
+            className="btn"
+          >
+            Copy diagnostics
+          </button>
+        </Row>
+        <Row title="Keyboard shortcuts" hint="Every key Venuta knows, in the app and from anywhere. Also on ?.">
+          <button onClick={props.onShortcuts} className="btn">
+            Show
+          </button>
+        </Row>
+      </Group>
+      <div className="mt-8 flex flex-col items-start gap-3 select-text">
+        <Brand size={64} word={40} />
+        <p className="text-[13px] text-ink/70">The essence of the flute. Version {v}, free and open source under the MIT licence.</p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
+          published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
         </p>
       </div>
-      <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
-        <button
-          onClick={() =>
-            void invoke<string>('diagnostics')
-              .then((t) => navigator.clipboard.writeText(t))
-              .then(() => notify('Diagnostics copied.'))
-              .catch((e) => notify(String(e)))
-          }
-          className="btn"
-        >
-          Copy diagnostics
-        </button>
-      </Row>
-      <Row title="Updates" hint={line}>
-        {u.at === 'found' ? (
-          <button onClick={() => void installUpdate()} className="btn-primary">
-            Install and restart
-          </button>
-        ) : (
-          <button onClick={() => void checkForUpdate()} disabled={u.at === 'checking' || u.at === 'downloading'} className="btn">
-            {u.at === 'checking' ? 'Checking…' : 'Check for updates'}
-          </button>
-        )}
-      </Row>
-      {u.at === 'downloading' && (
-        <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
-          <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }} />
-        </div>
-      )}
-      {(u.at === 'found' || u.at === 'downloading') && u.info.notes && (
-        <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{u.info.notes}</div>
-      )}
-      <Row title="Check when Venuta starts" hint="At most once a day, it asks GitHub whether there is a new version. Nothing else is sent.">
-        <Switch
-          label="Check for updates when Venuta starts"
-          on={auto}
-          onChange={(on) => {
-            setAuto(on)
-            remember({ auto: on })
-          }}
-        />
-      </Row>
-      <BetaRow />
-      <p className="mt-4 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
-        Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
-        published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
-      </p>
+      {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
   )
 }
-

@@ -1,16 +1,16 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Segmented, Switch } from '../../components/ui'
-import { invoke } from '@tauri-apps/api/core'
-import { inApp } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
-import { setMyName, TOGETHER } from '../../lib/together'
-import { LyricWindowsSettings } from './LyricWindowsSettings'
+import { setMyName } from '../../lib/together'
+import { Row } from './parts'
 
 /*
-  Settings > Listening: what plays next, how online songs come, which lyrics sources are asked
-  and in what order, and who is never offered. Saved with your settings; the online catalog is
-  told at once.
+  The listening settings, as the pieces the Settings pages are made of: what plays next (Playback),
+  how online songs come and which country the catalog answers for (Playback, Online), which lyrics
+  sources are asked and in what order (Lyrics), who is never offered (Playback), the name others see
+  in a room and how rooms connect (Online), and your history (System). Saved with your settings;
+  the online catalog is told at once.
 */
 
 /** The lyrics sources, in their own order (crates/engine lyrics_online SOURCES). */
@@ -47,38 +47,104 @@ const REGIONS: [string, string][] = [
   ['ZA', 'South Africa'],
 ]
 
-function Row(props: { title: string; hint?: string; children: React.ReactNode }) {
+/** The listening settings as they are now, read once when a page shows, and the way to change them. */
+function useListening() {
+  useSyncExternalStore(subscribeListening, listeningVersion)
+  useEffect(() => {
+    void loadListening(true)
+  }, [])
+  const set = (change: Parameters<typeof updateListening>[0]) => void updateListening(change).catch((e) => notify(String(e)))
+  return { l: listening(), set }
+}
+
+/** Local only: your own music and nothing online. */
+export function LocalOnlyRow() {
+  const { l, set } = useListening()
   return (
-    <div className="flex flex-wrap items-center gap-4 border-b border-edge py-4 last:border-b-0">
-      <div className="min-w-[220px] flex-1">
-        <div className="text-[14px] font-medium">{props.title}</div>
-        {props.hint && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">{props.hint}</div>}
-      </div>
-      {props.children}
-    </div>
+    <Row
+      title="Local only"
+      hint="Only your own music. The online catalog's songs, shelves and searches are hidden, online songs in your playlists are skipped, and Venuta doesn't go online at all: no lyrics or details lookups, covers or update checks. Off: your files and the online catalog together."
+    >
+      <Switch on={l.local_only} onChange={(on) => set({ local_only: on })} label="Local only" />
+    </Row>
   )
 }
 
-/** Listening together: the name others see, and how rooms connect (for the next room). */
-function TogetherSettings() {
-  const l = listening()
-  // Your edits while typing; what's saved otherwise.
-  const [name, setName] = useState<string | null>(null)
-  const [relay, setRelay] = useState<string | null>(null)
-  const relayNow = relay ?? l.together_relay ?? ''
-  const relayOk = !relayNow.trim() || /^https:\/\/[^\s/]+/.test(relayNow.trim())
-  const saveRelay = () => {
-    if (relay === null) return
-    const v = relay.trim()
-    if (v && !relayOk) return notify('A relay address starts with https://')
-    void updateListening({ together_relay: v || null })
-      .then(() => setRelay(null))
-      .catch((e) => notify(String(e)))
-  }
+/** What plays when the queue runs out, and what Venuta does when a song starts. */
+export function WhatPlaysRows() {
+  const { l, set } = useListening()
   return (
     <>
-      <h3 className="mt-8 text-[13px] font-semibold text-ink/60">{TOGETHER}</h3>
-      <Row title="Your name" hint="What others in a room see. Empty: this computer's user name.">
+      <Row title="Autoplay" hint="When the queue runs out, keep playing songs like the last one, from the online catalog (yours play from your files). Also in the queue.">
+        <Switch on={l.autoplay} onChange={(on) => set({ autoplay: on })} label="Autoplay" />
+      </Row>
+      <Row title="Hide music videos" hint="Leave videos out of search and of what plays next, so only songs come up.">
+        <Switch on={l.hide_videos} onChange={(on) => set({ hide_videos: on })} label="Hide music videos" />
+      </Row>
+      <Row title="Open Now Playing when you press play" hint="Now Playing opens each time something new plays.">
+        <Switch on={l.open_player_on_play} onChange={(on) => set({ open_player_on_play: on })} label="Open Now Playing when you press play" />
+      </Row>
+      <Row title="Song notifications" hint="When a new song starts while Venuta is in the background, Windows says what it is.">
+        <Switch on={l.song_notifications} onChange={(on) => set({ song_notifications: on })} label="Song notifications" />
+      </Row>
+    </>
+  )
+}
+
+/** How good a stream online songs come as. */
+export function StreamQualityRow() {
+  const { l, set } = useListening()
+  return (
+    <Row title="Stream quality" hint={l.stream_quality === 'low' ? 'The smallest stream each song offers: less data, less detail.' : 'The best stream each song offers (Opus or AAC, whichever is better).'}>
+      <Segmented
+        size="sm"
+        label="Stream quality"
+        value={l.stream_quality === 'low' ? 'low' : 'auto'}
+        onChange={(v) => set({ stream_quality: v })}
+        options={[
+          { value: 'auto', label: 'Best' },
+          { value: 'low', label: 'Data saver' },
+        ]}
+      />
+    </Row>
+  )
+}
+
+/** Which country the online catalog answers for. */
+export function RegionRow() {
+  const { l, set } = useListening()
+  return (
+    <Row title="Region" hint="Which country the online catalog answers for: its charts, Home, moods and search. Automatic follows Windows' region (Settings > Time & language).">
+      <select value={l.catalog_region} onChange={(e) => set({ catalog_region: e.target.value })} aria-label="Region for online music" className="field h-9 rounded-full px-3 text-[13px]">
+        <option value="">Automatic</option>
+        {REGIONS.map(([code, name]) => (
+          <option key={code} value={code}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </Row>
+  )
+}
+
+/** Your listening history, for Stats, Home and Most played. */
+export function HistoryRow() {
+  const { l, set } = useListening()
+  return (
+    <Row title="Keep a history" hint="What you play, from your files and online, for Stats, Home and Most played. Kept with your library, never sent anywhere. Also on Stats.">
+      <Switch on={l.history} onChange={(on) => set({ history: on })} label="Keep a history" />
+    </Row>
+  )
+}
+
+/** Listening together: the name others see, and hiding your address. */
+export function TogetherRows() {
+  const { l } = useListening()
+  // Your edits while typing; what's saved otherwise.
+  const [name, setName] = useState<string | null>(null)
+  return (
+    <>
+      <Row title="Your name" hint="What others in a room see. Empty: this computer's user name. Also in the Listen together panel.">
         <input
           value={name ?? l.together_name}
           onChange={(e) => setName(e.target.value)}
@@ -97,27 +163,45 @@ function TogetherSettings() {
       >
         <Switch on={l.together_hide_ip} onChange={(on) => void updateListening({ together_hide_ip: on }).catch((e) => notify(String(e)))} label="Hide your IP address" />
       </Row>
-      <Row
-        title="Your own relay"
-        hint={
-          l.local_only
-            ? 'With Local only on, rooms stay on your own network and use no relay.'
-            : 'When two computers cannot reach each other directly, a relay passes the encrypted sound between them. Empty: the free public relays. From the next room.'
-        }
-      >
-        <input
-          value={relayNow}
-          onChange={(e) => setRelay(e.target.value)}
-          onBlur={saveRelay}
-          onKeyDown={(e) => e.key === 'Enter' && saveRelay()}
-          placeholder="https://relay.example.com"
-          spellCheck={false}
-          aria-label="Your own relay"
-          aria-invalid={!relayOk}
-          className={`field h-8 w-[260px] rounded-full px-3 text-[13px] ${relayOk ? '' : 'ring-1 ring-[#d05050]'}`}
-        />
-      </Row>
     </>
+  )
+}
+
+/** Your own relay for rooms (from the next room). */
+export function RelayRow() {
+  const { l } = useListening()
+  const [relay, setRelay] = useState<string | null>(null)
+  const relayNow = relay ?? l.together_relay ?? ''
+  const relayOk = !relayNow.trim() || /^https:\/\/[^\s/]+/.test(relayNow.trim())
+  const saveRelay = () => {
+    if (relay === null) return
+    const v = relay.trim()
+    if (v && !relayOk) return notify('A relay address starts with https://')
+    void updateListening({ together_relay: v || null })
+      .then(() => setRelay(null))
+      .catch((e) => notify(String(e)))
+  }
+  return (
+    <Row
+      title="Your own relay"
+      hint={
+        l.local_only
+          ? 'With Local only on, rooms stay on your own network and use no relay.'
+          : 'When two computers cannot reach each other directly, a relay passes the encrypted sound between them. Empty: the free public relays. From the next room.'
+      }
+    >
+      <input
+        value={relayNow}
+        onChange={(e) => setRelay(e.target.value)}
+        onBlur={saveRelay}
+        onKeyDown={(e) => e.key === 'Enter' && saveRelay()}
+        placeholder="https://relay.example.com"
+        spellCheck={false}
+        aria-label="Your own relay"
+        aria-invalid={!relayOk}
+        className={`field h-8 w-[260px] rounded-full px-3 text-[13px] ${relayOk ? '' : 'ring-1 ring-[#d05050]'}`}
+      />
+    </Row>
   )
 }
 
@@ -133,13 +217,9 @@ function sourceOrder(setting: string[]): { id: string; on: boolean }[] {
 }
 const toSetting = (list: { id: string; on: boolean }[]) => list.map((s) => (s.on ? s.id : `-${s.id}`))
 
-export function ListeningSettings() {
-  useSyncExternalStore(subscribeListening, listeningVersion)
-  useEffect(() => {
-    void loadListening(true)
-  }, [])
-  const l = listening()
-  const set = (change: Parameters<typeof updateListening>[0]) => void updateListening(change).catch((e) => notify(String(e)))
+/** The lyrics sources asked while playing, in your order, each on or off. */
+export function LyricsSources() {
+  const { l, set } = useListening()
   const order = sourceOrder(l.lyrics_sources)
   const moveSource = (i: number, by: -1 | 1) => {
     const next = order.slice()
@@ -148,69 +228,8 @@ export function ListeningSettings() {
     ;[next[i], next[j]] = [next[j], next[i]]
     set({ lyrics_sources: toSetting(next) })
   }
-
   return (
-    <div>
-      <h2 className="title text-[22px]">Listening</h2>
-
-      <h3 className="mt-6 text-[13px] font-semibold text-ink/60">Your music and online</h3>
-      <Row
-        title="Local only"
-        hint="Only your own music: the online catalog's songs, shelves and searches are hidden, online songs in your playlists are skipped, and Venuta doesn't go online at all (no lyrics or details lookups, covers or update checks). Off: your files and the online catalog together."
-      >
-        <Switch on={l.local_only} onChange={(on) => set({ local_only: on })} label="Local only" />
-      </Row>
-
-      <h3 className="mt-6 text-[13px] font-semibold text-ink/60">What plays</h3>
-      <Row title="Autoplay" hint="When the queue runs out, keep playing songs like the last one, from the online catalog (yours play from your files).">
-        <Switch on={l.autoplay} onChange={(on) => set({ autoplay: on })} label="Autoplay" />
-      </Row>
-      <Row title="Open the player when you press play" hint="Now Playing opens each time something new plays.">
-        <Switch on={l.open_player_on_play} onChange={(on) => set({ open_player_on_play: on })} label="Open the player when you press play" />
-      </Row>
-      <Row title="Song notifications" hint="When a new song starts while Venuta is in the background, Windows says what it is.">
-        <Switch on={l.song_notifications} onChange={(on) => set({ song_notifications: on })} label="Song notifications" />
-      </Row>
-      <Row title="Keep a history" hint="What you play, from your files and online, for Listening's stats and history, Home and Most played. Kept with your library, never sent anywhere.">
-        <Switch on={l.history} onChange={(on) => set({ history: on })} label="Keep a history" />
-      </Row>
-
-      <TogetherSettings />
-
-      <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Online songs</h3>
-      <Row title="Stream quality" hint={l.stream_quality === 'low' ? 'The smallest stream each song offers: less data, less detail.' : 'The best stream each song offers (Opus or AAC, whichever is better).'}>
-        <Segmented
-          size="sm"
-          label="Stream quality"
-          value={l.stream_quality === 'low' ? 'low' : 'auto'}
-          onChange={(v) => set({ stream_quality: v })}
-          options={[
-            { value: 'auto', label: 'Best' },
-            { value: 'low', label: 'Data saver' },
-          ]}
-        />
-      </Row>
-      <Row title="Region" hint="Which country the online catalog answers for: its charts, Home, moods and search. Automatic follows Windows' region (Settings > Time & language).">
-        <select value={l.catalog_region} onChange={(e) => set({ catalog_region: e.target.value })} aria-label="Region for online music" className="field h-9 rounded-full px-3 text-[13px]">
-          <option value="">Automatic</option>
-          {REGIONS.map(([code, name]) => (
-            <option key={code} value={code}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </Row>
-      <Row title="Hide music videos" hint="Leave videos out of search and of what plays next, so only songs come up.">
-        <Switch on={l.hide_videos} onChange={(on) => set({ hide_videos: on })} label="Hide music videos" />
-      </Row>
-      <Row title="Levelling online songs" hint="With Levelling on (Sound), online songs are evened out by the catalog's own loudness for each, the way ReplayGain evens out your files." >
-        <span className="text-[12.5px] text-ink/50">With Levelling</span>
-      </Row>
-
-      <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Lyrics sources</h3>
-      <p className="mt-1 text-[12.5px] leading-relaxed text-ink/55">
-        For songs without lyrics of their own. Automatic takes the first source in this order with timed lyrics. Any song can use another (Now Playing, under its lyrics).
-      </p>
+    <>
       <ol className="mt-3 grid gap-0.5">
         {order.map((s, i) => {
           const [, label, note] = SOURCES.find(([k]) => k === s.id) ?? [s.id, s.id, '']
@@ -232,35 +251,39 @@ export function ListeningSettings() {
           )
         })}
       </ol>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {l.lyrics_sources.length > 0 && (
+      {l.lyrics_sources.length > 0 && (
+        <div className="mt-2">
           <button onClick={() => set({ lyrics_sources: [] })} className="btn-ghost btn-sm">
             Back to the usual order
           </button>
-        )}
-        {inApp() && (
-          <button
-            onClick={() =>
-              void invoke<number>('lyrics_forget_all')
-                .then((n) => notify(n ? `Forgot the lyrics kept for ${n.toLocaleString('en-IN')} songs; they are found again as songs play.` : 'No lyrics were kept.'))
-                .catch((e) => notify(String(e)))
-            }
-            className="btn-ghost btn-sm"
-            title="Lyrics found online are kept so each song is asked about once. Your choices per song stay."
-          >
-            Forget kept lyrics
-          </button>
-        )}
-      </div>
+        </div>
+      )}
+    </>
+  )
+}
 
-      <LyricWindowsSettings />
-
-      <h3 className="mt-8 text-[13px] font-semibold text-ink/60">Never offered</h3>
+/** Who radio and autoplay never offer: blocked artists and disliked songs, in one place. */
+export function NeverOffered() {
+  const { l, set } = useListening()
+  const none = !l.blocked_artists.length && !l.disliked.length
+  return (
+    <>
       <Row
-        title="Blocked artists"
-        hint={l.blocked_artists.length ? 'Radio, autoplay and suggestions never offer them. Their own pages, and songs you choose, still play.' : 'None. Block an artist from a song’s menu (Block artist).'}
+        title="Blocked artists and disliked songs"
+        hint={
+          none
+            ? 'None yet. Block an artist or dislike an online song from its menu; radio and autoplay then never offer them.'
+            : 'Radio, autoplay and suggestions never offer them. Their own pages, and songs you choose, still play.'
+        }
       >
-        <span />
+        {l.disliked.length > 0 && (
+          <span className="flex items-center gap-2 text-[12.5px] text-ink/60">
+            {`${l.disliked.length.toLocaleString('en-IN')} disliked ${l.disliked.length === 1 ? 'song' : 'songs'}`}
+            <button onClick={() => set({ disliked: [] })} className="btn-ghost btn-sm">
+              Forget them
+            </button>
+          </span>
+        )}
       </Row>
       {l.blocked_artists.length > 0 && (
         <ul className="grid gap-1 pb-2">
@@ -274,13 +297,6 @@ export function ListeningSettings() {
           ))}
         </ul>
       )}
-      <Row title="Disliked songs" hint={l.disliked.length ? `${l.disliked.length.toLocaleString('en-IN')} songs radio and autoplay never play.` : 'None. Dislike an online song from its menu.'}>
-        {l.disliked.length > 0 && inApp() && (
-          <button onClick={() => set({ disliked: [] })} className="btn-ghost btn-sm">
-            Forget them
-          </button>
-        )}
-      </Row>
-    </div>
+    </>
   )
 }

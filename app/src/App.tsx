@@ -404,7 +404,7 @@ export default function App() {
           notify(`Venuta ${info.version} is ready to install.`, {
             label: 'See what’s new',
             run: () => {
-              settingsSection('about')
+              settingsSection('system')
               go('settings')
             },
           })
@@ -424,7 +424,7 @@ export default function App() {
         listen('venuta://close-asked', async () => {
           const a = await chooseAsk({
             title: 'Keep playing when you close the window?',
-            text: 'Venuta can stay in the tray, by the clock: the music goes on and your media keys still work. Click its icon to come back. You can change this later in Settings, Startup and tray.',
+            text: 'Venuta can stay in the tray, by the clock: the music goes on and your media keys still work. Click its icon to come back. You can change this later in Settings, System.',
             confirm: 'Keep playing in the tray',
             other: 'Quit Venuta',
           })
@@ -438,7 +438,7 @@ export default function App() {
     }
   }, [])
 
-  // Shortcuts from anywhere (Settings, Startup and tray), the ones this window does: the player,
+  // Shortcuts from anywhere (Settings, System), the ones this window does: the player,
   // the volume, and liking the song playing.
   useEffect(() => {
     if (!inApp()) return
@@ -582,7 +582,7 @@ export default function App() {
       const nothing = r.albums_looked_up === 0 && r.lyrics_checked === 0 && !r.discogs_matches && !r.identified
       setNotice(
         nothing && !r.cancelled
-          ? 'Everything is already looked up; nothing new to find. Add music, or keys in Settings, Online sources, to find more.'
+          ? 'Everything is already looked up; nothing new to find. Add music, or keys in Settings, Library, to find more.'
           : r.cancelled
           ? 'Stopped. What was found is kept; look up again to continue.'
           : `Looked up ${r.albums_looked_up} albums (${r.musicbrainz_matches} on MusicBrainz, ${r.deezer_matches} on Deezer, ${r.apple_matches} on Apple${r.discogs_matches ? `, ${r.discogs_matches} on Discogs` : ''}) and found lyrics for ${r.lyrics_found} of ${r.lyrics_checked} songs${r.identified ? `; recognised ${r.identified} files without tags by their sound` : ''}. Organize shows what changes.`,
@@ -1117,6 +1117,11 @@ export default function App() {
             music={libMusic}
             onChooseLibrary={act.chooseRoot}
             onOpenLibrary={() => libMusic && act.openLibrary(libMusic)}
+            onOpenSound={() => {
+              setNowPanel('sound')
+              setNowOpen(true)
+            }}
+            onShortcuts={() => setSheet(true)}
             onChooseHome={async (path) => {
               if (root) await checkMusicFolder(root, path)
               await chooseHome(path)

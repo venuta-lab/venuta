@@ -14,7 +14,7 @@ import {
 } from '../../lib/lyricWindows'
 
 /*
-  Settings > Listening > Lyrics windows: the big screen and the desktop lyrics, each with its own
+  Settings > Lyrics: the big screen and the desktop lyrics, each with its own
   background and theme (and the desktop lyrics their place and lock): the same as their own
   controls, for when nothing is playing.
 */

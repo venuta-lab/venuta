@@ -60,7 +60,7 @@ export function HotkeysSetting() {
       <div className="mt-0.5 max-w-[62ch] text-[12.5px] leading-relaxed text-ink/55">
         These work while you're in another app, or with Venuta in the tray. Click one and press the keys, with Ctrl, Alt, Shift or Win. Backspace switches one off. Your media keys work as well, without setting anything.
       </div>
-      <div className="mt-3 grid gap-1">
+      <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(360px,1fr))] gap-x-6 gap-y-1">
         {HOTKEY_ACTIONS.map((a) => {
           const keys = now.keys[a.id] ?? ''
           const problem = now.problems.find((p) => p.action === a.id)

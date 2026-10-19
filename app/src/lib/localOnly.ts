@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from './listening'
 
 /*
-  Local only (Settings, Listening; off until switched on): Venuta shows only your own music and
+  Local only (Settings, Online; off until switched on): Venuta shows only your own music and
   goes nowhere online. The app itself refuses every online request then (app playback.rs, engine
   net.rs); these say it to the screens, so they hide what would only come back empty.
 */

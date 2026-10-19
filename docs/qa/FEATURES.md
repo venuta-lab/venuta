@@ -36,15 +36,15 @@ Walked through at the end of every piece of work and before every release. Each 
 - Send out: a file in any format with paths for this PC, next to the playlist, a phone or player, or a server; songs you don't have kept where the format can; a backup of everything (brought back, empty playlists too); YouTube Music links of 50; Spotify links to paste; Apple Music and Deezer pages of links; a CSV for TuneMyMusic or Soundiiz; copy as text
 
 ## Library
-- Metadata: what's missing, filters, editing an album
+- Health, Fix details (was Metadata): what's missing, filters, editing an album
 - Health: completeness, tools (Look up details online, Check quality, Look for changes), issues and their lists, Lyrics without timing
 - Organize: your library vs rules, Apply, Undo; New music (Incoming), drop files in
 - Devices: cards, selections, conversions, write, eject
-- Activity: every change with Undo
+- Activity (title bar): every change with Undo
 
 ## Settings
 - Look and feel: themes (in use, recent, browser, search, filters), New theme / Theme Studio, import/export themes, Mode, Colour, Window (surface, album background), Motion, App icon
-- Startup and tray, Music folders, Online sources (keys, Spotify), Safety and undo, About (updates)
+- Playback (output device, exclusive, levelling, crossfade, what plays, stream quality, never offered), Lyrics (sources, big screen, desktop lyrics), Library (folders, detail sources and keys, backup, rules), Online (Local only, catalog, accounts, region, listen together, relay and proxy), System (close, startup, shortcuts, history, cache, updates, diagnostics)
 
 ## Everywhere
 - Jump to (Ctrl+K): places, albums, artists, commands

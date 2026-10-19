@@ -186,7 +186,7 @@ export function InboxScreen(props: {
         props.home ? (
           <IncomingScreen root={props.home} onImported={props.onImported} />
         ) : (
-          <p className="py-20 text-center text-[14px] text-ink/55">Choose where your library lives first (Settings, Music folders).</p>
+          <p className="py-20 text-center text-[14px] text-ink/55">Choose where your library lives first (Settings, Library).</p>
         )
       ) : !data ? (
         <p className="py-20 text-center text-[14px] text-ink/55">{summary}</p>
@@ -749,7 +749,7 @@ function BuildBar(props: { root: string; data: Review; onSwitch: (path: string) 
             music folder is only read, never changed.
           </div>
           {!target && (
-            <div className="mt-1 text-[12.5px] text-fix">Choose where your library lives first, in Settings, Music folders.</div>
+            <div className="mt-1 text-[12.5px] text-fix">Choose where your library lives first, in Settings, Library.</div>
           )}
           {target && !ready.length && waiting > 0 && (
             <div className="mt-1 text-[12.5px] text-fix">Answer the questions above, and those albums are ready to build.</div>
