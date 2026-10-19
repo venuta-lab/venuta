@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlists as loadPlaylists, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { playlists as loadPlaylists, ytmPlaylist, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useYtmPart, useYtmStatus } from '../lib/ytmLibrary'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
@@ -10,6 +10,7 @@ import { addSongsTo } from '../screens/playlists/ops'
 import { nameNote, savedName } from '../lib/playlistName'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
+import { addPlan, canAddTo } from '../lib/ytmAdd'
 
 /*
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
@@ -33,6 +34,9 @@ export function askAddSongs(items: PlaylistItem[], label: string) {
   request = { items, label }
   emit()
 }
+
+/** YouTube Music playlists found to be someone else's (saved ones): not offered again. */
+const notYours = new Set<string>()
 
 /** Tell open playlist views that a playlist changed (so they re-read it). */
 export const playlistsChanged = () => window.dispatchEvent(new CustomEvent('venuta:playlists-changed'))
@@ -79,6 +83,7 @@ export function AddToPlaylist({ root }: { root: string }) {
   // Your YouTube Music playlists take the online songs among these (your own files stay in Venuta).
   const { signed_in } = useYtmStatus()
   const ytmLists = useYtmPart<OnlineSuggestion[]>('playlists', !!req).value
+  const [refused, setRefused] = useState(() => new Set(notYours))
   const videoIds = (req?.items ?? []).flatMap((i) => ('online' in i && i.online.provider === 'remote_catalog' ? [i.online.track_id] : []))
   const onlyHere = (req?.items.length ?? 0) - videoIds.length
   const ytmShown = useMemo(() => {
@@ -86,18 +91,31 @@ export function AddToPlaylist({ root }: { root: string }) {
     return (
       (ytmLists ?? [])
         .flatMap((c) => (c.kind === 'playlist' ? [c.collection] : []))
-        // Liked Music fills itself from likes; it isn't added to.
-        .filter((c) => !/^(VL)?LM$/.test(c.collection_id) && has(keyFor({ name: c.title } as PlaylistSummary, () => c.title)))
+        // Liked Music fills itself from likes; it isn't added to. Nor is someone else's playlist.
+        .filter(
+          (c) =>
+            !/^(VL)?LM$/.test(c.collection_id) && !refused.has(c.collection_id) && has(keyFor({ name: c.title } as PlaylistSummary, () => c.title)),
+        )
     )
-  }, [ytmLists, q])
+  }, [ytmLists, q, refused])
   async function addToYtm(c: OnlineCollection) {
     if (!req || busy || !videoIds.length) return
     setBusy(true)
     try {
-      await ytmPlaylistEdit(c.collection_id.replace(/^VL/, ''), [{ kind: 'add', video_ids: videoIds }])
-      const what = videoIds.length === 1 ? `“${req.label}”` : `${videoIds.length} songs`
+      // Read first: a playlist you can't change is refused before anything is sent, and songs
+      // already in it are left out (one there would fail the whole add).
+      const id = c.collection_id.replace(/^VL/, '')
+      const there = await ytmPlaylist(id)
+      const plan = addPlan(videoIds, there, `“${req.label}”`)
+      if (!canAddTo(there)) {
+        notYours.add(c.collection_id)
+        setRefused(new Set(notYours))
+        notify(plan.words)
+        return
+      }
+      if (plan.send.length) await ytmPlaylistEdit(id, [{ kind: 'add', video_ids: plan.send }])
       const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
-      notify(`Added ${what} to “${c.title}” on YouTube Music.${kept}`)
+      notify(`${plan.words}${kept}`)
       close()
     } catch (e) {
       notify(onlineProblem(e))
