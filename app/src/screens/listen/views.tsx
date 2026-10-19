@@ -224,6 +224,9 @@ export const HomeView = memo(function HomeView(props: {
   ]
   const known = parts.map((p) => p.id)
   const shown = arrange(layout, known)
+  const chips = <HomeChips chips={online.chips} chip={chip} onChip={setChip} />
+  // The first part shown is the card for what is playing: the chips go right under it.
+  const heroFirst = shown.find((s) => s.on)?.id === 'hero'
   return (
     <div className="pb-16">
       {props.editing === undefined && (
@@ -234,7 +237,7 @@ export const HomeView = memo(function HomeView(props: {
           </button>
         </div>
       )}
-      <HomeChips chips={online.chips} chip={chip} onChip={setChip} />
+      {!heroFirst && chips}
       {lib.albums.length === 0 && props.onAddMusic && (
         <section aria-label="Add your music" className="glass mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[24px] p-6">
           <div className="min-w-[260px] flex-1">
@@ -268,7 +271,10 @@ export const HomeView = memo(function HomeView(props: {
           {shown
             .filter((s) => s.on)
             .map((s) => (
-              <Fragment key={s.id}>{parts.find((p) => p.id === s.id)?.node}</Fragment>
+              <Fragment key={s.id}>
+                {parts.find((p) => p.id === s.id)?.node}
+                {heroFirst && s.id === 'hero' && <div className="mt-4">{chips}</div>}
+              </Fragment>
             ))}
         </div>
       </CardWidth>
@@ -387,7 +393,7 @@ function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }}
       transition={spring}
-      className="glass relative overflow-hidden rounded-[28px] p-6"
+      className="glass relative overflow-hidden rounded-[24px] p-4"
     >
       {art && (
         <img
@@ -398,20 +404,22 @@ function OnlineHero({ song, playing }: { song: QueueItem; playing: boolean }) {
           style={{ filter: 'blur(64px) var(--art-tint)' }}
         />
       )}
-      <div className="relative flex flex-wrap items-center gap-7">
-        <div className="aspect-square w-[200px] shrink-0 overflow-hidden rounded-2xl bg-ink/[0.06] shadow-2xl shadow-black/40">
+      <div className="relative flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="aspect-square w-[104px] shrink-0 overflow-hidden rounded-xl bg-ink/[0.06] shadow-xl shadow-black/35">
           <RemoteArt url={song.artwork_url} seed={song.album || song.title} size={200} imgClassName="h-full w-full object-cover" />
         </div>
-        <div className="min-w-[240px] flex-1">
-          <p className="text-[13px] text-ink/60">{playing ? 'Playing now' : 'Paused'}</p>
-          <h2 className="title mt-1.5 text-[30px] leading-[1.1]">{song.title}</h2>
-          {artist && <p className="mt-1.5 text-[15px] text-ink/80">{artist}</p>}
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
+        <div className="min-w-[220px] flex-1">
+          <p className="text-[12.5px] text-ink/60">{playing ? 'Playing now' : 'Paused'}</p>
+          <h2 className="title mt-1 truncate text-[22px] leading-[1.15]">{song.title}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink/65">
+            {artist && <span className="text-ink/80">{artist}</span>}
             {song.album && <span>{song.album}</span>}
             <AvailabilityBadge availability={availabilityOf(song)} />
           </div>
-          <div className="mt-5">
-            <button onClick={() => void toggle()} className="btn-primary play-main btn-lg">
+        </div>
+        <div className="shrink-0 pr-2">
+          <div>
+            <button onClick={() => void toggle()} className="btn-primary play-main">
               {playing ? <IconPause /> : <IconPlay />}
               {playing ? 'Pause' : 'Resume'}
             </button>
@@ -432,7 +440,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
       exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }}
       transition={spring}
       onContextMenu={(e) => menuFromEvent(e, menuFor('album', {}, albumWork(nav, a)))}
-      className="glass relative overflow-hidden rounded-[28px] p-6"
+      className="glass relative overflow-hidden rounded-[24px] p-4"
     >
       {cover && (
         <img
@@ -443,7 +451,7 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
           style={{ filter: "blur(64px) var(--art-tint)" }}
         />
       )}
-      <div className="relative flex flex-wrap items-center gap-7">
+      <div className="relative flex flex-wrap items-center gap-x-5 gap-y-3">
         <button
           onClick={() => {
             nav.openAlbum(a.dir, 'hero')
@@ -454,29 +462,29 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
           <motion.div
             layoutId={coverId('hero', a.dir)}
             transition={spring}
-            className="aspect-square w-[200px] overflow-hidden rounded-2xl bg-ink/[0.06] shadow-2xl shadow-black/40"
+            className="aspect-square w-[104px] overflow-hidden rounded-xl bg-ink/[0.06] shadow-xl shadow-black/35"
           >
             <Art cover={cover} album={a} />
           </motion.div>
         </button>
-        <div className="min-w-[240px] flex-1">
-          <p className="text-[13px] text-ink/60">{label}</p>
-          <h2 className="title mt-1.5 text-[30px] leading-[1.1]">
+        <div className="min-w-[220px] flex-1">
+          <p className="text-[12.5px] text-ink/60">{label}</p>
+          <h2 className="title mt-1 truncate text-[22px] leading-[1.15]">
             <button onClick={() => nav.openAlbum(a.dir, 'hero')} className="rounded-md text-left hover:underline">
               {a.title}
             </button>
           </h2>
-          <button onClick={() => nav.openArtist(a.artist)} className="mt-1.5 rounded-md text-left text-[15px] text-ink/80 hover:text-ink hover:underline">
-            {a.artist}
-          </button>
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] text-ink/60">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink/60">
+            <button onClick={() => nav.openArtist(a.artist)} className="rounded-md text-left text-ink/80 hover:text-ink hover:underline">
+              {a.artist}
+            </button>
             {a.year && <span>{a.year}</span>}
             <QualityBadge text={a.quality} />
             {a.hiRes && <HiResPill />}
           </div>
-          <div className="mt-5">
-            <PlayButtons tracks={a.tracks} from={albumFrom(a)} dir={a.dir} />
-          </div>
+        </div>
+        <div className="shrink-0 pr-2">
+          <PlayButtons tracks={a.tracks} from={albumFrom(a)} dir={a.dir} />
         </div>
       </div>
     </motion.section>

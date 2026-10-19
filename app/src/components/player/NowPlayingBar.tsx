@@ -53,6 +53,7 @@ import {
   IconPlay,
   IconPrevious,
   IconQueue,
+  IconSound,
   IconRepeat,
   IconRepeatOne,
   IconShuffle,
@@ -658,6 +659,11 @@ function SleepButton(props: { s: PlayerState }) {
   )
 }
 
+/** A thin line between the player bar's groups of buttons. */
+function Divider() {
+  return <span aria-hidden className="mx-0.5 h-5 w-px shrink-0 bg-ink/[0.12]" />
+}
+
 function Round(props: { label: string; onClick: () => void; on?: boolean; children: React.ReactNode }) {
   return (
     <motion.button
@@ -750,6 +756,8 @@ export function NowPlayingBar(props: {
   onExpand: () => void
   onQueue: () => void
   onLyrics: () => void
+  /** Now Playing's Sound: equalizer, levelling, crossfade. */
+  onSound: () => void
   onArtist: (name: string) => void
   queueOpen: boolean
   expanded: boolean
@@ -889,6 +897,8 @@ export function NowPlayingBar(props: {
 
           <div className="flex min-w-0 items-center justify-end gap-2">
             {info.lcd && <LcdSpectrum className="hidden h-9 w-[132px] shrink-0 @[1180px]:flex" />}
+            {/* In groups: what is playing and next, then how it sounds and when it stops, then the
+                mini player, then the volume. */}
             {song.lyrics && (
               <Round label="Lyrics (L)" onClick={props.onLyrics}>
                 <IconLyrics />
@@ -897,12 +907,18 @@ export function NowPlayingBar(props: {
             <Round label="Queue (Q)" on={props.queueOpen} onClick={props.onQueue}>
               <IconQueue />
             </Round>
+            <Divider />
+            <Round label="Sound: equalizer, levelling, crossfade" onClick={props.onSound}>
+              <IconSound />
+            </Round>
             <SleepButton s={s} />
             <span className="hidden @[900px]:contents">
-            <Round label="Mini player (Ctrl M)" onClick={() => void toggleMiniPlayer()}>
-              <IconMini />
-            </Round>
+              <Divider />
+              <Round label="Mini player (Ctrl M)" onClick={() => void toggleMiniPlayer()}>
+                <IconMini />
+              </Round>
             </span>
+            <Divider />
             <Volume volume={s.volume} />
           </div>
           {s.error && (

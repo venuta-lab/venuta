@@ -249,7 +249,7 @@ export function NowPlaying(props: {
                   onArtist={(name) => void leaving(() => props.onArtist(name))}
                   onOnlineArtist={(artist) => void leaving(() => props.onOnlineArtist(artist))}
                   onTiming={onTiming}
-                  from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} />}
+                  from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} said={[song.album, ...song.artists, song.album_artist]} />}
                 />
               </div>
             </div>

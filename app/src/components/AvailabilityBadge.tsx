@@ -6,7 +6,7 @@ import { togetherView } from '../lib/together'
  * room, "From <host>" for a song the host streams from their file. Lists show it only when they
  * hold online songs, so a library-only list looks as it always did.
  */
-export function AvailabilityBadge({ availability }: { availability: Availability | null | undefined }) {
+export function AvailabilityBadge({ availability, quiet }: { availability: Availability | null | undefined; quiet?: boolean }) {
   if (!availability) return null
   const online = availability === 'online'
   const room = availability === 'room'
@@ -22,9 +22,14 @@ export function AvailabilityBadge({ availability }: { availability: Availability
               ? 'In your library: plays from your file, not online'
               : 'Plays from your library'
       }
-      className={`inline-block shrink-0 rounded-full px-1.5 align-middle text-[10px] font-semibold uppercase leading-[16px] tracking-[0.04em] ${
-        online ? 'bg-accent/15 text-accent-ink' : room ? 'bg-ink/[0.1] text-ink/70' : 'bg-ink/[0.07] text-ink/55'
-      }`}
+      className={
+        quiet
+          ? // Beside the time in a long list: the word alone, Online in its colour.
+            `inline-block shrink-0 align-middle text-[9.5px] font-semibold uppercase tracking-[0.05em] ${online ? 'text-accent-ink/90' : 'text-ink/40'}`
+          : `inline-block shrink-0 rounded-full px-1.5 align-middle text-[10px] font-semibold uppercase leading-[16px] tracking-[0.04em] ${
+              online ? 'bg-accent/15 text-accent-ink' : room ? 'bg-ink/[0.1] text-ink/70' : 'bg-ink/[0.07] text-ink/55'
+            }`
+      }
     >
       {room ? `From ${host}` : online ? 'Online' : 'Local'}
     </span>

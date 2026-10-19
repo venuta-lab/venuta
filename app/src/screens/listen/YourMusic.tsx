@@ -1,5 +1,4 @@
 import { useEffect, useMemo } from 'react'
-import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { loadCovers, useCovers } from '../../lib/covers'
 import { yourMusicTiles, type YourMusicTile } from '../../lib/yourMusic'
 import type { Library } from './model'
@@ -44,8 +43,8 @@ export function YourMusic(props: {
   )
 }
 
-/** Three of the set's covers fanned at the top right, Local at the top left, the name and count
- *  across the bottom. */
+/** Three of the set's covers fanned at the top right, the name and count across the bottom. The
+ *  section's heading says these are on this PC, so the tiles don't each say Local. */
 function YourMusicCard({ tile, onOpen }: { tile: YourMusicTile; onOpen: () => void }) {
   const cover = useCovers(160)
   const arts = tile.covers.map((d) => cover(d)?.src).filter((s): s is string => !!s)
@@ -71,9 +70,6 @@ function YourMusicCard({ tile, onOpen }: { tile: YourMusicTile; onOpen: () => vo
             style={{ transform: `translateX(${fan[i].x}) rotate(${fan[i].r}deg)`, zIndex: fan[i].z }}
           />
         ))}
-      </span>
-      <span className="absolute left-3.5 top-3">
-        <AvailabilityBadge availability="local" />
       </span>
       <span className="absolute inset-x-3.5 bottom-2.5">
         <span className="block truncate text-[15px] font-semibold tracking-[-0.01em]">{tile.title}</span>

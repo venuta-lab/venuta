@@ -1223,6 +1223,10 @@ export default function App() {
               setNowPanel('lyrics')
               setNowOpen((o) => !(o && nowPanel === 'lyrics'))
             }}
+            onSound={() => {
+              setNowPanel('sound')
+              setNowOpen((o) => !(o && nowPanel === 'sound'))
+            }}
             onArtist={(name) => {
               setNowOpen(false)
               setListenArtist(name)

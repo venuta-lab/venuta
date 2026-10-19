@@ -27,6 +27,8 @@ import { FormatBar, SpectrogramView } from './libraryParts'
 const fmt = (n: number) => n.toLocaleString('en-IN')
 /** "1 album", "3 albums". */
 const albums = (n: number) => `${fmt(n)} ${n === 1 ? 'album' : 'albums'}`
+/** A label inside a sentence: "Album artist" reads "album artist" (a name like "ReplayGain" stays). */
+const lower = (label: string) => (/^[A-Z][a-z]/.test(label) ? label[0].toLowerCase() + label.slice(1) : label)
 const spring = { type: 'spring', stiffness: 360, damping: 32 } as const
 
 /** Whether the plan gives an album this detail. */
@@ -110,6 +112,9 @@ export function HealthScreen(props: {
     const after = pct(total - missing.length + fixed.length)
     return { ...d, missing, left: missing.filter((m) => !fixed.includes(m)), now, after }
   })
+  // The details every album has need no tile of their own: one line says they are done.
+  const done = details.filter((d) => d.missing.length === 0)
+  const gaps = details.filter((d) => d.missing.length > 0)
   const overallNow = details.length ? Math.round(details.reduce((x, d) => x + d.now, 0) / details.length) : 0
   const overallAfter = details.length ? Math.round(details.reduce((x, d) => x + d.after, 0) / details.length) : 0
   const sound = SOUND.map((x) => ({ ...x, found: byId.get(x.issue) })).filter((x) => x.found)
@@ -187,10 +192,18 @@ export function HealthScreen(props: {
         </section>
       </div>
 
-      {/* Details: one tile each. */}
+      {/* Details: a tile for each one with gaps; the ones every album has, as one line. */}
       <Section title="Details" />
+      {done.length > 0 && (
+        <p className="-mt-1 mb-3 flex items-center gap-2 text-[13px] text-ink/65">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-good)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m5 12.5 4.5 4.5L19 7.5" />
+          </svg>
+          {`Done: ${done.map((d) => lower(d.label)).join(', ')}.`}
+        </p>
+      )}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
-        {details.map((d) => (
+        {gaps.map((d) => (
           <section key={d.label} className="glass flex flex-col rounded-[20px] p-4">
             <div className="flex items-baseline gap-2">
               <span className="flex-1 text-[13.5px] font-medium">{d.label}</span>

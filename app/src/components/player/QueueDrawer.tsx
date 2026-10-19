@@ -45,10 +45,10 @@ function RowBody(props: { item: QueueItem; index: number; current: boolean; badg
       <div className="min-w-0 flex-1">
         <div className={`flex min-w-0 items-center gap-1.5 text-[13px] ${props.current ? 'font-medium text-accent-ink' : ''}`}>
           <span className="truncate">{props.item.title}</span>
-          {props.badge && <AvailabilityBadge availability={props.item.availability ?? (online ? 'online' : 'local')} />}
         </div>
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
+      {props.badge && <AvailabilityBadge quiet availability={props.item.availability ?? (online ? 'online' : 'local')} />}
       <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(props.item.duration_ms)}</span>
       {!props.current && (
         <button

@@ -55,6 +55,13 @@ export const IconLibrary = (p: P) => (
     <path d="M5 4v16M9.5 4v16M14 5l4.5 14.5" />
   </svg>
 )
+/** Sliders: the sound tools (equalizer, levelling, crossfade). */
+export const IconSound = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M6 4v5M6 13v7M12 4v9M12 17v3M18 4v3M18 11v9" />
+    <path d="M4 11h4M10 15h4M16 9h4" />
+  </svg>
+)
 /** Bars: Stats. */
 export const IconStats = (p: P) => (
   <svg {...base} {...p}>

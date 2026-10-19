@@ -230,6 +230,10 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
  * Who and what the song is, each a way in: every artist and the album open their pages; the
  * buttons under add it to a playlist, open the album, and the rest is under More.
  */
+/** The album title is one of the artists' names (a self-titled album). */
+const sameName = (album: string | null | undefined, artists: string[]) =>
+  !!album && artists.some((a) => a.toLowerCase() === album.toLowerCase())
+
 export function SongActions(props: {
   root: string
   song: QueueItem
@@ -297,7 +301,8 @@ export function SongActions(props: {
             ))
           : 'Unknown artist'}
       </p>
-      {remote ? (
+      {/* The album, unless it only repeats the artist's name (a self-titled album: Go to album has it). */}
+      {sameName(song.album, artists) ? null : remote ? (
         song.album ? (
           <p className="mt-1 max-w-full truncate text-[13px] text-ink/50">{song.album}</p>
         ) : null
