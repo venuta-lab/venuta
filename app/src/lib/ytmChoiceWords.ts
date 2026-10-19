@@ -7,9 +7,9 @@ export interface YtmChoices {
   personal: boolean
   /** My library in Venuta: the account's library shows in Library. */
   library: boolean
-  /** Count plays: online songs past 30 seconds join the account's history. */
+  /** Count plays: an online song heard 30 seconds is told as played (the account's history). */
   count_plays: boolean
-  /** How much I listened: with Count plays, how far into each song too. */
+  /** How much I listened: with Count plays, the seconds of each online song heard too. */
   listening_time: boolean
   /** Likes and dislikes: the same on the account. */
   likes: boolean
@@ -88,14 +88,14 @@ export const GROUPS: Group[] = [
         kind: 'account',
         key: 'count_plays',
         name: 'Count plays',
-        line: 'Online songs you play past 30 seconds join your YouTube history, so recommendations learn from Venuta too. Your files are never sent.',
+        line: 'After 30 seconds of an online song, Venuta tells YouTube Music you played it, so it joins your YouTube history and recommendations learn from it. Your files are never sent.',
       },
       {
         kind: 'account',
         key: 'listening_time',
         needs: 'count_plays',
         name: 'How much I listened',
-        line: 'With Count plays: also how far into each song you got, as YouTube’s app does. It tells YouTube about skips. Needs Count plays.',
+        line: 'With Count plays: also how many seconds of each online song you heard, sent as you listen and when it ends or you skip it, as YouTube’s app does. Needs Count plays.',
       },
       {
         kind: 'account',
