@@ -129,7 +129,11 @@ fn put_long(s: &dyn Entries, key: &str, value: &str) -> Result<(), String> {
             s.put(&part_key(key, &id, i), p)?;
         }
         s.put(key, &format!("{PARTS_HEADER}{}:{id}", parts.len()))?;
-        if old.as_deref().and_then(header_of).is_some_and(|(_, was)| was == id) {
+        if old
+            .as_deref()
+            .and_then(header_of)
+            .is_some_and(|(_, was)| was == id)
+        {
             return Ok(());
         }
     }
@@ -301,7 +305,11 @@ mod tests {
         put_long(&s, "k", &long_secret(300)).unwrap();
         put_long(&s, "k", &long_secret(120)).unwrap();
         let parts = (long_secret(120).encode_utf16().count()).div_ceil(PART_UNITS);
-        assert_eq!(s.0.lock().unwrap().len(), 1 + parts, "the header and its parts only");
+        assert_eq!(
+            s.0.lock().unwrap().len(),
+            1 + parts,
+            "the header and its parts only"
+        );
         assert_eq!(get_long(&s, "k").unwrap(), Some(long_secret(120)));
         put_long(&s, "k", "short now").unwrap();
         assert_eq!(s.0.lock().unwrap().len(), 1);
@@ -323,14 +331,13 @@ mod tests {
     fn a_damaged_or_missing_part_reads_as_nothing_kept() {
         let s = Limited::default();
         put_long(&s, "k", &long_secret(300)).unwrap();
-        let part = s
-            .0
-            .lock()
-            .unwrap()
-            .keys()
-            .find(|k| k.starts_with("k#"))
-            .cloned()
-            .unwrap();
+        let part =
+            s.0.lock()
+                .unwrap()
+                .keys()
+                .find(|k| k.starts_with("k#"))
+                .cloned()
+                .unwrap();
         s.put(&part, "changed").unwrap();
         assert_eq!(get_long(&s, "k").unwrap(), None, "never a garbled secret");
         s.delete(&part).unwrap();
