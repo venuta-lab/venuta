@@ -133,6 +133,9 @@ pub struct RemoteAlbum {
 pub struct RemotePlaylist {
     pub title: Option<String>,
     pub tracks: Vec<RemoteTrack>,
+    /// Its page's radio (the header's Start radio), as the catalog put it there.
+    #[serde(default)]
+    pub radio: Option<RadioEndpoint>,
 }
 
 /// An artist's page in the online catalog: who they are, their songs, their records, and
@@ -211,6 +214,9 @@ pub struct RemoteAlbumPage {
     /// asks for when it ends.
     #[serde(default)]
     pub playlist_id: Option<String>,
+    /// Its page's radio (the header's Start radio), as the catalog put it there.
+    #[serde(default)]
+    pub radio: Option<RadioEndpoint>,
 }
 
 /// A name in a credit line, and their artist page when the catalog links one.

@@ -1014,7 +1014,15 @@ fn album_page_of(page: &ytmusic::AlbumPage, album_id: &str) -> RemoteAlbumPage {
             .filter_map(crate::catalog_cards::shelf_of)
             .collect(),
         playlist_id: text(&page.playlist_id),
+        radio: page.radio.as_ref().map(crate::catalog_cards::endpoint_of),
     }
+}
+
+/// A playlist page's radio, as its header's Start radio names it (None when it names none).
+fn playlist_radio(raw: &Value) -> Option<RadioEndpoint> {
+    ytmusic::models::browse::header_radio(raw)
+        .as_ref()
+        .map(crate::catalog_cards::endpoint_of)
 }
 
 /// The words and marks between names in a credit line ("A, B & C").
@@ -1537,6 +1545,7 @@ impl crate::account::AccountAccess for YtmBackend {
             artwork_url: page.thumbnail,
             tracks,
             complete,
+            radio: page.radio.as_ref().map(crate::catalog_cards::endpoint_of),
         })
     }
 
@@ -2265,6 +2274,7 @@ impl MediaAccess for LiveCatalogAccess {
             .backend
             .browse(&playlist_browse_id(playlist_id)?, cancel)?;
         let title = catalog_json::read_playlist_title(&raw);
+        let radio = playlist_radio(&raw);
         let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
         let mut next = catalog_json::read_playlist_continuation(&raw);
         // At most 60 more pages (6,000 songs, more than YouTube keeps in one playlist).
@@ -2277,7 +2287,11 @@ impl MediaAccess for LiveCatalogAccess {
             ));
             next = catalog_json::read_playlist_continuation(&raw).filter(|t| *t != token);
         }
-        Ok(RemotePlaylist { title, tracks })
+        Ok(RemotePlaylist {
+            title,
+            tracks,
+            radio,
+        })
     }
 
     fn resolve_audio(
@@ -2853,7 +2867,41 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_page_of, playlist_browse_id};
+    use super::{album_page_of, playlist_browse_id, playlist_radio};
+    use crate::types::RadioEndpoint;
+
+    fn saved(name: &str) -> serde_json::Value {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ytm")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(file).expect("fixture")).expect("json")
+    }
+
+    // Start radio on an album or a playlist replays the radio its page header names, as it came.
+    #[test]
+    fn album_and_playlist_pages_carry_their_radio() {
+        let album = album_page_of(
+            &ytmusic::models::browse::parse_album(&saved("album-heartbeat.json")),
+            "MPREb_DbkpS1rORXk",
+        );
+        assert_eq!(
+            album.radio,
+            Some(RadioEndpoint {
+                playlist_id: Some("RDAMPLOLAK5uy_nzlLa_sS90GkezY_47EhlFbbf2z21PO_4".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            playlist_radio(&saved("playlist-first.json")),
+            Some(RadioEndpoint {
+                playlist_id: Some("RDAMPLPLXCoHsJ9oLec7aYGojOIj3Acu7wMKjADm".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(playlist_radio(&serde_json::json!({})), None);
+    }
 
     #[test]
     fn an_album_page_says_what_it_is_who_made_it_and_what_is_under_it() {

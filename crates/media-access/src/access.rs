@@ -100,6 +100,7 @@ pub trait MediaAccess: Send + Sync {
         Ok(RemotePlaylist {
             title: None,
             tracks,
+            radio: None,
         })
     }
 
