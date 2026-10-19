@@ -1380,6 +1380,18 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
     })
 }
 
+/// Whether a reading of a playlist got every song: no page failed or was left unread, every row
+/// is a song Venuta can name, and there are at least as many as the header says. Unsure reads as
+/// not whole, so a linked playlist waits instead of taking the songs it missed as taken out
+/// there (an unavailable song with no id would read just like that).
+fn read_whole(said: Option<u32>, rows: &[ytmusic::SongItem], failed: bool, left: bool) -> bool {
+    let named = rows
+        .iter()
+        .filter(|r| !r.video_id.trim().is_empty())
+        .count();
+    !failed && !left && named == rows.len() && said.is_none_or(|n| named >= n as usize)
+}
+
 impl YtmBackend {
     /// One account request, signed in, cancellable, its failure in words.
     fn account_call<T: Send>(
@@ -1476,14 +1488,14 @@ impl crate::account::AccountAccess for YtmBackend {
     ) -> Result<crate::account::AccountPlaylist, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
         let browse_id = playlist_browse_id(playlist_id)?;
-        let (page, rest, complete) = self.account_call(cancel, "the playlist", async {
+        let (page, rest, failed, left) = self.account_call(cancel, "the playlist", async {
             let page = self.it.playlist(client, &browse_id, None).await?;
             let mut rest = Vec::new();
             let mut token = page.continuation.clone();
-            let mut complete = true;
+            let mut failed = false;
             // ponytail: 100 songs a page, YouTube's cap is 5,000 a playlist.
             for _ in 0..60 {
-                let Some(t) = token else { break };
+                let Some(t) = token.clone() else { break };
                 match self.it.playlist_continuation(client, &t).await {
                     Ok(next) => {
                         rest.extend(next.items);
@@ -1491,19 +1503,16 @@ impl crate::account::AccountAccess for YtmBackend {
                     }
                     // A page that failed leaves the list incomplete, and says so.
                     Err(_) => {
-                        complete = false;
+                        failed = true;
                         break;
                     }
                 }
             }
-            Ok((page, rest, complete))
+            Ok((page, rest, failed, token.is_some()))
         })?;
-        let tracks = page
-            .items
-            .iter()
-            .chain(rest.iter())
-            .filter_map(account_track_of)
-            .collect();
+        let all: Vec<ytmusic::SongItem> = page.items.iter().chain(rest.iter()).cloned().collect();
+        let complete = read_whole(page.song_count, &all, failed, left);
+        let tracks = all.iter().filter_map(account_track_of).collect();
         Ok(crate::account::AccountPlaylist {
             playlist_id: playlist_id.trim_start_matches("VL").to_owned(),
             title: page.title.unwrap_or_default(),
@@ -2715,7 +2724,7 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_page_of, playlist_browse_id};
+    use super::{album_page_of, playlist_browse_id, read_whole};
 
     #[test]
     fn an_album_page_says_what_it_is_who_made_it_and_what_is_under_it() {
@@ -2779,6 +2788,41 @@ mod tests {
         b.use_identity(Some("brand-y"));
         b.set_cookie(None);
         assert_eq!(b.it.data_sync_id(), None, "signed out");
+    }
+
+    fn rows(ids: &[&str]) -> Vec<ytmusic::SongItem> {
+        ids.iter()
+            .map(|id| ytmusic::SongItem {
+                video_id: (*id).into(),
+                title: id.to_uppercase(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    // A reading that came back short must not count as whole: a linked playlist's sync would
+    // take every song it missed as taken out on YouTube Music.
+    #[test]
+    fn a_playlist_reading_is_whole_only_when_nothing_is_missing_from_it() {
+        assert!(read_whole(Some(3), &rows(&["a", "b", "c"]), false, false));
+        assert!(
+            read_whole(None, &rows(&["a", "b"]), false, false),
+            "no count to go by"
+        );
+        assert!(
+            !read_whole(Some(5), &rows(&["a", "b", "c"]), false, false),
+            "short of the header"
+        );
+        assert!(
+            !read_whole(Some(3), &rows(&["a", "b", "c"]), true, false),
+            "a page failed"
+        );
+        assert!(
+            !read_whole(Some(3), &rows(&["a", "b", "c"]), false, true),
+            "pages left unread"
+        );
+        // A row with no song to name (an unavailable one) can't be told from a song taken out.
+        assert!(!read_whole(Some(3), &rows(&["a", " ", "c"]), false, false));
     }
 
     #[test]
