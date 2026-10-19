@@ -1559,7 +1559,9 @@ export const ytmLinkReview = (root: string, name: string, all = false) => invoke
 export const ytmLinkStart = (root: string, name: string, target: string | null, privacy: string, choices: YtmChoices) =>
   invoke<YtmSyncReport>('ytm_link_start', { root, name, target, privacy, choices })
 export const ytmLinkChoose = (root: string, name: string, choices: YtmChoices) => invoke<YtmSyncReport>('ytm_link_choose', { root, name, choices })
-export const ytmLinkSync = (root: string, name: string, force = false) => invoke<YtmSyncReport>('ytm_link_sync', { root, name, force })
+/** Sync now. `force` answers the pause shown: "Sync again" after an Undo, or "Sync anyway" for the side most songs went from (`gone`). */
+export const ytmLinkSync = (root: string, name: string, force = false, gone: 'venuta' | 'youtube_music' | null = null) =>
+  invoke<YtmSyncReport>('ytm_link_sync', { root, name, force, gone })
 export const ytmUnlink = (name: string) => invoke<void>('ytm_unlink', { name })
 export const ytmLinkUndo = (root: string, name: string, copy: string) => invoke<void>('ytm_link_undo', { root, name, copy })
 

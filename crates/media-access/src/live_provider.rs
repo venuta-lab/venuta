@@ -231,8 +231,6 @@ struct YtmBackend {
     legacy: OnceLock<Result<LegacyResolver, AccessError>>,
     /// Data saver: the smallest stream instead of the best.
     saver: std::sync::atomic::AtomicBool,
-    /// YouTube stopped taking the sign-in; cleared by the next sign-in.
-    expired: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl YtmBackend {
@@ -270,21 +268,17 @@ impl YtmBackend {
             visitor: tokio::sync::OnceCell::new(),
             legacy: OnceLock::new(),
             saver: std::sync::atomic::AtomicBool::new(false),
-            expired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
-        // No cookie can be minted again from here: a rejected sign-in is told to the person, who
-        // signs in again. The heal is declared over at once, so a request waiting on it ends now
-        // instead of after the transport's long timeout, and says the session expired.
+        // No cookie can be minted again from here: the heal is declared over at once, so a
+        // request waiting on it is sent once more now instead of after the transport's long
+        // timeout. Only a request refused again after that marks the session expired (the
+        // transport keeps that), so one refusal never asks the person to sign in again.
         {
             let it = backend.it.clone();
-            let expired = backend.expired.clone();
             let rejected = it.session_rejected();
             backend.runtime.get().spawn(async move {
                 loop {
                     rejected.notified().await;
-                    if it.is_logged_in() {
-                        expired.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
                     drop(it.begin_heal());
                 }
             });
@@ -812,8 +806,9 @@ impl LiveBackend for YtmBackend {
     }
 
     fn set_cookie(&self, cookie: Option<&str>) {
-        self.expired
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        // Each sign-in (or sign-out) acts as itself: a brand channel chosen under the last one is
+        // chosen again under this one (the app does that at start, from what it kept).
+        self.it.set_data_sync_id(None);
         self.it.set_cookie(
             cookie
                 .map(str::to_owned)
@@ -835,6 +830,8 @@ impl LiveBackend for YtmBackend {
                 AccessError::new(AccessErrorKind::Transport, "the account didn't answer")
             })
         }))?;
+        // The account answered as itself: whatever was refused before, the sign-in works.
+        self.it.session_accepted();
         Ok(Some(RemoteAccount {
             name: info.name,
             email: info.email,
@@ -1377,7 +1374,13 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
         }
         ytmusic::Error::WriteUncertain => AccessError::new(
             AccessErrorKind::Transport,
-            format!("YouTube Music didn't say whether {what} went through."),
+            format!(
+                "YouTube Music didn't say whether {what} went through. Look there before trying again."
+            ),
+        ),
+        ytmusic::Error::SlowDown => AccessError::new(
+            AccessErrorKind::Transport,
+            "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
         other => AccessError::new(
             AccessErrorKind::Transport,
@@ -1402,6 +1405,18 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
     })
 }
 
+/// Whether a reading of a playlist got every song: no page failed or was left unread, every row
+/// is a song Venuta can name, and there are at least as many as the header says. Unsure reads as
+/// not whole, so a linked playlist waits instead of taking the songs it missed as taken out
+/// there (an unavailable song with no id would read just like that).
+fn read_whole(said: Option<u32>, rows: &[ytmusic::SongItem], failed: bool, left: bool) -> bool {
+    let named = rows
+        .iter()
+        .filter(|r| !r.video_id.trim().is_empty())
+        .count();
+    !failed && !left && named == rows.len() && said.is_none_or(|n| named >= n as usize)
+}
+
 impl YtmBackend {
     /// One account request, signed in, cancellable, its failure in words.
     fn account_call<T: Send>(
@@ -1413,14 +1428,15 @@ impl YtmBackend {
         if !self.it.is_logged_in() {
             return Err(signed_out());
         }
-        let expired = self.expired.clone();
+        let it = self.it.clone();
         self.run(cancellable(cancel.clone(), async move {
-            call.await.map_err(|e| {
-                if matches!(e, ytmusic::Error::SessionExpired) {
-                    expired.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                account_error(e, what)
-            })
+            let got = call.await;
+            // Answered as the account (its library, its playlists): the sign-in works again, even
+            // if something was refused before. A refusal after the retry is the transport's to mark.
+            if got.is_ok() {
+                it.session_accepted();
+            }
+            got.map_err(|e| account_error(e, what))
         }))
     }
 }
@@ -1431,7 +1447,7 @@ impl crate::account::AccountAccess for YtmBackend {
     }
 
     fn session_expired(&self) -> bool {
-        self.it.is_logged_in() && self.expired.load(std::sync::atomic::Ordering::Relaxed)
+        self.it.session_refused()
     }
 
     fn library(
@@ -1497,14 +1513,14 @@ impl crate::account::AccountAccess for YtmBackend {
     ) -> Result<crate::account::AccountPlaylist, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
         let browse_id = playlist_browse_id(playlist_id)?;
-        let (page, rest, complete) = self.account_call(cancel, "the playlist", async {
+        let (page, rest, failed, left) = self.account_call(cancel, "the playlist", async {
             let page = self.it.playlist(client, &browse_id, None).await?;
             let mut rest = Vec::new();
             let mut token = page.continuation.clone();
-            let mut complete = true;
+            let mut failed = false;
             // ponytail: 100 songs a page, YouTube's cap is 5,000 a playlist.
             for _ in 0..60 {
-                let Some(t) = token else { break };
+                let Some(t) = token.clone() else { break };
                 match self.it.playlist_continuation(client, &t).await {
                     Ok(next) => {
                         rest.extend(next.items);
@@ -1512,19 +1528,16 @@ impl crate::account::AccountAccess for YtmBackend {
                     }
                     // A page that failed leaves the list incomplete, and says so.
                     Err(_) => {
-                        complete = false;
+                        failed = true;
                         break;
                     }
                 }
             }
-            Ok((page, rest, complete))
+            Ok((page, rest, failed, token.is_some()))
         })?;
-        let tracks = page
-            .items
-            .iter()
-            .chain(rest.iter())
-            .filter_map(account_track_of)
-            .collect();
+        let all: Vec<ytmusic::SongItem> = page.items.iter().chain(rest.iter()).cloned().collect();
+        let complete = read_whole(page.song_count, &all, failed, left);
+        let tracks = all.iter().filter_map(account_track_of).collect();
         Ok(crate::account::AccountPlaylist {
             playlist_id: playlist_id.trim_start_matches("VL").to_owned(),
             title: page.title.unwrap_or_default(),
@@ -1573,21 +1586,13 @@ impl crate::account::AccountAccess for YtmBackend {
                     E::Rename { title } => words.0 = Some(title.clone()),
                     E::Describe { description } => words.1 = Some(description.clone()),
                     E::Privacy { privacy } => words.2 = Some(privacy.clone()),
+                    // Each song once (one duplicate fails a batch), 50 at a time with a pause.
                     E::Add { video_ids } => {
-                        // One duplicate fails a batch, so each batch is unique; 50 at a time.
-                        let mut seen = std::collections::HashSet::new();
-                        let unique: Vec<String> = video_ids
-                            .iter()
-                            .filter(|v| seen.insert(*v))
-                            .cloned()
-                            .collect();
-                        for batch in unique.chunks(50) {
-                            placed.extend(
-                                self.it
-                                    .playlist_add_placed(client, playlist_id, batch)
-                                    .await?,
-                            );
-                        }
+                        placed.extend(
+                            self.it
+                                .playlist_add_batches(client, playlist_id, video_ids)
+                                .await?,
+                        );
                     }
                     E::Remove { items } => {
                         if !items.is_empty() {
@@ -2853,7 +2858,7 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_page_of, playlist_browse_id};
+    use super::{album_page_of, playlist_browse_id, read_whole};
 
     #[test]
     fn an_album_page_says_what_it_is_who_made_it_and_what_is_under_it() {
@@ -2886,6 +2891,72 @@ mod tests {
             "album rows carry their plays"
         );
         assert_eq!(page.album.track_count, Some(page.tracks.len() as u32));
+    }
+
+    // The transport tells the healer about the first refusal, before its one retry. That alone
+    // must not say "Sign in again": only a request that is refused after the retry does.
+    #[test]
+    fn one_refusal_told_to_the_healer_is_not_an_expired_session() {
+        use super::LiveBackend;
+        use crate::account::AccountAccess;
+        let b = super::YtmBackend::new().unwrap();
+        b.set_cookie(Some("SAPISID=fixture; PREF=x"));
+        b.it.session_rejected().notify_one();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(b.signed_in());
+        assert!(!b.session_expired());
+    }
+
+    // A brand channel chosen under one sign-in must not ride along on the next one (its
+    // `onBehalfOfUser` with another account's cookie is refused), nor after signing out.
+    #[test]
+    fn a_new_sign_in_or_a_sign_out_acts_as_itself_again() {
+        use super::LiveBackend;
+        use crate::account::AccountAccess;
+        let b = super::YtmBackend::new().unwrap();
+        b.set_cookie(Some("SAPISID=first; PREF=x"));
+        b.use_identity(Some("brand-x"));
+        assert_eq!(b.it.data_sync_id().as_deref(), Some("brand-x"));
+        b.set_cookie(Some("SAPISID=second; PREF=x"));
+        assert_eq!(b.it.data_sync_id(), None, "another sign-in");
+        b.use_identity(Some("brand-y"));
+        b.set_cookie(None);
+        assert_eq!(b.it.data_sync_id(), None, "signed out");
+    }
+
+    fn rows(ids: &[&str]) -> Vec<ytmusic::SongItem> {
+        ids.iter()
+            .map(|id| ytmusic::SongItem {
+                video_id: (*id).into(),
+                title: id.to_uppercase(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    // A reading that came back short must not count as whole: a linked playlist's sync would
+    // take every song it missed as taken out on YouTube Music.
+    #[test]
+    fn a_playlist_reading_is_whole_only_when_nothing_is_missing_from_it() {
+        assert!(read_whole(Some(3), &rows(&["a", "b", "c"]), false, false));
+        assert!(
+            read_whole(None, &rows(&["a", "b"]), false, false),
+            "no count to go by"
+        );
+        assert!(
+            !read_whole(Some(5), &rows(&["a", "b", "c"]), false, false),
+            "short of the header"
+        );
+        assert!(
+            !read_whole(Some(3), &rows(&["a", "b", "c"]), true, false),
+            "a page failed"
+        );
+        assert!(
+            !read_whole(Some(3), &rows(&["a", "b", "c"]), false, true),
+            "pages left unread"
+        );
+        // A row with no song to name (an unavailable one) can't be told from a song taken out.
+        assert!(!read_whole(Some(3), &rows(&["a", " ", "c"]), false, false));
     }
 
     #[test]

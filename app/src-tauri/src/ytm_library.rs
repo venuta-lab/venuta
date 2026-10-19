@@ -168,6 +168,8 @@ pub async fn ytm_history(pb: State<'_, Playback>) -> Result<Vec<HistoryDay>, Str
 #[tauri::command]
 pub async fn ytm_upload(pb: State<'_, Playback>, path: String) -> Result<(), String> {
     let a = account(&pb)?;
+    // On a brand channel YouTube Music would put it in the main account's uploads.
+    crate::ytm_links::uploads_allowed(chosen_identity().as_deref())?;
     crate::blocking(move || {
         let p = std::path::PathBuf::from(&path);
         let name = p
@@ -257,8 +259,12 @@ pub fn restore_identity(pb: &Playback) {
     }
 }
 
-/// Signing out forgets the identity chosen too.
-pub fn forget_identity() {
+/// Signing in, out or switching forgets the identity chosen too: kept and in use (the catalog
+/// does that on a new cookie as well; this says it here, where the choice is kept).
+pub fn forget_identity(pb: &Playback) {
+    if let Some(a) = pb.online_catalog().account_access() {
+        a.use_identity(None);
+    }
     crate::ytm_links::forget_account_key();
     let _ = remember_identity(None);
 }

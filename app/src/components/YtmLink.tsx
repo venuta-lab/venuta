@@ -75,7 +75,11 @@ export function YtmLinkBar({ root, name }: { root: string; name: string }) {
           {link && signed_in && !expired && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {forceLabel ? (
-                <button onClick={() => void syncLink(root, name, { force: true })} disabled={s.syncing} className="btn-primary btn-sm">
+                <button
+                  onClick={() => void syncLink(root, name, { force: true, gone: p?.kind === 'many_gone' ? p.side : undefined })}
+                  disabled={s.syncing}
+                  className="btn-primary btn-sm"
+                >
                   {forceLabel}
                 </button>
               ) : p?.kind === 'other_account' ? null : (

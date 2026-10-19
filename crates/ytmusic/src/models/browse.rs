@@ -207,6 +207,9 @@ pub struct SortMenu {
 pub struct PlaylistPage {
     pub title: Option<String>,
     pub subtitle: Option<String>,
+    /// How many songs the header says the playlist holds ("120 songs"), when it says so in words
+    /// this reads. A reading with fewer rows than this didn't get them all.
+    pub song_count: Option<u32>,
     pub thumbnail: Option<String>,
     /// The playlist's own blurb, as the edit dialog needs it back to leave it alone.
     pub description: Option<String>,
@@ -550,6 +553,7 @@ pub fn parse_playlist(root: &Value) -> PlaylistPage {
         .filter(|t| !t.trim().is_empty());
     PlaylistPage {
         title,
+        song_count: subtitle.as_deref().and_then(song_count),
         subtitle,
         thumbnail,
         description: header_description(root, header),
@@ -564,6 +568,26 @@ pub fn parse_playlist(root: &Value) -> PlaylistPage {
         sort_menu: sort_menu(root),
         suggestions: owned.then(|| suggestions_token(root)).flatten(),
     }
+}
+
+/// The number of songs in a header line ("1,234 songs • 80+ hours", "1.2M views • 100 songs"):
+/// the part that is a number and a word for songs. None when no part says so.
+pub(crate) fn song_count(line: &str) -> Option<u32> {
+    line.split('•').find_map(|part| {
+        let (n, word) = part.trim().split_once(' ')?;
+        let word = word.trim().to_lowercase();
+        let songs = [
+            "song", "songs", "track", "tracks", "episode", "episodes", "video", "videos",
+        ];
+        if !songs.contains(&word.as_str()) {
+            return None;
+        }
+        let digits: String = n
+            .chars()
+            .filter(|c| !matches!(c, ',' | '.' | ' '))
+            .collect();
+        digits.parse().ok()
+    })
 }
 
 /// The track shelf's sort menu. Scoped to that shelf for the same reason `shelf_continuation` is:
@@ -1862,6 +1886,7 @@ mod tests {
         let p = parse_playlist(&root);
         assert_eq!(p.title.as_deref(), Some("Road Trip"));
         assert_eq!(p.subtitle.as_deref(), Some("2 songs • 7 min"));
+        assert_eq!(p.song_count, Some(2));
         assert_eq!(p.thumbnail.as_deref(), Some("cover.jpg"));
         assert_eq!(p.items.len(), 2);
         assert_eq!(p.items[0].video_id, "vid1");
@@ -1872,6 +1897,18 @@ mod tests {
         // A plain header (someone else's playlist) is not editable.
         assert!(!p.owned);
         assert!(!p.collaborative);
+    }
+
+    // What a playlist's header says it holds, so a reading that came back short can tell.
+    #[test]
+    fn the_header_says_how_many_songs_the_playlist_holds() {
+        assert_eq!(song_count("2 songs • 7 min"), Some(2));
+        assert_eq!(song_count("1 song • 3 min"), Some(1));
+        assert_eq!(song_count("1,234 songs • 80+ hours"), Some(1234));
+        assert_eq!(song_count("1.2M views • 100 songs • 6+ hours"), Some(100));
+        assert_eq!(song_count("12 episodes"), Some(12));
+        assert_eq!(song_count("Playlist • Aakash • 2024"), None);
+        assert_eq!(song_count("7 min"), None);
     }
 
     /// An uploaded album is a playlist as far as its browseId goes, and its rows carry no art of

@@ -36,12 +36,77 @@ fn youtube_cookies(mut cookies: Vec<tauri::webview::Cookie<'static>>) -> String 
         .join("; ")
 }
 
-/// At startup: a kept sign-in is used again, and kept current while Venuta runs.
+/// How often the cookies in use are compared with the ones kept. A compare of two strings in
+/// memory, no request: Google renews the cookies on the catalog's own answers.
+const RENEW_EVERY: Duration = Duration::from_secs(15);
+
+/// The cookies the vault holds for the sign-in in use, as this run last wrote or read them.
+/// One lock for "compare, then keep" and for every sign-in, switch and sign-out, so a renewal
+/// can never put back cookies a sign-out has just taken away.
+static KEPT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn kept() -> std::sync::MutexGuard<'static, Option<String>> {
+    KEPT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The cookies in use, renewed by Google: kept when they differ from what the vault holds, and
+/// in the slot of the account in use too (for switching back). Signed out keeps nothing. True
+/// when something was written.
+fn keep_renewed(
+    v: &dyn Vault,
+    kept: &mut Option<String>,
+    now: Option<String>,
+) -> Result<bool, String> {
+    let Some(now) = now else {
+        return Ok(false);
+    };
+    if kept.as_deref() == Some(now.as_str()) {
+        return Ok(false);
+    }
+    v.put(VAULT_KEY, &now)?;
+    let _ = crate::ytm_accounts::keep_active(v, &now);
+    *kept = Some(now);
+    Ok(true)
+}
+
+/// A sign-in that just worked, kept (None in `kept` when the vault refused it, so the renewal
+/// tries again). No kept account is the one in use until it says who it is.
+fn keep_sign_in(v: &dyn Vault, kept: &mut Option<String>, jar: &str) -> Result<(), String> {
+    crate::ytm_accounts::clear_active(v);
+    *kept = None;
+    v.put(VAULT_KEY, jar)?;
+    *kept = Some(jar.to_owned());
+    Ok(())
+}
+
+/// Sign out of what is kept: the sign-in in use and its slot. Every part is tried even when
+/// Windows refuses one; what it refused, in words.
+fn forget_sign_in(v: &dyn Vault, kept: &mut Option<String>) -> Vec<String> {
+    *kept = None;
+    let mut problems = Vec::new();
+    if let Err(e) = v.delete(VAULT_KEY) {
+        problems.push(e);
+    }
+    // Only this account is forgotten; others kept stay there to switch to.
+    if let Some(id) = crate::ytm_accounts::active(v)
+        && let Err(e) = crate::ytm_accounts::forget(v, &id)
+    {
+        problems.push(e);
+    }
+    problems
+}
+
+/// At startup: a kept sign-in is used again, and kept current while Venuta runs, whenever it
+/// was made (at start or later).
 pub fn restore(app: &AppHandle) {
     let pb = app.state::<Playback>();
-    if let Ok(Some(cookie)) = SystemVault.get(VAULT_KEY) {
-        pb.online_catalog().set_account_cookie(Some(&cookie));
-        crate::ytm_library::restore_identity(&pb);
+    {
+        let mut kept = kept();
+        if let Ok(Some(cookie)) = SystemVault.get(VAULT_KEY) {
+            pb.online_catalog().set_account_cookie(Some(&cookie));
+            crate::ytm_library::restore_identity(&pb);
+            *kept = Some(cookie);
+        }
     }
     // Google renews the cookies as the catalog answers: what is kept follows them (tried again
     // next time if it couldn't be kept, and said once).
@@ -50,25 +115,18 @@ pub fn restore(app: &AppHandle) {
     std::thread::Builder::new()
         .name("venuta-ytm-account".into())
         .spawn(move || {
-            let mut kept = SystemVault.get(VAULT_KEY).ok().flatten();
             let mut said = false;
             loop {
-                std::thread::sleep(Duration::from_secs(300));
-                let now = catalog.account_cookie();
-                if kept.is_some() && now.is_some() && now != kept {
-                    let Some(c) = &now else { continue };
-                    match SystemVault.put(VAULT_KEY, c) {
-                        Ok(()) => {
-                            // The slot of the account in use follows too (for switching back).
-                            let _ = crate::ytm_accounts::keep_active(&SystemVault, c);
-                            kept = now
-                        }
-                        Err(e) if !said => {
-                            said = true;
-                            let _ = app.emit("ytm-account-error", e);
-                        }
-                        Err(_) => {}
+                std::thread::sleep(RENEW_EVERY);
+                let mut kept = kept();
+                // Read under the lock: a sign-out in between is either all before or all after.
+                match keep_renewed(&SystemVault, &mut kept, catalog.account_cookie()) {
+                    Ok(_) => {}
+                    Err(e) if !said => {
+                        said = true;
+                        let _ = app.emit("ytm-account-error", e);
                     }
+                    Err(_) => {}
                 }
             }
         })
@@ -118,13 +176,22 @@ fn finish_sign_in(app: AppHandle) {
         let jar = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
         if ytmusic_signed_in(&jar) {
             let pb = app.state::<Playback>();
-            // Signed in either way; if it can't be kept, only for as long as Venuta is open.
-            let kept = SystemVault.put(VAULT_KEY, &jar);
-            pb.online_catalog().set_account_cookie(Some(&jar));
+            let catalog = pb.online_catalog();
+            // Signed in either way; if it can't be kept, only for as long as Venuta is open (the
+            // renewal tries keeping it again).
+            let kept = {
+                let mut kept = kept();
+                let done = keep_sign_in(&SystemVault, &mut kept, &jar);
+                catalog.set_account_cookie(Some(&jar));
+                done
+            };
             // A new sign-in starts as itself, not as the brand account chosen under the last one.
-            crate::ytm_library::forget_identity();
-            // Kept on its own too, so you can switch back to it later.
-            if let Ok(Some(who)) = pb.online_catalog().account(&CancellationToken::default()) {
+            crate::ytm_library::forget_identity(&pb);
+            // Kept on its own too, so you can switch back to it later: as the cookies are now,
+            // since the answer may have renewed them. If the account doesn't say who it is, no
+            // slot is the one in use, and Settings asks again when it lists the accounts.
+            if let Ok(Some(who)) = catalog.account(&CancellationToken::default()) {
+                let jar = catalog.account_cookie().unwrap_or_else(|| jar.clone());
                 let _ = crate::ytm_accounts::remember(&SystemVault, &who, &jar);
             }
             if let Some(w) = app.get_webview_window(WINDOW) {
@@ -156,15 +223,25 @@ fn ytmusic_signed_in(jar: &str) -> bool {
 /// next sign-in asks again).
 #[tauri::command]
 pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(), String> {
-    SystemVault.delete(VAULT_KEY)?;
-    pb.online_catalog().set_account_cookie(None);
-    crate::ytm_library::forget_identity();
-    // Only this account is forgotten; others kept stay there to switch to.
-    if let Some(id) = crate::ytm_accounts::active(&SystemVault) {
-        let _ = crate::ytm_accounts::forget(&SystemVault, &id);
-    }
+    // Signed out in memory first, whatever Windows then says about the kept copy, and under the
+    // same lock as the renewal, so it can't keep the cookies again a moment later.
+    let problems = {
+        let mut kept = kept();
+        pb.online_catalog().set_account_cookie(None);
+        forget_sign_in(&SystemVault, &mut kept)
+    };
+    crate::ytm_library::forget_identity(&pb);
     clear_web_session(&app);
     let _ = app.emit("ytm-account-changed", ());
+    if !problems.is_empty() {
+        let _ = app.emit(
+            "ytm-account-error",
+            format!(
+                "Signed out. Windows didn't let Venuta forget the kept sign-in, so it may be back at the next start. {}",
+                problems.join(" ")
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -227,13 +304,26 @@ pub async fn ytm_switch_account(
     id: String,
 ) -> Result<(), String> {
     let catalog = pb.online_catalog();
-    let now = catalog.account_cookie();
-    let jar = crate::ytm_accounts::switch(&SystemVault, &id, now.as_deref())?;
-    SystemVault.put(VAULT_KEY, &jar)?;
-    catalog.set_account_cookie(Some(&jar));
+    let kept_now = {
+        let mut kept = kept();
+        let now = catalog.account_cookie();
+        let jar = crate::ytm_accounts::switch(&SystemVault, &id, now.as_deref())?;
+        // Switched either way (the slot in use is this one now); if it can't be kept as the one
+        // in use, only until Venuta closes, and the renewal tries again.
+        let done = SystemVault.put(VAULT_KEY, &jar);
+        catalog.set_account_cookie(Some(&jar));
+        *kept = done.is_ok().then_some(jar);
+        done
+    };
     // Its own channel to start with; a brand account is chosen again under it.
-    crate::ytm_library::forget_identity();
+    crate::ytm_library::forget_identity(&pb);
     let _ = app.emit("ytm-account-changed", ());
+    if let Err(e) = kept_now {
+        let _ = app.emit(
+            "ytm-account-error",
+            format!("Switched until Venuta closes. {e}"),
+        );
+    }
     Ok(())
 }
 
@@ -358,6 +448,107 @@ mod tests {
 
     fn cookie(s: &str) -> Cookie<'static> {
         Cookie::parse(s.to_string()).unwrap()
+    }
+
+    use crate::ytm_accounts::tests::Memory;
+
+    fn who(email: &str) -> RemoteAccount {
+        RemoteAccount {
+            name: None,
+            email: Some(email.into()),
+            handle: None,
+            picture: None,
+        }
+    }
+
+    /// A vault that refuses to forget one key (Credential Manager saying no).
+    struct Stubborn(Memory, &'static str);
+    impl Vault for Stubborn {
+        fn put(&self, k: &str, v: &str) -> Result<(), String> {
+            self.0.put(k, v)
+        }
+        fn get(&self, k: &str) -> Result<Option<String>, String> {
+            self.0.get(k)
+        }
+        fn delete(&self, k: &str) -> Result<(), String> {
+            if k == self.1 {
+                return Err("Access is denied.".into());
+            }
+            self.0.delete(k)
+        }
+    }
+
+    // The bug: with nothing kept at start, a sign-in made while Venuta ran never had its renewed
+    // cookies kept, so the next start brought back the stale ones.
+    #[test]
+    fn cookies_renewed_after_a_sign_in_made_while_running_are_kept() {
+        let v = Memory::default();
+        let mut kept = None;
+        keep_sign_in(&v, &mut kept, "SAPISID=a; TS=1").unwrap();
+        crate::ytm_accounts::remember(&v, &who("a@x.com"), "SAPISID=a; TS=1").unwrap();
+
+        assert!(keep_renewed(&v, &mut kept, Some("SAPISID=a; TS=2".into())).unwrap());
+        assert_eq!(
+            v.get(VAULT_KEY).unwrap().as_deref(),
+            Some("SAPISID=a; TS=2")
+        );
+        let slot = crate::ytm_accounts::switch(&v, "a@x.com", None).unwrap();
+        assert_eq!(slot, "SAPISID=a; TS=2", "its own slot follows too");
+        // The same again writes nothing.
+        assert!(!keep_renewed(&v, &mut kept, Some("SAPISID=a; TS=2".into())).unwrap());
+    }
+
+    #[test]
+    fn cookies_renewed_after_a_kept_sign_in_restored_at_start_are_kept() {
+        let v = Memory::default();
+        v.put(VAULT_KEY, "SAPISID=a; TS=1").unwrap();
+        let mut kept = v.get(VAULT_KEY).unwrap();
+        assert!(!keep_renewed(&v, &mut kept, Some("SAPISID=a; TS=1".into())).unwrap());
+        assert!(keep_renewed(&v, &mut kept, Some("SAPISID=a; TS=2".into())).unwrap());
+        assert_eq!(
+            v.get(VAULT_KEY).unwrap().as_deref(),
+            Some("SAPISID=a; TS=2")
+        );
+    }
+
+    // After a sign-out the catalog holds no cookie; the renewal never puts one back.
+    #[test]
+    fn after_a_sign_out_nothing_is_kept_again() {
+        let v = Memory::default();
+        let mut kept = None;
+        keep_sign_in(&v, &mut kept, "SAPISID=a").unwrap();
+        crate::ytm_accounts::remember(&v, &who("a@x.com"), "SAPISID=a").unwrap();
+        assert!(forget_sign_in(&v, &mut kept).is_empty());
+        assert!(!keep_renewed(&v, &mut kept, None).unwrap());
+        assert_eq!(v.get(VAULT_KEY).unwrap(), None);
+        assert!(crate::ytm_accounts::list(&v).is_empty());
+    }
+
+    #[test]
+    fn a_refused_delete_does_not_stop_the_sign_out() {
+        let v = Stubborn(Memory::default(), VAULT_KEY);
+        let mut kept = None;
+        keep_sign_in(&v, &mut kept, "SAPISID=a").unwrap();
+        crate::ytm_accounts::remember(&v, &who("a@x.com"), "SAPISID=a").unwrap();
+        let problems = forget_sign_in(&v, &mut kept);
+        assert_eq!(problems, ["Access is denied."]);
+        assert_eq!(kept, None);
+        // The rest went anyway.
+        assert!(crate::ytm_accounts::list(&v).is_empty());
+        assert_eq!(crate::ytm_accounts::active(&v), None);
+    }
+
+    // The account check right after a sign-in failed: the new cookies must not land in the slot
+    // of the account used before.
+    #[test]
+    fn a_sign_in_not_known_yet_keeps_nothing_in_the_last_accounts_slot() {
+        let v = Memory::default();
+        let mut kept = None;
+        crate::ytm_accounts::remember(&v, &who("a@x.com"), "SAPISID=a").unwrap();
+        keep_sign_in(&v, &mut kept, "SAPISID=b").unwrap();
+        keep_renewed(&v, &mut kept, Some("SAPISID=b; TS=2".into())).unwrap();
+        let a = crate::ytm_accounts::switch(&v, "a@x.com", None).unwrap();
+        assert_eq!(a, "SAPISID=a");
     }
 
     #[test]

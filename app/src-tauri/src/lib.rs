@@ -1913,13 +1913,19 @@ async fn playlist_save(root: String, name: String, paths: Vec<String>) -> CmdRes
 /// Delete a playlist (its file goes to Set aside); returns what Undo needs to put it back.
 #[tauri::command]
 fn playlist_delete(root: String, name: String) -> CmdResult<engine::playlists::Deleted> {
-    engine::playlists::delete(Path::new(&root), &name)
+    let d = engine::playlists::delete(Path::new(&root), &name)?;
+    // "Also on YouTube Music" goes aside with it: a new playlist with this name starts unlinked.
+    ytm_links::deleted(&name, &d.aside);
+    Ok(d)
 }
 
 /// Undo a delete: the playlist's file comes back from Set aside, as it was.
 #[tauri::command]
 fn playlist_undelete(root: String, name: String, aside: String, was: String) -> CmdResult<()> {
-    engine::playlists::undelete(Path::new(&root), &name, Path::new(&aside), Path::new(&was))
+    engine::playlists::undelete(Path::new(&root), &name, Path::new(&aside), Path::new(&was))?;
+    // Its link comes back with it.
+    ytm_links::undeleted(&name, Path::new(&aside));
+    Ok(())
 }
 
 #[tauri::command]

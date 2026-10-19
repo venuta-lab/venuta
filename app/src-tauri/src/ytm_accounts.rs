@@ -100,6 +100,12 @@ pub fn keep_active(v: &dyn Vault, jar: &str) -> Result<(), String> {
     }
 }
 
+/// A new sign-in is starting: no kept account is the one in use until it says who it is
+/// (`remember`), so its cookies never go into the slot of the one before.
+pub fn clear_active(v: &dyn Vault) {
+    let _ = v.delete(ACTIVE_KEY);
+}
+
 /// Which one is in use (None: not known yet, as after an older version's sign-in).
 pub fn active(v: &dyn Vault) -> Option<String> {
     v.get(ACTIVE_KEY).ok().flatten()
@@ -129,13 +135,14 @@ pub fn forget(v: &dyn Vault, id: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
 
+    /// A vault in memory, for tests.
     #[derive(Default)]
-    struct Memory(RefCell<HashMap<String, String>>);
+    pub(crate) struct Memory(pub(crate) RefCell<HashMap<String, String>>);
     impl Vault for Memory {
         fn put(&self, k: &str, v: &str) -> Result<(), String> {
             self.0.borrow_mut().insert(k.into(), v.into());
@@ -186,6 +193,19 @@ mod tests {
         );
         assert_eq!(active(&v).as_deref(), Some("a@x.com"));
         assert!(switch(&v, "nobody", None).is_err());
+    }
+
+    // A sign-in whose account check fails must not leave the last account named as the one in
+    // use: its renewed cookies would then go into that account's slot.
+    #[test]
+    fn a_sign_in_starting_leaves_no_account_in_use_until_it_is_known() {
+        let v = Memory::default();
+        remember(&v, &who("a@x.com"), "jar-a").unwrap();
+        clear_active(&v);
+        assert_eq!(active(&v), None);
+        keep_active(&v, "jar-new").unwrap();
+        assert_eq!(v.get(&slot("a@x.com")).unwrap().as_deref(), Some("jar-a"));
+        assert_eq!(list(&v).len(), 1, "the kept one stays kept");
     }
 
     #[test]
