@@ -56,6 +56,10 @@ pub struct Link {
     /// each sync looks for them among your uploads, and a song found is the file's from then on.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub uploading: BTreeMap<String, Uploading>,
+    /// A song YouTube Music put in when another was sent (it sometimes swaps in another
+    /// version): its id there, to the id sent. The two are one song for the link.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, String>,
     /// What the last syncs did, newest first (a few kept).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SyncNote>,
@@ -101,6 +105,26 @@ pub struct Uploading {
 const HISTORY: usize = 20;
 
 impl Link {
+    /// What YouTube Music actually added for the songs sent (in the order sent): a different
+    /// id is remembered as the same song.
+    pub fn note_swaps(&mut self, sent: &[String], placed: &[(String, String)]) {
+        if sent.len() != placed.len() {
+            return;
+        }
+        for (want, (got, _)) in sent.iter().zip(placed) {
+            if want != got {
+                self.aliases.insert(got.clone(), want.clone());
+            }
+        }
+    }
+
+    /// A song's id there, as the link knows it.
+    fn id_there<'a>(&'a self, r: &'a AccountTrack) -> &'a str {
+        self.aliases
+            .get(&r.track.track_id)
+            .map_or(r.track.track_id.as_str(), String::as_str)
+    }
+
     /// The uploads that have shown up, each taken as its file's song; how many.
     pub fn claim_uploads(&mut self, uploads: &[AccountTrack]) -> usize {
         let taken: HashSet<String> = self.matches.values().cloned().collect();
@@ -239,6 +263,25 @@ pub fn unmatched(entries: &[PlaylistEntry], link: &Link) -> Vec<usize> {
         .collect()
 }
 
+/// Every file of yours in the playlist that isn't an online song: what "Check matches" lists.
+pub fn files(entries: &[PlaylistEntry]) -> Vec<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.online.is_none() && file_key(e).is_some())
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// How the playlist stands: songs that are (or go) there, and lines that stay here only.
+pub fn counts(entries: &[PlaylistEntry], link: &Link) -> (usize, usize) {
+    let there = entries
+        .iter()
+        .filter(|e| video_of(e, link).is_some())
+        .count();
+    (there, entries.len() - there)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
@@ -317,7 +360,7 @@ pub fn plan(
         .map(|e| video_of(e, link).filter(|v| seen.insert(v.clone())))
         .collect();
     let lids: Vec<&str> = local.iter().flatten().map(String::as_str).collect();
-    let rids = firsts(remote.iter().map(|r| r.track.track_id.as_str()));
+    let rids = firsts(remote.iter().map(|r| link.id_there(r)));
     let base: HashSet<&str> = link.base.iter().map(String::as_str).collect();
     let in_l: HashSet<&str> = lids.iter().copied().collect();
     let in_r: HashSet<&str> = rids.iter().copied().collect();
@@ -388,10 +431,8 @@ pub fn plan(
         .enumerate()
         .filter_map(|(i, v)| v.as_deref().map(|v| (v, i)))
         .collect();
-    let track_of: HashMap<&str, &AccountTrack> = remote
-        .iter()
-        .map(|r| (r.track.track_id.as_str(), r))
-        .collect();
+    let track_of: HashMap<&str, &AccountTrack> =
+        remote.iter().map(|r| (link.id_there(r), r)).collect();
     let mut lines: Vec<Option<usize>> = Vec::new();
     let mut new_items: HashMap<usize, Item> = HashMap::new();
     let mut pulled = 0;
@@ -444,7 +485,7 @@ pub fn plan(
     let kept: HashSet<&str> = order.iter().copied().collect();
     let remove_remote = remote
         .iter()
-        .filter(|r| !kept.contains(r.track.track_id.as_str()))
+        .filter(|r| !kept.contains(link.id_there(r)))
         .filter_map(|r| {
             r.set_video_id
                 .clone()
@@ -512,14 +553,16 @@ pub fn after_edits(
     removed: &[(String, String)],
     placed: &[(String, String)],
     order: &[String],
+    aliases: &BTreeMap<String, String>,
 ) -> (Vec<String>, Vec<String>) {
+    let same = |v: &str| aliases.get(v).cloned().unwrap_or_else(|| v.to_owned());
     let gone: HashSet<&str> = removed.iter().map(|(_, s)| s.as_str()).collect();
     let mut now: Vec<(String, String)> = remote
         .iter()
-        .filter_map(|r| Some((r.track.track_id.clone(), r.set_video_id.clone()?)))
+        .filter_map(|r| Some((same(&r.track.track_id), r.set_video_id.clone()?)))
         .filter(|(_, s)| !gone.contains(s.as_str()))
         .collect();
-    now.extend(placed.iter().cloned());
+    now.extend(placed.iter().map(|(v, s)| (same(v), s.clone())));
     let mut handle: HashMap<&str, &str> = HashMap::new();
     for (v, s) in &now {
         handle.entry(v.as_str()).or_insert(s.as_str());
@@ -840,6 +883,8 @@ mod tests {
         // One on its way to your uploads isn't asked about again.
         l.uploading.insert("md5:M1".into(), Uploading::default());
         assert!(unmatched(&mine, &l).is_empty());
+        assert_eq!(files(&mine), [1, 2]);
+        assert_eq!(counts(&mine, &l), (3, 1));
     }
 
     #[test]
@@ -890,10 +935,37 @@ mod tests {
         let removed = [("b".to_string(), "s-b".to_string())];
         let placed = [("n".to_string(), "s-n".to_string())];
         let order: Vec<String> = ["n", "a", "c"].iter().map(|s| s.to_string()).collect();
-        let (now, want) = after_edits(&r, &removed, &placed, &order);
+        let (now, want) = after_edits(&r, &removed, &placed, &order, &BTreeMap::new());
         assert_eq!(now, ["s-a", "s-c", "s-n"]);
         assert_eq!(want, ["s-n", "s-a", "s-c"]);
         assert_eq!(apply(&now, &moves(&now, &want)), want);
+    }
+
+    #[test]
+    fn a_song_swapped_for_another_version_there_is_still_the_same_song() {
+        let mine = [online("a")];
+        let mut l = link(&[]);
+        let p = plan(&mine, &l, "me", &[], true, false).unwrap();
+        assert_eq!(p.add_remote, ["a"]);
+        let placed = [("a2".to_string(), "s-a2".to_string())];
+        l.note_swaps(&p.add_remote, &placed);
+        l.base = p.order.clone();
+        let there = remote(&["a2"]);
+        // Not taken as "a" gone there and "a2" new.
+        assert!(
+            plan(&mine, &l, "me", &there, true, false)
+                .unwrap()
+                .is_empty()
+        );
+        let (now, want) = after_edits(&there, &[], &[], &l.base, &l.aliases);
+        assert_eq!(
+            (now, want),
+            (vec!["s-a2".to_string()], vec!["s-a2".to_string()])
+        );
+        // Taken out here, it goes there by its own id.
+        let p = plan(&[online("b")], &l, "me", &there, true, false).unwrap();
+        assert_eq!(p.remove_remote, [("a2".to_string(), "s-a2".to_string())]);
+        assert_eq!(p.add_remote, ["b"]);
     }
 
     #[test]

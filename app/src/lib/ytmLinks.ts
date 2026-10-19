@@ -117,7 +117,7 @@ let scheduledFor = ''
 
 async function syncDue(root: string) {
   if (!ytmReady()) return
-  const links = await ytmLinks().catch(() => [])
+  const links = await ytmLinks(root).catch(() => [])
   for (const l of links) {
     if (due(l.last_sync, nowSecs(), 'timer')) await syncLink(root, l.playlist, { quiet: true })
   }

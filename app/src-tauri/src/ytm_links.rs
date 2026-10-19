@@ -77,6 +77,9 @@ pub struct LinkView {
     pub link: Link,
     /// Files of yours not asked about yet (the matching review has them).
     pub unmatched: usize,
+    /// Songs that are (or go) there, and lines that stay here only.
+    pub there: usize,
+    pub only_here: usize,
 }
 
 fn entries_of(
@@ -95,18 +98,33 @@ pub async fn ytm_link(root: String, name: String) -> Result<Option<LinkView>, St
         let Some(link) = ytm_links::load(&data_dir(), &name) else {
             return Ok(None);
         };
-        let unmatched = entries_of(Path::new(&root), &name)
-            .map(|(e, _)| ytm_links::unmatched(&e, &link).len())
-            .unwrap_or(0);
-        Ok(Some(LinkView { link, unmatched }))
+        let (unmatched, (there, only_here)) = entries_of(Path::new(&root), &name)
+            .map(|(e, _)| {
+                (
+                    ytm_links::unmatched(&e, &link).len(),
+                    ytm_links::counts(&e, &link),
+                )
+            })
+            .unwrap_or_default();
+        Ok(Some(LinkView {
+            link,
+            unmatched,
+            there,
+            only_here,
+        }))
     })
     .await
 }
 
-/// Every link (to sync them at start, and every half hour at most).
+/// Every link of a playlist that is there (to sync them at start, and every half hour at
+/// most). A deleted playlist's link stays, so Undo brings it back linked, but rests.
 #[tauri::command]
-pub fn ytm_links() -> Vec<Link> {
+pub fn ytm_links(root: String) -> Vec<Link> {
+    let rootp = PathBuf::from(&root);
     ytm_links::all(&data_dir())
+        .into_iter()
+        .filter(|l| playlists::exists(&rootp, &l.playlist))
+        .collect()
 }
 
 /// A file of yours the matching review asks about.
@@ -122,6 +140,12 @@ pub struct ReviewRow {
     pub found: Option<OnlineEntry>,
     /// It can go to your uploads (a type and size YouTube Music takes).
     pub uploadable: bool,
+    /// What you said before (checking matches): the song it is there, kept here only, or on
+    /// its way to your uploads.
+    pub current: Option<OnlineEntry>,
+    pub current_id: Option<String>,
+    pub kept_here: bool,
+    pub uploading: bool,
 }
 
 fn uploadable(file: &Path) -> bool {
@@ -141,16 +165,36 @@ pub async fn ytm_link_review(
     pb: State<'_, Playback>,
     root: String,
     name: String,
+    all: bool,
 ) -> Result<Vec<ReviewRow>, String> {
     let catalog = pb.catalog();
+    let account = crate::ytm_library::account(&pb).ok();
     crate::blocking(move || {
         let rootp = PathBuf::from(&root);
         let (entries, _) = entries_of(&rootp, &name)?;
         let link = ytm_links::load(&data_dir(), &name).unwrap_or_default();
-        let rows: Vec<&PlaylistEntry> = ytm_links::unmatched(&entries, &link)
-            .into_iter()
-            .map(|i| &entries[i])
-            .collect();
+        let which = if all {
+            ytm_links::files(&entries)
+        } else {
+            ytm_links::unmatched(&entries, &link)
+        };
+        let rows: Vec<&PlaylistEntry> = which.into_iter().map(|i| &entries[i]).collect();
+        // The songs matched before, as the playlist there shows them.
+        let mut known: std::collections::HashMap<String, OnlineEntry> = Default::default();
+        if all
+            && !link.matches.is_empty()
+            && let Some(a) = &account
+            && let Ok(p) = a.playlist(&link.playlist_id, &CancellationToken::default())
+        {
+            for t in &p.tracks {
+                let id = link
+                    .aliases
+                    .get(&t.track.track_id)
+                    .cloned()
+                    .unwrap_or_else(|| t.track.track_id.clone());
+                known.insert(id, OnlineEntry::from_remote(&t.track));
+            }
+        }
         let songs: Vec<Foreign> = rows
             .iter()
             .map(|e| Foreign {
@@ -166,8 +210,14 @@ pub async fn ytm_link_review(
             .into_iter()
             .zip(found)
             .filter_map(|(e, found)| {
+                let key = ytm_links::file_key(e)?;
+                let current_id = link.matches.get(&key).cloned();
                 Some(ReviewRow {
-                    key: ytm_links::file_key(e)?,
+                    current: current_id.as_ref().and_then(|v| known.get(v).cloned()),
+                    current_id,
+                    kept_here: link.local_only.contains(&key),
+                    uploading: link.uploading.contains_key(&key),
+                    key,
                     path: e.path.clone(),
                     title: e.title.clone(),
                     artist: e.artist.clone(),
@@ -405,6 +455,9 @@ fn choose_and_sync(
             match sent {
                 Ok(()) => {
                     report.uploaded += 1;
+                    // Its upload is what it is there from now on (once it shows).
+                    link.matches.remove(key);
+                    link.local_only.remove(key);
                     link.uploading.insert(
                         key.clone(),
                         Uploading {
@@ -490,9 +543,16 @@ fn choose_and_sync(
                 video_ids: plan.add_remote.clone(),
             })?;
             note.pushed = plan.add_remote.len();
+            // YouTube Music sometimes puts in another version than the one sent.
+            link.note_swaps(&plan.add_remote, &placed);
         }
-        let (now_order, wanted) =
-            ytm_links::after_edits(&there.tracks, &plan.remove_remote, &placed, &plan.order);
+        let (now_order, wanted) = ytm_links::after_edits(
+            &there.tracks,
+            &plan.remove_remote,
+            &placed,
+            &plan.order,
+            &link.aliases,
+        );
         for (set_video_id, before) in ytm_links::moves(&now_order, &wanted) {
             send(PlaylistEdit::Move {
                 set_video_id,

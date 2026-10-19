@@ -6,7 +6,7 @@ import { useEscape } from '../lib/layers'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
 import { useYtmPart, useYtmStatus, ytmLibraryChanged } from '../lib/ytmLibrary'
-import { pauseWords, syncWords } from '../lib/ytmLinkWords'
+import { pauseWords, standWords, syncWords } from '../lib/ytmLinkWords'
 import { clearPause, reloadLink, syncLink, useYtmLinkState } from '../lib/ytmLinks'
 import { confirmAsk } from './Confirm'
 import { RemoteArt } from './RemoteArt'
@@ -23,7 +23,7 @@ import { Switch } from './ui'
 export function YtmLinkBar({ root, name }: { root: string; name: string }) {
   const { signed_in, expired } = useYtmStatus()
   const s = useYtmLinkState(root, name, true)
-  const [dialog, setDialog] = useState<'link' | 'review' | null>(null)
+  const [dialog, setDialog] = useState<Mode | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const link = s.link
   if (link === undefined) return null
@@ -45,7 +45,7 @@ export function YtmLinkBar({ root, name }: { root: string; name: string }) {
       notify(String(e))
     }
   }
-  const p = s.paused
+  const p = s.paused ?? (link?.held ? ({ kind: 'held' } as const) : null)
   const forceLabel = p?.kind === 'held' ? 'Sync again' : p?.kind === 'many_gone' ? 'Sync anyway' : null
   const uploading = Object.keys(link?.uploading ?? {}).length
 
@@ -70,9 +70,7 @@ export function YtmLinkBar({ root, name }: { root: string; name: string }) {
                       ? s.problem
                       : p
                         ? pauseWords(name, p)
-                        : link.last_sync
-                          ? `Synced ${when(link.last_sync * 1000).toLowerCase()}.`
-                          : 'Not synced yet.'}
+                        : `${link.last_sync ? `Synced ${when(link.last_sync * 1000).toLowerCase()}.` : 'Not synced yet.'} ${standWords(link.there, link.only_here)}`}
           </p>
           {link && signed_in && !expired && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -88,6 +86,11 @@ export function YtmLinkBar({ root, name }: { root: string; name: string }) {
               {link.unmatched > 0 && (
                 <button onClick={() => setDialog('review')} className="btn-ghost btn-sm">
                   {link.unmatched === 1 ? '1 file of yours isn’t there yet' : `${link.unmatched.toLocaleString('en-IN')} files of yours aren’t there yet`}
+                </button>
+              )}
+              {(Object.keys(link.matches).length > 0 || link.local_only.length > 0) && (
+                <button onClick={() => setDialog('matches')} className="btn-ghost btn-sm">
+                  Check matches
                 </button>
               )}
               {!!link.history?.length && (
@@ -120,10 +123,19 @@ export function YtmLinkBar({ root, name }: { root: string; name: string }) {
   )
 }
 
-type Choice = 'match' | 'upload' | 'keep'
+type Choice = 'current' | 'match' | 'upload' | 'keep' | 'uploading'
+type Mode = 'link' | 'review' | 'matches'
 
-/** Linking, or answering about files of yours added since: where, then file by file. */
-function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'review'; onClose: () => void }) {
+/** What a file was said to be before (Check matches), else the first guess. */
+function startChoice(r: YtmReviewRow): Choice {
+  if (r.uploading) return 'uploading'
+  if (r.current_id) return 'current'
+  if (r.kept_here) return 'keep'
+  return r.found ? 'match' : 'keep'
+}
+
+/** Linking, answering about files of yours added since, or checking every file's match. */
+function YtmLinkDialog(props: { root: string; name: string; mode: Mode; onClose: () => void }) {
   const { root, name, mode } = props
   const [where, setWhere] = useState<'new' | 'yours'>('new')
   const [privacy, setPrivacy] = useState('PRIVATE')
@@ -144,21 +156,21 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
 
   useEffect(() => {
     let live = true
-    ytmLinkReview(root, name)
+    ytmLinkReview(root, name, mode === 'matches')
       .then((r) => {
         if (!live) return
         setRows(r)
         // A song found there is taken; nothing is uploaded unless you tick it.
-        setChoice(Object.fromEntries(r.map((x) => [x.key, x.found ? 'match' : 'keep'])))
+        setChoice(Object.fromEntries(r.map((x) => [x.key, startChoice(x)])))
       })
       .catch((e) => live && (setProblem(onlineProblem(e)), setRows([])))
     return () => {
       live = false
     }
-  }, [root, name])
+  }, [root, name, mode])
 
   const counts = useMemo(() => {
-    const c = { match: 0, upload: 0, keep: 0 }
+    const c = { current: 0, match: 0, upload: 0, keep: 0, uploading: 0 }
     for (const v of Object.values(choice)) c[v]++
     return c
   }, [choice])
@@ -168,8 +180,9 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
     setBusy(true)
     const choices = {
       matches: rows.flatMap((r) => (choice[r.key] === 'match' && r.found ? [[r.key, r.found.track_id] as [string, string]] : [])),
+      // Kept here only: told again only when it was something else before.
       upload: rows.flatMap((r) => (choice[r.key] === 'upload' ? [r.key] : [])),
-      local_only: rows.flatMap((r) => (choice[r.key] === 'keep' ? [r.key] : [])),
+      local_only: rows.flatMap((r) => (choice[r.key] === 'keep' && (mode !== 'matches' || !r.kept_here) ? [r.key] : [])),
     }
     try {
       const report: YtmSyncReport =
@@ -205,18 +218,22 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
     >
       <motion.div
         role="dialog"
-        aria-label={mode === 'link' ? `Link ${name} to YouTube Music` : `Files of ${name} not on YouTube Music`}
+        aria-label={mode === 'link' ? `Link ${name} to YouTube Music` : mode === 'review' ? `Files of ${name} not on YouTube Music` : `Matches of ${name} on YouTube Music`}
         className="popover flex max-h-[86vh] w-[min(640px,94vw)] flex-col rounded-[20px] p-6"
         initial={{ y: 10, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 6, opacity: 0 }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 className="text-[17px] font-semibold leading-snug">{mode === 'link' ? `Also on YouTube Music: “${name}”` : 'Your files not on YouTube Music yet'}</h2>
+        <h2 className="text-[17px] font-semibold leading-snug">
+          {mode === 'link' ? `Also on YouTube Music: “${name}”` : mode === 'review' ? 'Your files not on YouTube Music yet' : `Your files in “${name}” and YouTube Music`}
+        </h2>
         <p className="mt-1.5 text-[13px] leading-relaxed text-ink/60">
           {mode === 'link'
             ? 'From now on, songs you add or take out here change there too, and changes made there come here. Your files never leave your library.'
-            : 'Choose, file by file, what each one is on YouTube Music.'}
+            : mode === 'review'
+              ? 'Choose, file by file, what each one is on YouTube Music.'
+              : 'Each file of yours, and the song it is on YouTube Music. Change one that’s wrong; a file you keep here only is taken out there.'}
         </p>
 
         {mode === 'link' && (
@@ -258,7 +275,7 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
           ) : (
             <>
               <p className="text-[12.5px] text-ink/55">
-                {rows.length === 1 ? '1 file of yours' : `${rows.length.toLocaleString('en-IN')} files of yours`} in this playlist: {counts.match} go across as the song found, {counts.upload} to your uploads, {counts.keep} stay here only.
+                {rows.length === 1 ? '1 file of yours' : `${rows.length.toLocaleString('en-IN')} files of yours`} in this playlist: {counts.current + counts.match} go across as a song there, {counts.upload + counts.uploading} to your uploads, {counts.keep} stay here only.
               </p>
               <ul className="mt-2 grid gap-1">
                 {rows.map((r) => (
@@ -267,27 +284,22 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
                       <p className="truncate text-[13.5px] font-medium">{r.title}</p>
                       <p className="truncate text-[12px] text-ink/55">{r.artist || r.album}</p>
                     </div>
-                    {r.found && (
-                      <div className="flex min-w-0 max-w-[200px] items-center gap-2" title={`On YouTube Music: ${r.found.title}, ${(r.found.artists ?? []).join(', ')}`}>
-                        <span className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-ink/10">
-                          <RemoteArt url={r.found.artwork_url ?? null} seed={r.found.title} size={32} imgClassName="h-full w-full object-cover" />
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-[12.5px]">{r.found.title}</span>
-                          <span className="block truncate text-[11.5px] text-ink/50">{(r.found.artists ?? []).join(', ')}</span>
-                        </span>
-                      </div>
+                    <Shown row={r} choice={choice[r.key]} />
+                    {choice[r.key] === 'uploading' ? (
+                      <span className="shrink-0 text-[12px] text-ink/50">On its way to your uploads</span>
+                    ) : (
+                      <select
+                        value={choice[r.key]}
+                        onChange={(e) => pick(r.key, e.target.value as Choice)}
+                        aria-label={`What ${r.title} is on YouTube Music`}
+                        className="field h-8 shrink-0 rounded-full px-3 text-[12.5px]"
+                      >
+                        {r.current_id && <option value="current">The song chosen before</option>}
+                        {r.found && r.found.track_id !== r.current_id && <option value="match">{r.current_id ? 'The song found now' : 'This song'}</option>}
+                        {r.uploadable && <option value="upload">Upload it</option>}
+                        <option value="keep">Keep here only</option>
+                      </select>
                     )}
-                    <select
-                      value={choice[r.key]}
-                      onChange={(e) => pick(r.key, e.target.value as Choice)}
-                      aria-label={`What ${r.title} is on YouTube Music`}
-                      className="field h-8 shrink-0 rounded-full px-3 text-[12.5px]"
-                    >
-                      {r.found && <option value="match">This song</option>}
-                      {r.uploadable && <option value="upload">Upload it</option>}
-                      <option value="keep">Keep here only</option>
-                    </select>
                   </li>
                 ))}
               </ul>
@@ -307,5 +319,22 @@ function YtmLinkDialog(props: { root: string; name: string; mode: 'link' | 'revi
         </div>
       </motion.div>
     </motion.div>
+  )
+}
+
+/** The song on YouTube Music a file goes across as, for the choice made. */
+function Shown({ row, choice }: { row: YtmReviewRow; choice: Choice }) {
+  const o = choice === 'current' ? row.current : choice === 'match' ? row.found : null
+  if (!o) return null
+  return (
+    <div className="flex min-w-0 max-w-[200px] items-center gap-2" title={`On YouTube Music: ${o.title}, ${(o.artists ?? []).join(', ')}`}>
+      <span className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-ink/10">
+        <RemoteArt url={o.artwork_url ?? null} seed={o.title} size={32} imgClassName="h-full w-full object-cover" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[12.5px]">{o.title}</span>
+        <span className="block truncate text-[11.5px] text-ink/50">{(o.artists ?? []).join(', ')}</span>
+      </span>
+    </div>
   )
 }

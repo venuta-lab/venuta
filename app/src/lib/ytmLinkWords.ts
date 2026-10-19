@@ -53,3 +53,22 @@ export function due(lastSync: number, now: number, why: 'open' | 'timer' | 'edit
   if (why === 'edit' || why === 'press') return true
   return now - lastSync >= (why === 'open' ? OPEN_GAP : TIMER_GAP) || lastSync === 0
 }
+
+/** YouTube Music's most songs in one playlist. */
+export const YTM_PLAYLIST_LIMIT = 5000
+
+/** How a linked playlist stands: songs there, and lines that stay here only. */
+export function standWords(there: number, onlyHere: number): string {
+  const n = (x: number) => x.toLocaleString('en-IN')
+  const all = there + onlyHere
+  const line = !onlyHere
+    ? there === 1
+      ? 'The 1 song there.'
+      : `All ${n(there)} songs there.`
+    : there
+      ? `${n(there)} of ${n(all)} songs there; ${n(onlyHere)} only here.`
+      : `None of its ${n(all)} songs there yet; ${n(onlyHere)} only here.`
+  return there >= YTM_PLAYLIST_LIMIT - 100
+    ? `${line} YouTube Music holds up to ${n(YTM_PLAYLIST_LIMIT)} songs in a playlist; past that, songs stay here only.`
+    : line
+}

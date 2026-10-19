@@ -5,9 +5,14 @@ import {
   listEdits,
   listRuns,
   undoEdit,
+  ytmLinkUndo,
+  ytmLinks,
   type EditChange,
   type Run,
+  type YtmSyncNote,
 } from '../lib/engine'
+import { notify } from '../lib/notify'
+import { syncWords } from '../lib/ytmLinkWords'
 import { RunRow } from '../components/AlbumRow'
 import { Page } from '../components/ui'
 import { when } from '../lib/format'
@@ -59,17 +64,39 @@ export function ActivityScreen(props: { root: string }) {
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [edits, setEdits] = useState<EditChange[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [syncs, setSyncs] = useState<{ playlist: string; note: YtmSyncNote; newest: boolean }[]>([])
   const load = useCallback(() => {
     listRuns().then(setRuns).catch(() => setRuns([]))
     listEdits().then(setEdits).catch(() => setEdits([]))
     if (props.root) listAnswers(props.root).then(setAnswers).catch(() => setAnswers({}))
+    if (props.root)
+      ytmLinks(props.root)
+        .then((links) =>
+          setSyncs(
+            links
+              .flatMap((l) => (l.history ?? []).map((note, i) => ({ playlist: l.playlist, note, newest: i === 0 })))
+              .sort((a, b) => b.note.at - a.note.at)
+              .slice(0, 40),
+          ),
+        )
+        .catch(() => setSyncs([]))
   }, [props.root])
   useEffect(() => {
     load()
   }, [load])
 
   const answerList = Object.entries(answers)
-  const nothing = runs?.length === 0 && edits.length === 0 && answerList.length === 0
+  const nothing = runs?.length === 0 && edits.length === 0 && answerList.length === 0 && syncs.length === 0
+  const undoSync = async (playlist: string, copy: string) => {
+    try {
+      await ytmLinkUndo(props.root, playlist, copy)
+      window.dispatchEvent(new Event('venuta:playlists-changed'))
+      notify(`“${playlist}” is back as it was before that sync. Nothing more goes to YouTube Music until you sync it again.`)
+      load()
+    } catch (e) {
+      notify(`Couldn't put it back: ${String(e)}`)
+    }
+  }
   return (
     <Page title="Activity" line="Everything that changed, newest first. Undo puts things back exactly; your originals are never touched by a build.">
       <div className="max-w-[880px]">
@@ -103,6 +130,31 @@ export function ActivityScreen(props: { root: string }) {
               <EditRow key={e.journal} change={e} onUndone={load} />
             ))}
           </div>
+        </section>
+      )}
+
+      {syncs.length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 text-[17px] font-semibold tracking-[-0.01em]">Playlists synced with YouTube Music</h2>
+          <div className="grid gap-1">
+            {syncs.map(({ playlist, note, newest }) => (
+              <div key={`${playlist}:${note.at}`} className="flex items-center gap-3 rounded-xl px-4 py-2.5 text-[13.5px] hover:bg-ink/[0.04]">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{syncWords(playlist, note) || `“${playlist}”: nothing changed.`}</span>
+                  <span className="block text-[12px] text-ink/50">
+                    {when(note.at * 1000)}
+                    {note.problem ? `. Stopped part way: ${note.problem}` : ''}
+                  </span>
+                </span>
+                {newest && note.undo && (
+                  <button onClick={() => void undoSync(playlist, note.undo!)} className="btn-ghost btn-sm" title="Put this playlist back as it was before this sync">
+                    Undo
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 px-4 text-[12px] text-ink/45">Undo puts your playlist back here; what was sent to YouTube Music stays there until you sync again.</p>
         </section>
       )}
 

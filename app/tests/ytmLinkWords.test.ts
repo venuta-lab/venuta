@@ -3,7 +3,7 @@
 // is due (on open at most once a minute, otherwise every half hour at most).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { syncWords, pauseWords, due } from '../src/lib/ytmLinkWords.ts'
+import { syncWords, pauseWords, due, standWords } from '../src/lib/ytmLinkWords.ts'
 
 const note = (n: Partial<Record<'pulled' | 'dropped' | 'pushed' | 'removed' | 'moved', number>>) => ({
   at: 0,
@@ -50,4 +50,12 @@ test('due: opened at most once a minute, otherwise every half hour', () => {
   assert.equal(due(now - 61, now, 'timer'), false)
   assert.equal(due(now - 30 * 60, now, 'timer'), true)
   assert.equal(due(now - 1, now, 'edit'), true)
+})
+
+test('how a linked playlist stands, and the 5,000-song limit there', () => {
+  assert.equal(standWords(42, 8), '42 of 50 songs there; 8 only here.')
+  assert.equal(standWords(3, 0), 'All 3 songs there.')
+  assert.equal(standWords(1, 0), 'The 1 song there.')
+  assert.equal(standWords(0, 2), 'None of its 2 songs there yet; 2 only here.')
+  assert.match(standWords(4950, 10), /holds up to 5,000 songs/)
 })

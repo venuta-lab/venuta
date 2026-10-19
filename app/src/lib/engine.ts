@@ -1445,6 +1445,9 @@ export interface YtmLink {
 export interface YtmLinkView extends YtmLink {
   /** Files of yours not asked about yet. */
   unmatched: number
+  /** Songs that are (or go) there, and lines that stay here only. */
+  there: number
+  only_here: number
 }
 export type YtmPause =
   | { kind: 'unread' }
@@ -1468,6 +1471,11 @@ export interface YtmReviewRow {
   duration_ms: number
   found: OnlineEntry | null
   uploadable: boolean
+  /** What you said before (Check matches). */
+  current: OnlineEntry | null
+  current_id: string | null
+  kept_here: boolean
+  uploading: boolean
 }
 export interface YtmChoices {
   matches?: [string, string][]
@@ -1475,8 +1483,8 @@ export interface YtmChoices {
   upload?: string[]
 }
 export const ytmLink = (root: string, name: string) => invoke<YtmLinkView | null>('ytm_link', { root, name })
-export const ytmLinks = () => invoke<YtmLink[]>('ytm_links')
-export const ytmLinkReview = (root: string, name: string) => invoke<YtmReviewRow[]>('ytm_link_review', { root, name })
+export const ytmLinks = (root: string) => invoke<YtmLink[]>('ytm_links', { root })
+export const ytmLinkReview = (root: string, name: string, all = false) => invoke<YtmReviewRow[]>('ytm_link_review', { root, name, all })
 export const ytmLinkStart = (root: string, name: string, target: string | null, privacy: string, choices: YtmChoices) =>
   invoke<YtmSyncReport>('ytm_link_start', { root, name, target, privacy, choices })
 export const ytmLinkChoose = (root: string, name: string, choices: YtmChoices) => invoke<YtmSyncReport>('ytm_link_choose', { root, name, choices })

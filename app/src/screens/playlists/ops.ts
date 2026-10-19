@@ -1,6 +1,7 @@
-import { confirmAsk } from '../../components/Confirm'
+import { chooseAsk, confirmAsk } from '../../components/Confirm'
 import { playlistsChanged } from '../../components/AddToPlaylist'
-import { playlistAdd, playlistDelete, playlistUndelete, playlistDuplicate, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
+import { playlistAdd, playlistDelete, playlistUndelete, playlistDuplicate, ytmLink, ytmPlaylistDelete, ytmUnlink, type PlaylistItem, type PlaylistSummary, type SmartRule } from '../../lib/engine'
+import { ytmLibraryChanged, ytmReady } from '../../lib/ytmLibrary'
 import { notify } from '../../lib/notify'
 import { playlistSongs } from './common'
 import type { PlaylistsPlace } from '../PlaylistsScreen'
@@ -59,16 +60,40 @@ export async function exportPlaylist(root: string, p: PlaylistSummary, rule?: Sm
 
 /** Asks first; the file goes to Set aside beside your music, not destroyed. */
 export async function deletePlaylist(root: string, p: Pick<PlaylistSummary, 'name'>): Promise<boolean> {
-  const ok = await confirmAsk({
-    title: `Delete “${p.name}”?`,
-    text: 'The playlist file is moved to the Set aside folder beside your music, not destroyed. Your songs stay where they are.',
-    confirm: 'Delete playlist',
-    danger: true,
-  })
-  if (!ok) return false
+  // Also on YouTube Music: deleting it there too is a choice of its own, never the default.
+  const link = await ytmLink(root, p.name).catch(() => null)
+  let there = false
+  if (link && ytmReady()) {
+    const a = await chooseAsk({
+      title: `Delete “${p.name}”?`,
+      text: `It is also on YouTube Music as “${link.title || p.name}”. Here, the file goes to the Set aside folder beside your music and can be put back. On YouTube Music, a deleted playlist can’t be put back from Venuta.`,
+      confirm: 'Delete here only',
+      other: 'Here and on YouTube Music',
+    })
+    if (a === 'no') return false
+    there = a === 'other'
+  } else {
+    const ok = await confirmAsk({
+      title: `Delete “${p.name}”?`,
+      text: `The playlist file is moved to the Set aside folder beside your music, not destroyed. Your songs stay where they are.${link ? ' It stays on YouTube Music.' : ''}`,
+      confirm: 'Delete playlist',
+      danger: true,
+    })
+    if (!ok) return false
+  }
   try {
     const gone = await playlistDelete(root, p.name)
     playlistsChanged()
+    if (there && link) {
+      try {
+        await ytmPlaylistDelete(link.playlist_id)
+        await ytmUnlink(p.name)
+        ytmLibraryChanged(['playlists'])
+      } catch (e) {
+        notify(`Deleted ${p.name} here. YouTube Music didn't take the delete: ${why(e)}`)
+        return true
+      }
+    }
     // Undo puts the file back as it was (from Set aside); the notice says so.
     notify(`Deleted ${p.name}.`, {
       label: 'Undo',
