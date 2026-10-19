@@ -41,6 +41,7 @@ pub fn restore(app: &AppHandle) {
     let pb = app.state::<Playback>();
     if let Ok(Some(cookie)) = SystemVault.get(VAULT_KEY) {
         pb.online_catalog().set_account_cookie(Some(&cookie));
+        crate::ytm_library::restore_identity(&pb);
     }
     // Google renews the cookies as the catalog answers: what is kept follows them (tried again
     // next time if it couldn't be kept, and said once).
@@ -116,6 +117,8 @@ fn finish_sign_in(app: AppHandle) {
             // Signed in either way; if it can't be kept, only for as long as Venuta is open.
             let kept = SystemVault.put(VAULT_KEY, &jar);
             pb.online_catalog().set_account_cookie(Some(&jar));
+            // A new sign-in starts as itself, not as the brand account chosen under the last one.
+            crate::ytm_library::forget_identity();
             if let Some(w) = app.get_webview_window(WINDOW) {
                 let _ = w.close();
             }
@@ -147,6 +150,7 @@ fn ytmusic_signed_in(jar: &str) -> bool {
 pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(), String> {
     SystemVault.delete(VAULT_KEY)?;
     pb.online_catalog().set_account_cookie(None);
+    crate::ytm_library::forget_identity();
     if let Some(main) = app.get_webview_window("main")
         && let Ok(cookies) = main.cookies()
     {

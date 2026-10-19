@@ -32,6 +32,8 @@ import { useCatalogTiles } from '../../lib/catalogTiles'
 import { useLocalOnly } from '../../lib/localOnly'
 import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
+import { useYtmCount, useYtmStatus } from '../../lib/ytmLibrary'
+import { YtmGrid, YtmSongs } from './YtmLibrary'
 import { availabilityOf, enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
@@ -50,7 +52,7 @@ import { CollectionCard } from './OnlineCards'
 import { startRadio } from '../../lib/radio'
 import { OnlineArtistSections } from './OnlineArtistSections'
 import { useArtistSongs, useOnlineArtistFor } from './artistSongs'
-import type { OnlineTrack } from '../../lib/engine'
+import type { CatalogTrack, OnlineTrack } from '../../lib/engine'
 export const HI_RES = 'Hi-Res'
 
 // --- Home ------------------------------------------------------------------------------------
@@ -495,6 +497,9 @@ function Hero({ album: a, label }: { album: Album; label: string }) {
 
 export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter: string; onFilter: (f: string) => void }) {
   const { lib, filter } = props
+  const { signed_in } = useYtmStatus()
+  const ytmAlbums = useYtmCount('albums', signed_in)
+  const ytmUploads = useYtmCount('upload_albums', signed_in)
   // One of your genres or categories: the catalog's genre of the same name, to go on exploring.
   const nav = useNav()
   const catalog = useCatalogTiles()
@@ -514,6 +519,26 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
   const chip = (id: string, label: string, count: number) => (
     <Chip key={id} group="listen-album-filter" on={filter === id} label={label} count={count} onClick={() => props.onFilter(id)} />
   )
+  const chipMaybe = (id: string, label: string, count: number | null) => (
+    <Chip key={id} group="listen-album-filter" on={filter === id} label={label} count={count ?? undefined} onClick={() => props.onFilter(id)} />
+  )
+  if (filter === 'ytm:albums' || filter === 'ytm:upload_albums')
+    return (
+      <div>
+        <InBar>
+          <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+            {chip('all', 'All', lib.albums.length)}
+            {chipMaybe('ytm:albums', 'On YouTube Music', ytmAlbums)}
+            {!!ytmUploads && chipMaybe('ytm:upload_albums', 'Your uploads', ytmUploads)}
+          </div>
+        </InBar>
+        {filter === 'ytm:albums' ? (
+          <YtmGrid part="albums" label="Your YouTube Music albums" empty="No albums saved on YouTube Music yet. Save one from its page." />
+        ) : (
+          <YtmGrid part="upload_albums" label="Your uploads" empty="No uploads on YouTube Music." />
+        )}
+      </div>
+    )
   return (
     <div className="pb-16">
       <InBar>
@@ -523,6 +548,9 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
           {lib.categories.map(([c, n]) => chip(c, c, n))}
           {/* A genre opened from Your music: its own chip while it shows. */}
           {filter.startsWith(GENRE_FILTER) && chip(filter, filter.slice(GENRE_FILTER.length), shown.length)}
+          {/* Your YouTube Music library, beside your own: online, so not in All. */}
+          {signed_in && chipMaybe('ytm:albums', 'On YouTube Music', ytmAlbums)}
+          {signed_in && !!ytmUploads && chipMaybe('ytm:upload_albums', 'Your uploads', ytmUploads)}
         </div>
       </InBar>
       {online && (
@@ -538,11 +566,77 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
   )
 })
 
+// --- Songs -----------------------------------------------------------------------------------
+
+/** Your songs, and (signed in) the account's library songs and uploads beside them. The account's
+ *  lists are read when chosen: they can be thousands long. */
+export const SongsView = memo(function SongsView({ tracks }: { tracks: CatalogTrack[] }) {
+  const { signed_in } = useYtmStatus()
+  const [view, setView] = useState<'all' | 'songs' | 'upload_songs'>('all')
+  const chip = (id: typeof view, label: string, count?: number) => (
+    <Chip key={id} group="listen-song-filter" on={view === id} label={label} count={count} onClick={() => setView(id)} />
+  )
+  const chips = signed_in && (
+    <InBar>
+      <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+        {chip('all', 'All', tracks.length)}
+        {chip('songs', 'On YouTube Music')}
+        {chip('upload_songs', 'Your uploads')}
+      </div>
+    </InBar>
+  )
+  if (signed_in && view !== 'all')
+    return (
+      <div>
+        {chips}
+        <YtmSongs
+          part={view}
+          label={view === 'songs' ? 'Your YouTube Music songs' : 'Your uploads'}
+          empty={view === 'songs' ? 'No songs saved to your YouTube Music library yet.' : 'No songs uploaded to YouTube Music.'}
+        />
+      </div>
+    )
+  return (
+    <div className="pb-16">
+      {chips}
+      <SongList tracks={tracks} from={{ kind: 'songs', ref: '', label: 'Songs' }} sortBy="title" pin />
+    </div>
+  )
+})
+
 // --- Artists ---------------------------------------------------------------------------------
 
 export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Artist[] }) {
+  const { signed_in } = useYtmStatus()
+  const [view, setView] = useState<'all' | 'artists' | 'subscriptions'>('all')
+  const ytmArtists = useYtmCount('artists', signed_in)
+  const following = useYtmCount('subscriptions', signed_in)
+  const chip = (id: typeof view, label: string, count: number | null) => (
+    <Chip key={id} group="listen-artist-filter" on={view === id} label={label} count={count ?? undefined} onClick={() => setView(id)} />
+  )
+  const chips = signed_in && (
+    <InBar>
+      <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+        {chip('all', 'All', artists.length)}
+        {chip('artists', 'On YouTube Music', ytmArtists)}
+        {chip('subscriptions', 'Following', following)}
+      </div>
+    </InBar>
+  )
+  if (signed_in && view !== 'all')
+    return (
+      <div>
+        {chips}
+        <YtmGrid
+          part={view}
+          label={view === 'artists' ? 'Your YouTube Music artists' : 'Artists you follow'}
+          empty={view === 'artists' ? 'No artists in your YouTube Music library yet.' : 'You follow no artists on YouTube Music yet.'}
+        />
+      </div>
+    )
   return (
     <div className="pb-16">
+      {chips}
       <WindowedGrid
         items={artists}
         keyOf={(ar) => ar.key}

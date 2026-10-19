@@ -11,10 +11,11 @@ import { dragSource, useDropTarget } from '../../lib/drag'
 import { addSongsTo } from './ops'
 import { playlistSongs, playPlaylist, plural, sourceName } from './common'
 import { keyFor, matcher } from '../../lib/textsearch'
-import { ytmPlaylists, type OnlineCollection } from '../../lib/engine'
+import type { OnlineCollection, OnlineSuggestion } from '../../lib/engine'
 import { useYtmAccount } from '../../lib/ytmAccount'
 import { CollectionCard } from '../listen/OnlineCards'
-import { useLocalOnly } from '../../lib/localOnly'
+import { useYtmPart } from '../../lib/ytmLibrary'
+import { YtmSignInAgain } from '../listen/YtmLibrary'
 
 /** A playlist with no songs yet, small: opens it, has its menu, takes songs dropped on it. */
 function EmptyPlaylist(props: { root: string; p: PlaylistSummary; onOpen: () => void }) {
@@ -146,19 +147,12 @@ export function PlaylistsHome(props: {
   const empty = all.filter((p) => !p.smart && !smartNames.has(p.name) && p.tracks === 0 && match(p))
   // Your YouTube Music playlists, when you are signed in (they open as online playlists).
   const account = useYtmAccount()
-  const [ytm, setYtm] = useState<OnlineCollection[]>([])
-  const localOnly = useLocalOnly()
-  useEffect(() => {
-    if (!account || localOnly) return
-    let live = true
-    ytmPlaylists()
-      .then((l) => live && setYtm(l))
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [account, localOnly])
-  const ytmShown = account && !localOnly ? ytm.filter((c) => match({ name: c.title } as PlaylistSummary)) : []
+  const collections = (v: OnlineSuggestion[] | null): OnlineCollection[] =>
+    (v ?? []).flatMap((c) => (c.kind === 'playlist' ? [c.collection] : []))
+  const ytm = collections(useYtmPart<OnlineSuggestion[]>('playlists').value)
+  const podcasts = collections(useYtmPart<OnlineSuggestion[]>('podcasts').value)
+  const ytmShown = ytm.filter((c) => match({ name: c.title } as PlaylistSummary))
+  const podcastsShown = podcasts.filter((c) => match({ name: c.title } as PlaylistSummary))
   // Liked songs leads what you made.
   const yours = all
     .filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
@@ -270,6 +264,7 @@ export function PlaylistsHome(props: {
                 ))}
               </div>,
             )}
+          <YtmSignInAgain />
           {ytmShown.length > 0 &&
             section(
               'From your YouTube Music',
@@ -279,6 +274,15 @@ export function PlaylistsHome(props: {
                 ))}
               </div>,
               <span className="text-[12.5px] text-ink/50">{account?.name ?? ''}</span>,
+            )}
+          {podcastsShown.length > 0 &&
+            section(
+              'Your podcasts',
+              <div className="flex flex-wrap gap-x-5 gap-y-7">
+                {podcastsShown.map((c) => (
+                  <CollectionCard key={c.collection_id} collection={c} />
+                ))}
+              </div>,
             )}
           {imported.map(([from, lists]) =>
             section(

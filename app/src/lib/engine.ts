@@ -1323,6 +1323,82 @@ export const ytmRate = (trackId: string, rating: 'like' | 'dislike' | 'none') =>
 /** Your YouTube Music likes into Venuta's Liked songs (only when you ask). */
 export const ytmBringInLikes = (root: string) => invoke<{ name: string | null; found: number; added: number }>('ytm_bring_in_likes', { root })
 
+// --- The signed-in account: library, changes, history, uploads, identities, collaboration ----
+
+/** Signed in, and whether YouTube still takes the sign-in (expired: "Sign in again"). */
+export interface YtmStatus {
+  signed_in: boolean
+  expired: boolean
+}
+export type YtmShelf = 'playlists' | 'albums' | 'artists' | 'subscriptions' | 'podcasts' | 'upload_albums'
+/** A song as the account's lists hold it: the song, and its place in the list. */
+export interface YtmTrack extends OnlineTrack {
+  set_video_id?: string | null
+  /** The account uploaded it: only it can play the song. */
+  upload?: boolean
+}
+export interface YtmPlaylist {
+  playlist_id: string
+  title: string
+  description: string | null
+  /** PRIVATE, UNLISTED or PUBLIC. */
+  privacy: string | null
+  /** The account made it, so it can change it. */
+  owned: boolean
+  collaborative: boolean
+  artwork_url: string | null
+  tracks: YtmTrack[]
+  /** Every page came (a sync never reads a missing song as taken out when false). */
+  complete: boolean
+}
+export type YtmEdit =
+  | { kind: 'rename'; title: string }
+  | { kind: 'describe'; description: string }
+  | { kind: 'privacy'; privacy: string }
+  | { kind: 'add'; video_ids: string[] }
+  | { kind: 'remove'; items: [string, string][] }
+  | { kind: 'move'; set_video_id: string; before: string | null }
+export interface YtmSaved {
+  playlist_id: string
+  saved: boolean
+}
+export interface YtmFollow {
+  channel_id: string
+  subscribed: boolean
+}
+export interface YtmHistoryDay {
+  title: string
+  tracks: OnlineTrack[]
+}
+export interface YtmIdentity {
+  id: string
+  name: string
+  handle: string | null
+  email: string | null
+  picture: string | null
+  current: boolean
+}
+export const ytmStatus = () => invoke<YtmStatus>('ytm_status')
+export const ytmLibrary = (shelf: YtmShelf) => invoke<OnlineSuggestion[]>('ytm_library', { shelf })
+export const ytmLibrarySongs = (uploads: boolean) => invoke<YtmTrack[]>('ytm_library_songs', { uploads })
+export const ytmPlaylist = (playlistId: string) => invoke<YtmPlaylist>('ytm_playlist', { playlistId })
+export const ytmPlaylistCreate = (title: string, privacy: string, videoIds: string[], description?: string) =>
+  invoke<string>('ytm_playlist_create', { title, description: description ?? null, privacy, videoIds })
+/** Change a playlist the account owns; where added songs landed, [videoId, setVideoId]. */
+export const ytmPlaylistEdit = (playlistId: string, edits: YtmEdit[]) => invoke<[string, string][]>('ytm_playlist_edit', { playlistId, edits })
+export const ytmPlaylistDelete = (playlistId: string) => invoke<void>('ytm_playlist_delete', { playlistId })
+export const ytmAlbumSaved = (albumId: string) => invoke<YtmSaved | null>('ytm_album_saved', { albumId })
+export const ytmSave = (playlistId: string, saved: boolean) => invoke<void>('ytm_save', { playlistId, saved })
+export const ytmArtistFollowed = (artistId: string) => invoke<YtmFollow | null>('ytm_artist_followed', { artistId })
+export const ytmSubscribe = (channelId: string, subscribed: boolean) => invoke<void>('ytm_subscribe', { channelId, subscribed })
+export const ytmHistory = () => invoke<YtmHistoryDay[]>('ytm_history')
+export const ytmUpload = (path: string) => invoke<void>('ytm_upload', { path })
+export const ytmIdentities = () => invoke<YtmIdentity[]>('ytm_identities')
+export const ytmUseIdentity = (id: string | null) => invoke<void>('ytm_use_identity', { id })
+export const ytmInvite = (playlistId: string) => invoke<string>('ytm_invite', { playlistId })
+export const ytmCloseToCollaborators = (playlistId: string, closed: boolean) => invoke<void>('ytm_close_to_collaborators', { playlistId, closed })
+export const ytmJoin = (link: string) => invoke<string>('ytm_join', { link })
+
 /** Playback catalog health for Settings (never includes stream URLs). */
 export interface OnlineCatalogStatus {
   live_env: boolean

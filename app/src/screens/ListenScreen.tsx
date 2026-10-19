@@ -28,8 +28,7 @@ import { OnlineShelfPage } from './listen/OnlineShelfPage'
 import { SearchHome } from './listen/SearchHome'
 import { YourMusic } from './listen/YourMusic'
 import { ListeningView } from './listen/ListeningView'
-import { SongList } from './listen/SongList'
-import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults, greeting } from './listen/views'
+import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults, SongsView, greeting } from './listen/views'
 import { artistKey, indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
@@ -579,9 +578,7 @@ function Listen(props: Props) {
     ) : tab === 'artists' ? (
       <ArtistsView artists={lib.artists} />
     ) : (
-      <div className="pb-16">
-        <SongList tracks={lib.tracks} from={{ kind: 'songs', ref: '', label: 'Songs' }} sortBy="title" pin />
-      </div>
+      <SongsView tracks={lib.tracks} />
     )
     return (
       <motion.div

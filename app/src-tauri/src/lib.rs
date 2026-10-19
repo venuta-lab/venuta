@@ -35,6 +35,7 @@ mod theme_packs;
 mod together;
 mod updates;
 mod ytm_account;
+mod ytm_library;
 
 /// The running deep check, if any, so it can be cancelled.
 #[derive(Default)]
@@ -3202,6 +3203,24 @@ pub fn run() {
             together::together_set_name,
             together::together_set_delay,
             ytm_account::ytm_bring_in_likes,
+            ytm_library::ytm_status,
+            ytm_library::ytm_library,
+            ytm_library::ytm_library_songs,
+            ytm_library::ytm_playlist,
+            ytm_library::ytm_playlist_create,
+            ytm_library::ytm_playlist_edit,
+            ytm_library::ytm_playlist_delete,
+            ytm_library::ytm_album_saved,
+            ytm_library::ytm_save,
+            ytm_library::ytm_artist_followed,
+            ytm_library::ytm_subscribe,
+            ytm_library::ytm_history,
+            ytm_library::ytm_upload,
+            ytm_library::ytm_identities,
+            ytm_library::ytm_use_identity,
+            ytm_library::ytm_invite,
+            ytm_library::ytm_close_to_collaborators,
+            ytm_library::ytm_join,
             diagnostics,
             restart_app,
             desktop::song_notification,
