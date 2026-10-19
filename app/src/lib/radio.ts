@@ -259,11 +259,16 @@ export async function startRadio(root: string, seed: QueueItem, opts: { quiet?: 
   if (!opts.quiet) notify(`Starting a radio of “${seed.title}”…`)
   try {
     const id = onlineIdOf(seed) ?? (await catalogIdOf(rowInfo(seed)))
+    // A file of yours with no same song on YouTube Music: tapped, it still plays; asked for its
+    // radio, that is said, and nothing is guessed.
+    if (!id && opts.quiet) return void playItems(root, [seed], 0)
     if (!id) return notify(`“${seed.title}” isn't on YouTube Music as the same song, so there's no radio of it.`)
     const list = `RDAMVM${id}`
     const from: From = { kind: 'radio', ref: list, label: `${seed.title} radio`, radio: list, seed: seed.title }
     await begin(root, [seed], 0, from, null, () => onlineRadio(id), { video_id: id, playlist_id: list, params: 'wAEB' })
   } catch (e) {
+    // Finding a file's song failed (offline): a song tapped still plays.
+    if (opts.quiet) return void playItems(root, [seed], 0)
     if (!isSearchCancelled(e)) notify(onlineProblem(e))
   }
 }

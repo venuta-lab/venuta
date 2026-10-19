@@ -11,7 +11,8 @@ import { loadCovers, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
-import { play, playItems, toRemoteItem } from '../../lib/player'
+import { play, toRemoteItem } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { statsOf, type Play, type SongInfo, type Stats } from '../../lib/stats'
 import { spring, type Library } from './model'
 import { useYtmStatus } from '../../lib/ytmLibrary'
@@ -282,7 +283,7 @@ function StatsBody({ stats: s, root, range }: { stats: Stats; root: string; rang
 function playFile(root: string, file: string, title: string, artists: string[], art: string | null) {
   if (file.startsWith('online:')) {
     const [, provider, ...id] = file.split(':')
-    void playItems(root, [toRemoteItem({ provider, track_id: id.join(':'), title, artists, album: null, duration_ms: null, artwork_url: art })], 0, { kind: 'songs', ref: '', label: 'Your history' })
+    void playWithRadio(root, toRemoteItem({ provider, track_id: id.join(':'), title, artists, album: null, duration_ms: null, artwork_url: art }))
     return
   }
   const t = trackAt(file)

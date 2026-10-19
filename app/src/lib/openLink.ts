@@ -5,7 +5,7 @@ import { notify } from './notify'
 import { ytmLibraryChanged, ytmReady } from './ytmLibrary'
 import { confirmAsk } from '../components/Confirm'
 import { ownedIndex, titleCore } from './owned'
-import { startRadio } from './radio'
+import { playWithRadio, startRadio } from './radio'
 import { toItem, toRemoteItem } from './player'
 import { searchKey } from './textsearch'
 import { searchMusic, showMusicPage } from '../screens/ListenScreen'
@@ -62,7 +62,7 @@ export async function openLink(root: string, link: string): Promise<Opened> {
       goToPlaylists({ kind: 'import', start: { kind: 'link', link: t.link } })
       return 'playlists'
     case 'song':
-      if (r.track) await startRadio(root, toRemoteItem(r.track))
+      if (r.track) await playWithRadio(root, toRemoteItem(r.track))
       return 'music'
     case 'album':
       showMusicPage({ kind: 'online-album', album: { provider: 'remote_catalog', album_id: t.id, title: '', artists: [], track_count: null, release_date: null, artwork_url: null } })
@@ -88,7 +88,7 @@ export async function openLink(root: string, link: string): Promise<Opened> {
         searchMusic(`${song.title} ${lead}`.trim())
         return 'music'
       }
-      await startRadio(root, toRemoteItem(best))
+      await playWithRadio(root, toRemoteItem(best))
       return 'music'
     }
     case 'spotify_album': {

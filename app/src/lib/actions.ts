@@ -5,9 +5,9 @@ import { searchWeb, type CatalogTrack, type OnlineTrack, type PlaylistSummary, t
 import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
-import { blockArtist, dislike, startRadio } from './radio'
+import { blockArtist, dislike, playWithRadio, startRadio } from './radio'
 import { shortcutWork } from './shortcuts'
-import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, playItems, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
+import { enqueue, enqueueItems, onlineEntryFrom, play, playAll, songItemOf, toItem, toRemoteItem, type QueueItem } from './player'
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
 import { deletePlaylist, duplicatePlaylist, exportPlaylist, goToPlaylists, renamePlaylist } from '../screens/playlists/ops'
@@ -89,7 +89,7 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
   const item = toRemoteItem(t)
   const albumId = t.album_id
   return {
-    play: playIt ?? (() => void playItems(nav.root, [item], 0)),
+    play: playIt ?? (() => void playWithRadio(nav.root, item)),
     next: () => void enqueueItems(nav.root, [item], true),
     queue: () => void enqueueItems(nav.root, [item], false),
     radio: () => void startRadio(nav.root, item),

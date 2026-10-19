@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
-import { playRadioList } from '../../lib/radio'
+import { playRadioAt, playRadioList } from '../../lib/radio'
 import { RemoteArt, artUrl, cleanArtUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { onlineArtistPage, type OnlineArtistPage as Page } from '../../lib/engine'
@@ -103,12 +103,20 @@ export function OnlineArtistPage({ artist, lib, onBack }: { artist: OnlineArtist
       )}
       <div className="mt-5 flex flex-wrap items-center gap-2.5">
         {playButton('lg')}
-        <button disabled={items.length < 2} onClick={() => void playAllItems(root, items, from, 'shuffle')} className="btn btn-lg shuffle-main">
+        <button
+          disabled={!page?.shuffle && items.length < 2}
+          onClick={() => (page?.shuffle ? void playRadioAt(root, page.shuffle, `${name} shuffle`) : void playAllItems(root, items, from, 'shuffle'))}
+          className="btn btn-lg shuffle-main"
+        >
           <IconShuffle />
           Shuffle
         </button>
-        {page?.radio_id && (
-          <button onClick={() => page.radio_id && void playRadioList(root, page.radio_id, `${name} radio`)} className="btn-ghost btn-lg" title={`Songs by ${name} and artists like them, without end`}>
+        {(page?.radio || page?.radio_id) && (
+          <button
+            onClick={() => (page.radio ? void playRadioAt(root, page.radio, `${name} radio`) : page.radio_id && void playRadioList(root, page.radio_id, `${name} radio`))}
+            className="btn-ghost btn-lg"
+            title={`Songs by ${name} and artists like them, without end`}
+          >
             <IconRadio width={18} height={18} />
             Radio
           </button>

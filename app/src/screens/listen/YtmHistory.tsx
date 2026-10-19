@@ -3,7 +3,8 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { ytmHistory, type YtmHistoryDay } from '../../lib/engine'
 import { listening } from '../../lib/listening'
 import { onlineProblem } from '../../lib/online'
-import { enqueueItems, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
+import { enqueueItems, onlineEntryFrom, toRemoteItem } from '../../lib/player'
+import { playWithRadio } from '../../lib/radio'
 import { useNav } from './model'
 import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
 import { YtmSignInAgain } from './YtmLibrary'
@@ -49,7 +50,6 @@ export function YtmHistory() {
         <p className="py-6 text-[13px] text-ink/55">Nothing in your YouTube Music history yet.</p>
       ) : (
         days.map((d) => {
-          const items = d.tracks.map(toRemoteItem)
           return (
             <section key={d.title} className="mb-8">
               <h3 className="mb-2 text-[14px] font-semibold text-ink/70">{d.title}</h3>
@@ -59,7 +59,7 @@ export function YtmHistory() {
                   <OnlineTrackRow
                     key={`${t.track_id}:${i}`}
                     track={t}
-                    onPlay={() => void playItems(root, items, i, { kind: 'search', ref: 'YouTube Music history', label: 'Your YouTube Music history' })}
+                    onPlay={() => void playWithRadio(root, toRemoteItem(t))}
                     onQueue={(next) => void enqueueItems(root, [toRemoteItem(t)], next)}
                     onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
                   />

@@ -34,13 +34,13 @@ import { YourMusic } from './YourMusic'
 import { WindowedGrid } from '../../components/WindowedGrid'
 import { useYtmCount, useYtmStatus } from '../../lib/ytmLibrary'
 import { YtmGrid, YtmSongs } from './YtmLibrary'
-import { availabilityOf, enqueueItems, onlineEntryFrom, play, playItems, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
+import { availabilityOf, enqueueItems, onlineEntryFrom, play, queueKey, toggle, toItem, toRemoteItem, type QueueItem } from '../../lib/player'
 import { artUrl, RemoteArt } from '../../components/RemoteArt'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { PlaylistShelf } from '../playlists/PlaylistShelf'
 import { OnlineResults, OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
-import { fromOnline, splitOnlineSongs, useOnlineExtras, useOnlineSearch } from './onlineSearch'
+import { splitOnlineSongs, useOnlineExtras, useOnlineSearch } from './onlineSearch'
 import { TopResult, type TopSources } from './TopResult'
 import { pickTop, type TopPick } from '../../lib/searchRank'
 
@@ -49,7 +49,7 @@ import { ownedIndex, titleCore } from '../../lib/owned'
 import { searchKey } from '../../lib/textsearch'
 import { MixedSongs, OnlineAlbumTile, OnlineArtistCard, type MixedSong } from './SearchAll'
 import { CollectionCard } from './OnlineCards'
-import { startRadio } from '../../lib/radio'
+import { playWithRadio } from '../../lib/radio'
 import { OnlineArtistSections } from './OnlineArtistSections'
 import { useArtistSongs, useOnlineArtistFor } from './artistSongs'
 import type { CatalogTrack, OnlineTrack } from '../../lib/engine'
@@ -882,11 +882,11 @@ export function SearchResults(props: {
     <>
       <OnlineTrackHeader />
       <div className="mt-1 grid gap-0.5">
-        {list.map((t, i) => (
+        {list.map((t) => (
           <OnlineTrackRow
             key={`${t.provider}:${t.track_id}`}
             track={t}
-            onPlay={() => void playItems(nav.root, list.map(toRemoteItem), i, fromOnline(q))}
+            onPlay={() => void playWithRadio(nav.root, toRemoteItem(t))}
             onQueue={(next) => void enqueueItems(nav.root, [toRemoteItem(t)], next)}
             onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
           />
@@ -988,7 +988,7 @@ export function SearchResults(props: {
               <MixedSongs
                 query={q}
                 songs={besideTop}
-                onPlay={(item) => void startRadio(nav.root, item)}
+                onPlay={(item) => void playWithRadio(nav.root, item)}
                 onSeeAll={songs.length > SONGS_BESIDE_TOP ? () => setChip('songs') : undefined}
               />
             )}

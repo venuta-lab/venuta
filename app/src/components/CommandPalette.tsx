@@ -5,7 +5,8 @@ import { AvailabilityBadge } from './AvailabilityBadge'
 import { RemoteArt } from './RemoteArt'
 import { isSearchCancelled, onlineSuggest, type OnlineSuggestions } from '../lib/engine'
 import { OFFLINE, onlineProblem, useNetworkOnline } from '../lib/online'
-import { enqueueItems, playItems, songItemOf, toRemoteItem } from '../lib/player'
+import { enqueueItems, songItemOf, toRemoteItem } from '../lib/player'
+import { playWithRadio } from '../lib/radio'
 import type { MusicPage } from '../screens/ListenScreen'
 import { menuFor } from '../lib/actions'
 import { menuFromEvent, openMenu, type MenuGroups } from '../lib/menu'
@@ -133,7 +134,6 @@ export function CommandPalette(props: {
     // completions of the words and the words themselves, as searches of Music.
     const typed = q.trim()
     const root = props.root ?? ''
-    const from = { kind: 'search' as const, ref: typed, label: `Online: ${typed}` }
     const art = (url: string | null | undefined, seed: string) => <RemoteArt url={url} seed={seed} size={36} imgClassName="h-full w-full object-cover" />
     const found = props.root && online.q === typed ? online.found : NO_SUGGESTIONS
     const musicCmds: { c: Command; s: number }[] = found.items.map((item, i): { c: Command; s: number } => {
@@ -151,13 +151,13 @@ export function CommandPalette(props: {
               detail: ['Song', t.artists.join(', ')].filter(Boolean).join(' · '),
               art: art(t.artwork_url, t.album || t.title),
               online: true,
-              run: () => void playItems(root, [one], 0, from),
+              run: () => void playWithRadio(root, one),
               menu: () =>
                 menuFor(
                   'song',
                   { online: true, noArtist: true },
                   {
-                    play: () => void playItems(root, [one], 0, from),
+                    play: () => void playWithRadio(root, one),
                     next: () => void enqueueItems(root, [one], true),
                     queue: () => void enqueueItems(root, [one], false),
                     playlist: () => askAddSongs([songItemOf(one)], t.title),

@@ -4,12 +4,13 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { isSearchCancelled, onlineSuggest, type HealthReport, type MoodTile, type OnlineAlbum, type OnlineCollection, type OnlineMore, type OnlineSuggestion } from '../lib/engine'
 import { loadCovers, useCovers } from '../lib/covers'
 import { RemoteArt } from '../components/RemoteArt'
-import { findOnlineArtist, fromOnline } from './listen/onlineSearch'
+import { findOnlineArtist } from './listen/onlineSearch'
 import { notify } from '../lib/notify'
 import { useLikes } from '../lib/likes'
 import { onlineProblem } from '../lib/online'
 import { useCatalog } from '../lib/catalog'
-import { current, isOnline, play, playItems, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
+import { current, isOnline, play, queueKey, readFrom, songItemOf, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
+import { playWithRadio } from '../lib/radio'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
 import { recentSearches } from '../lib/recentSearches'
@@ -493,7 +494,7 @@ function Listen(props: Props) {
     (text: string): Promise<OnlineSuggestions> =>
       onlineSuggest(text).then((found) => ({
         queries: found.queries,
-        items: found.items.flatMap((item): Suggestion[] => suggestionRow(item, text, { root, nav })),
+        items: found.items.flatMap((item): Suggestion[] => suggestionRow(item, { root, nav })),
       })),
     [root, nav],
   )
@@ -696,7 +697,7 @@ function LocalCover({ dir }: { dir: string }) {
 }
 
 /** One catalog suggestion as a dropdown row: a song plays, the rest open their page. */
-function suggestionRow(item: OnlineSuggestion, text: string, ctx: { root: string; nav: Nav }): Suggestion[] {
+function suggestionRow(item: OnlineSuggestion, ctx: { root: string; nav: Nav }): Suggestion[] {
   switch (item.kind) {
     case 'song': {
       const t = item.track
@@ -709,7 +710,7 @@ function suggestionRow(item: OnlineSuggestion, text: string, ctx: { root: string
           value: t.title,
           art: <RemoteArt url={t.artwork_url} seed={t.album || t.title} size={40} imgClassName="h-full w-full object-cover" />,
           where: 'online',
-          onPick: () => void playItems(ctx.root, [toRemoteItem(t)], 0, fromOnline(text)),
+          onPick: () => void playWithRadio(ctx.root, toRemoteItem(t)),
         },
       ]
     }
