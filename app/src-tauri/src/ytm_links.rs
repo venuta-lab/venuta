@@ -179,6 +179,8 @@ pub async fn ytm_link_review(
             ytm_links::unmatched(&entries, &link)
         };
         let rows: Vec<&PlaylistEntry> = which.into_iter().map(|i| &entries[i]).collect();
+        // Uploads are offered only from your own channel (see `uploads_allowed`).
+        let can_upload = uploads_allowed(crate::ytm_library::chosen_identity().as_deref()).is_ok();
         // The songs matched before, as the playlist there shows them.
         let mut known: std::collections::HashMap<String, OnlineEntry> = Default::default();
         if all
@@ -224,7 +226,7 @@ pub async fn ytm_link_review(
                     album: e.album.clone(),
                     duration_ms: e.duration_ms,
                     found,
-                    uploadable: uploadable(&rootp.join(&e.path)),
+                    uploadable: can_upload && uploadable(&rootp.join(&e.path)),
                 })
             })
             .collect())
@@ -279,10 +281,25 @@ pub async fn ytm_link_start(
         if ytm_links::load(&data, &name).is_some() {
             return Err("This playlist is linked already.".into());
         }
+        // Who is signed in, whether the files ticked can go, and whether the playlist there can be
+        // changed, all before anything is kept or sent: a link that can't work is never made.
         let key = account_key(catalog.as_ref())?;
+        if !choices.upload.is_empty() {
+            uploads_allowed(crate::ytm_library::chosen_identity().as_deref())?;
+        }
         let cancel = CancellationToken::default();
         let playlist_id = match target.filter(|t| !t.trim().is_empty()) {
-            Some(t) => t.trim().trim_start_matches("VL").to_owned(),
+            Some(t) => {
+                let id = t.trim().trim_start_matches("VL").to_owned();
+                if let Some(other) = linked_elsewhere(&ytm_links::all(&data), &id, &name) {
+                    return Err(format!(
+                        "That playlist on YouTube Music is linked to your “{other}” already. Two playlists linked to one would take out each other’s songs."
+                    ));
+                }
+                let there = account.playlist(&id, &cancel).map_err(|e| e.message)?;
+                can_change(&there)?;
+                id
+            }
             None => account
                 .create_playlist(&name, None, &privacy, &[], &cancel)
                 .map_err(|e| e.message)?,
@@ -443,9 +460,33 @@ fn choose_and_sync(
         link.matches.remove(&file);
         link.local_only.insert(file);
     }
-    if !choices.upload.is_empty() {
+    ytm_links::save(&data, &link)?;
+
+    // Who is signed in, and the playlist there, before any file goes up: files never go to an
+    // account or channel the link isn't on, nor for a playlist Venuta can't change.
+    let key = account_key(catalog.as_ref())?;
+    if !link.account.is_empty() && link.account != key {
+        report.paused = Some(Pause::OtherAccount {
+            account: link.account.clone(),
+        });
+        return Ok(report);
+    }
+    let there = account
+        .playlist(&link.playlist_id, &cancel)
+        .map_err(|e| e.message)?;
+    can_change(&there)?;
+
+    let uploads = match uploads_allowed(crate::ytm_library::chosen_identity().as_deref()) {
+        Ok(()) => choices.upload,
+        Err(e) if !choices.upload.is_empty() => {
+            report.upload_problems.push(format!("these files: {e}"));
+            Vec::new()
+        }
+        Err(_) => Vec::new(),
+    };
+    if !uploads.is_empty() {
         let (entries, _) = entries_of(root, name)?;
-        for (n, key) in choices.upload.iter().enumerate() {
+        for (n, key) in uploads.iter().enumerate() {
             let Some(e) = entries
                 .iter()
                 .find(|e| ytm_links::file_key(e).as_ref() == Some(key))
@@ -497,17 +538,7 @@ fn choose_and_sync(
         ytm_links::save(&data, &link)?;
     }
 
-    let key = account_key(catalog.as_ref())?;
     let (entries, lib) = entries_of(root, name)?;
-    let there = account
-        .playlist(&link.playlist_id, &cancel)
-        .map_err(|e| e.message)?;
-    if !there.owned && !there.collaborative {
-        return Err(format!(
-            "“{}” on YouTube Music isn't yours, so Venuta can't change it. Unlink, or link to one of your playlists.",
-            there.title
-        ));
-    }
     let plan = match ytm_links::plan(&entries, &link, &key, &there.tracks, there.complete, allow) {
         Ok(p) => {
             link.held = false;
@@ -594,4 +625,97 @@ fn choose_and_sync(
     ytm_links::save(&data, &link)?;
     report.note = note;
     Ok(report)
+}
+
+/// A playlist there that Venuta can change: one you made, or one you collaborate on.
+fn can_change(there: &media_access::AccountPlaylist) -> Result<(), String> {
+    if there.owned || there.collaborative {
+        return Ok(());
+    }
+    Err(format!(
+        "“{}” on YouTube Music isn't yours, so Venuta can't change it. Link to one of your playlists, or make a new one.",
+        there.title
+    ))
+}
+
+/// Files go up only from your own channel: YouTube Music takes uploads there and nowhere else,
+/// so on a brand channel they would land in the main account's uploads. `channel`: the one
+/// chosen, None for the sign-in's own.
+pub(crate) fn uploads_allowed(channel: Option<&str>) -> Result<(), String> {
+    match channel {
+        None => Ok(()),
+        Some(_) => Err(
+            "YouTube Music takes uploads only on your own channel, not on a brand channel. Switch to your own channel to upload them, or keep them here only."
+                .into(),
+        ),
+    }
+}
+
+/// Another playlist of yours already linked to this one there (by its id), if any.
+fn linked_elsewhere(links: &[Link], playlist_id: &str, name: &str) -> Option<String> {
+    links
+        .iter()
+        .find(|l| l.playlist_id == playlist_id && l.playlist != name)
+        .map(|l| l.playlist.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn there(owned: bool, collaborative: bool) -> media_access::AccountPlaylist {
+        media_access::AccountPlaylist {
+            playlist_id: "PL1".into(),
+            title: "Road".into(),
+            description: None,
+            privacy: None,
+            owned,
+            collaborative,
+            people: Vec::new(),
+            people_text: None,
+            artwork_url: None,
+            tracks: Vec::new(),
+            complete: true,
+        }
+    }
+
+    // Linking to someone else's playlist is refused before anything is kept.
+    #[test]
+    fn only_a_playlist_you_can_change_can_be_linked() {
+        assert!(can_change(&there(true, false)).is_ok());
+        assert!(
+            can_change(&there(false, true)).is_ok(),
+            "one you collaborate on"
+        );
+        let no = can_change(&there(false, false)).unwrap_err();
+        assert!(no.contains("isn't yours"), "{no}");
+    }
+
+    // YouTube Music takes uploads only on your own channel: on a brand channel they would land
+    // in the main account's uploads, never to show in this one.
+    #[test]
+    fn uploads_go_only_from_your_own_channel() {
+        assert!(uploads_allowed(None).is_ok());
+        let no = uploads_allowed(Some("brand-x")).unwrap_err();
+        assert!(no.contains("only on your own channel"), "{no}");
+    }
+
+    // Two of yours linked to one playlist there would take out each other's songs.
+    #[test]
+    fn a_playlist_there_is_linked_to_one_of_yours_only() {
+        let road = Link {
+            playlist: "Road".into(),
+            playlist_id: "PL1".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            linked_elsewhere(std::slice::from_ref(&road), "PL1", "Drive").as_deref(),
+            Some("Road")
+        );
+        assert_eq!(
+            linked_elsewhere(std::slice::from_ref(&road), "PL1", "Road"),
+            None
+        );
+        assert_eq!(linked_elsewhere(&[road], "PL2", "Drive"), None);
+    }
 }
