@@ -92,6 +92,10 @@ pub struct Listening {
     /// When the queue runs out, keep playing songs like the last one (a radio).
     #[serde(default = "yes")]
     pub autoplay: bool,
+    /// Play my copy when I have it: a song YouTube Music queues that is in your library as the
+    /// same song plays from your file, in the same place. Off: everything streams.
+    #[serde(default = "yes")]
+    pub play_my_copy: bool,
     /// Open Now Playing when you press play on something.
     #[serde(default)]
     pub open_player_on_play: bool,
@@ -171,6 +175,7 @@ impl Default for Listening {
     fn default() -> Self {
         Listening {
             autoplay: true,
+            play_my_copy: true,
             open_player_on_play: false,
             blocked_artists: Vec::new(),
             disliked: Vec::new(),
@@ -294,6 +299,15 @@ mod tests {
         let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
         assert!(!old.sync_likes, "settings from before stay as they were");
         assert!(!Listening::default().sync_likes);
+    }
+
+    #[test]
+    fn your_copy_plays_in_its_place_until_switched_off() {
+        let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
+        assert!(old.play_my_copy, "settings from before get the default");
+        assert!(Listening::default().play_my_copy);
+        let off: Listening = serde_json::from_str(r#"{"play_my_copy": false}"#).unwrap();
+        assert!(!off.play_my_copy);
     }
 
     #[test]
