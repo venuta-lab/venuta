@@ -42,20 +42,28 @@ pub fn restore(app: &AppHandle) {
     if let Ok(Some(cookie)) = SystemVault.get(VAULT_KEY) {
         pb.online_catalog().set_account_cookie(Some(&cookie));
     }
-    // Google renews the cookies as the catalog answers: what is kept follows them.
+    // Google renews the cookies as the catalog answers: what is kept follows them (tried again
+    // next time if it couldn't be kept, and said once).
     let catalog = pb.online_catalog();
+    let app = app.clone();
     std::thread::Builder::new()
         .name("venuta-ytm-account".into())
         .spawn(move || {
             let mut kept = SystemVault.get(VAULT_KEY).ok().flatten();
+            let mut said = false;
             loop {
                 std::thread::sleep(Duration::from_secs(300));
                 let now = catalog.account_cookie();
                 if kept.is_some() && now.is_some() && now != kept {
-                    if let Some(c) = &now {
-                        let _ = SystemVault.put(VAULT_KEY, c);
+                    let Some(c) = &now else { continue };
+                    match SystemVault.put(VAULT_KEY, c) {
+                        Ok(()) => kept = now,
+                        Err(e) if !said => {
+                            said = true;
+                            let _ = app.emit("ytm-account-error", e);
+                        }
+                        Err(_) => {}
                     }
-                    kept = now;
                 }
             }
         })
@@ -105,15 +113,19 @@ fn finish_sign_in(app: AppHandle) {
         let jar = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
         if ytmusic_signed_in(&jar) {
             let pb = app.state::<Playback>();
-            if let Err(e) = SystemVault.put(VAULT_KEY, &jar) {
-                let _ = app.emit("ytm-account-error", e);
-                return;
-            }
+            // Signed in either way; if it can't be kept, only for as long as Venuta is open.
+            let kept = SystemVault.put(VAULT_KEY, &jar);
             pb.online_catalog().set_account_cookie(Some(&jar));
             if let Some(w) = app.get_webview_window(WINDOW) {
                 let _ = w.close();
             }
             let _ = app.emit("ytm-account-changed", ());
+            if let Err(e) = kept {
+                let _ = app.emit(
+                    "ytm-account-error",
+                    format!("Signed in until Venuta closes. {e}"),
+                );
+            }
             return;
         }
         std::thread::sleep(Duration::from_millis(600));
