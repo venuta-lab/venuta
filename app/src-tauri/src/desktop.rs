@@ -2,7 +2,7 @@
 //! and starting with Windows (in the tray, without a window).
 
 use crate::playback::{NowPlaying, Playback};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
@@ -32,6 +32,41 @@ pub fn toggle_main(app: &AppHandle) {
     }
 }
 
+/// The sleep timer's minutes, as in the player bar and Sound.
+const SLEEP_MINUTES: [u32; 5] = [15, 30, 45, 60, 90];
+
+/// A sleep timer choice from the tray.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SleepPick {
+    Minutes(u32),
+    EndOfSong,
+    Off,
+}
+
+fn sleep_pick(id: &str) -> Option<SleepPick> {
+    match id.strip_prefix("sleep-")? {
+        "song" => Some(SleepPick::EndOfSong),
+        "off" => Some(SleepPick::Off),
+        m => m
+            .parse()
+            .ok()
+            .filter(|m| SLEEP_MINUTES.contains(m))
+            .map(SleepPick::Minutes),
+    }
+}
+
+/// One at a time, as in the player bar: a timer turns off stopping after the song, and the other
+/// way round.
+fn set_sleep(pb: &tauri::State<'_, Playback>, pick: SleepPick) {
+    let (minutes, after_song) = match pick {
+        SleepPick::Minutes(m) => (Some(f64::from(m)), false),
+        SleepPick::EndOfSong => (None, true),
+        SleepPick::Off => (None, false),
+    };
+    let _ = crate::playback::player_sleep(minutes, pb.clone());
+    let _ = crate::playback::player_stop_after(after_song, pb.clone());
+}
+
 /// The tray icon and its menu; the tooltip and first line follow the song playing.
 pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     let now = MenuItem::with_id(app, "now", "Nothing playing", false, None::<&str>)?;
@@ -47,6 +82,33 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let sleep_items = SLEEP_MINUTES
+        .iter()
+        .map(|m| {
+            MenuItem::with_id(
+                app,
+                format!("sleep-{m}"),
+                format!("In {m} minutes"),
+                true,
+                None::<&str>,
+            )
+        })
+        .chain([
+            MenuItem::with_id(
+                app,
+                "sleep-song",
+                "At the end of this song",
+                true,
+                None::<&str>,
+            ),
+            MenuItem::with_id(app, "sleep-off", "Turn off", true, None::<&str>),
+        ])
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let sleep_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = sleep_items
+        .iter()
+        .map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+        .collect();
+    let sleep = Submenu::with_items(app, "Sleep timer", true, &sleep_refs)?;
     let show = MenuItem::with_id(app, "show", "Show Venuta", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Venuta", true, None::<&str>)?;
     let line = || PredefinedMenuItem::separator(app);
@@ -58,6 +120,7 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
             &play,
             &next,
             &previous,
+            &sleep,
             &line()?,
             &mini,
             &lyrics,
@@ -92,7 +155,11 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                 "lyrics-move" => crate::lyric_windows::ask_main(app, "unlock"),
                 "show" => show_main(app),
                 "quit" => app.exit(0),
-                _ => {}
+                id => {
+                    if let Some(pick) = sleep_pick(id) {
+                        set_sleep(&pb, pick);
+                    }
+                }
             }
         })
         .on_tray_icon_event(|tray, e| {
@@ -225,4 +292,18 @@ pub fn set_close_action(action: String, now: bool, app: AppHandle) -> Result<(),
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SleepPick, sleep_pick};
+
+    #[test]
+    fn the_trays_sleep_choices() {
+        assert_eq!(sleep_pick("sleep-30"), Some(SleepPick::Minutes(30)));
+        assert_eq!(sleep_pick("sleep-song"), Some(SleepPick::EndOfSong));
+        assert_eq!(sleep_pick("sleep-off"), Some(SleepPick::Off));
+        assert_eq!(sleep_pick("sleep-31"), None, "only the minutes offered");
+        assert_eq!(sleep_pick("play"), None);
+    }
 }

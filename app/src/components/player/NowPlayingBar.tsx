@@ -20,6 +20,8 @@ import {
   setOutput,
   setRepeat,
   setShuffle,
+  setSleep,
+  setStopAfter,
   setVolume,
   onlineQuality,
   sourceLabel,
@@ -54,8 +56,10 @@ import {
   IconRepeat,
   IconRepeatOne,
   IconShuffle,
+  IconSleep,
   IconVolume,
 } from '../Icons'
+import { SLEEP_MINUTES, sleepBadge, sleepChoice } from '../../lib/sleep'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
@@ -568,6 +572,92 @@ export function SignalPath(props: { signal: Signal | null }) {
   )
 }
 
+/** The sleep timer, a click away: a moon that shows the time left while it's on, and a menu of
+ *  the same choices Sound has. */
+function SleepButton(props: { s: PlayerState }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  const badge = sleepBadge(props.s)
+  const on = sleepChoice(props.s)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', esc)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', esc)
+    }
+  }, [open])
+  const choose = (run: () => Promise<unknown>) => {
+    setOpen(false)
+    void run()
+  }
+  // One at a time: a timer turns off stopping after the song, and the other way round.
+  const timer = (m: number) => choose(async () => {
+    if (props.s.stop_after_current) await setStopAfter(false)
+    await setSleep(m)
+  })
+  const endOfSong = () => choose(async () => {
+    if (props.s.sleep_in_s !== null) await setSleep(null)
+    await setStopAfter(true)
+  })
+  const off = () => choose(async () => {
+    if (props.s.sleep_in_s !== null) await setSleep(null)
+    if (props.s.stop_after_current) await setStopAfter(false)
+  })
+  const item = (label: string, chosen: boolean | null, run: () => void) => (
+    <button
+      key={label}
+      role={chosen === null ? 'menuitem' : 'menuitemradio'}
+      aria-checked={chosen ?? undefined}
+      onClick={run}
+      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-ink/[0.07] ${chosen ? 'text-accent-ink' : 'text-ink/80'}`}
+    >
+      <span className="flex-1">{label}</span>
+      {chosen && <span aria-hidden>✓</span>}
+    </button>
+  )
+  const label = badge ? `Sleep timer: ${badge === 'End of song' ? 'stops at the end of this song' : `${badge} left`}` : 'Sleep timer'
+  return (
+    <div ref={box} className="relative">
+      <motion.button
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setOpen((o) => !o)}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={label}
+        className={`relative flex h-8 items-center gap-1 rounded-full transition-[background-color,color] duration-150 hover:bg-ink/10 ${badge ? 'bg-ink/[0.07] pl-2 pr-2.5 text-accent-ink' : 'w-8 justify-center text-ink/70 hover:text-ink'}`}
+      >
+        <IconSleep />
+        {badge && <span className="readout whitespace-nowrap text-[11px] font-medium tabular-nums">{badge}</span>}
+      </motion.button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.16 }}
+            role="menu"
+            aria-label="Sleep timer"
+            className="popover absolute bottom-10 right-0 z-50 w-[220px] rounded-2xl p-2 text-[12.5px]"
+          >
+            <div className="px-2.5 pb-1.5 pt-1 text-[12px] text-ink/55">{badge && badge !== 'End of song' ? `Pausing in ${badge.replace('m', ' min')}` : 'Pause the music'}</div>
+            {SLEEP_MINUTES.map((m) => item(`In ${m} minutes`, false, () => timer(m)))}
+            {item('At the end of this song', on === 'song', endOfSong)}
+            {on !== 'off' && (
+              <div className="mt-1 border-t border-edge pt-1">{item('Turn off', null, off)}</div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function Round(props: { label: string; onClick: () => void; on?: boolean; children: React.ReactNode }) {
   return (
     <motion.button
@@ -807,6 +897,7 @@ export function NowPlayingBar(props: {
             <Round label="Queue (Q)" on={props.queueOpen} onClick={props.onQueue}>
               <IconQueue />
             </Round>
+            <SleepButton s={s} />
             <span className="hidden @[900px]:contents">
             <Round label="Mini player (Ctrl M)" onClick={() => void toggleMiniPlayer()}>
               <IconMini />

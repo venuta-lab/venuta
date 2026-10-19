@@ -72,6 +72,7 @@ import { applyZoom, readZoom, zoomBy } from './lib/zoom'
 import { OpenLink } from './components/OpenLink'
 import { askOpenLink } from './lib/openLink'
 import { getPlayerState, onPlayer, queueKey } from './lib/player'
+import { SLEEP_MINUTES } from './lib/sleep'
 import { loadLikes, toggleLiked } from './lib/likes'
 import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics, toggleDesktopLyrics } from './lib/lyricWindows'
 // Places opened now and then load the first time they are opened, so the start is quicker.
@@ -687,6 +688,27 @@ export default function App() {
           setNowPanel('sound')
           setNowOpen(true)
         },
+      },
+      ...SLEEP_MINUTES.map((m) => ({
+        id: `sleep-${m}`,
+        group: 'Player',
+        label: `Sleep timer: pause in ${m} minutes`,
+        keywords: 'sleep timer stop night moon',
+        run: () => void player.setStopAfter(false).then(() => player.setSleep(m)),
+      })),
+      {
+        id: 'sleep-song',
+        group: 'Player',
+        label: 'Sleep timer: pause at the end of this song',
+        keywords: 'sleep timer stop after this song',
+        run: () => void player.setSleep(null).then(() => player.setStopAfter(true)),
+      },
+      {
+        id: 'sleep-off',
+        group: 'Player',
+        label: 'Turn the sleep timer off',
+        keywords: 'sleep timer cancel stop',
+        run: () => void player.setSleep(null).then(() => player.setStopAfter(false)),
       },
       { id: 'play-queue', group: 'Player', label: 'Show the queue', keys: 'Q', keywords: 'up next', run: () => setQueueOpen(true) },
       {

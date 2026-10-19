@@ -160,6 +160,11 @@ export const IconQueue = (p: P) => (
     <path d="M15.5 14.5v5.2l4-2.6-4-2.6Z" fill="currentColor" stroke="none" />
   </svg>
 )
+export const IconSleep = (p: P) => (
+  <svg {...base} width={18} height={18} {...p}>
+    <path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1Z" />
+  </svg>
+)
 export const IconLyrics = (p: P) => (
   <svg {...base} width={18} height={18} {...p}>
     <path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-6.5L8 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z" />
