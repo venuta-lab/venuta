@@ -1,6 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlists as loadPlaylists, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { playlists as loadPlaylists, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { useYtmPart, useYtmStatus } from '../lib/ytmLibrary'
+import { notify } from '../lib/notify'
+import { onlineProblem } from '../lib/online'
+import { RemoteArt } from './RemoteArt'
 import { useEscape } from '../lib/layers'
 import { addSongsTo } from '../screens/playlists/ops'
 import { nameNote, savedName } from '../lib/playlistName'
@@ -71,6 +75,36 @@ export function AddToPlaylist({ root }: { root: string }) {
   const fresh = savedName(q)
   const freshNote = nameNote(q)
   const exact = (lists ?? []).some((p) => p.name.toLowerCase() === fresh.toLowerCase())
+
+  // Your YouTube Music playlists take the online songs among these (your own files stay in Venuta).
+  const { signed_in } = useYtmStatus()
+  const ytmLists = useYtmPart<OnlineSuggestion[]>('playlists', !!req).value
+  const videoIds = (req?.items ?? []).flatMap((i) => ('online' in i && i.online.provider === 'remote_catalog' ? [i.online.track_id] : []))
+  const onlyHere = (req?.items.length ?? 0) - videoIds.length
+  const ytmShown = useMemo(() => {
+    const has = matcher(q)
+    return (
+      (ytmLists ?? [])
+        .flatMap((c) => (c.kind === 'playlist' ? [c.collection] : []))
+        // Liked Music fills itself from likes; it isn't added to.
+        .filter((c) => !/^(VL)?LM$/.test(c.collection_id) && has(keyFor({ name: c.title } as PlaylistSummary, () => c.title)))
+    )
+  }, [ytmLists, q])
+  async function addToYtm(c: OnlineCollection) {
+    if (!req || busy || !videoIds.length) return
+    setBusy(true)
+    try {
+      await ytmPlaylistEdit(c.collection_id.replace(/^VL/, ''), [{ kind: 'add', video_ids: videoIds }])
+      const what = videoIds.length === 1 ? `“${req.label}”` : `${videoIds.length} songs`
+      const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
+      notify(`Added ${what} to “${c.title}” on YouTube Music.${kept}`)
+      close()
+    } catch (e) {
+      notify(onlineProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function add(name: string) {
     if (!req || busy) return
@@ -170,6 +204,26 @@ export function AddToPlaylist({ root }: { root: string }) {
                   </span>
                 </button>
               ))}
+              {signed_in && videoIds.length > 0 && ytmShown.length > 0 && (
+                <>
+                  <div className="px-2.5 pb-1 pt-3 text-[12px] font-medium text-ink/50">On YouTube Music</div>
+                  {ytmShown.map((c) => (
+                    <button
+                      key={c.collection_id}
+                      onClick={() => void addToYtm(c)}
+                      className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
+                    >
+                      <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink/[0.08]">
+                        <RemoteArt url={c.artwork_url} seed={c.title} size={40} imgClassName="h-full w-full object-cover" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14px]">{c.title}</span>
+                        <span className="block truncate text-[12px] text-ink/50">{c.subtitle ?? 'YouTube Music'}</span>
+                      </span>
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           </motion.div>
         </motion.div>

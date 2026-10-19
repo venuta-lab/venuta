@@ -1,4 +1,5 @@
 import { motion } from 'motion/react'
+import { FollowButton } from '../../components/YtmButtons'
 import { useEffect, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
@@ -116,6 +117,7 @@ export function OnlineArtistPage({ artist, lib, onBack }: { artist: OnlineArtist
           <IconPlaylistAdd width={18} height={18} />
           Add to playlist
         </button>
+        <FollowButton artistId={artist.artist_id} />
       </div>
     </motion.div>
   )

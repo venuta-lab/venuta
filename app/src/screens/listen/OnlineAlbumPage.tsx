@@ -1,4 +1,5 @@
 import { motion } from 'motion/react'
+import { SaveAlbumButton } from '../../components/YtmButtons'
 import { useEffect, useMemo, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
@@ -173,6 +174,7 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
               <IconSelect width={18} height={18} />
               Select
             </button>
+            <SaveAlbumButton albumId={a.album_id} />
           </div>
         </motion.div>
       </div>
