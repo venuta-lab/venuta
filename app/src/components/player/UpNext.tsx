@@ -121,6 +121,10 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
   const cover = useCovers(320)
   const online = isOnline(props.item)
   const local = !online ? cover(props.item.dir) : null
+  // A song YouTube queued without its length (often the one it opens with): while it plays, the
+  // player knows it.
+  const playingLength = usePlayerValue((s) => s.duration_ms)
+  const length = props.item.duration_ms || (props.current ? playingLength : 0)
   return (
     <>
       <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
@@ -137,7 +141,7 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
       {props.badge && <AvailabilityBadge quiet availability={availabilityOf(props.item)} />}
-      <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(props.item.duration_ms)}</span>
+      <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(length)}</span>
       {props.onRemove ? (
         <button
           aria-label={`Remove ${props.item.title} from the queue`}
