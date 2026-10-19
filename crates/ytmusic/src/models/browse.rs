@@ -456,6 +456,14 @@ pub fn parse_history(root: &Value) -> Vec<HistoryGroup> {
         .collect()
 }
 
+/// Every song row of a list page or its continuation (library songs, uploads), in order.
+pub fn song_rows(root: &Value) -> Vec<SongItem> {
+    find_all(root, "musicResponsiveListItemRenderer")
+        .into_iter()
+        .filter_map(parse_list_item)
+        .collect()
+}
+
 /// Parse a `FEmusic_liked_*` response into a flat grid of cards. context/08. Playlists and albums
 /// come back as a grid of two-row cards; library artists come back as a shelf of list rows
 /// instead, so fall back to those when the grid is empty.

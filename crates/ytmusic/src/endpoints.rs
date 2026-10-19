@@ -1500,6 +1500,188 @@ impl InnerTube {
         self.post(path, client, &body, true).await?;
         Ok(())
     }
+
+    // --- The rest of the account: songs, uploads, podcasts, edits, collaboration -------------
+
+    /// The songs saved to the library (`FEmusic_liked_videos`) or uploaded by the account
+    /// (`FEmusic_library_privately_owned_tracks`): list rows, read page after page, each song once.
+    /// Needs login.
+    pub async fn library_songs(
+        &self,
+        client: &YouTubeClient,
+        browse_id: &str,
+    ) -> Result<Vec<SongItem>, Error> {
+        let value = self.browse(client, Some(browse_id), None).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut songs = Vec::new();
+        let mut keep = |rows: Vec<SongItem>, songs: &mut Vec<SongItem>| {
+            for row in rows {
+                if !row.video_id.is_empty() && seen.insert(row.video_id.clone()) {
+                    songs.push(row);
+                }
+            }
+        };
+        keep(browse::song_rows(&value), &mut songs);
+        let mut token = browse::continuation_token(&value);
+        // ponytail: 25 a page, so 400 pages is 10,000 songs, YouTube's own cap on a library list.
+        for _ in 0..400 {
+            let Some(t) = token else { break };
+            let Ok(page) = self.browse_continuation(client, &t).await.inspect_err(|e| {
+                tracing::warn!(error = %e, browse_id, "song list continuation failed; keeping what loaded")
+            }) else {
+                break;
+            };
+            let rows = browse::song_rows(&page);
+            if rows.is_empty() {
+                break;
+            }
+            keep(rows, &mut songs);
+            token = browse::continuation_token(&page).filter(|next| *next != t);
+        }
+        Ok(songs)
+    }
+
+    /// The podcasts the account follows (`FEmusic_library_non_music_audio_list`). Needs login.
+    pub async fn library_podcasts(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
+        self.library_grid(client, "FEmusic_library_non_music_audio_list")
+            .await
+    }
+
+    /// Add videos in one edit and say where each landed: its `(videoId, setVideoId)`, the handle a
+    /// later move or removal needs, from `playlistEditResults`. All or nothing, like
+    /// `playlist_add_many`; a video the playlist holds already fails the batch.
+    pub async fn playlist_add_placed(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        video_ids: &[String],
+    ) -> Result<Vec<(String, String)>, Error> {
+        let actions = video_ids
+            .iter()
+            .map(|v| add_video_action(v, false))
+            .collect();
+        let value = self
+            .edit_playlist_value(client, playlist_id, actions)
+            .await?;
+        Ok(added_placements(&value))
+    }
+
+    /// Move one item (by its `setVideoId`) to just before another, or to the end with `None`.
+    /// context/01 `ACTION_MOVE_VIDEO_BEFORE`.
+    pub async fn playlist_move(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        set_video_id: &str,
+        before: Option<&str>,
+    ) -> Result<(), Error> {
+        self.edit_playlist(client, playlist_id, move_action(set_video_id, before))
+            .await
+    }
+
+    /// Create a playlist with its words, privacy (`PRIVATE`, `UNLISTED`, `PUBLIC`) and first
+    /// songs in one call; returns the new playlistId. context/01 `playlist/create`.
+    pub async fn create_playlist_with(
+        &self,
+        client: &YouTubeClient,
+        title: &str,
+        description: Option<&str>,
+        privacy: &str,
+        video_ids: &[String],
+    ) -> Result<String, Error> {
+        let body = create_body(
+            self.context_for(client),
+            title,
+            description,
+            privacy,
+            video_ids,
+        );
+        let value = self.post("playlist/create", client, &body, true).await?;
+        metadata::find_first_str(&value, "playlistId")
+            .ok_or_else(|| Error::Other("create_playlist: no playlistId in response".into()))
+    }
+
+    /// Open a playlist you own to collaborators: the invite link anyone signed in can join with.
+    pub async fn collaboration_invite(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+    ) -> Result<String, Error> {
+        let value = self
+            .edit_playlist_value(
+                client,
+                playlist_id,
+                vec![serde_json::json!({ "action": "ACTION_CREATE_COLLABORATION_INVITE_LINK" })],
+            )
+            .await?;
+        metadata::find_first_str(&value, "collaborationInviteLink")
+            .ok_or_else(|| Error::Other("no invite link in the answer".into()))
+    }
+
+    /// Stop (or allow again) new collaborators joining a playlist you own.
+    pub async fn collaboration_closed(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        closed: bool,
+    ) -> Result<(), Error> {
+        self.edit_playlist(
+            client,
+            playlist_id,
+            serde_json::json!({ "action": "ACTION_SET_CLOSED_TO_CONTRIBUTIONS", "closedToContributions": closed }),
+        )
+        .await
+    }
+
+    /// Join someone's collaborative playlist with the `jct` token of its invite link.
+    pub async fn collaboration_join(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        token: &str,
+    ) -> Result<(), Error> {
+        self.edit_playlist(
+            client,
+            playlist_id,
+            serde_json::json!({ "action": "ACTION_JOIN_COLLABORATION", "joinCollaborationToken": token }),
+        )
+        .await
+    }
+
+    /// Delete one of the account's uploads (a song or an album) by its entity id.
+    pub async fn delete_upload(
+        &self,
+        client: &YouTubeClient,
+        entity_id: &str,
+    ) -> Result<(), Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DeleteBody {
+            context: Context,
+            entity_id: String,
+        }
+        let body = DeleteBody {
+            context: self.context_for(client),
+            entity_id: entity_id.to_owned(),
+        };
+        self.post("music/delete_privately_owned_entity", client, &body, true)
+            .await?;
+        Ok(())
+    }
+
+    /// Tell the account a song was played, as YouTube Music's own app does: the signed-in
+    /// `/player` answer's `videostatsPlaybackUrl`, fetched once with a fresh playback nonce.
+    /// That is what puts the song in the account's history and lets its recommendations learn.
+    pub async fn report_play(&self, client: &YouTubeClient, video_id: &str) -> Result<(), Error> {
+        let player = self.player(client, video_id, None, None, None).await?;
+        let url = player
+            .playback_tracking
+            .and_then(|t| t.videostats_playback_url)
+            .and_then(|u| u.base_url)
+            .ok_or_else(|| Error::Other("no playback address to report the play to".into()))?;
+        self.register_playback(client, &url, &crate::transport::generate_cpn(), None)
+            .await
+    }
 }
 
 /// Starts a `PlaylistSuggestions::refresh` that continues the playlist's radio rather than YouTube's
@@ -1612,6 +1794,73 @@ fn add_video_action(video_id: &str, allow_duplicates: bool) -> serde_json::Value
     action
 }
 
+/// Move an item before another (`movedSetVideoIdSuccessor`), or to the end without one.
+fn move_action(set_video_id: &str, before: Option<&str>) -> serde_json::Value {
+    let mut action =
+        serde_json::json!({ "action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": set_video_id });
+    if let Some(b) = before {
+        action["movedSetVideoIdSuccessor"] = b.into();
+    }
+    action
+}
+
+/// The `playlist/create` body: words, privacy, and the first songs when there are any.
+fn create_body(
+    context: Context,
+    title: &str,
+    description: Option<&str>,
+    privacy: &str,
+    video_ids: &[String],
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "context": context,
+        "title": title,
+        "privacyStatus": privacy,
+    });
+    if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
+        body["description"] = d.into();
+    }
+    if !video_ids.is_empty() {
+        body["videoIds"] = video_ids.into();
+    }
+    body
+}
+
+/// Where each added video landed, `(videoId, setVideoId)`, from an edit's `playlistEditResults`.
+fn added_placements(value: &serde_json::Value) -> Vec<(String, String)> {
+    metadata::find_all(value, "playlistEditVideoAddedResultData")
+        .into_iter()
+        .filter_map(|r| {
+            Some((
+                r.get("videoId")?.as_str()?.to_owned(),
+                r.get("setVideoId")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// The `jct` token in a collaboration invite link, the part `collaboration_join` takes.
+pub fn invite_token(link: &str) -> Option<String> {
+    let query = link.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == "jct").then(|| {
+            urlencoding::decode(v)
+                .map(|v| v.into_owned())
+                .unwrap_or_else(|_| v.to_owned())
+        })
+    })
+}
+
+/// The playlist id in a collaboration invite link (`list=`).
+pub fn invite_playlist(link: &str) -> Option<String> {
+    let query = link.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == "list").then(|| v.to_owned())
+    })
+}
+
 /// `browse/edit_playlist` answers HTTP 200 even when it applies nothing: the refusal is
 /// `"status": "STATUS_FAILED"` in the body. Adding a track the playlist already holds is the
 /// common one, and YouTube marks it by offering an "Add anyway" button whose endpoint repeats the
@@ -1698,6 +1947,63 @@ mod tests {
 
         let failed = json!({ "status": "STATUS_FAILED" });
         assert!(matches!(edit_rejection(&failed), Some(Error::Other(_))));
+    }
+
+    #[test]
+    fn a_move_names_the_item_and_what_it_goes_before() {
+        assert_eq!(
+            move_action("set-b", Some("set-a")),
+            json!({ "action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": "set-b", "movedSetVideoIdSuccessor": "set-a" })
+        );
+        // To the end: no successor at all.
+        assert_eq!(
+            move_action("set-b", None),
+            json!({ "action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": "set-b" })
+        );
+    }
+
+    #[test]
+    fn a_new_playlist_carries_its_words_privacy_and_songs_only_when_given() {
+        let ctx = InnerTube::new(Session::default(), None)
+            .unwrap()
+            .context_for(&web());
+        let full = create_body(
+            ctx.clone(),
+            "Road",
+            Some("For the car"),
+            "UNLISTED",
+            &["a".into(), "b".into()],
+        );
+        assert_eq!(full["title"], "Road");
+        assert_eq!(full["privacyStatus"], "UNLISTED");
+        assert_eq!(full["description"], "For the car");
+        assert_eq!(full["videoIds"], json!(["a", "b"]));
+        let bare = create_body(ctx, "Road", Some("  "), "PRIVATE", &[]);
+        assert!(bare.get("description").is_none());
+        assert!(bare.get("videoIds").is_none());
+    }
+
+    #[test]
+    fn an_add_says_where_each_song_landed() {
+        let resp = json!({ "status": "STATUS_SUCCEEDED", "playlistEditResults": [
+            { "playlistEditVideoAddedResultData": { "videoId": "v1", "setVideoId": "s1" } },
+            { "playlistEditVideoAddedResultData": { "videoId": "v2", "setVideoId": "s2" } }
+        ] });
+        assert_eq!(
+            added_placements(&resp),
+            vec![("v1".into(), "s1".into()), ("v2".into(), "s2".into())]
+        );
+    }
+
+    #[test]
+    fn an_invite_link_gives_its_playlist_and_token() {
+        let link = "https://music.youtube.com/playlist?list=PLabc&jct=tok%3D123";
+        assert_eq!(invite_playlist(link).as_deref(), Some("PLabc"));
+        assert_eq!(invite_token(link).as_deref(), Some("tok=123"));
+        assert_eq!(
+            invite_token("https://music.youtube.com/playlist?list=PLabc"),
+            None
+        );
     }
 
     #[test]
@@ -2432,5 +2738,183 @@ mod tests {
             assert!(body.get("context").is_some());
             assert!(as_account(&sent[0]), "an action is the account's own");
         }
+    }
+}
+
+#[cfg(test)]
+mod account_reads {
+    use super::*;
+    use crate::clients::{Clients, METADATA_CLIENT};
+    use crate::test_server::MockServer;
+    use crate::transport::Session;
+    use serde_json::json;
+
+    fn row(id: &str, title: &str) -> serde_json::Value {
+        json!({ "musicResponsiveListItemRenderer": {
+            "playlistItemData": { "videoId": id },
+            "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": title }] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                    { "text": "An Artist" }, { "text": " \u{2022} " }, { "text": "3:12" }
+                ] } } }
+            ]
+        } })
+    }
+
+    // Library songs come 25 at a time: every page is read, each song kept once, and a repeated
+    // song on a later page doesn't come twice.
+    #[tokio::test]
+    async fn library_songs_are_read_page_after_page_each_once() {
+        let server = MockServer::start(|req| {
+            let body = if req.path.contains("ctoken=page2") {
+                json!({ "continuationContents": { "musicShelfContinuation": {
+                    "contents": [row("bbbbbbbbbbb", "Second"), row("ccccccccccc", "Third")]
+                } } })
+            } else {
+                json!({ "contents": { "sectionListRenderer": { "contents": [{ "musicShelfRenderer": {
+                    "contents": [row("aaaaaaaaaaa", "First"), row("bbbbbbbbbbb", "Second")],
+                    "continuations": [{ "nextContinuationData": { "continuation": "page2" } }]
+                } }] } } })
+            };
+            (200, body.to_string())
+        });
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        let songs = it
+            .library_songs(&client, "FEmusic_liked_videos")
+            .await
+            .unwrap();
+        let ids: Vec<&str> = songs.iter().map(|s| s.video_id.as_str()).collect();
+        assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]);
+        let first = &server.requests()[0];
+        assert!(
+            first.body.contains("FEmusic_liked_videos"),
+            "{}",
+            first.body
+        );
+        assert!(first.header("cookie").is_some(), "read as the account");
+    }
+}
+
+#[cfg(test)]
+mod upload {
+    use crate::clients::{Clients, METADATA_CLIENT};
+    use crate::test_server::MockServer;
+    use crate::transport::{InnerTube, Session};
+
+    // Two steps, as Google's uploader wants them: ask for a place with the name and size, then send
+    // the whole file to the place it gave, signed in both times.
+    #[tokio::test]
+    async fn a_song_goes_up_in_two_steps_to_the_place_it_was_given() {
+        let server = MockServer::start_with_headers(|req| {
+            if req.header("x-goog-upload-command") == Some("start") {
+                let place = format!(
+                    "http://{}/place/123",
+                    req.header("host").unwrap_or_default()
+                );
+                (
+                    200,
+                    vec![("x-goog-upload-url".into(), place)],
+                    String::new(),
+                )
+            } else {
+                (200, Vec::new(), String::new())
+            }
+        });
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        it.upload_song(&client, "My Song.flac", b"fLaC-bytes".to_vec())
+            .await
+            .unwrap();
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[0].path.contains("upload/usermusic/http"),
+            "{}",
+            seen[0].path
+        );
+        assert_eq!(seen[0].body, "filename=My%20Song.flac");
+        assert_eq!(
+            seen[0].header("x-goog-upload-header-content-length"),
+            Some("10")
+        );
+        assert_eq!(seen[0].header("x-goog-upload-protocol"), Some("resumable"));
+        assert_eq!(seen[1].path, "/place/123");
+        assert_eq!(
+            seen[1].header("x-goog-upload-command"),
+            Some("upload, finalize")
+        );
+        assert_eq!(seen[1].header("x-goog-upload-offset"), Some("0"));
+        assert_eq!(seen[1].body, "fLaC-bytes");
+        assert!(
+            seen.iter().all(|r| r.header("cookie").is_some()),
+            "as the account both times"
+        );
+    }
+
+    #[tokio::test]
+    async fn signed_out_nothing_goes_up() {
+        let it = InnerTube::new(Session::default(), None).unwrap();
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        assert!(it.upload_song(&client, "a.flac", vec![1]).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod report_play {
+    use crate::clients::{Clients, METADATA_CLIENT};
+    use crate::test_server::MockServer;
+    use crate::transport::{InnerTube, Session};
+    use serde_json::json;
+
+    // A play is told the way YouTube Music's app tells it: the signed-in player answer's playback
+    // address, fetched once with a playback nonce, as the account.
+    #[tokio::test]
+    async fn a_play_is_reported_to_the_address_the_player_gives() {
+        let server = MockServer::start(|req| {
+            if req.path.contains("/youtubei/v1/player") {
+                let host = req.header("host").unwrap_or_default().to_owned();
+                (200, json!({ "playabilityStatus": { "status": "OK" }, "playbackTracking": { "videostatsPlaybackUrl": {
+                    "baseUrl": format!("http://{host}/api/stats/playback?docid=vid&ns=yt")
+                } } }).to_string())
+            } else {
+                (204, String::new())
+            }
+        });
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+        it.report_play(&client, "vid").await.unwrap();
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        let ping = &seen[1];
+        assert!(
+            ping.path.starts_with("/api/stats/playback?docid=vid"),
+            "{}",
+            ping.path
+        );
+        assert!(
+            ping.path.contains("c=WEB_REMIX")
+                && ping.path.contains("ver=2")
+                && ping.path.contains("cpn=")
+        );
+        assert!(ping.header("cookie").is_some(), "as the account");
     }
 }

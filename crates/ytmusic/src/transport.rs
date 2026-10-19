@@ -221,7 +221,18 @@ pub struct InnerTube {
     cookie_changed: Arc<Notify>,
     /// Where `post` sends to: [`BASE_URL`], except in tests, which point it at a local server.
     base_url: String,
+    /// Where a song goes up to the account's uploads: [`UPLOAD_SONG_URL`], or the test server.
+    upload_url: String,
 }
+
+/// Google's resumable uploader for songs going to the account's uploads.
+const UPLOAD_SONG_URL: &str = "https://upload.youtube.com/upload/usermusic/http?authuser=0";
+
+/// The kinds of file YouTube Music takes as an upload.
+pub const UPLOAD_EXTENSIONS: [&str; 5] = ["flac", "m4a", "mp3", "ogg", "wma"];
+
+/// The largest file it takes (300 MB).
+pub const UPLOAD_MAX_BYTES: u64 = 300 * 1024 * 1024;
 
 impl InnerTube {
     pub fn new(session: Session, proxy: Option<&str>) -> Result<Self, Error> {
@@ -247,13 +258,74 @@ impl InnerTube {
             heal: Arc::new(watch::Sender::new(HealState::default())),
             cookie_changed: Arc::new(Notify::new()),
             base_url: BASE_URL.to_owned(),
+            upload_url: UPLOAD_SONG_URL.to_owned(),
         })
     }
 
-    /// Point `post` somewhere else (a local test server).
+    /// Point `post` somewhere else (a local test server), uploads with it.
     #[cfg(test)]
     pub(crate) fn set_base_url(&mut self, url: &str) {
         self.base_url = url.to_owned();
+        self.upload_url = format!("{url}upload/usermusic/http?authuser=0");
+    }
+
+    /// Send a song to the account's uploads: the uploader is asked for a place (the file's name
+    /// and size), then gets the whole file there in one go. Afterwards YouTube takes a while to
+    /// process it before it shows in the uploads. Needs login; not possible on a brand account.
+    pub async fn upload_song(
+        &self,
+        client: &YouTubeClient,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), Error> {
+        if !self.is_logged_in() {
+            return Err(Error::Other("sign in to upload".into()));
+        }
+        let mut headers = self.headers(client, true);
+        let set = |h: &mut HeaderMap, k: &'static str, v: &str| {
+            if let Ok(val) = HeaderValue::from_str(v) {
+                h.insert(HeaderName::from_static(k), val);
+            }
+        };
+        set(
+            &mut headers,
+            "content-type",
+            "application/x-www-form-urlencoded;charset=utf-8",
+        );
+        set(&mut headers, "x-goog-upload-command", "start");
+        set(
+            &mut headers,
+            "x-goog-upload-header-content-length",
+            &bytes.len().to_string(),
+        );
+        set(&mut headers, "x-goog-upload-protocol", "resumable");
+        let start = self
+            .http
+            .post(&self.upload_url)
+            .headers(headers.clone())
+            .body(format!("filename={}", urlencoding::encode(file_name)))
+            .send()
+            .await?
+            .error_for_status()?;
+        self.absorb_cookies(start.headers());
+        let place = start
+            .headers()
+            .get("x-goog-upload-url")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Other("the uploader gave no place for the file".into()))?;
+        set(&mut headers, "x-goog-upload-command", "upload, finalize");
+        set(&mut headers, "x-goog-upload-offset", "0");
+        let done = self
+            .http
+            .post(&place)
+            .headers(headers)
+            .body(bytes)
+            .send()
+            .await?
+            .error_for_status()?;
+        self.absorb_cookies(done.headers());
+        Ok(())
     }
 
     /// Signal raised when YouTube rejects the signed-in session. See the field.

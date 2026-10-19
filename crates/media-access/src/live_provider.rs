@@ -171,6 +171,11 @@ trait LiveBackend: Send + Sync {
 
     fn logged_in(&self) -> bool;
 
+    /// The account's part of the catalog (see `crate::account`).
+    fn account_api(self: Arc<Self>) -> Option<Arc<dyn crate::account::AccountAccess>> {
+        None
+    }
+
     /// The home feed (see `MediaAccess::home`).
     fn home(
         &self,
@@ -212,6 +217,8 @@ struct YtmBackend {
     legacy: OnceLock<Result<LegacyResolver, AccessError>>,
     /// Data saver: the smallest stream instead of the best.
     saver: std::sync::atomic::AtomicBool,
+    /// YouTube stopped taking the sign-in; cleared by the next sign-in.
+    expired: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl YtmBackend {
@@ -249,7 +256,25 @@ impl YtmBackend {
             visitor: tokio::sync::OnceCell::new(),
             legacy: OnceLock::new(),
             saver: std::sync::atomic::AtomicBool::new(false),
+            expired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
+        // No cookie can be minted again from here: a rejected sign-in is told to the person, who
+        // signs in again. The heal is declared over at once, so a request waiting on it ends now
+        // instead of after the transport's long timeout, and says the session expired.
+        {
+            let it = backend.it.clone();
+            let expired = backend.expired.clone();
+            let rejected = it.session_rejected();
+            backend.runtime.get().spawn(async move {
+                loop {
+                    rejected.notified().await;
+                    if it.is_logged_in() {
+                        expired.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    drop(it.begin_heal());
+                }
+            });
+        }
         Ok(backend)
     }
 
@@ -445,6 +470,10 @@ fn parse_search(
 }
 
 impl LiveBackend for YtmBackend {
+    fn account_api(self: Arc<Self>) -> Option<Arc<dyn crate::account::AccountAccess>> {
+        Some(self)
+    }
+
     fn search(
         &self,
         query: &str,
@@ -765,6 +794,8 @@ impl LiveBackend for YtmBackend {
     }
 
     fn set_cookie(&self, cookie: Option<&str>) {
+        self.expired
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.it.set_cookie(
             cookie
                 .map(str::to_owned)
@@ -1313,6 +1344,458 @@ fn probe_media_status(audio: &EphemeralAudio) -> Option<u16> {
     }
 }
 
+// --- The signed-in account (crate::account) --------------------------------------------------
+
+/// What a failed account request tells the person.
+fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
+    match e {
+        ytmusic::Error::SessionExpired => AccessError::new(
+            AccessErrorKind::Transport,
+            "YouTube Music needs you to sign in again.",
+        ),
+        ytmusic::Error::AlreadyInPlaylist => {
+            AccessError::new(AccessErrorKind::InvalidInput, "Already in the playlist.")
+        }
+        ytmusic::Error::WriteUncertain => AccessError::new(
+            AccessErrorKind::Transport,
+            format!("YouTube Music didn't say whether {what} went through."),
+        ),
+        other => AccessError::new(
+            AccessErrorKind::Transport,
+            format!("YouTube Music didn't answer about {what}: {other}"),
+        ),
+    }
+}
+
+fn signed_out() -> AccessError {
+    AccessError::new(
+        AccessErrorKind::InvalidInput,
+        "Sign in to YouTube Music first.",
+    )
+}
+
+/// A song row as the account's lists hold it: the song, its place, whether it's an upload.
+fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTrack> {
+    Some(crate::account::AccountTrack {
+        track: crate::catalog_cards::track_of_row(row)?,
+        set_video_id: row.set_video_id.clone(),
+        upload: row.is_upload,
+    })
+}
+
+impl YtmBackend {
+    /// One account request, signed in, cancellable, its failure in words.
+    fn account_call<T: Send>(
+        &self,
+        cancel: &CancellationToken,
+        what: &str,
+        call: impl Future<Output = Result<T, ytmusic::Error>> + Send,
+    ) -> Result<T, AccessError> {
+        if !self.it.is_logged_in() {
+            return Err(signed_out());
+        }
+        let expired = self.expired.clone();
+        self.run(cancellable(cancel.clone(), async move {
+            call.await.map_err(|e| {
+                if matches!(e, ytmusic::Error::SessionExpired) {
+                    expired.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                account_error(e, what)
+            })
+        }))
+    }
+}
+
+impl crate::account::AccountAccess for YtmBackend {
+    fn signed_in(&self) -> bool {
+        self.it.is_logged_in()
+    }
+
+    fn session_expired(&self) -> bool {
+        self.it.is_logged_in() && self.expired.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn library(
+        &self,
+        shelf: crate::account::LibraryShelf,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::RemoteSuggestion>, AccessError> {
+        use crate::account::LibraryShelf as S;
+        let client = self.client(PAGES_CLIENT)?;
+        let cards = self.account_call(cancel, "your library", async {
+            match shelf {
+                S::Playlists => self.it.library_playlists(client).await,
+                S::Albums => self.it.library_albums(client).await,
+                S::Artists => self.it.library_artists(client).await,
+                S::Subscriptions => self.it.library_subscriptions(client).await,
+                S::Podcasts => self.it.library_podcasts(client).await,
+                S::UploadAlbums => self.it.upload_albums(client).await,
+            }
+        })?;
+        Ok(cards
+            .iter()
+            .filter_map(|c| match (shelf, c.kind) {
+                // Podcasts come as playlist-like cards: opened as podcasts.
+                (S::Podcasts, _) => crate::catalog_cards::collection_of(c, "podcast")
+                    .map(|collection| crate::RemoteSuggestion::Playlist { collection }),
+                // Library artists and subscriptions come as list rows the card reader calls songs.
+                (S::Artists | S::Subscriptions, _) => {
+                    (!c.id.trim().is_empty()).then(|| crate::RemoteSuggestion::Artist {
+                        artist: crate::RemoteArtist {
+                            provider: PROVIDER.into(),
+                            artist_id: c.id.trim().to_owned(),
+                            name: c.title.clone(),
+                            artwork_url: c.thumbnail.clone(),
+                            audience: None,
+                        },
+                        subtitle: c.subtitle.clone(),
+                    })
+                }
+                _ => crate::catalog_cards::suggestion_of(c),
+            })
+            .collect())
+    }
+
+    fn library_songs(
+        &self,
+        uploads: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::account::AccountTrack>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = if uploads {
+            "FEmusic_library_privately_owned_tracks"
+        } else {
+            "FEmusic_liked_videos"
+        };
+        let rows = self.account_call(cancel, "your songs", self.it.library_songs(client, id))?;
+        Ok(rows.iter().filter_map(account_track_of).collect())
+    }
+
+    fn playlist(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::account::AccountPlaylist, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let browse_id = playlist_browse_id(playlist_id)?;
+        let (page, rest, complete) = self.account_call(cancel, "the playlist", async {
+            let page = self.it.playlist(client, &browse_id, None).await?;
+            let mut rest = Vec::new();
+            let mut token = page.continuation.clone();
+            let mut complete = true;
+            // ponytail: 100 songs a page, YouTube's cap is 5,000 a playlist.
+            for _ in 0..60 {
+                let Some(t) = token else { break };
+                match self.it.playlist_continuation(client, &t).await {
+                    Ok(next) => {
+                        rest.extend(next.items);
+                        token = next.continuation.filter(|n| *n != t);
+                    }
+                    // A page that failed leaves the list incomplete, and says so.
+                    Err(_) => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            Ok((page, rest, complete))
+        })?;
+        let tracks = page
+            .items
+            .iter()
+            .chain(rest.iter())
+            .filter_map(account_track_of)
+            .collect();
+        Ok(crate::account::AccountPlaylist {
+            playlist_id: playlist_id.trim_start_matches("VL").to_owned(),
+            title: page.title.unwrap_or_default(),
+            description: page.description,
+            privacy: page.privacy,
+            owned: page.owned,
+            collaborative: page.collaborative,
+            artwork_url: page.thumbnail,
+            tracks,
+            complete,
+        })
+    }
+
+    fn create_playlist(
+        &self,
+        title: &str,
+        description: Option<&str>,
+        privacy: &str,
+        video_ids: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<String, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the new playlist",
+            self.it
+                .create_playlist_with(client, title, description, privacy, video_ids),
+        )
+    }
+
+    fn edit_playlist(
+        &self,
+        playlist_id: &str,
+        edits: &[crate::account::PlaylistEdit],
+        cancel: &CancellationToken,
+    ) -> Result<crate::account::Placements, AccessError> {
+        use crate::account::PlaylistEdit as E;
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(cancel, "the playlist change", async {
+            let mut placed = Vec::new();
+            let mut words: (Option<String>, Option<String>, Option<String>) = (None, None, None);
+            for edit in edits {
+                match edit {
+                    E::Rename { title } => words.0 = Some(title.clone()),
+                    E::Describe { description } => words.1 = Some(description.clone()),
+                    E::Privacy { privacy } => words.2 = Some(privacy.clone()),
+                    E::Add { video_ids } => {
+                        // One duplicate fails a batch, so each batch is unique; 50 at a time.
+                        let mut seen = std::collections::HashSet::new();
+                        let unique: Vec<String> = video_ids
+                            .iter()
+                            .filter(|v| seen.insert(*v))
+                            .cloned()
+                            .collect();
+                        for batch in unique.chunks(50) {
+                            placed.extend(
+                                self.it
+                                    .playlist_add_placed(client, playlist_id, batch)
+                                    .await?,
+                            );
+                        }
+                    }
+                    E::Remove { items } => {
+                        if !items.is_empty() {
+                            self.it
+                                .playlist_remove_many(client, playlist_id, items)
+                                .await?;
+                        }
+                    }
+                    E::Move {
+                        set_video_id,
+                        before,
+                    } => {
+                        self.it
+                            .playlist_move(client, playlist_id, set_video_id, before.as_deref())
+                            .await?;
+                    }
+                }
+            }
+            if words != (None, None, None) {
+                self.it
+                    .playlist_edit_details(
+                        client,
+                        playlist_id,
+                        words.0.as_deref(),
+                        words.1.as_deref(),
+                        words.2.as_deref(),
+                    )
+                    .await?;
+            }
+            Ok(placed)
+        })
+    }
+
+    fn delete_playlist(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "deleting the playlist",
+            self.it.delete_playlist(client, playlist_id),
+        )
+    }
+
+    fn album_saved(
+        &self,
+        album_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::account::SavedState>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let page = self.account_call(cancel, "the album", self.it.album(client, album_id))?;
+        Ok(page
+            .playlist_id
+            .map(|playlist_id| crate::account::SavedState {
+                playlist_id,
+                saved: page.in_library,
+            }))
+    }
+
+    fn save(
+        &self,
+        playlist_id: &str,
+        saved: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "saving to your library",
+            self.it.like_playlist(client, id, saved),
+        )
+    }
+
+    fn artist_followed(
+        &self,
+        artist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::account::FollowState>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let page = self.account_call(cancel, "the artist", self.it.artist(client, artist_id))?;
+        Ok(
+            (!page.channel_id.is_empty()).then(|| crate::account::FollowState {
+                channel_id: page.channel_id.clone(),
+                subscribed: page.subscribed,
+            }),
+        )
+    }
+
+    fn subscribe(
+        &self,
+        channel_id: &str,
+        subscribed: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "following the artist",
+            self.it.subscribe(client, channel_id, subscribed),
+        )
+    }
+
+    fn history(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::account::HistoryDay>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let groups = self.account_call(cancel, "your history", self.it.history(client))?;
+        Ok(groups
+            .iter()
+            .map(|g| crate::account::HistoryDay {
+                title: g.title.clone(),
+                tracks: g
+                    .items
+                    .iter()
+                    .filter_map(crate::catalog_cards::track_of_row)
+                    .collect(),
+            })
+            .filter(|d| !d.tracks.is_empty())
+            .collect())
+    }
+
+    fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(cancel, "the play", self.it.report_play(client, video_id))
+    }
+
+    fn upload(
+        &self,
+        file_name: &str,
+        bytes: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let ext = file_name
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !ytmusic::UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "YouTube Music takes FLAC, M4A, MP3, OGG and WMA uploads.",
+            ));
+        }
+        if bytes.len() as u64 >= ytmusic::UPLOAD_MAX_BYTES {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "YouTube Music takes uploads up to 300 MB.",
+            ));
+        }
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the upload",
+            self.it.upload_song(client, file_name, bytes),
+        )
+    }
+
+    fn identities(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::account::AccountIdentityInfo>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let all = self.account_call(cancel, "your accounts", self.it.account_identities(client))?;
+        let using = self.it.data_sync_id();
+        Ok(all
+            .into_iter()
+            .map(|a| crate::account::AccountIdentityInfo {
+                current: using
+                    .as_deref()
+                    .map_or(a.is_selected, |u| u == a.data_sync_id),
+                id: a.data_sync_id,
+                name: a.name,
+                handle: a.handle,
+                email: a.email,
+                picture: a.thumbnail,
+            })
+            .collect())
+    }
+
+    fn use_identity(&self, id: Option<&str>) {
+        self.it.set_data_sync_id(id.map(str::to_owned));
+    }
+
+    fn invite(&self, playlist_id: &str, cancel: &CancellationToken) -> Result<String, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the invite link",
+            self.it.collaboration_invite(client, playlist_id),
+        )
+    }
+
+    fn close_to_collaborators(
+        &self,
+        playlist_id: &str,
+        closed: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "collaborators",
+            self.it.collaboration_closed(client, playlist_id, closed),
+        )
+    }
+
+    fn join(&self, invite_link: &str, cancel: &CancellationToken) -> Result<String, AccessError> {
+        let (Some(playlist_id), Some(token)) = (
+            ytmusic::invite_playlist(invite_link),
+            ytmusic::invite_token(invite_link),
+        ) else {
+            return Err(AccessError::new(
+                AccessErrorKind::InvalidInput,
+                "That isn't a YouTube Music invite link.",
+            ));
+        };
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "joining the playlist",
+            self.it.collaboration_join(client, &playlist_id, &token),
+        )?;
+        Ok(playlist_id)
+    }
+}
+
 async fn cancellable<T>(
     cancel: CancellationToken,
     future: impl Future<Output = Result<T, AccessError>>,
@@ -1346,6 +1829,10 @@ impl LiveCatalogAccess {
 }
 
 impl MediaAccess for LiveCatalogAccess {
+    fn account_access(&self) -> Option<Arc<dyn crate::account::AccountAccess>> {
+        self.backend.clone().account_api()
+    }
+
     fn search_tracks(
         &self,
         query: &str,

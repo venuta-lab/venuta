@@ -7,6 +7,7 @@
 //! saved into playlists or restored queues.
 
 mod access;
+pub mod account;
 mod art_url;
 #[cfg(feature = "live-provider")]
 mod catalog_cards;
@@ -27,6 +28,10 @@ mod types;
 pub use access::{
     AccessError, AccessErrorKind, CachedAccess, CatalogHealth, MediaAccess, catalog_health,
     default_media_access, live_catalog_env_enabled,
+};
+pub use account::{
+    AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, FollowState, HistoryDay,
+    LibraryShelf, Placements, PlaylistEdit, SavedState,
 };
 pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;

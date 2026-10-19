@@ -225,6 +225,12 @@ pub trait MediaAccess: Send + Sync {
         Err(unsupported("the account's likes"))
     }
 
+    /// The account's library and the changes made to it (see `crate::account`). None for a
+    /// catalog with no account: Local only, the fake one.
+    fn account_access(&self) -> Option<std::sync::Arc<dyn crate::account::AccountAccess>> {
+        None
+    }
+
     /// One catalog song by its id: what it is (for a pasted link).
     fn track(
         &self,
@@ -633,6 +639,10 @@ impl MediaAccess for CachedAccess {
 
     fn account_liked(&self, cancel: &CancellationToken) -> Result<Vec<RemoteTrack>, AccessError> {
         self.inner.account_liked(cancel)
+    }
+
+    fn account_access(&self) -> Option<Arc<dyn crate::account::AccountAccess>> {
+        self.inner.account_access()
     }
 
     fn resolve_audio_small(
