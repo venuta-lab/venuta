@@ -26,6 +26,8 @@ const DEFAULTS: Listening = {
   together_relay: null,
   together_delay: {},
   shortcuts: [],
+  play_my_copy: true,
+  hide_blocked: true,
 }
 
 let now: Listening = DEFAULTS

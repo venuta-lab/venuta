@@ -2,6 +2,8 @@ import { ytmAddAccount, ytmForgetAccount, ytmSwitchAccount, ytmUseIdentity, type
 import { menuFromEvent, type MenuGroups } from '../lib/menu'
 import { notify } from '../lib/notify'
 import { useYtmAccounts } from '../lib/ytmAccount'
+import { summary } from '../lib/ytmChoiceWords'
+import { openYtmChoices, useYtmChoices } from '../lib/ytmChoices'
 import { askSignOut } from './askSignOut'
 import { confirmAsk } from './Confirm'
 import { RemoteArt } from './RemoteArt'
@@ -10,7 +12,8 @@ import { RemoteArt } from './RemoteArt'
   Who you are on YouTube Music, and switching: the channels of the sign-in in use (your own and
   any brand accounts), and the other Google accounts kept on this computer. In the title bar's
   corner as your picture, and in Settings, Online. Each linked playlist stays with the account
-  it was linked on, and waits while another is in use.
+  it was linked on, and waits while another is in use. The picture's menu also says what Venuta
+  does with the account in use, and opens your choices.
 */
 
 const label = (a: { name: string | null; email: string | null }) => a.name ?? a.email ?? 'Google account'
@@ -31,9 +34,14 @@ const forget = async (a: YtmSavedAccount) => {
   if (ok) await ytmForgetAccount(a.id).catch((e) => notify(String(e)))
 }
 
-/** The switcher as a menu: channels, other accounts, add, sign out. */
-function menuOf(saved: YtmSavedAccount[], channels: YtmIdentity[]): MenuGroups {
+/** The switcher as a menu: what is on, channels, other accounts, add, sign out. */
+function menuOf(saved: YtmSavedAccount[], channels: YtmIdentity[], on: string | null): MenuGroups {
   const groups: MenuGroups = []
+  if (on)
+    groups.push([
+      { label: on, disabled: true, run: () => {} },
+      { label: 'Your YouTube Music choices…', run: openYtmChoices },
+    ])
   if (channels.length > 1)
     groups.push(
       channels.map((c) => ({
@@ -54,14 +62,16 @@ function menuOf(saved: YtmSavedAccount[], channels: YtmIdentity[]): MenuGroups {
 /** Your picture in the title bar's corner, signed in; the switcher behind it. */
 export function YtmProfileButton() {
   const { account, saved, channels } = useYtmAccounts()
+  const mine = useYtmChoices()
   if (!account) return null
+  const on = mine ? summary(mine.choices) : null
   const using = channels.find((c) => c.current)
   const name = using?.name ?? account.name ?? 'YouTube Music'
   const picture = using?.picture ?? account.picture
   return (
     <button
-      onClick={(e) => menuFromEvent(e, menuOf(saved, channels))}
-      onContextMenu={(e) => menuFromEvent(e, menuOf(saved, channels))}
+      onClick={(e) => menuFromEvent(e, menuOf(saved, channels, on))}
+      onContextMenu={(e) => menuFromEvent(e, menuOf(saved, channels, on))}
       aria-label={`YouTube Music: ${name}. Switch account`}
       title={`YouTube Music: ${name}${account.email ? ` (${account.email})` : ''}. Switch account or channel`}
       className="mr-1 grid h-8 w-8 place-items-center rounded-full transition-colors hover:bg-ink/10"

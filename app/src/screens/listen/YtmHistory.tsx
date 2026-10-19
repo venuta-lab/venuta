@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { ytmHistory, type YtmHistoryDay } from '../../lib/engine'
-import { listening } from '../../lib/listening'
 import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playItems, toRemoteItem } from '../../lib/player'
+import { useYtmChoices } from '../../lib/ytmChoices'
 import { useNav } from './model'
 import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
 import { YtmSignInAgain } from './YtmLibrary'
@@ -18,6 +18,7 @@ export function YtmHistory() {
   const { root } = useNav()
   const [days, setDays] = useState<YtmHistoryDay[] | null>(null)
   const [problem, setProblem] = useState('')
+  const counting = !!useYtmChoices()?.choices.count_plays
   useEffect(() => {
     let live = true
     ytmHistory()
@@ -35,9 +36,9 @@ export function YtmHistory() {
     <div className="mt-6">
       <YtmSignInAgain />
       <p className="mb-5 max-w-[70ch] text-[12.5px] leading-relaxed text-ink/55">
-        {listening().report_plays
+        {counting
           ? 'What your YouTube Music account has played, here and everywhere else. Venuta tells it the online songs you play; your own files stay in Venuta.'
-          : 'What your YouTube Music account has played on your phone and the web. To add what you play here, switch on Count plays on YouTube Music in Settings, Online.'}
+          : 'What your YouTube Music account has played on your phone and the web. To add what you play here, switch on Count plays in Settings, Online.'}
       </p>
       {problem ? (
         <p role="status" className="py-6 text-[13px] text-ink/55">

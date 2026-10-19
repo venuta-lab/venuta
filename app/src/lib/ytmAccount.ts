@@ -1,9 +1,9 @@
 import { listen } from '@tauri-apps/api/event'
 import { useCallback, useEffect, useState } from 'react'
-import { inApp, libraryHome, ytmAccount, ytmBringInLikes, ytmIdentities, ytmRate, ytmSavedAccounts, type YtmAccountInfo, type YtmIdentity, type YtmSavedAccount } from './engine'
+import { inApp, libraryHome, ytmAccount, ytmBringInLikes, ytmIdentities, ytmNewLikesIn, ytmRate, ytmSavedAccounts, type YtmAccountInfo, type YtmIdentity, type YtmSavedAccount } from './engine'
 import { loadLikes } from './likes'
-import { listening, loadListening } from './listening'
 import { notify } from './notify'
+import { loadYtmChoices } from './ytmChoices'
 import type { QueueItem } from './player'
 
 /** Who is signed in to YouTube Music (null: no one; undefined: still asking), kept current. */
@@ -27,12 +27,13 @@ export function useYtmAccount() {
 }
 
 
-/** With "Like on YouTube Music too" on and someone signed in: an online song gets the same
- *  rating on the account as in Venuta. Says so only when YouTube Music doesn't take it. */
+/** With "Likes and dislikes" on for the account in use: an online song gets the same rating
+ *  there as in Venuta (a like, an unlike, a thumbs down). Says so only when YouTube Music
+ *  doesn't take it. */
 export async function rateOnAccount(q: QueueItem, rating: 'like' | 'dislike' | 'none') {
   if (!inApp() || q.online?.kind !== 'online' || q.online.provider !== 'remote_catalog') return
-  await loadListening()
-  if (!listening().sync_likes) return
+  const mine = await loadYtmChoices()
+  if (!mine?.choices.likes) return
   try {
     await ytmRate(q.online.track_id, rating)
   } catch (e) {
@@ -55,6 +56,28 @@ export async function bringInYtmLikes(): Promise<string> {
       : `All ${r.found.toLocaleString('en-IN')} are in ${list} already.`
   } catch (e) {
     return `Couldn't bring in your likes: ${String(e)}`
+  }
+}
+
+const likesLooked = new Set<string>()
+
+/** "New YouTube likes come in": the songs liked on the account since Venuta last looked join
+ *  Liked songs, quietly; at most once per start for each account (and the first look only notes
+ *  what is there). Says something only when songs came in. */
+export async function newLikesIn(account: string) {
+  if (!inApp() || likesLooked.has(account)) return
+  likesLooked.add(account)
+  try {
+    const root = (await libraryHome()).library
+    if (!root) return
+    const r = await ytmNewLikesIn(root)
+    if (!r.added) return
+    await loadLikes(root, true)
+    window.dispatchEvent(new Event('venuta:playlists-changed'))
+    const n = r.added.toLocaleString('en-IN')
+    notify(`${n} ${r.added === 1 ? 'song' : 'songs'} you liked on YouTube Music joined ${r.name ?? 'Liked songs'}.`)
+  } catch {
+    // Quiet: it looks again at the next start.
   }
 }
 

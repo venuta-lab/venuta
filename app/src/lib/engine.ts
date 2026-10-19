@@ -1,5 +1,6 @@
 // Typed wrappers over the Rust commands in app/src-tauri/src/lib.rs.
 import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core'
+import type { YtmChoices as YtmAccountChoices } from './ytmChoiceWords'
 
 export interface ScanReport {
   files_seen: number
@@ -229,11 +230,11 @@ export interface Listening {
   lyrics_sources: string[]
   /** Say each new song in a Windows notification while Venuta is in the background. */
   song_notifications: boolean
-  /** Signed in to YouTube Music: liking, unliking or disliking online does the same there. */
+  /** Old, for the whole library: each account has its own now (lib/ytmChoices.ts). Never used. */
   sync_likes: boolean
-  /** Tell the YouTube Music account what is played here (after 30 s of a song). Off until switched on. */
+  /** Old, for the whole library: each account has its own now (lib/ytmChoices.ts). Never used. */
   report_plays: boolean
-  /** The sign-in's three offers were made once already. */
+  /** Old, for the whole library: each account is asked now (lib/ytmChoices.ts). Never used. */
   ytm_offered: boolean
   /** Only your own music, and nothing online (lib/localOnly.ts). */
   local_only: boolean
@@ -247,6 +248,10 @@ export interface Listening {
   together_delay: Record<string, number>
   /** What you pinned to the top of Home (lib/shortcuts.ts). */
   shortcuts: unknown[]
+  /** Hybrid: when an online song is one you have, play your file in its place. */
+  play_my_copy: boolean
+  /** Artists you blocked stay out of what the catalog picks; off, they can come again (the list is kept). */
+  hide_blocked: boolean
 }
 
 /** A radio: songs like a seed, and its own list id to ask for more of it. */
@@ -1326,6 +1331,21 @@ export const ytmPlaylists = () => invoke<OnlineCollection[]>('ytm_playlists')
 export const ytmRate = (trackId: string, rating: 'like' | 'dislike' | 'none') => invoke<boolean>('ytm_rate', { trackId, rating })
 /** Your YouTube Music likes into Venuta's Liked songs (only when you ask). */
 export const ytmBringInLikes = (root: string) => invoke<{ name: string | null; found: number; added: number }>('ytm_bring_in_likes', { root })
+
+/** The choices of the account and channel in use (null: signed out, or Local only). */
+export interface YtmChoicesView {
+  /** Which account and channel ("email#channel"). */
+  account: string
+  /** Asked already; false the first time (the choices are the safe ones). */
+  asked: boolean
+  choices: YtmAccountChoices
+}
+/** The account in use's choices, read again (and told to the catalog). */
+export const ytmChoices = () => invoke<YtmChoicesView | null>('ytm_choices')
+/** Keep an account's choices, all of them. */
+export const ytmSetChoices = (account: string, choices: YtmAccountChoices) => invoke<YtmChoicesView>('ytm_set_choices', { account, choices })
+/** With "New YouTube likes come in" on: the songs liked there since Venuta last looked join Liked songs. */
+export const ytmNewLikesIn = (root: string) => invoke<{ name: string | null; added: number }>('ytm_new_likes_in', { root })
 
 // --- The signed-in account: library, changes, history, uploads, identities, collaboration ----
 
