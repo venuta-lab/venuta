@@ -130,3 +130,12 @@ test('albums, artists and playlists can be added to Home', () => {
   for (const kind of ['album', 'artist', 'playlist'] as const) assert.ok(ids(actionsFor(kind, {})).includes('shortcut'), kind)
   assert.ok(ids(actionsFor('album', { online: true })).includes('shortcut'))
 })
+
+test('a song in the queue plays, plays next, starts its radio, goes to a playlist, its artist and album', () => {
+  const q = ids(actionsFor('queued', {}))
+  for (const id of ['play', 'next', 'radio', 'playlist', 'artist', 'album', 'remove'] as const) assert.ok(q.includes(id), id)
+  // The one playing: nothing to play or put next, and it stays.
+  const now = ids(actionsFor('queued', { current: true }))
+  for (const id of ['play', 'next', 'remove'] as const) assert.ok(!now.includes(id), id)
+  assert.ok(now.includes('radio'))
+})
