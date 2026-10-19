@@ -16,13 +16,14 @@ export function QueueRadio({ className = '' }: { className?: string }) {
   const index = usePlayerValue((s) => s.index)
   const seed = from?.kind === 'radio' && from.seed && index > 0 ? from.seed : ''
   return (
-    <div className={`flex items-center gap-3 text-[12px] text-ink/60 ${className}`}>
-      <label className="flex items-center gap-2" title="When an album or playlist ends, keep playing what YouTube Music plays after it">
+    // In a narrow column "Back to…" goes under Autoplay rather than being cut to a letter or two.
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink/60 ${className}`}>
+      <label className="flex shrink-0 items-center gap-2" title="When an album or playlist ends, keep playing what YouTube Music plays after it">
         <Switch on={listening().autoplay} onChange={(on) => void updateListening({ autoplay: on })} label="Autoplay" />
         Autoplay
       </label>
       {seed && (
-        <button onClick={() => void jumpTo(0)} className="ml-auto truncate rounded-full px-2 py-0.5 text-accent-ink hover:bg-ink/[0.08]" title={`Play “${seed}” again, and the radio from it`}>
+        <button onClick={() => void jumpTo(0)} className="ml-auto min-w-0 max-w-full truncate rounded-full px-2 py-0.5 text-accent-ink hover:bg-ink/[0.08]" title={`Play “${seed}” again, and the radio from it`}>
           Back to {seed}
         </button>
       )}
