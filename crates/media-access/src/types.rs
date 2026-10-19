@@ -381,6 +381,10 @@ pub struct RemoteCollection {
     pub artwork_url: Option<String>,
     /// "playlist" or "podcast".
     pub kind: String,
+    /// What the card's own play button plays (a mix's endpoint, `params` and all): played
+    /// as it came, rather than a radio rebuilt from the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play: Option<RadioEndpoint>,
 }
 
 /// One thing the catalog suggests while words are typed: a song to play, or an album, artist

@@ -1223,6 +1223,8 @@ export interface OnlineCollection {
   subtitle: string | null
   artwork_url: string | null
   kind: 'playlist' | 'podcast'
+  /** What the card's own play button plays (a mix's endpoint, `params` and all), when it has one. */
+  play?: RadioEndpoint | null
 }
 
 /** One thing the catalog suggests while typing: a song to play, or something to open. */

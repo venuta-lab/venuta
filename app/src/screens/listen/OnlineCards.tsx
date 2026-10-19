@@ -5,7 +5,8 @@ import { onlineCollection, type MoodTile, type OnlineCollection, type OnlineShel
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
-import { isRadioList, listIdOf, playRadioAt } from '../../lib/radio'
+import { listIdOf, playRadioAt } from '../../lib/radio'
+import { radioOfCard } from '../../lib/mixes'
 import { menuFor, onlineSongWork } from '../../lib/actions'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
@@ -43,8 +44,10 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
   const { root, openOnlineCollection } = useNav()
   const list = c.kind === 'podcast' ? null : listIdOf(c.collection_id)
   const from = { kind: 'search' as const, ref: c.title, label: `Online: ${c.title}`, list }
-  // One of YouTube Music's own mixes plays as the radio it is; a playlist plays its songs.
-  const play = () => (isRadioList(list) ? void playRadioAt(root, { playlist_id: list }, c.title) : void withCollection(c, (items) => void playAllItems(root, items, from)))
+  // One of YouTube Music's own mixes plays as the radio it is, through what its own play button
+  // plays (a mix's endpoint, params and all); a playlist plays its songs.
+  const mix = radioOfCard(c)
+  const play = () => (mix ? void playRadioAt(root, mix, c.title) : void withCollection(c, (items) => void playAllItems(root, items, from)))
   const menu = () =>
     menuFor(
       'album',
