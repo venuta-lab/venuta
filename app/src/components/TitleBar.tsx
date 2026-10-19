@@ -20,31 +20,35 @@ export function TitleBar(props: { onSearch: () => void; onActivity: () => void }
   useEffect(() => {
     if (inApp()) invoke<boolean>('is_test_copy').then(setTest, () => {})
   }, [])
+  // Three parts: the two sides grow alike, so the search sits in the middle; when the window
+  // narrows, the search shrinks first and never covers what is beside it.
   return (
-    <div data-tauri-drag-region className="@container/title relative z-30 flex h-10 shrink-0 items-center pl-5">
-      <span data-tauri-drag-region className="pointer-events-none flex items-center">
-        <Brand size={29} word={17} />
-      </span>
-      {test && (
-        <span data-tauri-drag-region className="ml-2 rounded-full bg-[#e5484d] px-2 py-0.5 text-[11px] font-semibold text-white">
-          Test copy
+    <div data-tauri-drag-region className="@container/title relative z-30 flex h-10 shrink-0 items-center">
+      <div data-tauri-drag-region className="flex min-w-max flex-1 basis-0 items-center">
+        <span data-tauri-drag-region className="pointer-events-none ml-5 flex items-center">
+          <Brand size={29} word={17} />
         </span>
-      )}
+        {test && (
+          <span data-tauri-drag-region className="ml-2 rounded-full bg-[#e5484d] px-2 py-0.5 text-[11px] font-semibold text-white">
+            Test copy
+          </span>
+        )}
+      </div>
       {/* The music screen puts its search here (ListenScreen, through TITLE_SEARCH). Elsewhere the same
           box stands in for it and opens Search; Ctrl+K is the command palette everywhere. */}
-      <div className="absolute left-1/2 top-1/2 w-[min(420px,36vw)] -translate-x-1/2 -translate-y-1/2 [&:has(>#title-search>*)>.jump]:hidden">
+      <div className="mx-3 min-w-0 shrink grow-0 basis-[min(420px,36vw)] [&:has(>#title-search>*)>.jump]:hidden">
         <div id={TITLE_SEARCH} />
         <button
           onClick={props.onSearch}
           title="Search your music and the online catalog (/). Ctrl+K: go anywhere or run a command"
-          className="jump mx-auto flex w-[min(420px,36vw)] items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
+          className="jump flex w-full items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
         >
           <IconSearch width={14} height={14} />
           <span className="flex-1 truncate text-left">Search songs, albums, artists, playlists</span>
           <kbd>/</kbd>
         </button>
       </div>
-      <div className="ml-auto flex h-full items-center">
+      <div data-tauri-drag-region className="flex h-full min-w-max flex-1 basis-0 items-center justify-end">
         <RoomChip />
         <button
           onClick={askOpenLink}
