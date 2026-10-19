@@ -4,9 +4,9 @@
 
 use crate::playback::Playback;
 use media_access::{
-    AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RemoteAlbum,
-    RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist, RemoteRadio,
-    RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RadioEndpoint,
+    RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist,
+    RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -436,8 +436,16 @@ pub async fn online_home(
     .map_err(|e| e.to_string())?
 }
 
-/// A radio: songs like `seed` (a song id), or more of the radio `playlist_id` after the song
-/// `seed`. Songs you disliked are left out.
+/// Songs you disliked leave what the catalog queues: your own press, the one thing taken out.
+fn without_disliked(tracks: &mut Vec<RemoteTrack>) {
+    let disliked = engine::settings::load().listening.disliked;
+    if !disliked.is_empty() {
+        tracks.retain(|t| !disliked.contains(&format!("{}:{}", t.provider, t.track_id)));
+    }
+}
+
+/// A radio of `seed` (a song id) or of the radio `playlist_id`, for one with no button to
+/// replay. Songs you disliked are left out.
 #[tauri::command]
 pub async fn online_radio(
     seed: Option<String>,
@@ -453,13 +461,73 @@ pub async fn online_radio(
                 &CancellationToken::default(),
             )
             .map_err(words)?;
-        let disliked = engine::settings::load().listening.disliked;
-        if !disliked.is_empty() {
-            radio
-                .tracks
-                .retain(|t| !disliked.contains(&format!("{}:{}", t.provider, t.track_id)));
-        }
+        without_disliked(&mut radio.tracks);
         Ok(radio)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The queue the catalog put on a button, a tuning chip or a list's end, asked for as it came.
+/// `playing`: the song playing, left out when the answer opens with it. Songs you disliked are
+/// left out.
+#[tauri::command]
+pub async fn online_radio_at(
+    endpoint: RadioEndpoint,
+    playing: Option<String>,
+    pb: State<'_, Playback>,
+) -> Result<RemoteRadio, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut radio = access
+            .radio_at(&endpoint, playing.as_deref(), &CancellationToken::default())
+            .map_err(words)?;
+        without_disliked(&mut radio.tracks);
+        Ok(radio)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The next page of the same radio (`endpoint` and `continuation` from the page before). Songs
+/// you disliked are left out.
+#[tauri::command]
+pub async fn online_radio_more(
+    endpoint: RadioEndpoint,
+    continuation: String,
+    pb: State<'_, Playback>,
+) -> Result<RemoteRadio, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut radio = access
+            .radio_more(&endpoint, &continuation, &CancellationToken::default())
+            .map_err(words)?;
+        without_disliked(&mut radio.tracks);
+        Ok(radio)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The catalog's Related songs for a song (`related_id`: its Related page, when known). Songs
+/// you disliked are left out.
+#[tauri::command]
+pub async fn online_related(
+    track_id: String,
+    related_id: Option<String>,
+    pb: State<'_, Playback>,
+) -> Result<Vec<RemoteTrack>, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut tracks = access
+            .related_songs(
+                &track_id,
+                related_id.as_deref(),
+                &CancellationToken::default(),
+            )
+            .map_err(words)?;
+        without_disliked(&mut tracks);
+        Ok(tracks)
     })
     .await
     .map_err(|e| e.to_string())?
