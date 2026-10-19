@@ -57,6 +57,88 @@ pub struct Settings {
     /// defaults (app hotkeys.rs).
     #[serde(default)]
     pub hotkeys: BTreeMap<String, String>,
+    /// What Venuta does with each YouTube Music account and channel, by the key linked
+    /// playlists use (`email#channel`): asked once, at sign-in. One not in here hasn't been
+    /// asked yet and gets the safe choices (`YtmChoices::default`); nothing carries over from
+    /// another account, or from the old switches for the whole library.
+    #[serde(default)]
+    pub ytm_choices: BTreeMap<String, YtmChoices>,
+}
+
+impl Settings {
+    /// The choices made for this account and channel; None until it is asked.
+    pub fn ytm_choices_of(&self, account: &str) -> Option<YtmChoices> {
+        self.ytm_choices.get(account).copied()
+    }
+
+    /// What holds for this account and channel: its choices, or the safe ones until asked.
+    pub fn ytm_choices_for(&self, account: &str) -> YtmChoices {
+        self.ytm_choices_of(account).unwrap_or_default()
+    }
+
+    /// Keep this account's choices (one that needs another goes off without it).
+    pub fn set_ytm_choices(&mut self, account: &str, choices: YtmChoices) {
+        self.ytm_choices
+            .insert(account.to_owned(), choices.settled());
+    }
+}
+
+/// Everything Venuta can do with a YouTube Music account, each a switch. Safe by default:
+/// what only reads is on, because that is why you sign in; what writes to the account or its
+/// history is off until you turn it on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct YtmChoices {
+    /// Recommendations for me: Home, radio, Up next and mixes are asked for as the account.
+    /// Off: YouTube's general ones, as signed out (the library and edits still use it).
+    #[serde(default = "yes")]
+    pub personal: bool,
+    /// My library in Venuta: the account's playlists, albums, artists and songs show in Library.
+    #[serde(default = "yes")]
+    pub library: bool,
+    /// Count plays: online songs played past 30 seconds join the account's history.
+    #[serde(default)]
+    pub count_plays: bool,
+    /// How much I listened: with Count plays, how far into each song you got too.
+    #[serde(default)]
+    pub listening_time: bool,
+    /// Likes and dislikes: a like, unlike or thumbs down here is the same on the account.
+    #[serde(default)]
+    pub likes: bool,
+    /// Signed-in search: searches and suggestions go as the account (and join its history).
+    #[serde(default)]
+    pub signed_search: bool,
+    /// New YouTube likes come in: songs liked there join Liked songs here when Venuta starts.
+    #[serde(default)]
+    pub new_likes_in: bool,
+    /// Linked playlists stay in step on their own (on open, after a change, every half hour).
+    /// Off: only when you press Sync.
+    #[serde(default = "yes")]
+    pub links_in_step: bool,
+}
+
+impl Default for YtmChoices {
+    fn default() -> Self {
+        YtmChoices {
+            personal: true,
+            library: true,
+            count_plays: false,
+            listening_time: false,
+            likes: false,
+            signed_search: false,
+            new_likes_in: false,
+            links_in_step: true,
+        }
+    }
+}
+
+impl YtmChoices {
+    /// The same choices, with one that needs another off without it.
+    pub fn settled(self) -> Self {
+        YtmChoices {
+            listening_time: self.listening_time && self.count_plays,
+            ..self
+        }
+    }
 }
 
 /// A proxy address as it may be used: `http`, `https`, `socks5` or `socks5h`, then a host and a
@@ -117,15 +199,17 @@ pub struct Listening {
     /// Say each new song in a Windows notification while Venuta is in the background.
     #[serde(default)]
     pub song_notifications: bool,
-    /// Signed in to YouTube Music: liking, unliking or disliking an online song in Venuta does
-    /// the same on the account. Off until you switch it on.
+    /// Signed in to YouTube Music: liking, unliking or disliking an online song in Venuta did
+    /// the same on the account. Kept so older files read; each account has its own now
+    /// (`YtmChoices::likes`), and this one is never used.
     #[serde(default)]
     pub sync_likes: bool,
-    /// Tell the YouTube Music account what is played here (after 30 seconds of a song), so its
-    /// history and recommendations learn from Venuta too. Off until switched on.
+    /// Told the YouTube Music account what is played here. Kept so older files read; each
+    /// account has its own now (`YtmChoices::count_plays`), and this one is never used.
     #[serde(default)]
     pub report_plays: bool,
-    /// The sign-in's three offers (likes in, likes out, plays) were made once already.
+    /// The sign-in's offers were made once, for the whole library. Kept so older files read;
+    /// each account is asked now (`Settings::ytm_choices`), and this one is never used.
     #[serde(default)]
     pub ytm_offered: bool,
     /// Only your own music: the online catalog's parts are hidden and Venuta makes no online
@@ -153,6 +237,13 @@ pub struct Listening {
     /// `lyrics_online::order`); empty: the default order, all on.
     #[serde(default)]
     pub lyrics_sources: Vec<String>,
+    /// Hybrid: when an online song is one you have, play your file in its place.
+    #[serde(default = "yes")]
+    pub play_my_copy: bool,
+    /// Artists you blocked are hidden from what the catalog picks (its radio, Home, autoplay).
+    /// Off: they may come again; the list itself is kept.
+    #[serde(default = "yes")]
+    pub hide_blocked: bool,
 }
 
 /// An artist never to be offered: by their catalog id when known, and by name.
@@ -189,6 +280,8 @@ impl Default for Listening {
             together_delay: Default::default(),
             shortcuts: Vec::new(),
             lyrics_sources: Vec::new(),
+            play_my_copy: true,
+            hide_blocked: true,
         }
     }
 }
@@ -301,6 +394,90 @@ mod tests {
         let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
         assert!(!old.report_plays && !old.ytm_offered);
         assert!(!Listening::default().report_plays);
+    }
+
+    #[test]
+    fn a_new_account_gets_the_safe_choices() {
+        let safe = YtmChoices::default();
+        // What only reads is on: that is why you sign in.
+        assert!(safe.personal && safe.library && safe.links_in_step);
+        // What writes to the account or its history is off until you turn it on.
+        assert!(!safe.count_plays && !safe.listening_time && !safe.likes);
+        assert!(!safe.signed_search && !safe.new_likes_in);
+        let blank: YtmChoices = serde_json::from_str("{}").unwrap();
+        assert_eq!(blank, safe, "a choice added later starts safe too");
+    }
+
+    #[test]
+    fn the_old_switches_for_the_whole_library_reach_no_account() {
+        // A test copy of a library carried these from the owner's Venuta: no account takes them.
+        let old: Settings = serde_json::from_str(
+            r#"{"rules_dir": null, "new_library": null,
+                "listening": {"sync_likes": true, "report_plays": true, "ytm_offered": true}}"#,
+        )
+        .unwrap();
+        assert!(
+            old.listening.sync_likes && old.listening.report_plays,
+            "still readable"
+        );
+        assert_eq!(
+            old.ytm_choices_of("me@example.com#own"),
+            None,
+            "never asked"
+        );
+        let now = old.ytm_choices_for("me@example.com#own");
+        assert!(!now.count_plays && !now.likes);
+        assert_eq!(now, YtmChoices::default());
+    }
+
+    #[test]
+    fn each_account_and_channel_keeps_its_own_choices() {
+        let mut s = Settings::default();
+        let counted = YtmChoices {
+            count_plays: true,
+            ..Default::default()
+        };
+        s.set_ytm_choices("me@example.com#own", counted);
+        assert_eq!(s.ytm_choices_of("me@example.com#own"), Some(counted));
+        assert_eq!(
+            s.ytm_choices_of("me@example.com#brand"),
+            None,
+            "a channel is asked too"
+        );
+        assert_eq!(s.ytm_choices_of("other@example.com#own"), None);
+        // Kept with the settings, and read back the same.
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.ytm_choices_of("me@example.com#own"), Some(counted));
+    }
+
+    #[test]
+    fn how_much_you_listened_goes_only_with_count_plays() {
+        let mut s = Settings::default();
+        s.set_ytm_choices(
+            "a#own",
+            YtmChoices {
+                listening_time: true,
+                ..Default::default()
+            },
+        );
+        assert!(!s.ytm_choices_for("a#own").listening_time);
+        s.set_ytm_choices(
+            "a#own",
+            YtmChoices {
+                count_plays: true,
+                listening_time: true,
+                ..Default::default()
+            },
+        );
+        assert!(s.ytm_choices_for("a#own").listening_time);
+    }
+
+    #[test]
+    fn your_copy_plays_and_blocked_artists_stay_hidden_unless_switched_off() {
+        let old: Listening = serde_json::from_str(r#"{"autoplay": true}"#).unwrap();
+        assert!(old.play_my_copy && old.hide_blocked);
+        let now = Listening::default();
+        assert!(now.play_my_copy && now.hide_blocked);
     }
 
     #[test]
