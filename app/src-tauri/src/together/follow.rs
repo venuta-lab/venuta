@@ -185,7 +185,9 @@ impl Follower {
         let Some(plan) = self.plan(&t, st.same_room) else {
             return;
         };
-        let tolerance = Duration::from_micros(if st.same_room { 1_000 } else { 5_000 });
+        // Apart, the player plays on through anything under 300 ms; telling it of every few ms
+        // the estimate moves would only be noise.
+        let tolerance = Duration::from_micros(if st.same_room { 1_000 } else { 50_000 });
         let moved = match (st.anchor, plan.anchor) {
             (None, Some(_)) => true,
             (Some(a), Some(b)) => a.max(b) - a.min(b) > tolerance,
@@ -209,6 +211,28 @@ impl Follower {
         };
         st.next = None;
         st.next_due = None;
+        // The song in the player already (a resume, a seek, the same song again): ready where the
+        // room asks without opening it again; a stream from the host would start over from its
+        // first byte, and a press would take seconds.
+        if !st.player_error && st.now.as_ref().is_some_and(|n| n.key == song.key) {
+            st.now = Some(Loaded {
+                index,
+                key: song.key.clone(),
+            });
+            st.anchor = None;
+            let _ = self.pb().room_sync(Some(SyncPlan {
+                anchor: None,
+                position_ms,
+                playing: true,
+                same_room: st.same_room,
+                extra_latency_ms: self.delay_ms,
+            }));
+            st.pending = Some((rev, index, false));
+            if let Some(how) = st.heard.get(&song.key).copied() {
+                self.report_hearing_later(st, rev, index, how);
+            }
+            return;
+        }
         match self.copy_of(&song, st) {
             Some(c) => {
                 let _ = self.pb().room_load(&self.root, c.item, position_ms, c.own);
@@ -375,6 +399,15 @@ impl Follower {
                 }
                 In::Room(view) => {
                     st.queue = view.queue;
+                    // Songs taken out or moved before the one playing shift it: it is the same
+                    // song (by its key), not one to open again.
+                    for loaded in [&mut st.now, &mut st.next].into_iter().flatten() {
+                        if st.queue.get(loaded.index).map(|q| &q.key) != Some(&loaded.key)
+                            && let Some(i) = st.queue.iter().position(|q| q.key == loaded.key)
+                        {
+                            loaded.index = i;
+                        }
+                    }
                     let way_changed = st.same_room != view.same_room;
                     st.same_room = view.same_room;
                     // Same room switched on or off: the player follows the new way at once.

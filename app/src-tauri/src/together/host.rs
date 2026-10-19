@@ -331,6 +331,11 @@ impl Host {
                         && let Some(rtt) = net::path_of(&conn).rtt_ms
                     {
                         self.room.lock().unwrap().round_trip(i64::from(rtt) * 1_000);
+                        // Someone farther than this network now: same room goes back to apart.
+                        let same_room = self.room.lock().unwrap().view(true).same_room;
+                        if same_room && !self.all_on_one_network() {
+                            self.set(|room| room.set_same_room(false));
+                        }
                     }
                 }
                 _ if !in_room => {}
@@ -501,6 +506,18 @@ impl Host {
         let c = self.room.lock().unwrap().undo(HOST, self.clock.now_us())?;
         self.apply(c);
         Ok(())
+    }
+
+    /// Whether everyone is on this network (same room can work).
+    pub fn all_on_one_network(&self) -> bool {
+        let paths: Vec<net::Path> = self
+            .conns
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(_, c)| net::path_of(c))
+            .collect();
+        net::same_room_possible(&paths)
     }
 
     pub fn set(&self, f: impl FnOnce(&mut Room) -> Changes) {

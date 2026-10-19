@@ -68,6 +68,8 @@ export interface RoomView {
   activity: Activity[]
   new_role: Role
   same_room: boolean
+  /** A song getting ready to start: who it still waits for (empty: about to go). */
+  starting?: string[] | null
 }
 
 export interface TogetherView {
@@ -184,7 +186,10 @@ const ask = (action: Record<string, unknown>) => invoke('together_ask', { action
 const route = {
   toggle: () => {
     if (!can(view, 'control')) return explainNo('control')
-    return ask({ do: view.room?.timeline?.playing ? 'pause' : 'play' })
+    // Playing or on its way (the button shows pause for both): pause. Deciding from the room's
+    // paused-while-it-starts state sent Play, which took the room back to the song before.
+    const going = !!view.room?.timeline?.playing || view.room?.starting != null
+    return ask({ do: going ? 'pause' : 'play' })
   },
   next: () => (can(view, 'control') ? ask({ do: 'next' }) : explainNo('control')),
   previous: () => (can(view, 'control') ? ask({ do: 'previous' }) : explainNo('control')),

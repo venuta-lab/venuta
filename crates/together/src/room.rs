@@ -19,7 +19,7 @@ use std::collections::{HashSet, VecDeque};
 /// The host's member id.
 pub const HOST: u32 = 0;
 /// How long a start waits for everyone to be ready before going without the slow ones.
-pub const READY_WAIT_US: i64 = 8_000_000;
+pub const READY_WAIT_US: i64 = 2_500_000;
 /// How long before a song ends the next one is prepared.
 pub const PREPARE_AHEAD_US: i64 = 10_000_000;
 /// How many activity lines are kept.
@@ -47,6 +47,8 @@ struct Preparing {
     since_us: i64,
     /// For a next song prepared ahead: when it starts (the last one's end), else as soon as ready.
     starts_at_us: Option<i64>,
+    /// The same song as it was known before the queue changed (a Ready for it still counts).
+    also: Vec<(u64, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -322,9 +324,11 @@ impl Room {
         Changes::default()
     }
 
-    /// A guest's round trip, for how far ahead starts are set.
+    /// A guest's round trip, for how far ahead starts are set: the slowest lately, easing back
+    /// down after one slow reading (so one bad moment doesn't slow every start after it).
     pub fn round_trip(&mut self, rtt_us: i64) {
-        self.slowest_rtt_us = self.slowest_rtt_us.max(rtt_us);
+        let eased = self.slowest_rtt_us - (self.slowest_rtt_us - rtt_us).max(0) / 8;
+        self.slowest_rtt_us = rtt_us.max(eased);
     }
 
     /// The playing song's real length, from the host's player.
@@ -337,7 +341,7 @@ impl Room {
         let Some(prep) = &mut self.preparing else {
             return Changes::default();
         };
-        if (prep.rev, prep.index) != (rev, index) {
+        if (prep.rev, prep.index) != (rev, index) && !prep.also.contains(&(rev, index)) {
             return Changes::default();
         }
         prep.waiting.remove(&id);
@@ -365,6 +369,15 @@ impl Room {
         }
         Ok(match action {
             Action::Play => {
+                // A song on its way already: it stays on its way (pressing again because it
+                // seemed slow must never send the room back to the song before).
+                if self
+                    .preparing
+                    .as_ref()
+                    .is_some_and(|p| p.starts_at_us.is_none())
+                {
+                    return Ok(Changes::default());
+                }
                 let Some(t) = self.timeline else {
                     return Ok(self.prepare(self.current_index().unwrap_or(0), 0, None, now_us));
                 };
@@ -396,6 +409,11 @@ impl Room {
                 Changes::room()
             }
             Action::Seek { position_ms } => {
+                // While a song gets ready, the seek moves where it starts.
+                if let Some(p) = self.preparing.as_ref().filter(|p| p.starts_at_us.is_none()) {
+                    let index = p.index;
+                    return Ok(self.prepare(index, position_ms, None, now_us));
+                }
                 let Some(t) = self.timeline.or(self.preparing.as_ref().map(|p| Timeline {
                     index: p.index,
                     rev: p.rev,
@@ -501,6 +519,7 @@ impl Room {
                     return Ok(Changes::default());
                 }
                 self.keep_undo();
+                self.remember_preparing();
                 let s = self.queue.remove(from);
                 self.queue.insert(to, s);
                 // The playing entry keeps playing wherever it moves.
@@ -623,6 +642,7 @@ impl Room {
             waiting,
             since_us: now_us,
             starts_at_us,
+            also: Vec::new(),
         });
         self.length_ms = None;
         Changes {
@@ -663,8 +683,20 @@ impl Room {
             .or(self.timeline.map(|t| t.index))
     }
 
+    /// The song being readied, as people know it now: still known so after the queue changes
+    /// (their Ready, sent for it as it was, still counts).
+    fn remember_preparing(&mut self) {
+        if let Some(p) = &mut self.preparing {
+            let was = (p.rev, p.index);
+            if !p.also.contains(&was) {
+                p.also.push(was);
+            }
+        }
+    }
+
     /// Entries at or after `at` moved by `by`: the playing one keeps its song.
     fn queue_changed(&mut self, at: usize, by: isize) {
+        self.remember_preparing();
         let shift = |i: usize| {
             if i >= at {
                 (i as isize + by).max(0) as usize
@@ -755,6 +787,17 @@ impl Room {
             activity: self.activity.iter().cloned().collect(),
             new_role: self.new_role,
             same_room: self.same_room,
+            starting: self
+                .preparing
+                .as_ref()
+                .filter(|p| p.starts_at_us.is_none())
+                .map(|p| {
+                    self.people
+                        .iter()
+                        .filter(|m| p.waiting.contains(&m.id))
+                        .map(|m| m.name.clone())
+                        .collect()
+                }),
         }
     }
 
@@ -882,6 +925,87 @@ mod tests {
         let t = r.timeline().unwrap();
         assert!(t.playing);
         assert_eq!(t.at_us, 800_000, "half a second ahead of the last ready");
+    }
+
+    #[test]
+    fn play_while_a_song_starts_changes_nothing() {
+        let mut r = room();
+        let _ravi = join(&mut r, "k1", "Ravi");
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.tick(READY_WAIT_US);
+        r.ask(HOST, Action::Next, 10_000_000).unwrap();
+        // Pressed again while the next song gets ready (the button looked like nothing
+        // happened): it stays on its way, never back to the song before.
+        let c = r.ask(HOST, Action::Play, 10_200_000).unwrap();
+        assert_eq!(c.prepare, None);
+        assert_eq!(r.preparing().map(|p| p.1), Some(1));
+    }
+
+    #[test]
+    fn a_seek_while_a_song_starts_moves_its_start() {
+        let mut r = room();
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        r.ask(HOST, Action::Next, 5_000_000).unwrap();
+        let c = r
+            .ask(
+                HOST,
+                Action::Seek {
+                    position_ms: 30_000,
+                },
+                5_100_000,
+            )
+            .unwrap();
+        assert_eq!(c.prepare.map(|p| (p.1, p.2)), Some((1, 30_000)));
+    }
+
+    #[test]
+    fn ready_still_counts_after_the_queue_changes_mid_start() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        let (rev, index, _) = r.ask(HOST, Action::Play, 0).unwrap().prepare.unwrap();
+        // Someone adds a song while it gets ready: the start isn't held up by it.
+        r.ask(
+            ravi,
+            Action::Add {
+                songs: vec![song(9)],
+                next: false,
+            },
+            100_000,
+        )
+        .unwrap();
+        r.ready(HOST, rev, index, 200_000);
+        r.ready(ravi, rev, index, 300_000);
+        assert!(r.timeline().is_some_and(|t| t.playing), "started at once");
+    }
+
+    #[test]
+    fn a_slow_guest_holds_a_start_two_and_a_half_seconds_at_most() {
+        assert_eq!(READY_WAIT_US, 2_500_000);
+    }
+
+    #[test]
+    fn one_slow_round_trip_doesnt_slow_every_start_after() {
+        let mut r = room();
+        r.round_trip(900_000);
+        let spiked = r.slowest_rtt_us;
+        for _ in 0..30 {
+            r.round_trip(40_000);
+        }
+        assert!(r.slowest_rtt_us < spiked / 4, "{}", r.slowest_rtt_us);
+        assert!(r.slowest_rtt_us >= 40_000);
+    }
+
+    #[test]
+    fn the_room_says_a_song_is_starting_and_who_it_waits_for() {
+        let mut r = room();
+        let _ravi = join(&mut r, "k1", "Ravi");
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        let v = r.view(false);
+        assert_eq!(v.starting, Some(vec!["Ravi".to_owned()]));
+        r.tick(READY_WAIT_US);
+        assert_eq!(r.view(false).starting, None, "playing");
     }
 
     #[test]

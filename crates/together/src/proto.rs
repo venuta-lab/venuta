@@ -271,6 +271,9 @@ pub struct RoomView {
     pub new_role: Role,
     /// Speakers in one room: tight sync (correcting by single samples).
     pub same_room: bool,
+    /// A song getting ready to start: who it still waits for, by name (empty: about to go).
+    #[serde(default)]
+    pub starting: Option<Vec<String>>,
 }
 
 /// What the host sends a guest.

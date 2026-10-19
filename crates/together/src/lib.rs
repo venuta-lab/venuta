@@ -16,7 +16,7 @@ pub mod room;
 pub mod timeline;
 
 /// The protocol version both sides speak; a Venuta speaking another is told to update.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// How many people a room holds, the host included (the host's upload carries streamed songs).
 pub const MAX_PEOPLE: usize = 10;

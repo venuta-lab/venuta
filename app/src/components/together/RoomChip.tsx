@@ -298,6 +298,19 @@ function People({ v, host }: { v: TogetherView; host: boolean }) {
   )
 }
 
+/** A song on its way: said, with who it waits for, so a press is seen to have worked. */
+function Starting({ v }: { v: TogetherView }) {
+  const who = v.room?.starting
+  if (who == null) return null
+  const names = who.length > 2 ? `${who.slice(0, 2).join(', ')} and ${who.length - 2} more` : who.join(' and ')
+  return (
+    <p className="flex items-center gap-2 py-1 text-[12px] text-ink/65" role="status">
+      <span className="keep-round h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
+      {names ? `Starting, waiting for ${names}…` : 'Starting…'}
+    </p>
+  )
+}
+
 function ActivityLine({ v, host }: { v: TogetherView; host: boolean }) {
   const a = v.room?.activity ?? []
   if (!a.length) return null
@@ -385,6 +398,7 @@ function HostPanel({ v }: { v: TogetherView }) {
       ))}
       <People v={v} host />
       {room.members.length === 1 && !room.waiting.length && <p className="py-1 text-[12px] text-ink/50">Waiting for friends. Copy the invite and send it to them.</p>}
+      <Starting v={v} />
       <ActivityLine v={v} host />
       <div className="mt-2 grid gap-2 border-t border-edge pt-2.5 text-[12.5px]">
         <div className="flex items-center gap-2">
@@ -392,7 +406,7 @@ function HostPanel({ v }: { v: TogetherView }) {
           <RoleMenu value={room.new_role} onChange={(r) => void setNewRole(r)} label="What new people can do" />
         </div>
         <div className="flex items-center gap-2">
-          <span className="flex-1 text-ink/65" title="Speakers that hear each other: sync within a few milliseconds (no longer bit-perfect while it corrects)">
+          <span className="flex-1 text-ink/65" title="For speakers that hear each other, with everyone on this Wi-Fi: within a few milliseconds (not bit-perfect while it corrects). Over the internet each of you hears it smoothly on your own.">
             Same room (tight sync)
           </span>
           <Switch on={room.same_room} onChange={(on) => void setSameRoom(on)} label="Same room" />
@@ -437,6 +451,7 @@ function GuestPanel({ v }: { v: TogetherView }) {
       </div>
       {v.state === 'reconnecting' && <p className="mb-1.5 text-[12px] text-ink/60">Reconnecting… the music goes on meanwhile.</p>}
       <People v={v} host={false} />
+      <Starting v={v} />
       <ActivityLine v={v} host={false} />
       <Delay v={v} />
       <div className="mt-2.5 flex items-center justify-between">

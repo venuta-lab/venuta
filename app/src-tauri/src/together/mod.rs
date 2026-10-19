@@ -510,7 +510,16 @@ pub fn together_new_role(t: State<'_, Together>, role_name: String) -> Result<()
 
 #[tauri::command]
 pub fn together_same_room(t: State<'_, Together>, on: bool) -> Result<(), String> {
-    with_host(&t, |h| h.set(|room| room.set_same_room(on)))
+    with_host(&t, |h| {
+        if on && !h.all_on_one_network() {
+            return Err(
+                "Same room is for speakers that hear each other: everyone on this Wi-Fi. Over the internet each of you hears it smoothly on your own."
+                    .to_owned(),
+            );
+        }
+        h.set(|room| room.set_same_room(on));
+        Ok(())
+    })?
 }
 
 #[tauri::command]

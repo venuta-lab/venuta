@@ -107,11 +107,23 @@ pub async fn ticket(ep: &Endpoint, reach: &Reach) -> String {
 }
 
 /// How a connection reaches the other side now (for the panel and the connection check).
-#[derive(Debug, Clone, Default, serde::Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, PartialEq)]
 pub struct Path {
     pub direct: bool,
     pub relay: bool,
     pub rtt_ms: Option<u32>,
+}
+
+/// The longest round trip that still means one network (Wi-Fi at home, a LAN).
+pub const SAME_NETWORK_RTT_MS: u32 = 8;
+
+/// Whether speakers that hear each other can be kept within a few ms: every connection direct
+/// and as quick as one network. Over the internet the clock can't be known that well (the way
+/// there and back differ by unknown ms), and trying only makes the music crackle.
+pub fn same_room_possible(paths: &[Path]) -> bool {
+    paths
+        .iter()
+        .all(|p| p.direct && p.rtt_ms.is_some_and(|r| r <= SAME_NETWORK_RTT_MS))
 }
 
 pub fn path_of(conn: &Connection) -> Path {
@@ -207,6 +219,40 @@ impl Clock {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_room_needs_one_network() {
+        use super::{Path, same_room_possible};
+        let lan = Path {
+            direct: true,
+            relay: false,
+            rtt_ms: Some(3),
+        };
+        let far = Path {
+            direct: true,
+            relay: false,
+            rtt_ms: Some(40),
+        };
+        let relayed = Path {
+            direct: false,
+            relay: true,
+            rtt_ms: Some(2),
+        };
+        assert!(same_room_possible(&[lan, lan]));
+        assert!(same_room_possible(&[]), "the host alone");
+        assert!(
+            !same_room_possible(&[lan, far]),
+            "one friend over the internet"
+        );
+        assert!(!same_room_possible(&[relayed]));
+        assert!(
+            !same_room_possible(&[Path {
+                rtt_ms: None,
+                ..lan
+            }]),
+            "not measured yet"
+        );
+    }
+
     #[test]
     fn your_key_is_the_same_in_one_room_and_different_in_others() {
         let mine = [7u8; 32];
