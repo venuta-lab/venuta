@@ -52,6 +52,11 @@ pub struct AccountPlaylist {
     /// The account made it, so it can change it.
     pub owned: bool,
     pub collaborative: bool,
+    /// A collaborative playlist's people (their pictures), and the words beside them.
+    #[serde(default)]
+    pub people: Vec<String>,
+    #[serde(default)]
+    pub people_text: Option<String>,
     #[serde(default)]
     pub artwork_url: Option<String>,
     pub tracks: Vec<AccountTrack>,

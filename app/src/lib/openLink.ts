@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { catalogNow } from './catalog'
-import { onlineSearch, type OnlineTrack } from './engine'
+import { onlineSearch, ytmJoin, type OnlineTrack } from './engine'
+import { notify } from './notify'
+import { ytmLibraryChanged, ytmReady } from './ytmLibrary'
+import { confirmAsk } from '../components/Confirm'
 import { ownedIndex, titleCore } from './owned'
 import { startRadio } from './radio'
 import { toItem, toRemoteItem } from './player'
@@ -33,6 +36,24 @@ export const askOpenLink = () => window.dispatchEvent(new Event('venuta:open-lin
 export type Opened = 'music' | 'playlists'
 
 export async function openLink(root: string, link: string): Promise<Opened> {
+  // A collaborative playlist's invite: joined when you say so (else it opens to look at).
+  if (/[?&]jct=/.test(link) && /youtube\.com/i.test(link)) {
+    if (!ytmReady()) notify('Sign in to YouTube Music (Settings, Online) to join a shared playlist. It opens here to look at.')
+    else {
+      const ok = await confirmAsk({
+        title: 'Join this shared playlist?',
+        text: 'It joins your YouTube Music library, and you can add songs to it. Each person can take out only what they added.',
+        confirm: 'Join',
+      })
+      if (ok) {
+        const id = await ytmJoin(link)
+        ytmLibraryChanged(['playlists'])
+        notify('Joined. It’s in your playlists.')
+        showMusicPage({ kind: 'online-collection', collection: { provider: 'remote_catalog', collection_id: id, title: '', subtitle: null, artwork_url: null, kind: 'playlist' } })
+        return 'music'
+      }
+    }
+  }
   const r = await invoke<LinkOpen>('open_link', { link })
   const t = r.target
   const lead = r.artists[0] ?? ''

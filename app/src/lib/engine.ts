@@ -1350,6 +1350,9 @@ export interface YtmPlaylist {
   /** The account made it, so it can change it. */
   owned: boolean
   collaborative: boolean
+  /** A collaborative playlist's people (their pictures), and the words beside them. */
+  people: string[]
+  people_text: string | null
   artwork_url: string | null
   tracks: YtmTrack[]
   /** Every page came (a sync never reads a missing song as taken out when false). */

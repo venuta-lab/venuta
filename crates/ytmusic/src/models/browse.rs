@@ -224,6 +224,10 @@ pub struct PlaylistPage {
     /// what you added (which is per row, see `SongItem::set_video_id`). YouTube says so by turning
     /// the header's facepile into the "Collaborate" panel's button.
     pub collaborative: bool,
+    /// A collaborative playlist's people, as its facepile shows them: each one's picture, and
+    /// the words beside them ("Aakash and 2 others"). Empty otherwise.
+    pub people: Vec<String>,
+    pub people_text: Option<String>,
     /// Absent on lists YouTube will not reorder at all: albums and its own radio mixes.
     pub sort_menu: Option<SortMenu>,
     /// Token for the "Suggestions" shelf YouTube Music puts under a playlist you own (#395), read
@@ -514,11 +518,30 @@ pub fn parse_playlist(root: &Value) -> PlaylistPage {
     // The facepile is on every playlist header (the owner's avatar); only a collaborative one taps
     // through to the Collaborate panel, and it also carries an avatar per contributor. Note a
     // collaborative playlist you own has no editable header at all, so `owned` reads false on it.
-    let collaborative = find_all(root, "facepile").iter().any(|f| {
+    let facepiles = find_all(root, "facepile");
+    let collab_pile = facepiles.iter().find(|f| {
         find_all(f, "tag")
             .iter()
             .any(|t| t.as_str() == Some("PAplaylist_collaborate"))
     });
+    let collaborative = collab_pile.is_some();
+    let people: Vec<String> = collab_pile
+        .map(|f| {
+            find_all(f, "avatarViewModel")
+                .into_iter()
+                .filter_map(|a| find_first_str(a, "url"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let people_text = collab_pile
+        .and_then(|f| {
+            f.get("avatarStackViewModel")?
+                .get("text")?
+                .get("content")?
+                .as_str()
+        })
+        .map(str::to_owned)
+        .filter(|t| !t.trim().is_empty());
     PlaylistPage {
         title,
         subtitle,
@@ -530,6 +553,8 @@ pub fn parse_playlist(root: &Value) -> PlaylistPage {
         continuation: shelf_continuation(root),
         owned,
         collaborative,
+        people,
+        people_text,
         sort_menu: sort_menu(root),
         suggestions: owned.then(|| suggestions_token(root)).flatten(),
     }
@@ -1862,8 +1887,32 @@ mod tests {
         let collab = json!({ "avatarStackViewModel": { "rendererContext": { "commandContext": {
             "onTap": { "innertubeCommand": { "showEngagementPanelEndpoint": {
                 "identifier": { "tag": "PAplaylist_collaborate" } } } } } } } });
-        assert!(!parse_playlist(&page(owner_only)).collaborative);
+        assert!(!parse_playlist(&page(owner_only.clone())).collaborative);
         assert!(parse_playlist(&page(collab)).collaborative);
+        assert!(parse_playlist(&page(owner_only)).people.is_empty());
+    }
+
+    /// A collaborative playlist's facepile: a picture per person and the words beside them.
+    #[test]
+    fn a_collaborative_playlists_people_are_its_facepile() {
+        let page = json!({ "contents": { "sectionListRenderer": { "contents": [
+            { "musicResponsiveHeaderRenderer": { "facepile": { "avatarStackViewModel": {
+                "avatars": [
+                    { "avatarViewModel": { "image": { "sources": [{ "url": "https://yt3.ggpht.com/a" }] } } },
+                    { "avatarViewModel": { "image": { "sources": [{ "url": "https://yt3.ggpht.com/b" }] } } }
+                ],
+                "text": { "content": "Aakash and 1 other" },
+                "rendererContext": { "commandContext": { "onTap": { "innertubeCommand": {
+                    "showEngagementPanelEndpoint": { "identifier": { "tag": "PAplaylist_collaborate" } } } } } }
+            } } } }
+        ] } } });
+        let p = parse_playlist(&page);
+        assert!(p.collaborative);
+        assert_eq!(
+            p.people,
+            ["https://yt3.ggpht.com/a", "https://yt3.ggpht.com/b"]
+        );
+        assert_eq!(p.people_text.as_deref(), Some("Aakash and 1 other"));
     }
 
     /// An owned playlist's page carries a suggestions section ("add more to this playlist") with a

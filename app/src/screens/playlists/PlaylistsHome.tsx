@@ -16,6 +16,7 @@ import { useYtmAccount } from '../../lib/ytmAccount'
 import { CollectionCard } from '../listen/OnlineCards'
 import { useYtmPart } from '../../lib/ytmLibrary'
 import { YtmSignInAgain } from '../listen/YtmLibrary'
+import { askOpenLink } from '../../lib/openLink'
 
 /** A playlist with no songs yet, small: opens it, has its menu, takes songs dropped on it. */
 function EmptyPlaylist(props: { root: string; p: PlaylistSummary; onOpen: () => void }) {
@@ -273,7 +274,12 @@ export function PlaylistsHome(props: {
                   <CollectionCard key={c.collection_id} collection={c} />
                 ))}
               </div>,
-              <span className="text-[12.5px] text-ink/50">{account?.name ?? ''}</span>,
+              <span className="flex items-center gap-3 text-[12.5px] text-ink/50">
+                {account?.name ?? ''}
+                <button onClick={askOpenLink} title="Paste a collaborative playlist's invite link to join it" className="btn-ghost btn-sm">
+                  Join with an invite link
+                </button>
+              </span>,
             )}
           {podcastsShown.length > 0 &&
             section(

@@ -8,7 +8,7 @@ import { IconClose, IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '..
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { SavePlaylistButton } from '../../components/YtmButtons'
-import { onlineCollection, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, type OnlineCollection, type OnlineTrack, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
+import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, type OnlineCollection, type OnlineTrack, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
@@ -72,6 +72,8 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
     }
   }, [c.collection_id, asAccount, stamp])
   const owned = !!mine?.owned
+  // Open to collaborators: anyone in it adds songs, and each takes out only what they added.
+  const collab = !!mine?.collaborative
   const playlistId = mine?.playlist_id ?? c.collection_id.replace(/^VL/, '')
   const title = mine?.title || c.title
 
@@ -161,7 +163,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
         </div>
         <motion.div className="min-w-[260px] flex-1 pb-1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.05 }}>
           <p className="flex items-center gap-2 text-[13px] font-medium text-ink/60">
-            {podcast ? 'Podcast' : owned ? 'Your playlist' : 'Playlist'} <AvailabilityBadge availability="online" />
+            {podcast ? 'Podcast' : collab ? 'Collaborative playlist' : owned ? 'Your playlist' : 'Playlist'} <AvailabilityBadge availability="online" />
           </p>
           {owned && mine ? (
             <Details mine={mine} onSave={(edits, next) => {
@@ -194,6 +196,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
               </button>
             )}
           </div>
+          {asAccount && mine && !podcast && (owned || collab) && <Collaborate mine={mine} onChanged={() => setStamp((n) => n + 1)} />}
         </motion.div>
       </div>
 
@@ -209,10 +212,10 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
         ) : (
           <>
             <OnlineTrackHeader />
-            {owned ? (
-              <Reorder.Group axis="y" values={tracks} onReorder={(next) => setTracks(next)} className="mt-1 grid gap-0.5">
+            {owned || collab ? (
+              <Reorder.Group axis="y" values={tracks} onReorder={(next) => owned && setTracks(next)} className="mt-1 grid gap-0.5">
                 {tracks.map((t, i) => (
-                  <OwnedRow key={t.set_video_id ?? `${keyOf(t)}:${i}`} track={t} onRemove={() => remove(t)} onDrop={() => reorder(tracks)}>
+                  <OwnedRow key={t.set_video_id ?? `${keyOf(t)}:${i}`} track={t} canDrag={owned} onRemove={() => remove(t)} onDrop={() => owned && reorder(tracks)}>
                     {row(t, i)}
                   </OwnedRow>
                 ))}
@@ -231,12 +234,13 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   )
 }
 
-/** A song of your own playlist: dragged by its grip, taken out with ×. */
-function OwnedRow(props: { track: YtmTrack; onRemove: () => void; onDrop: () => void; children: React.ReactNode }) {
+/** A song of your own playlist: dragged by its grip, taken out with ×. In a collaborative one
+ *  you don't own, only ×: YouTube Music lets each person take out what they added. */
+function OwnedRow(props: { track: YtmTrack; canDrag: boolean; onRemove: () => void; onDrop: () => void; children: React.ReactNode }) {
   const drag = useDragControls()
   return (
     <Reorder.Item value={props.track} dragListener={false} dragControls={drag} onDragEnd={props.onDrop} className="group flex items-center gap-1">
-      <DragHandle label={props.track.title} onPointerDown={(e) => drag.start(e)} />
+      {props.canDrag && <DragHandle label={props.track.title} onPointerDown={(e) => drag.start(e)} />}
       <div className="min-w-0 flex-1">{props.children}</div>
       <button
         aria-label={`Take ${props.track.title} out of the playlist`}
@@ -321,6 +325,69 @@ function Details(props: { mine: YtmPlaylist; onSave: (edits: YtmEdit[], next: Pa
           ))}
         </select>
       </label>
+    </div>
+  )
+}
+
+/** Collaborating: the people in it, the invite link, and whether new people may join. Inviting
+ *  and closing are the owner's; anyone else is told so by YouTube Music's answer. */
+function Collaborate({ mine, onChanged }: { mine: YtmPlaylist; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [closed, setClosed] = useState(false)
+  const ownerOnly = 'Only the playlist’s owner can do that. Ask them for the invite link.'
+  const invite = async () => {
+    setBusy(true)
+    try {
+      const link = await ytmInvite(mine.playlist_id)
+      await navigator.clipboard?.writeText(link).catch(() => {})
+      notify(
+        mine.collaborative
+          ? 'Invite link copied.'
+          : 'Invite link copied. Anyone signed in to YouTube Music can add songs with it; each person can take out only what they added.',
+      )
+      if (!mine.collaborative) onChanged()
+    } catch (e) {
+      notify(mine.owned ? onlineProblem(e) : ownerOnly)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const close = async (next: boolean) => {
+    setBusy(true)
+    try {
+      await ytmCloseToCollaborators(mine.playlist_id, next)
+      setClosed(next)
+      notify(next ? 'No one new can join now. Everyone in it can still add songs.' : 'People can join with the invite link again.')
+    } catch (e) {
+      notify(mine.owned ? onlineProblem(e) : ownerOnly)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mt-4 flex max-w-[640px] flex-wrap items-center gap-3 rounded-2xl bg-ink/[0.04] px-4 py-3">
+      {mine.collaborative && mine.people.length > 0 && (
+        <span className="flex -space-x-2" aria-hidden>
+          {mine.people.slice(0, 5).map((p) => (
+            <span key={p} className="h-7 w-7 overflow-hidden rounded-full bg-ink/10 ring-2 ring-[var(--surface,transparent)]">
+              <RemoteArt url={p} size={28} imgClassName="h-full w-full object-cover" />
+            </span>
+          ))}
+        </span>
+      )}
+      <p className="min-w-[180px] flex-1 text-[12.5px] leading-relaxed text-ink/60">
+        {mine.collaborative
+          ? `${mine.people_text ? `${mine.people_text}. ` : ''}Anyone in it adds songs; each person can take out only what they added.`
+          : 'Invite people to add songs to it with you.'}
+      </p>
+      <button onClick={() => void invite()} disabled={busy} className="btn btn-sm">
+        {mine.collaborative ? 'Copy invite link' : 'Invite people'}
+      </button>
+      {mine.collaborative && (
+        <button onClick={() => void close(!closed)} disabled={busy} className="btn-ghost btn-sm">
+          {closed ? 'Let people join again' : 'Stop new people joining'}
+        </button>
+      )}
     </div>
   )
 }

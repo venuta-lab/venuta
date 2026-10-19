@@ -1513,6 +1513,8 @@ impl crate::account::AccountAccess for YtmBackend {
             privacy: page.privacy,
             owned: page.owned,
             collaborative: page.collaborative,
+            people: page.people,
+            people_text: page.people_text,
             artwork_url: page.thumbnail,
             tracks,
             complete,
