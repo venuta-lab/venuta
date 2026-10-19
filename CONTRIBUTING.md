@@ -93,6 +93,10 @@ VENUTA_MULTI=1 VENUTA_HOME="D:/venuta-test" pnpm --dir app tauri dev
 |---|---|
 | `crates/engine` | The library: scan, index (SQLite), rules, plan and apply with undo, health, playlists, cards, lookups, lyrics |
 | `crates/player` | The audio engine: decoding, WASAPI output, queue, sound tools |
+| `crates/media-access` | The online catalog, the same for every provider |
+| `crates/ytmusic` | The YouTube Music client: search, suggestions, pages, radio, lyrics |
+| `crates/together` | Listen together rooms: the messages, the host's room, the shared clock, the invite |
+| `crates/phone-server` | Your library to phones on the same Wi-Fi (OpenSubsonic) |
 | `crates/cli` | `venuta`, the engine from the command line |
 | `app/src-tauri` | The desktop shell: commands the UI calls, tray, windows |
 | `app/src` | The interface (React, Tailwind, Motion) |

@@ -1,150 +1,109 @@
 <div align="center">
 
-<img src="docs/media/logo.png" width="104" alt="The Venuta mark: a V with a peacock feather and a flute's holes">
+<img src="docs/media/logo.png" width="96" alt="The Venuta mark: a V with a peacock feather and a flute's holes">
 
 # Venuta
 
 **Streaming-app polish for your own lossless library.**
 
-Bit-perfect playback, synced lyrics everywhere, your streaming playlists matched to the files you
-own, and your music player filled in one go. One beautiful, free app for Windows.
+Your FLACs, played bit-perfect, with synced lyrics, friends listening along, and the online
+catalog right beside them. Free for Windows.
 
 [![Latest release](https://img.shields.io/github/v/release/venuta-lab/venuta?style=flat-square&color=8b7cf6&label=release)](https://github.com/venuta-lab/venuta/releases/latest)
-[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](#install)
+[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](#download)
 [![Free and open source](https://img.shields.io/badge/free-open%20source-3fa66b?style=flat-square)](LICENSE)
 
 ### [Download for Windows](https://github.com/venuta-lab/venuta/releases/latest)
 
-[Using Venuta](docs/GUIDE.md) &nbsp;&nbsp;|&nbsp;&nbsp; [What's new](CHANGELOG.md) &nbsp;&nbsp;|&nbsp;&nbsp; [Themes](docs/THEMES.md)
+[Using Venuta](docs/GUIDE.md) &nbsp;&nbsp;|&nbsp;&nbsp; [What's new](CHANGELOG.md) &nbsp;&nbsp;|&nbsp;&nbsp; [Themes](docs/THEMES.md) &nbsp;&nbsp;|&nbsp;&nbsp; [Questions](docs/FAQ.md)
 
 <br>
 
-<img src="docs/screenshots/music-home.jpg" alt="Venuta's Music home with The Dark Side of the Moon in 24-bit/96 kHz, and playlists of reference recordings" width="100%">
+<img src="docs/screenshots/music-home.jpg" alt="Venuta's Home: The Dark Side of the Moon in FLAC 24/96, then the hi-res albums" width="100%">
 
 </div>
 
 <br>
 
-The good-looking music apps are all streaming apps, and the players for the music you own still
-look like it's 2010. Venuta gives your FLAC collection the polish it deserves, and puts everything
-you used to stitch together from plugins and separate tools in one place.
-
-Free and open source. No account, no ads, no tracking.
-
-|  |  |
-|---|---|
-| **Beautiful, on your own files**<br>Album-art backgrounds, 18 themes, a modern home for the music you own. | **Bring your playlists home**<br>Paste a Spotify, Apple Music or YouTube Music link. Matched to your files in seconds. |
-| **Lyrics everywhere**<br>Synced in Now Playing, full screen on your TV, floating over your desktop. | **Your player, sorted**<br>Playlists and albums onto your DAP's card, written and converted for it. |
-| **Know your FLACs are real**<br>Spots fake hi-res and lossy files dressed up as lossless. | **Bit-perfect, gapless, hi-res**<br>Exclusive WASAPI straight to your DAC, with every step shown. |
-| **Listen together**<br>The same song at the same moment with friends anywhere, each from their best copy. | **Your music and the catalog, as one**<br>The online catalog beside your files. Or Local only, and nothing online. |
+<table>
+<tr>
+<td width="50%" valign="top"><a href="#lyrics-everywhere"><img src="docs/media/tiles/lyrics.webp" alt="Desktop lyrics in Glass, floating over the desktop" width="100%"></a><br><b>Lyrics everywhere</b><br><sub>In Now Playing, on your TV, and floating over every window.</sub></td>
+<td width="50%" valign="top"><a href="#listen-together"><img src="docs/media/tiles/together.webp" alt="A room with two people, both in sync" width="100%"></a><br><b>Listen together</b><br><sub>Friends hear the same moment, each from their best copy.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="#your-music-and-the-catalog-as-one"><img src="docs/media/tiles/catalog.webp" alt="One search: your Pink Floyd files first, then the catalog's" width="100%"></a><br><b>Your music and the catalog, as one</b><br><sub>One search, your files first. Or Local only.</sub></td>
+<td width="50%" valign="top"><a href="#bit-perfect-and-looked-after"><img src="docs/media/tiles/hires.webp" alt="Kind of Blue in FLAC 24/96" width="100%"></a><br><b>Bit-perfect, gapless, hi-res</b><br><sub>Exclusive WASAPI straight to your DAC.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="#bring-your-playlists-home"><img src="docs/media/tiles/import.webp" alt="A Spotify playlist matched to the library" width="100%"></a><br><b>Bring your playlists home</b><br><sub>Paste a Spotify, Apple Music or YouTube Music link.</sub></td>
+<td width="50%" valign="top"><a href="#your-player-filled-in-one-go"><img src="docs/media/tiles/devices.webp" alt="Choosing playlists for an Astell&Kern card" width="100%"></a><br><b>Your player, filled in one go</b><br><sub>Playlists and albums onto your DAP's card.</sub></td>
+</tr>
+</table>
 
 ## Lyrics everywhere
 
-<img src="docs/media/lyrics.gif" alt="Synced lyrics following Pink Floyd's Time in Now Playing" width="100%">
+<img src="docs/media/desktop-lyrics.gif" alt="Desktop lyrics over the desktop in Clear, Glass, the cover's light and the theme's scene" width="100%">
 
-- **Synced lyrics** that follow the song, for most of your library, found for you. Click a line to
-  jump to it.
-- **Big screen** (F11) fills your TV or a second monitor. **Desktop lyrics** (Ctrl+Shift+D)
-  float over every window as a strip you move, size and lock so clicks pass through. Each in
-  Clear, Glass, Frosted, the cover's light or any theme.
-- **Six styles**, in the colour of the cover. Songs without timing? Tap along once and they're
-  timed forever.
+Synced lyrics that follow the song, found for you. **Desktop lyrics** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>)
+float over every window: move them, size them, and lock them so clicks pass through. Clear,
+Glass, Frosted, the cover's light or any theme. The **big screen** (<kbd>F11</kbd>) fills your TV.
 
 <p align="center">
-  <img src="docs/screenshots/lyric-style.jpg" alt="Six lyric styles, for the big screen and the desktop" width="340">
-  &nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/mini-player.jpg" alt="The mini player" width="380">
+  <img src="docs/screenshots/big-screen.jpg" alt="The big screen" width="49%">
+  <img src="docs/media/lyrics.gif" alt="Synced lyrics in Now Playing" width="49%">
 </p>
-
-## Bring your playlists home
-
-<img src="docs/media/import.gif" alt="Importing Sennheiser's headphone-test playlist from a Spotify link and seeing which songs are already in the library" width="100%">
-
-Leaving Spotify or Apple Music doesn't mean starting over.
-
-- **Paste a link** from Spotify, Apple Music, YouTube Music, TIDAL, Deezer, JioSaavn or
-  ListenBrainz. No sign-in, nothing to install.
-- **Every song you own is matched** to your file, even across remasters and editions. The ones you
-  don't have keep their place and fill in as your collection grows.
-- **Any playlist file** from any player or phone works too: M3U, PLS, XSPF, WPL, CSV, even
-  spreadsheets and zips.
-- **Send them back out**: to any format and path layout, one backup of every playlist, or rebuilt on
-  Deezer, Apple Music, Spotify or YouTube.
-
-| | |
-|---|---|
-| ![Your songs matched, the rest kept in place](docs/screenshots/import-matched.jpg) | ![Send out: files, a backup, or a streaming service](docs/screenshots/send-out.jpg) |
-
-## Your player, sorted
-
-<img src="docs/screenshots/devices.jpg" alt="Setting up an SD card for an Astell&Kern player with three playlists, converted to 16-bit FLAC" width="100%">
-
-Plug in your DAP's SD card and pick what it carries: the whole library, or just the playlists,
-albums and artists you want.
-
-- **Written the way your player reads it**: ready-made profiles for Astell&Kern, the Snowsky Echo
-  Mini and Disc, and Poweramp on Android, plus an exact copy for anything else. A car or USB stick,
-  or a gift card for a friend, too.
-- **Converted on the way**: hi-res as 16-bit FLAC (still lossless, a third of the size) or AAC for
-  phones and cars. Your library is never touched.
-- **Only what changed is written**, it picks up where it left off if you pull the card, it can sync
-  itself the moment you plug it in, and it never touches files it didn't put there.
-
-**Over Wi-Fi**, a Subsonic app on your phone (Android or iPhone) plays your library and keeps albums
-and playlists for offline. **Coming next**: phones and Android players over USB.
-
-## Bit-perfect, when it matters
-
-- **Exclusive WASAPI**, gapless, hi-res as it was recorded. The **Signal** view shows every step
-  from the file to your DAC, and tells you the moment anything changes the sound.
-- **Every sound tool is off until you want it**: a 10-band equaliser, bass and treble, volume
-  levelling by song or album, crossfade and a sleep timer.
-
-| | |
-|---|---|
-| ![An album in 24-bit/96 kHz: Kind of Blue](docs/screenshots/album.jpg) | ![The sound tools, all off until you want them](docs/screenshots/sound.jpg) |
-
-## Your library, looked after
-
-<img src="docs/screenshots/health.jpg" alt="Health: how complete the library is, with one-click tools to fill the gaps" width="100%">
-
-- **Know your FLACs are real**: damaged files, lossy sources passed off as lossless, and fake
-  hi-res, all found for you.
-- **Details filled in**: original years, composers, lyricists, sharper covers and synced lyrics,
-  from free public sources.
-- **Tidy without fear**: your own rules for folders, file names and artist spellings. Every change
-  is shown before it happens, nothing is ever deleted, and everything can be undone.
-- **Playlists are plain `.m3u8` files** beside your music, so every other player can read them too.
-
-| | |
-|---|---|
-| ![Every album, with hi-res marked](docs/screenshots/albums.jpg) | ![Your playlists and smart playlists](docs/screenshots/playlists.jpg) |
-
-## Find anything
-
-<img src="docs/screenshots/search.jpg" alt="Search: Take Five in the library first, then the original recording online" width="100%">
-
-One search for everything, forgiving of spelling and across scripts: "kesariya" finds केसरिया, in
-names and in lyrics. Your library comes first; below it, the online catalog plays songs you don't
-own yet, with the original recording ahead of covers.
 
 ## Listen together
 
-Start a room and send friends the invite. Everyone hears the same song at the same moment, each
-from their best copy: their own file, the online song, or yours streamed to them. Over the
-internet or your home Wi-Fi, with no account.
+<p align="center">
+  <img src="docs/screenshots/together-host.jpg" alt="Sam's Venuta hosting a room" width="49%">
+  <img src="docs/screenshots/together-guest.jpg" alt="Priya's Venuta in the room, in sync" width="49%">
+  <br>
+  <sub>Sam hosts; Priya joins from another PC. Each plays their own file of Fast Car, in sync to the millisecond.</sub>
+</p>
 
-- **You choose who does what**: control, add songs or just listen, per person.
-- **The room's queue** for everyone, with who added each song; your own queue back when you leave.
-- **Same room** keeps speakers that hear each other within a millisecond or two.
+Start a room, send the invite, and everyone hears the same moment, each from their best copy:
+their own file, the online song, or yours streamed to them. Over the internet or your home Wi-Fi,
+with no account. You choose who can control, add songs or just listen.
+
+## Your music and the catalog, as one
+
+<img src="docs/media/catalog.gif" alt="Searching Pink Floyd: the library's albums and songs first, then The Wall from the catalog" width="100%">
+
+One search finds your files first, then the online catalog: albums, artists, playlists and moods
+with pages like a music app's. Songs you don't own play straight away. **Local only** turns all
+of it off.
+
+## Bring your playlists home
+
+<img src="docs/media/import.gif" alt="A Spotify playlist matched to the files in the library" width="100%">
+
+Paste a link from Spotify, Apple Music, YouTube Music, TIDAL, Deezer or JioSaavn. Every song you
+own is matched to your file, even across remasters; the rest keep their place and play online.
+
+## Your player, filled in one go
+
+<img src="docs/screenshots/devices.jpg" alt="Three playlists chosen for an Astell&Kern card" width="100%">
+
+Pick what your DAP's card carries, and Venuta writes it the way your player reads it, converting
+hi-res to 16-bit FLAC on the way if you like. Over Wi-Fi, Subsonic apps on your phone play your
+library too.
+
+## Bit-perfect, and looked after
+
+<p align="center">
+  <img src="docs/screenshots/sound.jpg" alt="The sound tools, all off until you want them" width="49%">
+  <img src="docs/screenshots/health.jpg" alt="Health: how complete the library is" width="49%">
+</p>
+
+Exclusive WASAPI, gapless, hi-res as it was recorded, and every sound tool off until you want it.
+**Health** spots fake hi-res and lossy files posing as lossless, and fills in what's missing.
 
 ## Make it yours
 
 <img src="docs/media/themes.gif" alt="The same screen in eleven of Venuta's looks" width="100%">
 
-Eleven built-in looks, inspired by the players you know and a few retro classics, plus seven more as
-theme files, in light and dark. The **Theme Studio** makes your own from a few colours or the album
-playing, and shares it as one file. Pick the app icon too, in 33 materials.
+Eighteen looks, light and dark, and a **Theme Studio** that makes your own from the album playing.
 
 <details>
 <summary><b>Every look, side by side</b></summary>
@@ -154,89 +113,23 @@ playing, and shares it as one file. Pick the app icon too, in 33 materials.
 
 ## Promises
 
-- **Your music is never changed behind your back.** Every change is shown first, and every tag
-  write is checked: if the audio isn't identical afterwards, the file is left as it was.
-- **Nothing is deleted.** Replaced files and removed playlists go to **Set aside**, and everything
-  can be undone in **Activity**.
-- **No account, no ads, no tracking.** Your library stays on your PC; [here is everything Venuta's
-  internet use is for](PRIVACY.md).
+- **Your music is never changed behind your back.** Every change is shown first, and can be undone.
+- **Nothing is deleted.** Replaced files and removed playlists go to Set aside.
+- **No account, no ads, no tracking.** [What Venuta goes online for](PRIVACY.md).
 - **Free, forever.** Open source under the MIT licence.
 
-## FAQ
+## Download
 
-<details>
-<summary><b>Is it really free?</b></summary>
-Yes. Free and open source, with no account, no ads, no trial and no paid tier.
-</details>
+Get `Venuta_x.y.z_x64-setup.exe` from [the latest release](https://github.com/venuta-lab/venuta/releases/latest)
+and run it: it installs for your user on Windows 10 or 11, no admin rights needed. If SmartScreen
+asks, choose **More info**, then **Run anyway**. Updates come to you, signed, in one click.
 
-<details>
-<summary><b>Is playback really bit-perfect?</b></summary>
-In exclusive mode with the sound tools off, your DAC receives the file's samples untouched. The
-Signal view in Now Playing shows every step, and says so the moment an equaliser, volume levelling
-or crossfade changes them.
-</details>
+<br>
 
-<details>
-<summary><b>Will it work with my DAP or phone?</b></summary>
-Anything that reads an SD card or shows up as a drive works today, with ready-made profiles for
-Astell&Kern, Snowsky Echo Mini and Disc, and Poweramp on Android, and an exact copy for any other
-player. Over Wi-Fi, Subsonic apps on Android and iPhone play your library and keep it for
-offline. Phones and Android players over USB are coming next.
-</details>
+<p align="center">
+  <a href="docs/GUIDE.md">Using Venuta</a> &nbsp;|&nbsp; <a href="docs/FAQ.md">Questions</a> &nbsp;|&nbsp; <a href="CONTRIBUTING.md">Build and contribute</a> &nbsp;|&nbsp; <a href="PRIVACY.md">Privacy</a> &nbsp;|&nbsp; <a href="SECURITY.md">Security</a> &nbsp;|&nbsp; <a href="LICENSE">MIT licence</a>
+</p>
 
-<details>
-<summary><b>Can I bring my Spotify or Apple Music playlists?</b></summary>
-Yes: paste the playlist's share link, no sign-in. For a playlist longer than 100 songs, select the
-songs in Spotify's app, copy them, and paste them in. Apple Music, YouTube Music, TIDAL, Deezer,
-JioSaavn and ListenBrainz links work too.
-</details>
-
-<details>
-<summary><b>Windows says it doesn't recognise the app. Is it safe?</b></summary>
-The installer isn't code-signed yet, so SmartScreen doesn't know it. Choose <b>More info</b>, then
-<b>Run anyway</b>. The source is all here, and every update Venuta installs is signed.
-</details>
-
-<details>
-<summary><b>Where does my data live?</b></summary>
-In your library folder (a hidden <code>.venuta</code> folder beside your music), so it moves with
-your library. Nothing leaves your PC except what you ask for: lookups for lyrics and covers, the online catalog, rooms you start or join, and the daily check for updates.
-</details>
-
-## Install
-
-Download `Venuta_x.y.z_x64-setup.exe` from
-[the latest release](https://github.com/venuta-lab/venuta/releases/latest) and run it. It installs
-for your user, without admin rights, on Windows 10 or 11.
-
-**Updates come to you.** Venuta checks once a day and tells you when there's something new;
-**Settings › About** shows what's new and installs it in one click.
-
-[Using Venuta](docs/GUIDE.md) walks through every place, the lyrics, the shortcuts and where things
-are kept.
-
-## Build it
-
-Rust (stable), the MSVC build tools, Node 24 and pnpm 10:
-
-```bash
-pnpm --dir app install
-pnpm --dir app tauri dev
-```
-
-[CONTRIBUTING.md](CONTRIBUTING.md) has the checks and how to send a change; security problems go
-through [SECURITY.md](SECURITY.md).
-
-| | |
-|---|---|
-| [`crates/engine`](crates/engine) | The library: scan, rules, plans with undo, health, playlists, cards, lookups |
-| [`crates/player`](crates/player) | Decoding, bit-perfect output, the sound tools |
-| [`crates/media-access`](crates/media-access) | The online catalog |
-| [`crates/cli`](crates/cli) | `venuta`, the engine from the command line |
-| [`app/`](app) | The desktop app (Tauri) and its interface (React) |
-
-## Licence
-
-MIT, see [LICENSE](LICENSE). Details come from [MusicBrainz](https://musicbrainz.org), the iTunes
-Search API, the Deezer API and [LRCLIB](https://lrclib.net), within their published limits. The
-screenshots show a demo library; album art and lyrics belong to their owners.
+<sub>Details come from [MusicBrainz](https://musicbrainz.org), the iTunes Search API, the Deezer API and
+[LRCLIB](https://lrclib.net), within their published limits. The screenshots show a demo library;
+album art and lyrics belong to their owners.</sub>
