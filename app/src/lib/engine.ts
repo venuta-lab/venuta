@@ -961,6 +961,8 @@ export interface OnlineAlbumPage {
   shelves: OnlineShelf[]
   /** The album's own list in the catalog (`OLAK5uy_…`): what Autoplay asks for when it ends. */
   playlist_id?: string | null
+  /** Its page's Start radio, as the catalog put it there. */
+  radio?: RadioEndpoint | null
 }
 
 /** A titled row of cards on an online page, and where its "See all" leads. */
@@ -1251,6 +1253,8 @@ export interface MoodSection {
 export interface OnlineCollectionPage {
   title: string | null
   tracks: OnlineTrack[]
+  /** Its page's Start radio, as the catalog put it there. */
+  radio?: RadioEndpoint | null
 }
 
 const none = <T,>(empty: T) => Promise.resolve<T>(empty)
@@ -1425,6 +1429,8 @@ export interface YtmPlaylist {
   tracks: YtmTrack[]
   /** Every page came (a sync never reads a missing song as taken out when false). */
   complete: boolean
+  /** Its page's Start radio, as YouTube Music put it there. */
+  radio?: RadioEndpoint | null
 }
 export type YtmEdit =
   | { kind: 'rename'; title: string }
