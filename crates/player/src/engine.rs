@@ -323,12 +323,27 @@ struct Engine<T: Item + Serialize> {
     settle_until: Option<Instant>,
     /// A new plan whose sound hasn't come out yet: lined up exactly when it first does.
     sync_fresh: bool,
-    /// Once settled after lining up mid-song, a second look: a seek lands a few ms off, so one
-    /// more lines it up closer (no trimming needed, still bit-perfect).
-    sync_second_look: bool,
     /// Just lined up by a seek: what's left (the seek's own moment) is closed exactly on the
     /// next period, past or before a few just-decoded frames.
     sync_fine: bool,
+    /// The room's next song just took over: it plays straight on, no correction, until the
+    /// room's plan for it comes (the old song's plan would put it minutes in).
+    sync_hold: bool,
+    /// The error smoothed over about a second (what corrections act on, so noise isn't chased).
+    sync_avg: Option<f64>,
+    /// Since when the error has been past the seek line (it is lined up only once it lasts).
+    sync_far_since: Option<Instant>,
+    /// The last frames changed went this way (ahead): trimming starts over when it turns.
+    sync_trim_ahead: Option<bool>,
+    /// Decoding last fell behind (a stream waiting for bytes): no lining up for a while, so a
+    /// stall plays late instead of skipping ahead into what hasn't arrived.
+    starved_at: Option<Instant>,
+    /// Music came out in the last period (a seek now would be heard as a cut).
+    sounding: bool,
+    /// A seek to make after this period, which fades out first (milliseconds into the song).
+    seek_after_fade: Option<f64>,
+    /// Frames of fade-in still to come after such a seek.
+    fade_in_left: usize,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -365,8 +380,15 @@ impl<T: Item + Serialize> Engine<T> {
             sync_error_ms: None,
             settle_until: None,
             sync_fresh: false,
-            sync_second_look: false,
             sync_fine: false,
+            sync_hold: false,
+            sync_avg: None,
+            sync_far_since: None,
+            sync_trim_ahead: None,
+            starved_at: None,
+            sounding: false,
+            seek_after_fade: None,
+            fade_in_left: 0,
         }
     }
 
@@ -954,12 +976,19 @@ impl<T: Item + Serialize> Engine<T> {
                     .front()
                     .is_some_and(|f| f.frames() == 0 && !f.ended)
                 {
+                    self.starved_at = Some(Instant::now());
                     break;
                 }
                 continue;
             }
             // This song is over: on to the next.
             self.segs.pop_front();
+            // In a room, the next song plays straight on until the room's plan for it comes.
+            if self.sync.is_some() {
+                self.sync_hold = true;
+                self.sync_avg = None;
+                self.sync_far_since = None;
+            }
             if self.stop_after_current {
                 // Stop here, with the next song ready.
                 self.stop_after_current = false;
@@ -986,7 +1015,36 @@ impl<T: Item + Serialize> Engine<T> {
             }
         }
         // Silence for the rest of the period (end of the queue, or before a format change).
+        let music = frames.saturating_sub(lead);
         taken.resize(want * src_ch, 0);
+        // Either side of a seek that would be heard: out to silence, then back up from it.
+        if self.seek_after_fade.is_some() || self.fade_in_left > 0 {
+            let len = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
+            let out = self.seek_after_fade.is_some();
+            for (i, frame) in taken.chunks_exact_mut(src_ch).enumerate().skip(lead) {
+                let k = i - lead;
+                let g = if out {
+                    // Down over the period's last `len` frames, silent after.
+                    let from = music.saturating_sub(len);
+                    if k < from {
+                        1.0
+                    } else {
+                        crate::sync::fade_gain(k - from, len, false)
+                    }
+                } else if k < self.fade_in_left {
+                    crate::sync::fade_gain(len - self.fade_in_left + k, len, true)
+                } else {
+                    1.0
+                };
+                if g < 1.0 {
+                    frame.iter_mut().for_each(|x| *x = (*x as f32 * g) as i32);
+                }
+            }
+            if !out {
+                self.fade_in_left = self.fade_in_left.saturating_sub(music);
+            }
+        }
+        self.sounding = music > 0;
         // What's heard (after the sound tools), kept as mono for a spectrum display.
         if self.spectrum {
             let full = i32::MAX as f32;
@@ -1039,6 +1097,14 @@ impl<T: Item + Serialize> Engine<T> {
             std::thread::sleep(Duration::from_millis(20));
             self.dev_fmt = None;
             self.publish(true);
+        }
+        // Faded out: now the seek, and a fade back in from it.
+        if let Some(to) = self.seek_after_fade.take() {
+            self.realign(to, 600);
+            // No closing-up a few frames after it: that would cut into the fade-in. The few ms a
+            // seek lands off aren't heard apart, and in one room the trimming takes them up.
+            self.sync_fine = false;
+            self.fade_in_left = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
         }
         Ok(())
     }
@@ -1128,10 +1194,15 @@ impl<T: Item + Serialize> Engine<T> {
             && crate::sync::is_nudge(&old, &new, Instant::now())
         {
             self.sync = Some(new);
+            self.sync_hold = false;
             return;
         }
         self.trimmer.reset();
         self.sync_error_ms = None;
+        self.sync_hold = false;
+        self.sync_avg = None;
+        self.sync_far_since = None;
+        self.sync_trim_ahead = None;
         let Some(plan) = plan else {
             self.sync = None;
             return;
@@ -1148,15 +1219,11 @@ impl<T: Item + Serialize> Engine<T> {
         if self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(target);
         } else if (self.position_ms() as i64 - target as i64).abs() > 30 {
-            self.seek(target);
+            self.seek_heard(target as f64);
         }
         self.sync = Some(plan);
         self.sync_fresh = true;
         self.sync_fine = false;
-        // Joining mid-song (or lining up again while it plays), apart: a second look. A start
-        // from silence lines up at the first sound and never jumps just after it; in one room
-        // small gaps close by single frames instead (a jump there is heard).
-        self.sync_second_look = started && !plan.same_room;
         self.settle_until = Some(now + Duration::from_millis(600));
         // Playing (or waiting to) keeps the device going: silence until the start, which also
         // keeps the song decoding ahead. Paused: paused there.
@@ -1183,6 +1250,14 @@ impl<T: Item + Serialize> Engine<T> {
         let Some(plan) = self.sync else {
             return Ok(Some(0));
         };
+        // The device not going yet: a period of silence starts it, so every decision after this
+        // one knows its real delay (before it runs, only its whole buffer is known, and a start
+        // judged by that comes out a period early, then stops).
+        if !self.started && plan.playing {
+            self.fill()?;
+            self.write_silence(want)?;
+            return Ok(None);
+        }
         let rate = f64::from(fmt.rate.max(1));
         let now = Instant::now();
         let delay = self.heard_delay_ms(&plan);
@@ -1210,6 +1285,11 @@ impl<T: Item + Serialize> Engine<T> {
             self.write_silence(want)?;
             return Ok(None);
         }
+        // The next song took over: straight on until the room's plan for it comes; and this
+        // period fades out before a seek, so nothing more to decide now.
+        if self.sync_hold || self.seek_after_fade.is_some() {
+            return Ok(Some(0));
+        }
         let Some(front) = self.segs.front() else {
             return Ok(Some(0));
         };
@@ -1222,8 +1302,18 @@ impl<T: Item + Serialize> Engine<T> {
         // (the device may have taken a moment to open since the plan came).
         if self.sync_fresh {
             self.sync_fresh = false;
-            if (written_ms - (expected + delay)).abs() > 15.0 {
-                self.realign(expected + delay, 400);
+            let off = (written_ms - (expected + delay)).abs();
+            // From silence, exactly where the room is; with music already coming out (a new plan
+            // mid-song, the next song after this one), only an offset someone could hear.
+            let limit = if !self.sounding {
+                15.0
+            } else if plan.same_room {
+                crate::sync::NUDGE_MS
+            } else {
+                crate::sync::APART_NUDGE_MS
+            };
+            if off > limit {
+                self.seek_heard(expected + delay);
             } else {
                 self.settle_until = Some(now + Duration::from_millis(400));
             }
@@ -1247,32 +1337,61 @@ impl<T: Item + Serialize> Engine<T> {
                 return Ok(Some(frames));
             }
         }
-        let last = self.sync_error_ms.map(f64::from);
         self.sync_error_ms = Some(error as f32);
         let settling = self.settle_until.is_some_and(|t| now < t);
-        // The sound jumped (the device or the computer missed a beat): that's been heard
-        // already, so lining up again right now adds nothing anyone hears.
-        let jumped = last.is_some_and(|l| (error - l).abs() > crate::sync::JUMP_MS);
-        if !settling && (self.sync_second_look || jumped) {
-            self.sync_second_look = false;
-            if error.abs() > crate::sync::SECOND_LOOK_MS {
-                self.realign(expected + delay, 400);
-                return Ok(Some(0));
-            }
+        // Smoothed over about a second: one late clock reading or a jittery position is noise,
+        // not a reason to touch the music.
+        let share = (want as f64 / rate / crate::sync::SMOOTHING.as_secs_f64()).min(1.0);
+        let avg = match self.sync_avg {
+            Some(a) if !settling => a + (error - a) * share,
+            _ => error,
+        };
+        self.sync_avg = Some(avg);
+        // A stream that stalled plays late for a while instead of skipping ahead into bytes that
+        // haven't come yet (which would only stall it again).
+        let starved = self
+            .starved_at
+            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(3));
+        if settling || starved {
+            self.sync_far_since = None;
+            return Ok(Some(0));
         }
-        match crate::sync::correction(error, plan.same_room, settling) {
-            Correction::None => Ok(Some(0)),
+        match crate::sync::correction(avg, plan.same_room, false) {
+            Correction::None => {
+                self.sync_far_since = None;
+                Ok(Some(0))
+            }
             Correction::Seek => {
-                self.realign(expected + delay, 600);
+                // Only once it lasts: a burst of late clock readings passes, a drift doesn't.
+                let since = *self.sync_far_since.get_or_insert(now);
+                if now.duration_since(since) >= crate::sync::far_for(plan.same_room) {
+                    self.sync_far_since = None;
+                    self.seek_heard(expected + delay);
+                }
                 Ok(Some(0))
             }
             Correction::Trim { ppm, ahead } => {
+                self.sync_far_since = None;
+                if self.sync_trim_ahead != Some(ahead) {
+                    self.sync_trim_ahead = Some(ahead);
+                    self.trimmer.reset();
+                }
                 let n = self.trimmer.due(want, ppm);
                 if n > 0 {
                     self.trim_front(want, n, ahead);
                 }
                 Ok(Some(0))
             }
+        }
+    }
+
+    /// A seek that may be heard: while music is coming out, this period fades out and the seek
+    /// comes after it, fading back in; from silence, at once.
+    fn seek_heard(&mut self, to_ms: f64) {
+        if self.sounding && self.playing {
+            self.seek_after_fade = Some(to_ms);
+        } else {
+            self.realign(to_ms, 600);
         }
     }
 
