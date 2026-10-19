@@ -65,6 +65,8 @@ export const HomeView = memo(function HomeView(props: {
   onLibrary: (view: 'albums' | 'artists' | 'songs', filter?: string) => void
   onOpenPlaylist: (name: string) => void
   onPlaylists: () => void
+  /** No music of your own yet: a way to add it, at the top of Home. */
+  onAddMusic?: () => void
 }) {
   const { lib } = props
   const now = useNowPlaying()
@@ -227,6 +229,20 @@ export const HomeView = memo(function HomeView(props: {
         </button>
       </div>
       <HomeChips chips={online.chips} chip={chip} onChip={setChip} />
+      {lib.albums.length === 0 && props.onAddMusic && (
+        <section aria-label="Add your music" className="glass mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[24px] p-6">
+          <div className="min-w-[260px] flex-1">
+            <h3 className="text-[17px] font-semibold">Add your music</h3>
+            <p className="mt-1 max-w-[60ch] text-[13.5px] leading-relaxed text-ink/60">
+              Your FLACs and other files, beside the catalog and played bit-perfect. Choose the folder your albums are in; it is
+              only read, never changed.
+            </p>
+          </div>
+          <button onClick={props.onAddMusic} className="btn-primary">
+            Add your music
+          </button>
+        </section>
+      )}
       <AnimatePresence>
         {editing && (
           <EditHome

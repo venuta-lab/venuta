@@ -123,6 +123,8 @@ interface Props {
   onEditDetails: (dir: string) => void
   onOpenPlaylist: (name: string) => void
   onPlaylists: () => void
+  /** No music of your own yet: add it (Home offers it). */
+  onAddMusic?: () => void
   /** Bumped when Music is chosen again while already open: back to its start. */
   reset?: number
 }
@@ -538,6 +540,7 @@ function Listen(props: Props) {
         onLibrary={openLibrary}
         onOpenPlaylist={props.onOpenPlaylist}
         onPlaylists={props.onPlaylists}
+        onAddMusic={props.onAddMusic}
       />
     ) : tab === 'listening' ? (
       <ListeningView lib={lib} root={root} />

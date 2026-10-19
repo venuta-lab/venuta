@@ -197,6 +197,9 @@ export default function App() {
   const listenSearch = useRef<HTMLInputElement>(null)
   // An album to open on the Music home (from the palette), once it is showing.
   const [listenAlbum, setListenAlbum] = useState<string | null>(null)
+  /** An album to open in the editor, from its page's Edit details. */
+  const [editDir, setEditDir] = useState<string | null>(null)
+  const editOpened = useCallback(() => setEditDir(null), [])
   const [listenArtist, setListenArtist] = useState<string | null>(null)
   // The player's big view (and which side panel) and the queue drawer.
   const [nowOpen, setNowOpen] = useState(false)
@@ -565,16 +568,18 @@ export default function App() {
     }
   }
 
-  async function chooseRoot() {
+  /** Choose the folder your music is in, and open it. Whether one was opened. */
+  async function chooseRoot(): Promise<boolean> {
     const picked = inApp() ? await open({ directory: true, title: 'Choose the folder that holds your music' }) : null
-    if (typeof picked !== 'string') return
+    if (typeof picked !== 'string') return false
     try {
       await checkMusicFolder(picked)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      return
+      return false
     }
     openLibrary(picked)
+    return true
   }
 
   function openLibrary(path: string) {
@@ -931,24 +936,23 @@ export default function App() {
     if (setup && active !== 'settings')
       return (
         <SetupScreen
-          root={root}
           home={home}
-          music={libMusic}
           suggestion={suggestion}
-          report={report}
-          busy={busy}
-          lookup={lookup}
           onChooseHome={async (path) => {
             await chooseHome(path)
             setHome(path)
+            return `${path.replace(/[\\/]+$/, '')}/Music`
           }}
-          onChooseMusic={act.chooseRoot}
-          onStartEmpty={() => libMusic && act.openLibrary(libMusic)}
-          onLookup={act.runLookup}
-          onCancelLookup={() => void cancelLookup()}
-          onDone={() => {
+          onAddMusic={async () => {
+            if (!(await act.chooseRoot())) return false
             setSetup(false)
-            go('inbox')
+            go('listen')
+            return true
+          }}
+          onSkip={(music) => {
+            act.openLibrary(music)
+            setSetup(false)
+            go('listen')
           }}
           onClose={root && home ? () => setSetup(false) : undefined}
         />
@@ -983,9 +987,11 @@ export default function App() {
       )
     switch (active) {
       case 'listen':
-        if (report && report.summary.tracks === 0)
+        // A folder chosen with no music in it says so; your library with none yet still has
+        // Home (the catalog), with a way to add yours.
+        if (report && report.summary.tracks === 0 && !samePath(root, libMusic))
           return (
-            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
+            <NoMusic path={root} isLibrary={false} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
           )
         return (
           <ListenScreen
@@ -997,9 +1003,13 @@ export default function App() {
             onOpenedAlbum={() => setListenAlbum(null)}
             openArtist={listenArtist}
             onOpenedArtist={() => setListenArtist(null)}
-            onEditDetails={() => go('music')}
+            onEditDetails={(dir) => {
+              setEditDir(dir)
+              go('music')
+            }}
             onOpenPlaylist={openPlaylist}
             onPlaylists={openPlaylists}
+            onAddMusic={samePath(root, libMusic) ? () => void act.chooseRoot() : undefined}
             reset={again}
           />
         )
@@ -1008,7 +1018,7 @@ export default function App() {
           return (
             <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
           )
-        return <MusicScreen root={root} report={report} busy={busy} searchRef={search} />
+        return <MusicScreen root={root} report={report} busy={busy} searchRef={search} openDir={editDir} onOpened={editOpened} />
       case 'health':
         return (
           <HealthScreen

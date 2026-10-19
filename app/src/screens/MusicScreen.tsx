@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { AlbumSummary, HealthReport } from '../lib/engine'
 import { AlbumEditor } from './AlbumEditor'
@@ -39,11 +39,16 @@ export function MusicScreen({
   report,
   busy,
   searchRef,
+  openDir = null,
+  onOpened,
 }: {
   root: string
   report: HealthReport | null
   busy: string
   searchRef: React.Ref<HTMLInputElement>
+  /** An album to open in the editor (from its page's Edit details); cleared with onOpened. */
+  openDir?: string | null
+  onOpened?: () => void
 }) {
   const cover = useCovers(320)
   const making = !!useJob('covers')
@@ -51,6 +56,13 @@ export function MusicScreen({
   const [filter, setFilter] = useState<string>('all')
   const [selected, setSelected] = useState<AlbumSummary | null>(null)
   const albums = useMemo(() => report?.albums ?? [], [report])
+  useEffect(() => {
+    if (!openDir) return
+    const a = albums.find((x) => x.dir === openDir)
+    if (!a) return
+    setSelected(a)
+    onOpened?.()
+  }, [openDir, albums, onOpened])
 
   // Which details each album lacks.
   const gaps = useMemo(() => {
