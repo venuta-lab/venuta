@@ -239,7 +239,6 @@ export function SongActions(props: {
   /** Open an online artist's page (Music, over what's there). */
   onOnlineArtist: (artist: { artist_id: string; name: string; artwork_url?: string | null }) => void
   onTiming: () => void
-  stars: ReactNode
   /** "Playing from …", under the album. */
   from: ReactNode
 }) {
@@ -310,7 +309,6 @@ export function SongActions(props: {
       {props.from}
       <div className="mt-4 flex items-center justify-center gap-3">
         <LikeButton root={props.root} item={song} size={20} />
-        {!remote && props.stars}
         <div className="seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
           <IconAction label="Add to playlist" onClick={() => askAddSongs([songItemOf(song)], song.title)}>
             <IconPlaylistAdd width={18} height={18} />

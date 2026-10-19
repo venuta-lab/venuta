@@ -2136,26 +2136,14 @@ pub fn ensure_default_smart(rules_dir: &Path) -> Result<(), String> {
         op: op.into(),
         value: value.into(),
     };
-    let defaults = [
-        SmartRule {
-            name: "Top rated".into(),
-            r#match: all(),
-            conditions: vec![c("rating", "at_least", "4")],
-            limit: None,
-        },
-        SmartRule {
-            name: "Explore".into(),
-            r#match: all(),
-            conditions: vec![c("unrated", "", ""), c("album_has_rating", "at_least", "4")],
-            limit: Some(200),
-        },
-        SmartRule {
-            name: "Recently added".into(),
-            r#match: all(),
-            conditions: vec![c("added_days", "at_most", "30")],
-            limit: Some(300),
-        },
-    ];
+    // None asks for star ratings: Venuta doesn't give them (likes are the one way to keep a
+    // song, for your files and online alike). Libraries made before keep what they have.
+    let defaults = [SmartRule {
+        name: "Recently added".into(),
+        r#match: all(),
+        conditions: vec![c("added_days", "at_most", "30")],
+        limit: Some(300),
+    }];
     for r in defaults {
         let text = toml::to_string_pretty(&r).map_err(|e| e.to_string())?;
         std::fs::write(
@@ -2871,6 +2859,34 @@ mod tests {
             "again, asked"
         );
         assert_eq!(read(root.path(), &lib, "Mix").unwrap().0.len(), 2);
+    }
+
+    #[test]
+    fn a_new_librarys_smart_playlists_need_no_star_ratings() {
+        let rules = tempfile::tempdir().unwrap();
+        ensure_default_smart(rules.path()).unwrap();
+        let made = load_smart(rules.path());
+        assert_eq!(
+            made.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["Recently added"]
+        );
+        let rated = ["rating", "unrated", "album_has_rating"];
+        assert!(made.iter().all(|r| {
+            r.conditions
+                .iter()
+                .all(|c| !rated.contains(&c.field.as_str()))
+        }));
+        // A library that has its smart playlists (Top rated among them) keeps them as they are.
+        let old = tempfile::tempdir().unwrap();
+        let dir = smart_dir(old.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Top rated.toml"), "kept").unwrap();
+        ensure_default_smart(old.path()).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("Top rated.toml")).unwrap(),
+            "kept"
+        );
     }
 
     #[test]

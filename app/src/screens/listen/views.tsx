@@ -112,17 +112,6 @@ export const HomeView = memo(function HomeView(props: {
     () => (heard?.top ?? []).filter(([, n]) => n >= 2).map(([d]) => lib.byDir.get(d)).filter((a): a is Album => !!a),
     [heard, lib],
   )
-  // Albums with songs you rated 4 or 5 stars, best first.
-  const rated = useMemo(() => {
-    const score = (a: Album) => {
-      const r = a.tracks.map((t) => t.stars).filter((x) => x > 0)
-      return r.length ? r.reduce((x, y) => x + y, 0) / r.length : 0
-    }
-    return lib.albums
-      .filter((a) => a.tracks.some((t) => t.stars >= 4))
-      .sort((a, b) => score(b) - score(a))
-      .slice(0, 30)
-  }, [lib])
   // Played before, but not in the last month: oldest first.
   const [openedAt] = useState(() => Date.now())
   const rediscover = useMemo(() => {
@@ -218,7 +207,6 @@ export const HomeView = memo(function HomeView(props: {
     { id: 'playlists', label: 'Your playlists', node: <PlaylistShelf root={props.root} onOpen={props.onOpenPlaylist} onSeeAll={props.onPlaylists} /> },
     { id: 'yours', label: 'Your music', node: <YourMusic root={props.root} lib={lib} onOpen={props.onLibrary} /> },
     { id: 'most', label: 'Most played', node: top.length > 2 && <Shelf title="Most played" albums={top} origin="shelf-top" /> },
-    { id: 'rated', label: 'Top rated', node: rated.length > 0 && <Shelf title="Top rated" albums={rated} origin="shelf-rated" /> },
     { id: 'rediscover', label: 'Rediscover', node: rediscover.length > 0 && <Shelf title="Rediscover" albums={rediscover} origin="shelf-rediscover" /> },
     { id: 'hires', label: 'Hi-Res', node: <Shelf title="Hi-Res" albums={lib.hiRes} origin="shelf-hires" onSeeAll={() => props.onSeeAll(HI_RES)} /> },
     {

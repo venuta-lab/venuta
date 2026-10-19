@@ -2,7 +2,6 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { trackAt } from './catalog'
 import {
-  editTags,
   inApp,
   type Availability,
   type CatalogTrack,
@@ -760,17 +759,3 @@ export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
 /** Pause after `minutes` (null cancels). */
 export const setSleep = (minutes: number | null) => call('player_sleep', { minutes })
 
-/** Your rating for a song (0–5), written into the file as RATING (journalled, undoable). */
-export async function rate(path: string, stars: number) {
-  const value = stars > 0 ? [String(Math.min(5, stars) * 20)] : []
-  const was = state.queue.find((q) => q.path === path)?.stars ?? 0
-  const show = (n: number) => set({ ...state, queue: state.queue.map((q) => (q.path === path ? { ...q, stars: n } : q)) })
-  show(stars)
-  try {
-    const r = await editTags(state.root || queueRoot, [{ file: path, set: [['RATING', value]] }])
-    if (r.errors.length) throw new Error(r.errors[0][1])
-  } catch (e) {
-    show(was)
-    notify(`Couldn't save the rating: ${e instanceof Error ? e.message : String(e)}`)
-  }
-}

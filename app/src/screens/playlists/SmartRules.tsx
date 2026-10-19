@@ -4,10 +4,12 @@ import { smartSave, type Condition, type SmartRule } from '../../lib/engine'
 import { Segmented } from '../../components/ui'
 import { useEscape } from '../../lib/layers'
 
-const FIELDS: { id: string; label: string; ops: string[]; hint: string }[] = [
-  { id: 'rating', label: 'Rating (stars)', ops: ['at_least', 'at_most', 'is'], hint: '4' },
-  { id: 'unrated', label: 'Not rated yet', ops: [''], hint: '' },
-  { id: 'album_has_rating', label: 'Its album has a song rated', ops: ['at_least'], hint: '4' },
+// `kept`: star ratings aren't given in Venuta any more; a rule that already uses them still
+// reads and edits as it was, but new rules don't offer them.
+const FIELDS: { id: string; label: string; ops: string[]; hint: string; kept?: true }[] = [
+  { id: 'rating', label: 'Rating (stars)', ops: ['at_least', 'at_most', 'is'], hint: '4', kept: true },
+  { id: 'unrated', label: 'Not rated yet', ops: [''], hint: '', kept: true },
+  { id: 'album_has_rating', label: 'Its album has a song rated', ops: ['at_least'], hint: '4', kept: true },
   { id: 'genre', label: 'Genre', ops: ['contains', 'is'], hint: 'Filmi' },
   { id: 'language', label: 'Language', ops: ['is'], hint: 'hin' },
   { id: 'category', label: 'Category', ops: ['is', 'contains'], hint: 'Film & Series' },
@@ -96,7 +98,7 @@ export function SmartRules(props: { root: string; rule: SmartRule; onSaved: () =
       <div className="mt-4 grid gap-2">
         <AnimatePresence initial={false}>
           {rule.conditions.map((c, i) => {
-            const f = FIELDS.find((x) => x.id === c.field) ?? FIELDS[0]
+            const f = FIELDS.find((x) => x.id === c.field) ?? FIELDS.find((x) => !x.kept)!
             return (
               <motion.div
                 key={i}
@@ -115,7 +117,7 @@ export function SmartRules(props: { root: string; rule: SmartRule; onSaved: () =
                   }}
                   className="field min-w-[200px]"
                 >
-                  {FIELDS.map((x) => (
+                  {FIELDS.filter((x) => !x.kept || x.id === c.field).map((x) => (
                     <option key={x.id} value={x.id}>
                       {x.label}
                     </option>
@@ -146,7 +148,7 @@ export function SmartRules(props: { root: string; rule: SmartRule; onSaved: () =
           })}
         </AnimatePresence>
       </div>
-      <button onClick={() => setRule({ ...rule, conditions: [...rule.conditions, { field: 'rating', op: 'at_least', value: '4' }] })} className="btn-ghost btn-sm mt-3">
+      <button onClick={() => setRule({ ...rule, conditions: [...rule.conditions, { field: 'added_days', op: 'at_most', value: '30' }] })} className="btn-ghost btn-sm mt-3">
         + Add a rule
       </button>
       <label className="mt-4 flex flex-wrap items-center gap-2 text-[13px] text-ink/75">

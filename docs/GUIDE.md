@@ -3,7 +3,7 @@
 ## The places
 
 **Music** is where you listen: the album playing (or one picked for today), your playlists,
-shelves (jump back in, most played, top rated, hi-res, your categories), then albums, artists,
+shelves (jump back in, most played, hi-res, your categories), then albums, artists,
 songs and playlists. Click to play; right-click a song or an album for the rest, including **Add
 to playlist…**. Play goes in order, Shuffle turns shuffle on, and the queue says where it is
 playing from.
@@ -12,8 +12,7 @@ playing from.
 next, the sound tools and the signal path. Every artist and the album open their pages; **More**
 has Show in folder and Search the web.
 
-**Metadata** lists the albums missing details; open one to edit its fields and song titles, and
-rate songs.
+**Metadata** lists the albums missing details; open one to edit its fields and song titles.
 
 **Health** shows how complete and how sound the library is, with the tools: look up details
 online, measure loudness and check quality, rescan, and the songs whose lyrics have no timing.

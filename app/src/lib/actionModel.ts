@@ -32,7 +32,6 @@ export type ActionId =
   | 'update'
   | 'refind'
   | 'fillOnline'
-  | 'rate'
   | 'export'
   | 'use'
   | 'playOnline'
@@ -92,7 +91,6 @@ export const LABELS: Record<ActionId, string> = {
   update: 'Update from where it came from…',
   refind: 'Look for missing songs again',
   fillOnline: 'Fill missing online…',
-  rate: 'Give unrated songs four stars',
   export: 'Export…',
   use: 'Use the song from your library',
   playOnline: 'Play online…',
@@ -138,7 +136,6 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
             'duplicate',
             ...when(f.sourced && !f.smart, 'update'),
             ...when(f.missing && !f.smart, 'refind', 'fillOnline'),
-            'rate',
             'export',
           ],
           when(!f.smart, 'delete'),

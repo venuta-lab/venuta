@@ -1434,8 +1434,6 @@ export const playlistShelf = (root: string) =>
   inApp() ? invoke<PlaylistSummary[]>('playlist_shelf', { root }) : Promise.resolve<PlaylistSummary[]>([])
 export const wantRemove = (album: string, artist: string) => invoke<void>('want_remove', { album, artist })
 export const wantedExport = (root: string, to: string) => invoke<number>('wanted_export', { root, to })
-export const ratePlaylist = (root: string, name: string, stars: number) =>
-  invoke<EditReport>('rate_playlist', { root, name, stars })
 
 // --- Your library, tidied in place ------------------------------------------------------------
 

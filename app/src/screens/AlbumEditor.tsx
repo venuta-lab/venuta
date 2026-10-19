@@ -46,7 +46,7 @@ async function backupFirst(): Promise<boolean> {
 
 /**
  * Album view that doubles as an editor. Album fields and titles are edited inline and saved
- * together; star ratings save the moment they are clicked.
+ * together.
  */
 export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: string; onClose: () => void }) {
   const a = props.album
@@ -54,7 +54,6 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
   const [detail, setDetail] = useState<AlbumDetail | null>(null)
   const [fields, setFields] = useState<Partial<Record<AlbumField, string>>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
-  const [stars, setStars] = useState<Record<string, number>>({})
   const [status, setStatus] = useState('')
   const [problem, setProblem] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -139,13 +138,6 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
     setTitles({})
     setDetail(await albumDetail(props.root, a.dir))
     setStatus('Saved. Every change can be undone in Activity.')
-  }
-
-  async function rate(path: string, value: number) {
-    const before = stars[path] ?? detail?.tracks.find((t) => t.path === path)?.stars ?? 0
-    const next = before === value ? 0 : value // clicking the same star clears it
-    setStars((s) => ({ ...s, [path]: next }))
-    if (!(await run([{ file: path, set: [['RATING', next ? [String(next * 20)] : []]] }]))) setStars((s) => ({ ...s, [path]: before }))
   }
 
   const value = (k: AlbumField) => fields[k] ?? detail?.[k] ?? ''
@@ -246,7 +238,6 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
                       />
                       {t.artist && <div className="truncate text-[12px] text-ink/50">{t.artist}</div>}
                     </div>
-                    <Stars value={stars[t.path] ?? t.stars} onRate={(n) => void rate(t.path, n)} disabled={!inApp()} />
                     <span className="w-12 text-right text-[12px] tabular-nums text-ink/50">{t.duration_ms ? fmtDuration(t.duration_ms) : ''}</span>
                   </div>
                 </div>
@@ -254,7 +245,7 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
             </div>
             <div className="mt-4 flex items-center gap-3 border-t border-edge pt-4">
               <span role="status" className={`min-w-0 flex-1 truncate text-[12.5px] ${problem ? 'text-problem' : 'text-ink/55'}`} title={status}>
-                {status || (inApp() ? 'Click a field or a title to change it. Ratings save as soon as you click a star.' : 'Editing works in the desktop app.')}
+                {status || (inApp() ? 'Click a field or a title to change it.' : 'Editing works in the desktop app.')}
               </span>
               {!dirty && inApp() && !!detail?.tracks.length && (
                 <button onClick={() => askAddToPlaylist(detail.tracks.map((t) => t.path), detail.album || a.title)} className="btn-ghost btn-sm">
@@ -286,37 +277,6 @@ export function AlbumEditor(props: { root: string; album: AlbumSummary; src?: st
         </div>
       </motion.div>
     </motion.div>
-  )
-}
-
-function Stars(props: { value: number; onRate: (n: number) => void; disabled?: boolean }) {
-  const [hover, setHover] = useState(0)
-  const shown = hover || props.value
-  return (
-    <div
-      className={`flex transition-opacity ${props.value || hover ? '' : 'opacity-40 group-hover:opacity-100'}`}
-      onMouseLeave={() => setHover(0)}
-      role="group"
-      aria-label={props.value ? `Rated ${props.value} of 5` : 'Not rated'}
-    >
-      {[1, 2, 3, 4, 5].map((n) => (
-        <motion.button
-          key={n}
-          disabled={props.disabled}
-          whileTap={{ scale: 1.35 }}
-          onMouseEnter={() => setHover(n)}
-          onFocus={() => setHover(n)}
-          onBlur={() => setHover(0)}
-          onClick={() => props.onRate(n)}
-          className="px-[1px] text-[15px] leading-none"
-          style={{ color: n <= shown ? 'var(--accent)' : 'color-mix(in oklab, var(--ink) 22%, transparent)' }}
-          aria-label={n === props.value ? `${n} stars (click again to clear)` : `${n} ${n === 1 ? 'star' : 'stars'}`}
-          title={n === props.value ? 'Click again to clear the rating' : undefined}
-        >
-          ★
-        </motion.button>
-      ))}
-    </div>
   )
 }
 

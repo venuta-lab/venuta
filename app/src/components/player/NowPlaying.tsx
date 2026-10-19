@@ -16,7 +16,6 @@ import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SignalPath } from './NowPlayingBar'
 import { Segmented } from '../ui'
 import { SoundPanel } from './SoundPanel'
-import { Stars } from './Stars'
 import { PlayingFrom } from './PlayingFrom'
 import { QueueRadio } from './QueueRadio'
 
@@ -250,7 +249,6 @@ export function NowPlaying(props: {
                   onArtist={(name) => void leaving(() => props.onArtist(name))}
                   onOnlineArtist={(artist) => void leaving(() => props.onOnlineArtist(artist))}
                   onTiming={onTiming}
-                  stars={<Stars path={song.path} stars={song.stars} size={18} />}
                   from={<PlayingFrom className="mt-1 block truncate text-[12.5px] text-ink/45" onOpen={props.onClose} />}
                 />
               </div>

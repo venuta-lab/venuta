@@ -83,7 +83,7 @@ export function ActivityScreen(props: { root: string }) {
           </span>
           <p className="mt-4 text-[15px] font-medium">Nothing has changed yet</p>
           <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-ink/55">
-            Builds, edits to tags and ratings, and your answers in Organize are listed here as they happen, each one with Undo.
+            Builds, edits to tags, and your answers in Organize are listed here as they happen, each one with Undo.
           </p>
         </div>
       )}

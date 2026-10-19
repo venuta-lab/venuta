@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tracksFor } from '../../lib/catalog'
 import { useCovers } from '../../lib/covers'
 import {
-  confirmBackup,
   playlistDuplicate,
   playlistQueue,
   playlistRefind,
@@ -13,7 +12,6 @@ import {
   playlistTracks,
   playlistFindOnline,
   type ForeignSong,
-  ratePlaylist,
   searchWeb,
   smartSave,
   type CatalogTrack,
@@ -46,7 +44,6 @@ import {
 import { notify } from '../../lib/notify'
 import { keyFor, matcher } from '../../lib/textsearch'
 import { useEscape } from '../../lib/layers'
-import { confirmAsk } from '../../components/Confirm'
 import { askAddSongs, askAddToPlaylist } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { Mosaic } from '../../components/Mosaic'
@@ -438,25 +435,6 @@ export function PlaylistPage(props: {
     if (await deletePlaylist(root, { name })) props.onGone()
   }
 
-  /** Four stars for every song here without a rating; it writes the files, so a backup comes first. */
-  async function rateUnrated() {
-    try {
-      const r = await ratePlaylist(root, name, 4)
-      notify(r.changed ? `Gave ${plural(r.changed, 'unrated song')} four stars.` : 'Every song here already has a rating.')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!msg.includes('BACKUP_NOT_CONFIRMED')) return notify(msg)
-      const ok = await confirmAsk({
-        title: 'Do you have a backup of this library?',
-        text: 'Ratings are written into your music files. Every change is journaled and can be undone, but a backup is the real safety net.',
-        confirm: 'I have a backup',
-      })
-      if (!ok) return
-      await confirmBackup()
-      await rateUnrated()
-    }
-  }
-
   async function refind() {
     const n = await playlistRefind(root, name)
     notify(n ? `Found ${plural(n, 'song')} that came into your library since.` : 'None of the missing songs are in your library yet.')
@@ -492,7 +470,6 @@ export function PlaylistPage(props: {
           : undefined,
         refind: () => void refind(),
         fillOnline: () => setPicking({ rows: (rows ?? []).filter(toGet), mode: 'use' }),
-        rate: have.length ? () => void rateUnrated() : undefined,
         export: () => void exportFile(),
         delete: () => void remove(),
       },

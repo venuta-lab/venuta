@@ -940,7 +940,7 @@ function Safety() {
       <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Safety and undo</h2>
       <Row
         title="I have a backup of my music"
-        hint="Editing tags or ratings changes your music files (safely, and each change can be undone). This confirms you have a copy elsewhere."
+        hint="Editing tags changes your music files (safely, and each change can be undone). This confirms you have a copy elsewhere."
       >
         <Switch label="I have a backup of my music" on={!!s?.backup_confirmed} onChange={(on) => save({ backup_confirmed: on })} />
       </Row>

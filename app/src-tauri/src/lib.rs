@@ -11,7 +11,7 @@ use engine::rules::Rules;
 use engine::settings::{Decision, Settings};
 use engine::{Index, ScanReport, paths};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -2841,47 +2841,6 @@ fn chrono_today() -> String {
     format!("{}-{m:02}-{d:02}", if m <= 2 { y + 1 } else { y })
 }
 
-/// Rate the songs of one playlist (e.g. Apple's Favourite Songs) that have no rating yet.
-#[tauri::command]
-async fn rate_playlist(
-    root: String,
-    name: String,
-    stars: u8,
-    jobs: State<'_, Jobs>,
-) -> CmdResult<engine::edit::EditReport> {
-    files_settled(&jobs)?;
-    if !settings_with_defaults().backup_confirmed {
-        return Err("BACKUP_NOT_CONFIRMED".into());
-    }
-    blocking(move || {
-        let rootp = PathBuf::from(&root);
-        let (_, lib) = load_lib(&rootp)?;
-        let (entries, _) = engine::playlists::read(&rootp, &lib, &name)?;
-        let unrated: HashSet<String> = lib
-            .tracks
-            .iter()
-            .filter(|t| t.first("RATING").is_none())
-            .map(|t| t.path.clone())
-            .collect();
-        let edits: Vec<engine::edit::TagEdit> = entries
-            .into_iter()
-            .filter(|e| !e.missing && unrated.contains(&e.path))
-            .map(|e| engine::edit::TagEdit {
-                file: e.path,
-                set: vec![(
-                    "RATING".into(),
-                    engine::edit::stars_to_rating(stars).into_iter().collect(),
-                )],
-            })
-            .collect();
-        let report = engine::edit::edit_in_place(&rootp, &edits)?;
-        let mut index = open_index(&rootp)?;
-        libcache::scan(&mut index, &rootp)?;
-        Ok(report)
-    })
-    .await
-}
-
 #[derive(Serialize)]
 struct TrackRow {
     path: String,
@@ -3328,7 +3287,6 @@ pub fn run() {
             playlist_find_online,
             import_apply,
             set_apple,
-            rate_playlist
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
