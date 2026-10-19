@@ -237,6 +237,9 @@ pub struct PlaylistPage {
     /// with `InnerTube::playlist_suggestions`. Withheld on anyone else's playlist, where the same
     /// token pages to related playlists instead.
     pub suggestions: Option<String>,
+    /// The header menu's radio of this playlist (`RDAMPL…` and its params), see [`header_radio`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radio: Option<WatchEndpoint>,
 }
 
 /// A page of extra tracks fetched via a continuation token.
@@ -339,6 +342,10 @@ pub struct AlbumPage {
     /// from the artist, related albums. Same response as the tracks, so they cost no extra fetch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<ArtistCarousel>,
+    /// The header menu's radio of this album (`RDAMPL` + its `OLAK5uy_…`, and its params), see
+    /// [`header_radio`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radio: Option<WatchEndpoint>,
 }
 
 /// Parse a `FEmusic_home` response into filter chips + titled carousel sections. context/08.
@@ -567,6 +574,7 @@ pub fn parse_playlist(root: &Value) -> PlaylistPage {
         people_text,
         sort_menu: sort_menu(root),
         suggestions: owned.then(|| suggestions_token(root)).flatten(),
+        radio: header_radio(root),
     }
 }
 
@@ -994,6 +1002,7 @@ pub fn parse_album(root: &Value) -> AlbumPage {
             .collect(),
         in_library: library_toggle(header)
             .is_some_and(|t| t.get("isToggled").and_then(Value::as_bool).unwrap_or(false)),
+        radio: header_radio(root),
     }
 }
 
@@ -1424,6 +1433,20 @@ fn playlist_header(root: &Value) -> Option<&Value> {
         .find_map(|key| find_all(root, key).into_iter().next())
 }
 
+/// The radio of an album or playlist page as its header menu puts it ("Start mix" / "Start
+/// radio", the item whose icon is `MIX`): `RDAMPL` + the list's id and YouTube's params, to replay
+/// as it is. Read from the header alone: each song row carries a `MIX` item of its own (that
+/// song's radio). None when the header has no such item.
+pub fn header_radio(root: &Value) -> Option<WatchEndpoint> {
+    find_all(playlist_header(root)?, "menuNavigationItemRenderer")
+        .into_iter()
+        .filter(|item| item.pointer("/icon/iconType").and_then(Value::as_str) == Some("MIX"))
+        .find_map(|item| {
+            item.get("navigationEndpoint")
+                .and_then(WatchEndpoint::within)
+        })
+}
+
 /// The shelf holding the playlist's/album's own tracks — the first one in the response, since the
 /// suggestions section always comes after it.
 fn track_shelf(root: &Value) -> Option<&Value> {
@@ -1545,6 +1568,51 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    fn saved_page(name: &str) -> Value {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../media-access/tests/fixtures/ytm")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(file).expect("fixture")).expect("json")
+    }
+
+    // An album's and a playlist's header menu carries YouTube's own radio of the list (the item
+    // whose icon is `MIX`, "Start mix" or "Start radio"), kept as it came. The album's song rows
+    // have a `MIX` item each too (a song's radio): those are not the album's.
+    #[test]
+    fn album_and_playlist_pages_keep_their_radio_button() {
+        let album = parse_album(&saved_page("album-heartbeat.json"));
+        assert_eq!(
+            album.radio,
+            Some(WatchEndpoint {
+                playlist_id: Some("RDAMPLOLAK5uy_nzlLa_sS90GkezY_47EhlFbbf2z21PO_4".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        let playlist = parse_playlist(&saved_page("playlist-first.json"));
+        assert_eq!(
+            playlist.radio,
+            Some(WatchEndpoint {
+                playlist_id: Some("RDAMPLPLXCoHsJ9oLec7aYGojOIj3Acu7wMKjADm".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            header_radio(&saved_page("playlist-first.json")),
+            playlist.radio
+        );
+        // A header with no radio item (Shuffle only) has none; nothing is made up.
+        let bare = json!({ "header": { "musicResponsiveHeaderRenderer": { "buttons": [
+            { "menuRenderer": { "items": [ { "menuNavigationItemRenderer": {
+                "icon": { "iconType": "MUSIC_SHUFFLE" },
+                "navigationEndpoint": { "watchPlaylistEndpoint": { "playlistId": "PL1", "params": "x" } }
+            } } ] } }
+        ] } } });
+        assert_eq!(header_radio(&bare), None);
+        assert_eq!(parse_playlist(&bare).radio, None);
     }
 
     // A channel YouTube Music doesn't treat as an artist comes back with a visual header, not an

@@ -4,15 +4,16 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { confirmAsk } from '../../components/Confirm'
 import { DragHandle } from '../../components/DragHandle'
-import { IconClose, IconPause, IconPlay, IconPlaylistAdd, IconShuffle } from '../../components/Icons'
+import { IconClose, IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { SavePlaylistButton } from '../../components/YtmButtons'
-import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, type OnlineCollection, type OnlineTrack, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
+import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, type OnlineCollection, type OnlineTrack, type RadioEndpoint, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
 import { isRadioList, listIdOf, playRadioAt } from '../../lib/radio'
+import { listRadio } from '../../lib/radioSession'
 import { useYtmStatus, ytmLibraryChanged } from '../../lib/ytmLibrary'
 import { movesBetween } from '../../lib/ytmMoves'
 import { minutes, plural, spring, useNav } from './model'
@@ -45,6 +46,8 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   const [mine, setMine] = useState<YtmPlaylist | null>(null)
   const [problem, setProblem] = useState('')
   const [stamp, setStamp] = useState(0)
+  // The page's Start radio, as YouTube Music put it there.
+  const [radioButton, setRadioButton] = useState<RadioEndpoint | null>(null)
   // The order YouTube Music last had (its items' set ids): what a drag is measured against.
   const sent = useRef<string[]>([])
   const asAccount = signed_in && c.kind === 'playlist'
@@ -52,7 +55,11 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
     let live = true
     const plain = () =>
       onlineCollection(c.collection_id)
-        .then((p) => live && setTracks(p.tracks))
+        .then((p) => {
+          if (!live) return
+          setTracks(p.tracks)
+          setRadioButton(p.radio ?? null)
+        })
         .catch((e) => {
           if (!live) return
           setProblem(onlineProblem(e))
@@ -64,6 +71,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
           if (!live) return
           setMine(p)
           setTracks(p.tracks)
+          setRadioButton(p.radio ?? null)
           sent.current = setIds(p.tracks)
         })
         .catch(() => live && void plain())
@@ -82,6 +90,9 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   // Its own list in the catalog: what Autoplay asks YouTube Music to go on with when it ends.
   const list = c.kind === 'podcast' ? null : listIdOf(playlistId)
   const from: From = useMemo(() => ({ kind: 'search', ref: c.title, label: `Online: ${c.title}`, list }), [c.title, list])
+  // Start radio: the radio its page's button names, else the playlist's list's (Liked music's is
+  // RDAMPLLM). A podcast has none, and a radio is its own.
+  const radio = tracks?.length && list ? listRadio(radioButton, list) : null
   const nowKey = usePlayerValue((s) => {
     const now = current(s)
     return now ? queueKey(now) : ''
@@ -188,6 +199,12 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
               <IconShuffle />
               Shuffle
             </button>
+            {radio && (
+              <button onClick={() => void playRadioAt(root, radio, `${title} radio`)} className="btn-ghost btn-lg" title={`Play YouTube Music's radio of “${title}”`}>
+                <IconRadio width={18} height={18} />
+                Start radio
+              </button>
+            )}
             <button disabled={!items.length} onClick={addAll} className="btn-ghost btn-lg">
               <IconPlaylistAdd width={18} height={18} />
               Add to playlist

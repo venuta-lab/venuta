@@ -144,7 +144,8 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
         return [[...when(f.maybe, 'use'), 'playOnline', 'useOnline', 'find', 'copy', 'web'], when(!f.smart, 'remove')]
       case 'queued':
         return [
-          ['play'],
+          when(!f.current, 'play', 'next'),
+          ['radio'],
           ['playlist'],
           [...when(!f.noArtist, 'artist'), ...when(!f.online, 'album')],
           when(!f.current, 'remove'),

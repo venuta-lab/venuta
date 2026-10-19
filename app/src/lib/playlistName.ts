@@ -26,6 +26,10 @@ export function savedName(typed: string): string {
   return RESERVED.has(out.toUpperCase()) ? `${out}_` : out
 }
 
+/** The name a new playlist is made under: the one typed, else the one suggested (the queue's
+ *  radio), as it will be saved. */
+export const newPlaylistName = (typed: string, suggested?: string | null) => savedName(typed.trim() ? typed : (suggested ?? ''))
+
 /**
  * What to say under the name field while it is typed, when the name saved won't be the name
  * typed (null when it will be).

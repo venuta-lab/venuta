@@ -3,7 +3,7 @@ import { SaveAlbumButton } from '../../components/YtmButtons'
 import { useEffect, useMemo, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
-import { IconPause, IconPlay, IconPlaylistAdd, IconSelect, IconShuffle } from '../../components/Icons'
+import { IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconSelect, IconShuffle } from '../../components/Icons'
 import { SelectBar } from '../../components/SelectBar'
 import { NO_PICKS, pick, pickAll, picked, type Picks } from '../../lib/selection'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
@@ -12,6 +12,8 @@ import { onlineAlbumPage, type OnlineAlbum, type OnlineAlbumPage as Page } from 
 import { onlineProblem } from '../../lib/online'
 import { ownedIndex, titleCore } from '../../lib/owned'
 import { current, fromIs, onlineEntryFrom, playAllItems, queueKey, toggle, usePlayerValue, type From } from '../../lib/player'
+import { playRadioAt } from '../../lib/radio'
+import { listRadio } from '../../lib/radioSession'
 import { matcher, searchKey } from '../../lib/textsearch'
 import { spring, useNav, type Library } from './model'
 import { OnlineShelfRow } from './OnlineCards'
@@ -64,6 +66,8 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
   // catalog is what Autoplay asks YouTube Music to go on with when it ends.
   const list = page?.playlist_id ?? null
   const from: From = useMemo(() => ({ kind: 'search', ref: title, label: `Online: ${title}`, list }), [title, list])
+  // Start radio: the radio its page's button names, else the album's list's.
+  const radio = page ? listRadio(page.radio, list) : null
   // The songs that hold the words typed in "Search this album", with their album numbers.
   const shown = useMemo(() => {
     const all = songs.map((s, i) => ({ s, n: i + 1 }))
@@ -168,6 +172,12 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
               <IconShuffle />
               Shuffle
             </button>
+            {radio && (
+              <button onClick={() => void playRadioAt(root, radio, `${title} radio`)} className="btn-ghost btn-lg" title={`Play YouTube Music's radio of “${title}”`}>
+                <IconRadio width={18} height={18} />
+                Start radio
+              </button>
+            )}
             <button disabled={!items.length} onClick={addAll} className="btn-ghost btn-lg">
               <IconPlaylistAdd width={18} height={18} />
               Add to playlist

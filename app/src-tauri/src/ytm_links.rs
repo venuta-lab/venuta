@@ -688,6 +688,7 @@ mod tests {
             people_text: None,
             artwork_url: None,
             tracks: Vec::new(),
+            radio: None,
             complete: true,
         }
     }

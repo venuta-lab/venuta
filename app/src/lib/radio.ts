@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { catalogNow } from './catalog'
 import {
+  inApp,
   isSearchCancelled,
   onlineRadio,
   onlineRadioAt,
@@ -49,7 +50,9 @@ import {
   matchMemory,
   nextStep,
   radioSession,
+  relatedAsk,
   saveSession,
+  sessionShelf,
   type RadioSession,
   type Step,
 } from './radioSession'
@@ -93,10 +96,14 @@ const store = () => {
 }
 /** Files you started a radio from (or that stood in for a song), and their catalog song. */
 const matches = matchMemory(store)
+/** The sessions of queues something else replaced: Undo puts the queue back, and its radio
+ *  goes on where it was. */
+const replaced = sessionShelf()
 
 function put(s: RadioSession | null, room = false) {
   if (room) roomSession = s
   else {
+    if (session && session.key !== s?.key) replaced.keep(session)
     session = s
     saveSession(store, s)
   }
@@ -305,6 +312,17 @@ export async function playRadioList(root: string, playlistId: string, label: str
   }
 }
 
+/** YouTube Music's Related songs for a song in the queue (the Related tab): the session's
+ *  Related page when it is about that song, else the song's own. A file of yours asks for its
+ *  same song's (found once, remembered). Nothing is asked in Local only or outside the app. */
+export async function relatedSongs(item: QueueItem): Promise<OnlineTrack[]> {
+  if (isLocalOnly() || !inApp()) return []
+  const id = onlineIdOf(item) ?? (await catalogIdOf(rowInfo(item)))
+  if (!id) return []
+  const ask = relatedAsk(sessionOf(!!roomRoute()), id)
+  return onlineRelated(ask.trackId, ask.relatedId)
+}
+
 /** A catalog list id as the radio's own (`VL` is a page id's prefix, not the list's). */
 export const listIdOf = (id: string | null | undefined) => (id ? id.replace(/^VL/, '') : null)
 
@@ -381,7 +399,7 @@ export async function blockArtist(name: string, artistId: string | null = null) 
  *  when it says one), or a radio from before sessions were kept, which goes on from its list. */
 function sessionFor(key: string): RadioSession {
   const f = readFrom(key)
-  return loadSession(store, key) ?? listSession(key, listIdOf(f?.list ?? (f?.kind === 'radio' ? f.radio : null)))
+  return loadSession(store, key) ?? replaced.take(key) ?? listSession(key, listIdOf(f?.list ?? (f?.kind === 'radio' ? f.radio : null)))
 }
 
 /** Ask for what the step names and put it in the queue (`room`: the host's room's). */

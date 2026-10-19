@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { nameNote, savedName } from '../src/lib/playlistName.ts'
+import { nameNote, newPlaylistName, savedName } from '../src/lib/playlistName.ts'
 
 const { cases } = JSON.parse(readFileSync(new URL('./fixtures/playlist-names.json', import.meta.url), 'utf8')) as {
   cases: [string, string][]
@@ -23,4 +23,11 @@ test('a changed name says what it is saved as, and why', () => {
   assert.match(nameNote('L'.repeat(150)) ?? '', /at most 100 letters/)
   assert.match(nameNote('CON') ?? '', /Windows keeps that name/)
   assert.equal(nameNote('***'), 'A name needs at least one letter or number.')
+})
+
+test('a new playlist takes the name suggested until one is typed', () => {
+  assert.equal(newPlaylistName('', 'Kitni Baatein Radio'), 'Kitni Baatein Radio')
+  assert.equal(newPlaylistName('  ', 'Mix: one/two'), 'Mix one two')
+  assert.equal(newPlaylistName('Road trip', 'Kitni Baatein Radio'), 'Road trip')
+  assert.equal(newPlaylistName('', undefined), '')
 })

@@ -63,6 +63,9 @@ pub struct AccountPlaylist {
     /// Every page came: false when a later page failed, so a sync must not read a song missing
     /// from this list as one taken out.
     pub complete: bool,
+    /// Its page's radio (the header's Start radio), as YouTube put it there.
+    #[serde(default)]
+    pub radio: Option<crate::types::RadioEndpoint>,
 }
 
 /// A change to a playlist the account owns.
