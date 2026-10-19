@@ -8,15 +8,22 @@ import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
 import { Toast } from './components/Toast'
+import { IconCards, IconFind, IconHealth, IconHome, IconInbox, IconLibrary, IconSettings, IconStats } from './components/Icons'
+import { Segmented } from './components/ui'
 import {
-  IconActivity,
-  IconCards,
-  IconHealth,
-  IconInbox,
-  IconListen,
-  IconTag,
-  IconSettings,
-} from './components/Icons'
+  PLACE_KEYS,
+  PLACE_LABELS,
+  PLACE_ORDER,
+  RAIL_BOTTOM,
+  RAIL_GROUPS,
+  isMusicPlace,
+  musicTopOf,
+  placeForKey,
+  placeOfMusicTop,
+  screenKey,
+  swipeFrom,
+  type Place,
+} from './lib/places'
 import {
   cancelDeepCheck,
   cancelLookup,
@@ -98,12 +105,22 @@ const store = {
 const normPath = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
 const samePath = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && normPath(a) === normPath(b)
 
-// "listen" is the Music home (listening); "music" is the album wall for details (Metadata).
-// Playlists live in Music (its Playlists tab).
-type Place = 'listen' | 'music' | 'health' | 'inbox' | 'devices' | 'activity' | 'settings'
-const ORDER: Place[] = ['listen', 'music', 'health', 'inbox', 'devices', 'activity', 'settings']
-/** The places on the top of the rail, in order (Ctrl+1 … Ctrl+5). */
-const MAIN = 5
+// The places and the rail are in lib/places.ts. Home, Search, Library and Stats are one screen
+// (Music); Health holds Fix details (the album wall for details, once Metadata). Playlists live in
+// Library. Besides a place, `go` takes 'listen' (the music screen as it was left) and 'details'.
+type Where = Place | 'listen' | 'details'
+type HealthView = 'overview' | 'details'
+const RAIL_ICONS: Record<Place, Section['icon']> = {
+  home: IconHome,
+  search: IconFind,
+  library: IconLibrary,
+  stats: IconStats,
+  health: IconHealth,
+  organize: IconInbox,
+  devices: IconCards,
+  activity: IconHealth,
+  settings: IconSettings,
+}
 
 /**
  * The window's backdrop: the playing song's cover whenever there is one, so the backdrop and the
@@ -140,7 +157,13 @@ export default function App() {
   const [readError, setReadError] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const [active, setActive] = useState<Place>('listen')
+  const [active, setActive] = useState<Place>('home')
+  // The music place last shown, for going back to the music screen as it was left.
+  const lastMusic = useRef<Place>('home')
+  useEffect(() => {
+    if (isMusicPlace(active)) lastMusic.current = active
+  }, [active])
+  const [healthView, setHealthView] = useState<HealthView>('overview')
   const [direction, setDirection] = useState(1)
   const [backdrop, setBackdrop] = useState<string[]>([])
   const [deep, setDeep] = useState<{ done: number; total: number } | null>(null)
@@ -341,12 +364,15 @@ export default function App() {
   }, [root, refresh])
 
   const go = useCallback(
-    (id: Place) => {
+    (where: Where) => {
+      const id: Place = where === 'listen' ? (isMusicPlace(active) ? active : lastMusic.current) : where === 'details' ? 'health' : where
+      if (where === 'details') setHealthView('details')
+      else if (where === 'health' && active !== 'health') setHealthView('overview')
       // Going anywhere (even to the place underneath) closes the full-window views over it.
       setNowOpen(false)
       setQueueOpen(false)
-      const from = ORDER.indexOf(active)
-      const to = ORDER.indexOf(id)
+      const from = PLACE_ORDER.indexOf(active)
+      const to = PLACE_ORDER.indexOf(id)
       if (to < 0 || to === from) return
       setDirection(to > from ? 1 : -1)
       setVisit((n) => n + 1)
@@ -470,7 +496,7 @@ export default function App() {
     (place: PlaylistsPlace = { kind: 'home' }) => {
       showPlaylists(place)
       showMusicTab('playlists')
-      go('listen')
+      go('library')
     },
     [go],
   )
@@ -602,11 +628,11 @@ export default function App() {
 
   // Everything the palette can do.
   const commands: Command[] = useMemo(() => {
-    const goTo = (p: Place, label: string, keys: string, keywords = ''): Command => ({
+    const goTo = (p: Place, keywords = ''): Command => ({
       id: `go-${p}`,
       group: 'Go to',
-      label,
-      keys,
+      label: PLACE_LABELS[p],
+      keys: PLACE_KEYS[p],
       keywords,
       run: () => go(p),
     })
@@ -617,10 +643,13 @@ export default function App() {
       ['amoled', 'AMOLED (true black)'],
     ]
     const list: Command[] = [
-      goTo('listen', 'Music', 'Ctrl+1', 'listen play home albums artists songs player'),
-      goTo('music', 'Metadata', 'Ctrl+2', 'tags details edit covers album wall'),
-      goTo('health', 'Health', 'Ctrl+3', 'status quality metadata completeness problems tools'),
-      goTo('inbox', 'Organize', 'Ctrl+4', 'inbox questions decisions review new music incoming manage library naming'),
+      goTo('home', 'music listen play start greeting shelves'),
+      goTo('search', 'find look for browse moods genres catalog'),
+      goTo('library', 'music albums artists songs playlists liked'),
+      goTo('stats', 'listening history most played top time'),
+      goTo('health', 'status quality completeness problems tools'),
+      { id: 'go-details', group: 'Go to', label: 'Fix details', keywords: 'metadata tags details edit covers album wall', run: () => go('details') },
+      goTo('organize', 'inbox questions decisions review new music incoming manage library naming'),
       { id: 'playlists', group: 'Go to', label: 'Playlists', keywords: 'music smart want-list to get', run: () => openPlaylists() },
       {
         id: 'playlist-new',
@@ -667,9 +696,9 @@ export default function App() {
           menu: () => menuFor('playlist', playlistFacts(p), playlistWork(root, p)),
         }),
       ),
-      goTo('devices', 'Devices', 'Ctrl+5', 'cards sd players sync'),
-      goTo('activity', 'Activity', 'Ctrl+H', 'history undo builds'),
-      goTo('settings', 'Settings', 'Ctrl+,', 'preferences options keys'),
+      goTo('devices', 'cards sd players sync'),
+      goTo('activity', 'history undo builds changes'),
+      goTo('settings', 'preferences options keys'),
       { id: 'search', group: 'Actions', label: 'Search your music', keys: '/', run: () => focusSearch() },
       { id: 'play-toggle', group: 'Player', label: 'Play or pause', keys: 'Space', keywords: 'resume stop', run: () => void player.toggle() },
       { id: 'mini', group: 'Player', label: 'Mini player', keys: 'Ctrl+M', keywords: 'small window compact on top', run: () => void player.toggleMiniPlayer() },
@@ -817,7 +846,7 @@ export default function App() {
         go('listen')
         setListenArtist(name)
       },
-      editDetails: () => go('music'),
+      editDetails: () => go('details'),
     }
     const albumMenu = (dir: string) => () => {
       const tracks = catalogNow(root)
@@ -841,10 +870,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, root, go, prefs, toggleTheme, shelf, openPlaylists, openPlaylist])
 
-  function focusSearch() {
-    // Music and Metadata each have a search: the one showing, or Music from anywhere else.
-    if (active !== 'listen' && active !== 'music') go('listen')
-    const target = active === 'music' ? search : listenSearch
+  function focusSearch(music = false) {
+    // Fix details searches its own list with /; everywhere else it is the one search, for music.
+    const details = !music && active === 'health' && healthView === 'details'
+    if (!details && !isMusicPlace(active)) go('search')
+    const target = details ? search : listenSearch
     window.setTimeout(() => target.current?.focus(), 80)
   }
 
@@ -871,9 +901,10 @@ export default function App() {
       } else if (e.ctrlKey && k === 'h') {
         e.preventDefault()
         go('activity')
-      } else if (e.ctrlKey && /^[1-5]$/.test(k)) {
+      } else if (e.ctrlKey && /^[1-7]$/.test(k)) {
         e.preventDefault()
-        go(ORDER[Number(k) - 1])
+        const p = placeForKey(Number(k))
+        if (p) go(p)
       } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
         e.preventDefault()
         setLinkOpen(true)
@@ -911,26 +942,22 @@ export default function App() {
     if (now < s.lock) return
     s.acc += e.deltaX
     if (Math.abs(s.acc) > 160) {
-      const places = ORDER.slice(0, MAIN)
-      const i = places.indexOf(active)
-      const next = i >= 0 ? places[i + (s.acc > 0 ? 1 : -1)] : undefined
+      const next = swipeFrom(active, s.acc > 0 ? 1 : -1)
       s.acc = 0
       s.lock = now + 650
       if (next) go(next)
     }
   }
 
-  const top: Section[] = [
-    { id: 'listen', label: 'Music', icon: IconListen, keys: 'Ctrl+1' },
-    { id: 'music', label: 'Metadata', icon: IconTag, keys: 'Ctrl+2' },
-    { id: 'health', label: 'Health', icon: IconHealth, keys: 'Ctrl+3' },
-    { id: 'inbox', label: 'Organize', icon: IconInbox, keys: 'Ctrl+4', badge: inboxCount },
-    { id: 'devices', label: 'Devices', icon: IconCards, keys: 'Ctrl+5' },
-  ]
-  const bottom: Section[] = [
-    { id: 'activity', label: 'Activity', icon: IconActivity, keys: 'Ctrl+H' },
-    { id: 'settings', label: 'Settings', icon: IconSettings, keys: 'Ctrl+,' },
-  ]
+  const section = (p: Place): Section => ({
+    id: p,
+    label: PLACE_LABELS[p],
+    icon: RAIL_ICONS[p],
+    keys: PLACE_KEYS[p],
+    badge: p === 'organize' ? inboxCount : undefined,
+  })
+  const groups = RAIL_GROUPS.map((g) => g.map(section))
+  const bottom = RAIL_BOTTOM.map(section)
 
   const screen = useMemo(() => {
     if (setup && active !== 'settings')
@@ -985,13 +1012,28 @@ export default function App() {
           onChoose={() => void act.chooseRoot()}
         />
       )
+    const healthViews = (
+      <Segmented
+        tabs
+        label="Health views"
+        value={healthView}
+        options={[
+          { value: 'overview' as const, label: 'Overview' },
+          { value: 'details' as const, label: 'Fix details' },
+        ]}
+        onChange={setHealthView}
+      />
+    )
     switch (active) {
-      case 'listen':
+      case 'home':
+      case 'search':
+      case 'library':
+      case 'stats':
         // A folder chosen with no music in it says so; your library with none yet still has
         // Home (the catalog), with a way to add yours.
         if (report && report.summary.tracks === 0 && !samePath(root, libMusic))
           return (
-            <NoMusic path={root} isLibrary={false} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
+            <NoMusic path={root} isLibrary={false} onAdd={() => go('organize')} onChoose={() => void act.chooseRoot()} />
           )
         return (
           <ListenScreen
@@ -1005,21 +1047,24 @@ export default function App() {
             onOpenedArtist={() => setListenArtist(null)}
             onEditDetails={(dir) => {
               setEditDir(dir)
-              go('music')
+              go('details')
             }}
             onOpenPlaylist={openPlaylist}
             onPlaylists={openPlaylists}
             onAddMusic={samePath(root, libMusic) ? () => void act.chooseRoot() : undefined}
             reset={again}
+            top={musicTopOf(active)}
+            onTop={(t) => go(placeOfMusicTop(t))}
           />
         )
-      case 'music':
-        if (report && report.summary.tracks === 0)
-          return (
-            <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('inbox')} onChoose={() => void act.chooseRoot()} />
-          )
-        return <MusicScreen root={root} report={report} busy={busy} searchRef={search} openDir={editDir} onOpened={editOpened} />
       case 'health':
+        if (healthView === 'details') {
+          if (report && report.summary.tracks === 0)
+            return (
+              <NoMusic path={root} isLibrary={samePath(root, libMusic)} onAdd={() => go('organize')} onChoose={() => void act.chooseRoot()} />
+            )
+          return <MusicScreen root={root} report={report} busy={busy} searchRef={search} openDir={editDir} onOpened={editOpened} views={healthViews} />
+        }
         return (
           <HealthScreen
             root={root}
@@ -1028,7 +1073,8 @@ export default function App() {
             onLookup={act.runLookup}
             onCheck={act.runDeepCheck}
             onRescan={() => void refresh(root, true)}
-            onOrganize={() => go('inbox')}
+            onOrganize={() => go('organize')}
+            views={healthViews}
             running={{ lookup: !!lookup, check: !!deep }}
             progress={
               <>
@@ -1044,7 +1090,7 @@ export default function App() {
             }
           />
         )
-      case 'inbox':
+      case 'organize':
         return (
           <InboxScreen
             root={root}
@@ -1083,17 +1129,17 @@ export default function App() {
     // The page is drawn again only when what it shows changes, not when the window around it does
     // (a notice, the queue or the palette opening, a progress tick elsewhere).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setup, active, ready, missing, root, home, libMusic, suggestion, report, busy, lookup, deep, readError, listenAlbum, listenArtist, again, act, go, refresh, openPlaylist, openPlaylists])
+  }, [setup, active, healthView, editDir, ready, missing, root, home, libMusic, suggestion, report, busy, lookup, deep, readError, listenAlbum, listenArtist, again, act, go, refresh, openPlaylist, openPlaylists])
 
   return (
     <MotionConfig reducedMotion={motionSetting(prefs)}>
       <div className="relative flex h-full flex-col" onWheel={onWheel}>
         <NowBackdrop covers={backdrop} />
         <ThemeFx />
-        <TitleBar onPalette={() => setPalette(true)} />
+        <TitleBar onSearch={() => focusSearch(true)} onActivity={() => go('activity')} />
         <div className="relative z-10 flex min-h-0 flex-1">
           <Rail
-            top={top}
+            groups={groups}
             bottom={bottom}
             active={setup ? '' : active}
             onSelect={(id) => {
@@ -1101,6 +1147,7 @@ export default function App() {
               // The place you're on, chosen again (and nothing over it): back to its start.
               if (id === active && !nowOpen) {
                 setAgain((n) => n + 1)
+                if (id === 'health') setHealthView('overview')
                 document.querySelector('main .thin-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
               }
               go(id as Place)
@@ -1116,7 +1163,7 @@ export default function App() {
             >
             <AnimatePresence mode="popLayout" custom={direction} initial={false}>
               <motion.div
-                key={active}
+                key={screenKey(active)}
                 custom={direction}
                 // The rail is a column, so places move up and down with it: a short rise, quick.
                 variants={{

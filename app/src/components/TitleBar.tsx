@@ -12,7 +12,7 @@ import { RoomChip } from './together/RoomChip'
 export const TITLE_SEARCH = 'title-search'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
-export function TitleBar(props: { onPalette: () => void }) {
+export function TitleBar(props: { onSearch: () => void; onActivity: () => void }) {
   const win = inApp() ? getCurrentWindow() : null
   // A copy for testing, beside the one in use: never mistaken for it.
   const [test, setTest] = useState(false)
@@ -20,7 +20,7 @@ export function TitleBar(props: { onPalette: () => void }) {
     if (inApp()) invoke<boolean>('is_test_copy').then(setTest, () => {})
   }, [])
   return (
-    <div data-tauri-drag-region className="relative z-30 flex h-10 shrink-0 items-center pl-5">
+    <div data-tauri-drag-region className="@container/title relative z-30 flex h-10 shrink-0 items-center pl-5">
       <span data-tauri-drag-region className="pointer-events-none flex items-center">
         <Brand size={29} word={17} />
       </span>
@@ -29,17 +29,18 @@ export function TitleBar(props: { onPalette: () => void }) {
           Test copy
         </span>
       )}
-      {/* Music puts its search here (ListenScreen, through TITLE_SEARCH); elsewhere it's Jump to. */}
+      {/* The music screen puts its search here (ListenScreen, through TITLE_SEARCH). Elsewhere the same
+          box stands in for it and opens Search; Ctrl+K is the command palette everywhere. */}
       <div className="absolute left-1/2 top-1/2 w-[min(420px,36vw)] -translate-x-1/2 -translate-y-1/2 [&:has(>#title-search>*)>.jump]:hidden">
         <div id={TITLE_SEARCH} />
         <button
-          onClick={props.onPalette}
-          title="Go to a place, an album or an artist, or run a command"
-          className="jump mx-auto flex w-[min(320px,32vw)] items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
+          onClick={props.onSearch}
+          title="Search your music and the online catalog (/). Ctrl+K: go anywhere or run a command"
+          className="jump mx-auto flex w-[min(420px,36vw)] items-center gap-2 rounded-full bg-ink/[0.06] px-3.5 py-1 text-[12.5px] text-ink/50 shadow-[inset_0_0_0_1px_var(--edge)] transition-colors hover:bg-ink/[0.1] hover:text-ink/70"
         >
           <IconSearch width={14} height={14} />
-          <span className="flex-1 truncate text-left">Jump to…</span>
-          <kbd>Ctrl K</kbd>
+          <span className="flex-1 truncate text-left">Search songs, albums, artists, playlists</span>
+          <kbd>/</kbd>
         </button>
       </div>
       <div className="ml-auto flex h-full items-center">
@@ -55,7 +56,7 @@ export function TitleBar(props: { onPalette: () => void }) {
             <path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" />
           </svg>
         </button>
-        <ActivityIndicator />
+        <ActivityIndicator onAll={props.onActivity} />
         <WinButton label="Minimise" onClick={() => win?.minimize()}>
           <path d="M5 12h14" />
         </WinButton>

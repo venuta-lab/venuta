@@ -67,6 +67,8 @@ export function HealthScreen(props: {
   onRescan: () => void
   onOrganize: () => void
   running: { lookup: boolean; check: boolean }
+  /** Health's views (Overview, Fix details), pinned at the top. */
+  views?: React.ReactNode
 }) {
   const { report } = props
   const cover = useCovers(320)
@@ -135,13 +137,13 @@ export function HealthScreen(props: {
 
   if (!s)
     return (
-      <Page title="Health" line={props.busy || 'Reading your music…'}>
+      <Page title="Health" line={props.busy || 'Reading your music…'} bar={props.views}>
         <span />
       </Page>
     )
 
   return (
-    <Page title="Health" line={`${albums(s.albums)}, ${fmt(s.tracks)} ${s.tracks === 1 ? 'song' : 'songs'}, ${Math.round(s.hours)} hours, ${(s.bytes / 1e9).toFixed(1)} GB`}>
+    <Page bar={props.views} title="Health" line={`${albums(s.albums)}, ${fmt(s.tracks)} ${s.tracks === 1 ? 'song' : 'songs'}, ${Math.round(s.hours)} hours, ${(s.bytes / 1e9).toFixed(1)} GB`}>
       {props.progress}
 
       {/* The overview and the tools. */}

@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import type { ComponentType, SVGProps } from 'react'
+import { Fragment, type ComponentType, type SVGProps } from 'react'
 
 export interface Section {
   id: string
@@ -11,9 +11,9 @@ export interface Section {
   badge?: number
 }
 
-/** The left rail: your places on top, history and settings at the bottom. */
+/** The left rail: your places in groups on top, a thin line between groups, Settings at the bottom. */
 export function Rail(props: {
-  top: Section[]
+  groups: Section[][]
   bottom: Section[]
   active: string
   onSelect: (id: string) => void
@@ -55,7 +55,12 @@ export function Rail(props: {
       aria-label="Sections"
       className="rail rail-main relative z-20 mb-3 ml-3 flex w-[84px] shrink-0 flex-col items-center gap-1 py-2"
     >
-      {props.top.map(item)}
+      {props.groups.map((group, i) => (
+        <Fragment key={group[0]?.id ?? i}>
+          {i > 0 && <span aria-hidden className="my-1.5 h-px w-9 shrink-0 bg-ink/[0.12]" />}
+          {group.map(item)}
+        </Fragment>
+      ))}
       <div className="flex-1" />
       {props.bottom.map(item)}
     </nav>

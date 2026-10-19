@@ -66,10 +66,10 @@ export function JobRow({ job, now }: { job: Job; now: number }) {
 }
 
 /**
- * Title-bar indicator: hidden when nothing runs; otherwise the current work at a glance, and a
- * list of everything running on click.
+ * Activity, in the title bar: when nothing runs, a button to every change (each with Undo); while
+ * work runs, that work at a glance, and on click everything running and the way to the changes.
  */
-export function ActivityIndicator() {
+export function ActivityIndicator(props: { onAll: () => void }) {
   const jobs = useJobs()
   const [want, setOpen] = useState(false)
   const open = want && jobs.length > 0
@@ -87,6 +87,19 @@ export function ActivityIndicator() {
 
   return (
     <div ref={box} className="relative mr-2 flex items-center">
+      {!lead && (
+        <button
+          onClick={props.onAll}
+          title="Every change Venuta made, each with Undo (Ctrl+H)"
+          className="flex h-8 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[12.5px] text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7.5V12l3 2" />
+          </svg>
+          <span className="hidden @[1240px]/title:inline">Activity</span>
+        </button>
+      )}
       <AnimatePresence>
         {lead && (
           <motion.button
@@ -122,7 +135,18 @@ export function ActivityIndicator() {
                 <JobRow key={j.key} job={j} now={now} />
               ))}
             </div>
-            <p className="border-t border-ink/[0.07] py-2.5 text-[11.5px] text-ink/45">You can keep using Venuta while this runs.</p>
+            <div className="flex items-center gap-3 border-t border-ink/[0.07] py-2.5">
+              <p className="min-w-0 flex-1 text-[11.5px] text-ink/45">You can keep using Venuta while this runs.</p>
+              <button
+                onClick={() => {
+                  setOpen(false)
+                  props.onAll()
+                }}
+                className="shrink-0 rounded-full px-2.5 py-0.5 text-[12px] text-ink/70 hover:bg-ink/10 hover:text-ink"
+              >
+                Every change
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

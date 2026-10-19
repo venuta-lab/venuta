@@ -36,6 +36,31 @@ export const IconChevron = (p: P) => (
     <path d="m9 6 6 6-6 6" />
   </svg>
 )
+/** A house: Home. */
+export const IconHome = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M4 11 12 4.5l8 6.5v8a1.5 1.5 0 0 1-1.5 1.5H15v-5H9v5H5.5A1.5 1.5 0 0 1 4 19Z" />
+  </svg>
+)
+/** Search, at the rail's size. */
+export const IconFind = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="m15.5 15.5 4.5 4.5" />
+  </svg>
+)
+/** Records on a shelf: Library. */
+export const IconLibrary = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M5 4v16M9.5 4v16M14 5l4.5 14.5" />
+  </svg>
+)
+/** Bars: Stats. */
+export const IconStats = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M5 20v-8M10 20V6M15 20v-9M20 20V9" />
+  </svg>
+)
 /** A note: listening. */
 export const IconListen = (p: P) => (
   <svg {...base} {...p}>

@@ -147,7 +147,7 @@ export function RoomChip() {
           aria-expanded={open}
           aria-label={TOGETHER}
           title={TOGETHER}
-          className="grid h-8 w-8 place-items-center rounded-full text-ink/60 transition-colors hover:bg-ink/10 hover:text-ink"
+          className="flex h-8 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[12.5px] text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <circle cx="9" cy="8" r="3.2" />
@@ -155,6 +155,7 @@ export function RoomChip() {
             <circle cx="16.5" cy="9" r="2.6" />
             <path d="M15.5 14.2c2.4-.3 4.4 1.2 5 4.3" />
           </svg>
+          <span className="hidden @[1240px]/title:inline">{TOGETHER}</span>
         </button>
       )}
       <AnimatePresence>

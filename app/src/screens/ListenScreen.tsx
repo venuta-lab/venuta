@@ -29,10 +29,11 @@ import { SearchHome } from './listen/SearchHome'
 import { YourMusic } from './listen/YourMusic'
 import { ListeningView } from './listen/ListeningView'
 import { SongList } from './listen/SongList'
-import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults } from './listen/views'
+import { AlbumsView, ArtistPage, ArtistsView, HomeView, SearchResults, greeting } from './listen/views'
 import { artistKey, indexTracks, fmtNum, NavContext, NowContext, scrollerOf, search, spring, useNav, type Nav, type OnlineArtistRef } from './listen/model'
 import { PlaylistsScreen, showPlaylists, usePlaylistsKind } from './PlaylistsScreen'
 import { useLyricHits } from '../lib/lyricsSearch'
+import type { MusicTop } from '../lib/places'
 
 export type Tab = 'home' | 'search' | 'albums' | 'artists' | 'songs' | 'playlists' | 'listening'
 /** The library's own views, as chips under Library. */
@@ -43,15 +44,11 @@ const LIBRARY: [LibraryView, string][] = [
   ['songs', 'Songs'],
   ['playlists', 'Playlists'],
 ]
-/** The tabs along the top: Home, Search, Library (which opens its last view) and Listening
- *  (your stats and history). */
-type Top = 'home' | 'search' | 'library' | 'listening'
-const TOPS: [Top, string][] = [
-  ['home', 'Home'],
-  ['search', 'Search'],
-  ['library', 'Library'],
-  ['listening', 'Listening'],
-]
+/** The music screen's views, chosen on the rail: Home, Search, Library (which opens its last view)
+ *  and Listening (shown as Stats: your stats and history). */
+type Top = MusicTop
+/** Each view's title: Home greets you by the hour. */
+const TITLES: Record<Top, () => string> = { home: greeting, search: () => 'Search', library: () => 'Library', listening: () => 'Stats' }
 const isLibrary = (t: Tab): t is LibraryView => t !== 'home' && t !== 'search' && t !== 'listening'
 const topOf = (t: Tab): Top => (isLibrary(t) ? 'library' : t)
 
@@ -125,8 +122,12 @@ interface Props {
   onPlaylists: () => void
   /** No music of your own yet: add it (Home offers it). */
   onAddMusic?: () => void
-  /** Bumped when Music is chosen again while already open: back to its start. */
+  /** Bumped when the place is chosen again while already open: back to its start. */
   reset?: number
+  /** The view the rail chose (Home, Search, Library, or Stats as Listening). */
+  top: Top
+  /** This screen moves to another view itself (typing a search, a tile opening Albums). */
+  onTop: (top: Top) => void
 }
 
 // The view you were on, kept while you visit other places (the screen itself is remounted).
@@ -161,7 +162,21 @@ function NowPlaying({ children }: { children: ReactNode }) {
 function Listen(props: Props) {
   const { root, report, busy, searchRef, openAlbum, onOpenedAlbum, openArtist = null, onOpenedArtist } = props
   const box = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState<Tab>(kept.tab)
+  // The rail chooses the view; Library remembers which of its own views was open.
+  const [libView, setLibView] = useState<LibraryView>(isLibrary(kept.tab) ? kept.tab : kept.library)
+  const tab: Tab = props.top === 'library' ? libView : props.top
+  const topNow = useRef(props.top)
+  topNow.current = props.top
+  const onTop = useRef(props.onTop)
+  useEffect(() => {
+    onTop.current = props.onTop
+  })
+  const setTab = useCallback((t: Tab) => {
+    if (isLibrary(t)) setLibView(t)
+    const next = topOf(t)
+    if (next !== topNow.current) onTop.current(next)
+  }, [])
+  const [editingHome, setEditingHome] = useState(false)
   const [stack, setStack] = useState<Entry[]>([])
   // What is typed (the dropdown follows it), and what was searched for (Enter, or a pick from
   // the dropdown): the results are for the words searched, as on the Search page.
@@ -180,8 +195,8 @@ function Listen(props: Props) {
     kept.tab = tab
     kept.filter = filter
     kept.asked = asked
-    if (isLibrary(tab)) kept.library = tab
-  }, [tab, filter, asked])
+    kept.library = libView
+  }, [tab, libView, filter, asked])
   const [fadeIn, setFadeIn] = useState(true)
   const [shown, setShown] = useState<string | null>(null)
   const typed = useDeferredValue(asked)
@@ -252,6 +267,19 @@ function Listen(props: Props) {
     restore.current = 0
     setStack([])
   }
+  // Another view chosen on the rail: the pages over this one close; only Search keeps its words.
+  const seenTop = useRef(props.top)
+  useEffect(() => {
+    if (seenTop.current === props.top) return
+    seenTop.current = props.top
+    leavePages()
+    if (props.top !== 'search') {
+      setQuery('')
+      setAsked('')
+    }
+    if (props.top !== 'home') setEditingHome(false)
+    setFadeIn(true)
+  }, [props.top])
 
   const edit = useRef(props.onEditDetails)
   useEffect(() => {
@@ -356,7 +384,7 @@ function Listen(props: Props) {
     setAsked('')
     setFadeIn(true)
     setTab(tabAsked)
-  }, [tabAsked])
+  }, [tabAsked, setTab])
 
   // Music chosen again in the rail: close pages and search, back to the top.
   const resets = useRef(props.reset)
@@ -386,7 +414,6 @@ function Listen(props: Props) {
   useEffect(() => {
     searchForRef.current = searchFor
   })
-  const chooseTop = (t: Top) => choose(t === 'library' ? (isLibrary(tab) ? tab : kept.library) : t)
   // Your music's tiles (Home, Search): a Library view, Albums with a filter.
   const openLibrary = (view: 'albums' | 'artists' | 'songs', f?: string) => {
     choose(view)
@@ -485,7 +512,7 @@ function Listen(props: Props) {
     setFilter(f)
     setFadeIn(true)
     setTab('albums')
-  }, [])
+  }, [setTab])
 
   const s = report?.summary
   const line = tracks
@@ -541,6 +568,7 @@ function Listen(props: Props) {
         onOpenPlaylist={props.onOpenPlaylist}
         onPlaylists={props.onPlaylists}
         onAddMusic={props.onAddMusic}
+        editing={editingHome}
       />
     ) : tab === 'listening' ? (
       <ListeningView lib={lib} root={root} />
@@ -616,30 +644,25 @@ function Listen(props: Props) {
         )}
       <div ref={box}>
         <Page
-          title="Music"
-          line={line}
-          under={
+          title={TITLES[props.top]()}
+          line={props.top === 'library' ? line : props.top === 'listening' ? 'What you play, from your files and online.' : undefined}
+          actions={
+            props.top === 'home' ? (
+              <button onClick={() => setEditingHome((e) => !e)} aria-expanded={editingHome} className="btn-ghost btn-sm">
+                {editingHome ? 'Done' : 'Edit Home'}
+              </button>
+            ) : undefined
+          }
+          bar={
             isLibrary(tab) ? (
               <Segmented
                 tabs
-                size="sm"
                 label="Library views"
                 value={tab}
                 options={LIBRARY.map(([value, label]) => ({ value, label, drop: value === 'playlists' ? toPlaylists : null }))}
                 onChange={choose}
               />
             ) : undefined
-          }
-          bar={
-            <>
-              <Segmented
-                tabs
-                label="Music views"
-                value={topOf(tab)}
-                options={TOPS.map(([value, label]) => ({ value, label }))}
-                onChange={chooseTop}
-              />
-            </>
           }
         >
           {body}

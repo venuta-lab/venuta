@@ -423,9 +423,10 @@ export function CommandPalette(props: {
 export function ShortcutSheet(props: { open: boolean; onClose: () => void }) {
   const rows: [string, string][] = [
     ['Ctrl+K', 'Command palette: go anywhere, find anything, run any action'],
-    ['Ctrl+1 … Ctrl+5', 'Music, Metadata, Health, Organize, Devices'],
+    ['Ctrl+1 … Ctrl+7', 'Home, Search, Library, Stats, Health, Organize, Devices'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+H', 'Activity (history and undo)'],
+    ['Ctrl+O', 'Open a link from YouTube Music or Spotify'],
     ['/', 'Search music, yours and online'],
     ['Ctrl+Shift+L', 'Switch between light and dark'],
     ['1 2 3 · 0', 'On a question: answer · skip'],
@@ -436,9 +437,11 @@ export function ShortcutSheet(props: { open: boolean; onClose: () => void }) {
     ['Ctrl+← · Ctrl+→', 'Previous · next song'],
     ['Ctrl+↑ · Ctrl+↓', 'Louder · quieter'],
     ['M', 'Mute, and back'],
+    ['← · →', 'Back or ahead 5 seconds (Shift: 30)'],
     ['Ctrl+S · Ctrl+R', 'Shuffle · repeat'],
     ['Ctrl+E', 'Now Playing'],
     ['L · Q', 'Lyrics · the queue'],
+    ['Alt+↑ · Alt+↓ · Delete', 'In the queue: move a song · remove it'],
     ['F11', 'Lyrics on the big screen'],
     ['Ctrl+Shift+D', 'Desktop lyrics, from anywhere'],
     ['Ctrl+M', 'Mini player'],

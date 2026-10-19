@@ -41,6 +41,7 @@ export function MusicScreen({
   searchRef,
   openDir = null,
   onOpened,
+  views,
 }: {
   root: string
   report: HealthReport | null
@@ -49,6 +50,8 @@ export function MusicScreen({
   /** An album to open in the editor (from its page's Edit details); cleared with onOpened. */
   openDir?: string | null
   onOpened?: () => void
+  /** Health's views (Overview, Fix details): this list is Health's Fix details. */
+  views?: React.ReactNode
 }) {
   const cover = useCovers(320)
   const making = !!useJob('covers')
@@ -98,13 +101,15 @@ export function MusicScreen({
   const s = report?.summary
   return (
     <Page
-      title="Metadata"
+      title="Health"
       line={
         s
           ? `${fmtNum(s.albums)} albums, ${fmtNum(s.tracks)} songs. ${needing ? `${fmtNum(needing)} could use more details; open one to edit it.` : 'Every album has its details.'}`
           : busy || 'Reading your music…'
       }
       bar={
+        <>
+        {views}
         <div className="flex min-w-[240px] max-w-[420px] flex-1 items-center gap-2 rounded-full bg-ink/[0.07] px-4 shadow-[inset_0_0_0_1px_var(--edge)] focus-within:bg-ink/[0.1]">
           <IconSearch className="shrink-0 text-ink/45" />
           <input
@@ -118,6 +123,7 @@ export function MusicScreen({
           />
           <kbd>/</kbd>
         </div>
+        </>
       }
       under={
         albums.length > 0 && (

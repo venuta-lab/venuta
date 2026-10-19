@@ -67,6 +67,8 @@ export const HomeView = memo(function HomeView(props: {
   onPlaylists: () => void
   /** No music of your own yet: a way to add it, at the top of Home. */
   onAddMusic?: () => void
+  /** Edit Home open, when the page around Home holds its button (the greeting is then the page's title). */
+  editing?: boolean
 }) {
   const { lib } = props
   const now = useNowPlaying()
@@ -148,7 +150,9 @@ export const HomeView = memo(function HomeView(props: {
     [pins, lib],
   )
   const [layout, setLayout] = useState(readLayout)
-  const [editing, setEditing] = useState(false)
+  const [ownEditing, setOwnEditing] = useState(false)
+  // The page's own Edit Home button, when it has one; otherwise Home's own, beside the greeting.
+  const editing = props.editing ?? ownEditing
   const change = (l: HomeLayout) => {
     setLayout(l)
     saveLayout(l)
@@ -222,12 +226,14 @@ export const HomeView = memo(function HomeView(props: {
   const shown = arrange(layout, known)
   return (
     <div className="pb-16">
-      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h2 className="title text-[24px] leading-tight">{greeting()}</h2>
-        <button onClick={() => setEditing((e) => !e)} aria-expanded={editing} className="btn-ghost btn-sm ml-auto">
-          {editing ? 'Done' : 'Edit Home'}
-        </button>
-      </div>
+      {props.editing === undefined && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="title text-[24px] leading-tight">{greeting()}</h2>
+          <button onClick={() => setOwnEditing((e) => !e)} aria-expanded={editing} className="btn-ghost btn-sm ml-auto">
+            {editing ? 'Done' : 'Edit Home'}
+          </button>
+        </div>
+      )}
       <HomeChips chips={online.chips} chip={chip} onChip={setChip} />
       {lib.albums.length === 0 && props.onAddMusic && (
         <section aria-label="Add your music" className="glass mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[24px] p-6">
@@ -271,7 +277,7 @@ export const HomeView = memo(function HomeView(props: {
 })
 
 /** "Good morning", "Good afternoon", "Good evening", by the hour. */
-function greeting() {
+export function greeting() {
   const h = new Date().getHours()
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }

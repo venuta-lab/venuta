@@ -2,9 +2,14 @@
 
 ## The places
 
-**Music** is where you listen: the album playing (or one picked for today), your playlists,
-shelves (jump back in, most played, hi-res, your categories), then albums, artists,
-songs and playlists. Click to play; right-click a song or an album for the rest, including **Add
+The rail on the left has four groups: what you listen to (**Home**, **Search**, **Library**), your
+library at a glance (**Stats**, **Health**), managing it (**Organize**, **Devices**), and **Settings**
+at the bottom. **Activity** is in the title bar.
+
+**Home** is where you listen: the album playing (or one picked for today), your playlists and
+shelves (jump back in, most played, hi-res, your categories). **Search** finds your music and the
+online catalog, and browses moods and genres. **Library** holds your albums, artists, songs and
+playlists. **Stats** is what you play, from your files and online, and your history. Click to play; right-click a song or an album for the rest, including **Add
 to playlist…**. Play goes in order, Shuffle turns shuffle on, and the queue says where it is
 playing from.
 
@@ -12,16 +17,15 @@ playing from.
 next, the sound tools and the signal path. Every artist and the album open their pages; **More**
 has Show in folder and Search the web.
 
-**Metadata** lists the albums missing details; open one to edit its fields and song titles.
-
 **Health** shows how complete and how sound the library is, with the tools: look up details
 online, measure loudness and check quality, rescan, and the songs whose lyrics have no timing.
+Its **Fix details** lists the albums missing details; open one to edit its fields and song titles.
 
 **Organize** tidies the library with your rules and files new music. What can be proven is done
 for you, with its proof; what can't is asked, one question at a time, with the evidence side by
 side.
 
-**Playlists** (in Music) are ordinary `.m3u8` files in your library, so any player can read
+**Playlists** (in Library) are ordinary `.m3u8` files in your library, so any player can read
 them. Make them, drag to reorder, import them from elsewhere, or let smart playlists fill
 themselves from rules. A playlist keeps every song, here or not: the ones you don't have play
 from the online catalog in their places, so it plays straight through. Importing a playlist you already have fills it in and
@@ -42,7 +46,8 @@ selection (playlists, albums, artists) in the library's own folder layout, conve
 FLAC or AAC for players that need it; a gift card adds a tracklist and a list of what's missing.
 **Test this player** puts a short test album on the card to check what your player reads.
 
-**Activity** lists every build, edit, timing and answer, each with Undo. **Settings** holds the
+**Activity** (in the title bar, or Ctrl+H) lists every build, edit, timing and answer, each with
+Undo; while work runs, the same button shows it. **Settings** holds the
 look, startup and the tray, folders, online sources and keys, safety, and updates.
 
 **The app icon** is yours to choose: Settings, Look and feel, App icon offers the Venuta mark (a V
@@ -103,7 +108,7 @@ your own. Your library always comes first.
 | Keys | |
 |---|---|
 | Ctrl+K | Command palette: go anywhere, find anything |
-| Ctrl+1 … Ctrl+5 | Music, Metadata, Health, Organize, Devices |
+| Ctrl+1 … Ctrl+7 | Home, Search, Library, Stats, Health, Organize, Devices |
 | Ctrl+H, Ctrl+, | Activity, Settings |
 | / | Search your music |
 | Space | Play or pause |
