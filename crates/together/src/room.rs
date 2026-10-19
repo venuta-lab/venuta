@@ -618,11 +618,30 @@ impl Room {
         if index >= self.queue.len() {
             return Changes::default();
         }
-        if starts_at_us.is_none() {
-            // Everyone holds where they are while the new song gets ready.
-            if let Some(t) = self.timeline {
-                self.timeline = Some(t.paused_at(now_us));
-            }
+        if starts_at_us.is_none()
+            && let Some(t) = self.timeline
+        {
+            // Everyone holds where they are while the new song gets ready. The same song moved
+            // (a seek, a resume) is held where it will start: a player told the held place again
+            // as it gets ready stays ready there. A song already held stays exactly as it was: a
+            // new moment for it would be a new timeline, which every player would follow again
+            // (opening the held song once more, or moving back to it).
+            self.timeline = Some(if t.index == index {
+                if !t.playing && t.position_ms == position_ms {
+                    t
+                } else {
+                    Timeline {
+                        position_ms,
+                        at_us: now_us,
+                        playing: false,
+                        ..t
+                    }
+                }
+            } else if t.playing {
+                t.paused_at(now_us)
+            } else {
+                t
+            });
         }
         let waiting = self
             .people
@@ -957,6 +976,81 @@ mod tests {
             )
             .unwrap();
         assert_eq!(c.prepare.map(|p| (p.1, p.2)), Some((1, 30_000)));
+    }
+
+    #[test]
+    fn a_seek_while_a_resume_gets_ready_holds_the_song_where_it_will_start() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        r.ready(ravi, 1, 0, 0);
+        r.ask(HOST, Action::Pause, 10_500_000).unwrap();
+        let paused = r.timeline().unwrap();
+        assert_eq!((paused.position_ms, paused.playing), (10_000, false));
+        // Play: held as it was (no new moment: the players are there already).
+        r.ask(HOST, Action::Play, 11_000_000).unwrap();
+        assert_eq!(r.timeline(), Some(paused), "held exactly as it paused");
+        // A seek before it starts: held where it will now start, so a player told the held
+        // place again (as it says ready) stays ready there, not back at the pause.
+        let c = r
+            .ask(
+                HOST,
+                Action::Seek {
+                    position_ms: 30_000,
+                },
+                11_100_000,
+            )
+            .unwrap();
+        assert_eq!(c.prepare, Some((1, 0, 30_000)));
+        let held = r.timeline().unwrap();
+        assert_eq!(
+            (held.index, held.position_ms, held.playing),
+            (0, 30_000, false)
+        );
+        r.ready(HOST, 1, 0, 11_200_000);
+        r.ready(ravi, 1, 0, 11_300_000);
+        let t = r.timeline().unwrap();
+        assert_eq!((t.position_ms, t.playing), (30_000, true));
+    }
+
+    #[test]
+    fn a_seek_while_the_next_song_gets_ready_leaves_the_last_one_held_as_it_was() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        r.ready(ravi, 1, 0, 0);
+        r.ask(HOST, Action::Next, 10_000_000).unwrap();
+        let held = r.timeline().unwrap();
+        assert_eq!((held.index, held.playing), (0, false));
+        // A seek before the next song starts moves its start; the song before stays held exactly
+        // as it was (a new moment for it would have every player open it again).
+        let c = r
+            .ask(
+                HOST,
+                Action::Seek {
+                    position_ms: 30_000,
+                },
+                10_200_000,
+            )
+            .unwrap();
+        assert_eq!(c.prepare.map(|p| (p.1, p.2)), Some((1, 30_000)));
+        assert_eq!(r.timeline(), Some(held));
+    }
+
+    #[test]
+    fn play_while_playing_leaves_the_rooms_timeline_alone() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        r.ask(HOST, Action::Play, 0).unwrap();
+        r.ready(HOST, 1, 0, 0);
+        r.ready(ravi, 1, 0, 0);
+        let t = r.timeline().unwrap();
+        let c = r.ask(ravi, Action::Play, 6_000_000).unwrap();
+        assert_eq!(c, Changes::default());
+        assert_eq!(r.timeline(), Some(t), "the same start, the same place");
+        assert_eq!(r.timeline().unwrap().position_at(6_500_000), 6_000);
     }
 
     #[test]

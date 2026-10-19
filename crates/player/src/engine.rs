@@ -342,6 +342,9 @@ struct Engine<T: Item + Serialize> {
     sounding: bool,
     /// A seek to make after this period, which fades out first (milliseconds into the song).
     seek_after_fade: Option<f64>,
+    /// Moved while stopped (a seek while paused): what the device still holds is from the old
+    /// place, so it is let go before the device starts again.
+    flush_before_start: bool,
     /// Frames of fade-in still to come after such a seek.
     fade_in_left: usize,
 }
@@ -388,6 +391,7 @@ impl<T: Item + Serialize> Engine<T> {
             starved_at: None,
             sounding: false,
             seek_after_fade: None,
+            flush_before_start: false,
             fade_in_left: 0,
         }
     }
@@ -575,6 +579,8 @@ impl<T: Item + Serialize> Engine<T> {
                 let _ = d.stop();
             }
             self.started = false;
+            // Nothing comes out now: a seek from here is not heard as a cut.
+            self.sounding = false;
         }
     }
 
@@ -589,6 +595,9 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.segs.clear();
         self.seek_waiting = None;
+        // A seek or fade-in meant for the song before is not this one's.
+        self.seek_after_fade = None;
+        self.fade_in_left = 0;
         let mut tries = self.queue.items().len();
         while let Some(item) = self.queue.current().cloned() {
             match item.open() {
@@ -624,6 +633,9 @@ impl<T: Item + Serialize> Engine<T> {
 
     fn seek(&mut self, ms: u64) {
         self.seek_waiting = None;
+        if !self.playing {
+            self.flush_before_start = true;
+        }
         let Some(front) = self.segs.front_mut() else {
             return;
         };
@@ -767,8 +779,21 @@ impl<T: Item + Serialize> Engine<T> {
         }
         Ok(())
     }
+    /// Stopped after a move: let go of what the device holds from the old place, so the first
+    /// thing heard when it starts again is the new place (not a blip of the old one).
+    fn flush_if_moved(&mut self) {
+        if !self.flush_before_start || self.started {
+            return;
+        }
+        self.flush_before_start = false;
+        if let Some(d) = self.device.as_mut() {
+            d.flush();
+        }
+    }
+
     /// Keep an already-open device clocked while the first remote audio chunk is arriving.
     fn wait_for_remote(&mut self) -> Result<(), String> {
+        self.flush_if_moved();
         let Some(format) = self.dev_fmt.as_ref() else {
             return Ok(());
         };
@@ -795,6 +820,7 @@ impl<T: Item + Serialize> Engine<T> {
             device.start()?;
             self.started = true;
         }
+        self.sounding = false;
         Ok(())
     }
 
@@ -909,6 +935,7 @@ impl<T: Item + Serialize> Engine<T> {
         self.ensure_device(&fmt)?;
         self.fill()?;
         let dev_fmt = self.dev_fmt.clone().expect("opened");
+        self.flush_if_moved();
         let dev = self.device.as_mut().expect("opened");
         let want = if self.started {
             dev.wait()?
@@ -988,6 +1015,8 @@ impl<T: Item + Serialize> Engine<T> {
                 self.sync_hold = true;
                 self.sync_avg = None;
                 self.sync_far_since = None;
+                // A lining-up meant for the song that just ended: not into this one.
+                self.seek_after_fade = None;
             }
             if self.stop_after_current {
                 // Stop here, with the next song ready.
@@ -1203,6 +1232,10 @@ impl<T: Item + Serialize> Engine<T> {
         self.sync_avg = None;
         self.sync_far_since = None;
         self.sync_trim_ahead = None;
+        // A seek still waiting for its fade-out was the old plan's place: never carried into
+        // this one (a pause stops the device before it runs, and it would land later, in a
+        // resumed or the next song, as a jump back to where that pause was).
+        self.seek_after_fade = None;
         let Some(plan) = plan else {
             self.sync = None;
             return;
@@ -1219,7 +1252,14 @@ impl<T: Item + Serialize> Engine<T> {
         if self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(target);
         } else if (self.position_ms() as i64 - target as i64).abs() > 30 {
-            self.seek_heard(target as f64);
+            if plan.playing {
+                self.seek_heard(target as f64);
+            } else {
+                // Paused: the device stops now, so nothing of the move is heard; made at once,
+                // and what it holds from before the move is let go before it starts again.
+                self.realign(target as f64, 600);
+                self.flush_before_start = true;
+            }
         }
         self.sync = Some(plan);
         self.sync_fresh = true;
@@ -1457,6 +1497,9 @@ impl<T: Item + Serialize> Engine<T> {
             device.start()?;
             self.started = true;
         }
+        // Silence coming out (waiting for the room's start): a start or a seek from here is
+        // from silence, to be exact, and needs no fade.
+        self.sounding = false;
         Ok(())
     }
 

@@ -159,6 +159,8 @@ pub struct Captured {
     pub frames: Vec<usize>,
     /// A paced device: when its first frame played (frame k plays k/rate after it).
     pub started_at: Option<std::time::Instant>,
+    /// How many times the device was told to let go of what it held (stopped).
+    pub flushes: usize,
 }
 
 pub struct MemoryDevice {
@@ -258,6 +260,11 @@ impl Device for MemoryDevice {
             }
         }
         Ok(())
+    }
+    fn flush(&mut self) {
+        if let Ok(mut c) = self.captured.lock() {
+            c.flushes += 1;
+        }
     }
     fn start(&mut self) -> Result<(), String> {
         Ok(())
