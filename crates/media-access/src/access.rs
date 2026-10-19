@@ -278,6 +278,18 @@ pub trait MediaAccess: Send + Sync {
         let _ = country;
     }
 
+    /// "Recommendations for me": signed in, what the catalog picks (Home, radio, Up next) is
+    /// asked for as the account; off, as a signed-out visitor. Catalogs without one ignore it.
+    fn set_personal(&self, on: bool) {
+        let _ = on;
+    }
+
+    /// "Signed-in search": searches and suggestions go as the account. Catalogs without one
+    /// ignore it.
+    fn set_signed_search(&self, on: bool) {
+        let _ = on;
+    }
+
     /// Data saver: play the smallest stream a song offers instead of the best.
     fn set_data_saver(&self, on: bool) {
         let _ = on;
@@ -657,6 +669,14 @@ impl MediaAccess for CachedAccess {
         self.inner.set_hide_videos(on)
     }
 
+    fn set_personal(&self, on: bool) {
+        self.inner.set_personal(on)
+    }
+
+    fn set_signed_search(&self, on: bool) {
+        self.inner.set_signed_search(on)
+    }
+
     fn set_region(&self, country: Option<&str>) {
         // Songs found for another country may not play the same: their addresses are asked again.
         if let Ok(mut cache) = self.cache.lock() {
@@ -792,6 +812,8 @@ mod tests {
     /// A catalog whose resolve is slow and counted; everything else is unsupported.
     struct Slow {
         resolves: AtomicUsize,
+        /// The account's choices it was told, in order.
+        choices: std::sync::Mutex<Vec<(&'static str, bool)>>,
     }
 
     fn nope<T>() -> Result<T, AccessError> {
@@ -861,11 +883,18 @@ mod tests {
                 loudness_db: None,
             })
         }
+        fn set_personal(&self, on: bool) {
+            self.choices.lock().unwrap().push(("personal", on));
+        }
+        fn set_signed_search(&self, on: bool) {
+            self.choices.lock().unwrap().push(("signed_search", on));
+        }
     }
 
     fn cached() -> (Arc<Slow>, Arc<CachedAccess>) {
         let inner = Arc::new(Slow {
             resolves: AtomicUsize::new(0),
+            choices: Default::default(),
         });
         let cached = Arc::new(CachedAccess::new(inner.clone(), Duration::from_secs(60)));
         (inner, cached)
@@ -900,5 +929,16 @@ mod tests {
         cached.forget("abc");
         cached.resolve_audio("abc", &cancel).unwrap();
         assert_eq!(inner.resolves.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_accounts_choices_reach_the_catalog_itself() {
+        let (inner, cached) = cached();
+        cached.set_personal(false);
+        cached.set_signed_search(true);
+        assert_eq!(
+            *inner.choices.lock().unwrap(),
+            [("personal", false), ("signed_search", true)]
+        );
     }
 }

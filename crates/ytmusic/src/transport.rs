@@ -195,6 +195,13 @@ pub struct InnerTube {
     /// generates. Shared like `session` so a settings toggle reaches every clone, and an atomic
     /// rather than part of `Session` because the endpoints read it on every parse.
     hide_videos: Arc<AtomicBool>,
+    /// "Recommendations for me" (on by default): Home, radio and Up next are asked for as the
+    /// account. Off, they go the way a signed-out visitor's do, while the library and every
+    /// change still go as the account. Shared like `hide_videos`, for the same reasons.
+    personal: Arc<AtomicBool>,
+    /// "Signed-in search" (off by default): searches and suggestions go as the account, and
+    /// YouTube keeps them in its search history. Off, they go with no cookie at all.
+    signed_search: Arc<AtomicBool>,
     /// Artists the user blocked: dropped from the surfaces YouTube generates (radio, autoplay,
     /// home, carousels), never from a list the user opened. Shared like `session` so a settings
     /// change reaches every clone. A `RwLock` rather than an atomic because it is a set, and the
@@ -253,6 +260,8 @@ impl InnerTube {
             http: builder.build()?,
             session: Arc::new(RwLock::new(session)),
             hide_videos: Arc::new(AtomicBool::new(false)),
+            personal: Arc::new(AtomicBool::new(true)),
+            signed_search: Arc::new(AtomicBool::new(false)),
             blocked: Arc::new(RwLock::new(BlockList::default())),
             session_rejected: Arc::new(Notify::new()),
             heal: Arc::new(watch::Sender::new(HealState::default())),
@@ -393,6 +402,26 @@ impl InnerTube {
         self.hide_videos.load(Ordering::Relaxed)
     }
 
+    /// "Recommendations for me" on or off (the account's choice; on by default).
+    pub fn set_personal(&self, on: bool) {
+        self.personal.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether what YouTube picks (Home, radio, Up next) is asked for as the account.
+    pub(crate) fn personal(&self) -> bool {
+        self.personal.load(Ordering::Relaxed)
+    }
+
+    /// "Signed-in search" on or off (the account's choice; off by default).
+    pub fn set_signed_search(&self, on: bool) {
+        self.signed_search.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether searches and suggestions go as the account.
+    pub(crate) fn signed_search(&self) -> bool {
+        self.signed_search.load(Ordering::Relaxed)
+    }
+
     /// Replace the blocked-artist list (the app rebuilds it from the stored settings row on every
     /// change; there is no incremental update).
     pub fn set_blocked(&self, list: BlockList) {
@@ -493,6 +522,20 @@ impl InnerTube {
     ) -> crate::models::context::Context {
         let s = self.session.read().unwrap();
         client.to_context(&s.locale, s.visitor_data.as_deref(), None)
+    }
+
+    /// The context for a request sent as the account (`signed`) or with none: the caller passes
+    /// the same `signed` as `set_login`.
+    pub(crate) fn context_as(
+        &self,
+        client: &YouTubeClient,
+        signed: bool,
+    ) -> crate::models::context::Context {
+        if signed {
+            self.context_for(client)
+        } else {
+            self.context_anonymous(client)
+        }
     }
 
     /// Build a one-off authenticated context for identity validation without changing the shared

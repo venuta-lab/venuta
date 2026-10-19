@@ -193,6 +193,12 @@ trait LiveBackend: Send + Sync {
 
     fn set_hide_videos(&self, on: bool);
 
+    /// See `MediaAccess::set_personal`.
+    fn set_personal(&self, on: bool);
+
+    /// See `MediaAccess::set_signed_search`.
+    fn set_signed_search(&self, on: bool);
+
     fn set_region(&self, country: Option<&str>);
 
     fn set_data_saver(&self, on: bool);
@@ -780,6 +786,14 @@ impl LiveBackend for YtmBackend {
 
     fn set_hide_videos(&self, on: bool) {
         self.it.set_hide_videos(on);
+    }
+
+    fn set_personal(&self, on: bool) {
+        self.it.set_personal(on);
+    }
+
+    fn set_signed_search(&self, on: bool) {
+        self.it.set_signed_search(on);
     }
 
     fn set_region(&self, country: Option<&str>) {
@@ -2422,6 +2436,14 @@ impl MediaAccess for LiveCatalogAccess {
 
     fn set_hide_videos(&self, on: bool) {
         self.backend.set_hide_videos(on);
+    }
+
+    fn set_personal(&self, on: bool) {
+        self.backend.set_personal(on);
+    }
+
+    fn set_signed_search(&self, on: bool) {
+        self.backend.set_signed_search(on);
     }
 
     fn set_region(&self, country: Option<&str>) {

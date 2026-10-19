@@ -196,9 +196,10 @@ impl InnerTube {
     /// Typeahead for the search field and Ctrl+K: query completions plus a few matching songs,
     /// artists and albums. context/08.
     ///
-    /// Sent with the account, unlike a preview `search` (#203): this is the request YTM's own
-    /// search box sends signed in on every keystroke, so it is not written to search history, and
-    /// the account is what ranks the user's own listening first and returns their past searches.
+    /// Sent with the account only when "Signed-in search" is on: this is the request YTM's own
+    /// search box sends signed in on every keystroke, so it is not written to search history, but
+    /// the account ranks the user's own listening first and returns their past searches, and
+    /// every typed prefix reaches it. Off (the default), it goes like a preview `search` (#203).
     pub async fn search_suggestions(
         &self,
         client: &YouTubeClient,
@@ -209,12 +210,13 @@ impl InnerTube {
             context: Context,
             input: String,
         }
+        let signed = self.signed_search();
         let body = Body {
-            context: self.context_for(client),
+            context: self.context_as(client, signed),
             input: input.to_owned(),
         };
         let value = self
-            .post("music/get_search_suggestions", client, &body, true)
+            .post("music/get_search_suggestions", client, &body, signed)
             .await?;
         let mut r = browse::parse_search_suggestions(&value);
         self.drop_video_cards(&mut r.items);
@@ -260,13 +262,15 @@ impl InnerTube {
             playlist_id: Option<String>,
             is_audio_only: bool,
         }
+        // As the account unless "Recommendations for me" is off: then YouTube's general radio.
+        let signed = self.personal();
         let body = NextBody {
-            context: self.context_for(metadata_client),
+            context: self.context_as(metadata_client, signed),
             video_id: video_id.map(str::to_owned),
             playlist_id: playlist_id.map(str::to_owned),
             is_audio_only: true,
         };
-        let value = self.post("next", metadata_client, &body, true).await?;
+        let value = self.post("next", metadata_client, &body, signed).await?;
         let mut next = metadata::parse_next(&value);
         // The seed itself survives: "start radio from this video" must still open on that video,
         // and the track already playing is never yanked out from under the user.
@@ -564,6 +568,18 @@ impl InnerTube {
         browse_id: Option<&str>,
         params: Option<&str>,
     ) -> Result<serde_json::Value, Error> {
+        self.browse_as(client, browse_id, params, true).await
+    }
+
+    /// [`Self::browse`] as the account (`signed`), or as a signed-out visitor: what YouTube picks
+    /// for you is asked for that way when "Recommendations for me" is off.
+    async fn browse_as(
+        &self,
+        client: &YouTubeClient,
+        browse_id: Option<&str>,
+        params: Option<&str>,
+        signed: bool,
+    ) -> Result<serde_json::Value, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct BrowseBody {
@@ -574,18 +590,18 @@ impl InnerTube {
             params: Option<String>,
         }
         let body = BrowseBody {
-            context: self.context_for(client),
+            context: self.context_as(client, signed),
             browse_id: browse_id.map(str::to_owned),
             params: params.map(str::to_owned),
         };
         let mut healed = false;
         loop {
-            let value = self.post("browse", client, &body, true).await?;
+            let value = self.post("browse", client, &body, signed).await?;
 
             // A stale cookie authenticates transport-wise but YouTube returns a logged-out "Sign
             // in" state for account-scoped browse. Same reasoning as the transport's 401: let the
             // healer have a go and retry once before telling the user their session expired.
-            if self.is_logged_in() && browse::is_signed_out(&value) {
+            if signed && self.is_logged_in() && browse::is_signed_out(&value) {
                 if !healed && !self.healing_suspended() {
                     healed = true;
                     tracing::warn!("InnerTube browse returned the signed-out state, healing");
@@ -608,17 +624,27 @@ impl InnerTube {
         client: &YouTubeClient,
         token: &str,
     ) -> Result<serde_json::Value, Error> {
+        self.browse_continuation_as(client, token, true).await
+    }
+
+    /// [`Self::browse_continuation`] as the account (`signed`) or as a signed-out visitor.
+    async fn browse_continuation_as(
+        &self,
+        client: &YouTubeClient,
+        token: &str,
+        signed: bool,
+    ) -> Result<serde_json::Value, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct ContinuationBody {
             context: Context,
         }
         let body = ContinuationBody {
-            context: self.context_for(client),
+            context: self.context_as(client, signed),
         };
         let enc = urlencoding::encode(token);
         let path = format!("browse?ctoken={enc}&continuation={enc}&type=next");
-        self.post(&path, client, &body, true).await
+        self.post(&path, client, &body, signed).await
     }
 
     /// A library grid, paged to the end. YouTube hands these out ~25 at a time, so a single browse
@@ -695,7 +721,9 @@ impl InnerTube {
         client: &YouTubeClient,
         params: Option<&str>,
     ) -> Result<HomePage, Error> {
-        let value = self.browse(client, Some("FEmusic_home"), params).await?;
+        let value = self
+            .browse_as(client, Some("FEmusic_home"), params, self.personal())
+            .await?;
         let mut page = browse::parse_home(&value);
         for s in &mut page.sections {
             self.drop_video_cards(&mut s.items);
@@ -714,7 +742,9 @@ impl InnerTube {
         client: &YouTubeClient,
         token: &str,
     ) -> Result<HomePage, Error> {
-        let value = self.browse_continuation(client, token).await?;
+        let value = self
+            .browse_continuation_as(client, token, self.personal())
+            .await?;
         let mut page = browse::parse_home(&value);
         for s in &mut page.sections {
             self.drop_video_cards(&mut s.items);
@@ -1034,14 +1064,16 @@ impl InnerTube {
 
     /// The raw `search` / `browse` responses, for callers that read the JSON with their own
     /// parsers (Venuta's catalog reader) and for the live smoke tests. A search sent this way is
-    /// never written to the account's search history.
+    /// written to the account's search history only when "Signed-in search" is on; off (the
+    /// default), it goes with no account at all.
     pub async fn search_json(
         &self,
         client: &YouTubeClient,
         query: &str,
         params: Option<&str>,
     ) -> Result<serde_json::Value, Error> {
-        self.search_raw(client, query, params, false).await
+        self.search_raw(client, query, params, self.signed_search())
+            .await
     }
 
     /// The next page of a raw search, from the continuation token its last page gave. The query
@@ -1061,14 +1093,15 @@ impl InnerTube {
             #[serde(skip_serializing_if = "Option::is_none")]
             params: Option<String>,
         }
+        let signed = self.signed_search();
         let body = ContinuationBody {
-            context: self.context_anonymous(client),
+            context: self.context_as(client, signed),
             query: query.to_owned(),
             params: params.map(str::to_owned),
         };
         let enc = urlencoding::encode(token);
         let path = format!("search?ctoken={enc}&continuation={enc}&type=next");
-        self.post(&path, client, &body, false).await
+        self.post(&path, client, &body, signed).await
     }
 
     pub async fn browse_json(
@@ -2916,5 +2949,104 @@ mod report_play {
                 && ping.path.contains("cpn=")
         );
         assert!(ping.header("cookie").is_some(), "as the account");
+    }
+}
+
+// The account's choices: recommendations as the account, or YouTube's general ones; searches
+// anonymous, or as the account. The library and every change stay the account's either way.
+#[cfg(test)]
+mod choices {
+    use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
+    use crate::models::metadata::Rating;
+    use crate::test_server::{MockServer, Seen};
+    use crate::transport::{InnerTube, Session};
+
+    fn signed_in(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture-sapisid; PREF=x".to_owned()),
+            data_sync_id: Some("fixture-dsid".to_owned()),
+            visitor_data: Some("fixture-visitor".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn web() -> YouTubeClient {
+        Clients::bundled().get(METADATA_CLIENT).unwrap().clone()
+    }
+
+    fn as_account(req: &Seen) -> bool {
+        req.header("cookie").is_some()
+            || req.header("authorization").is_some()
+            || req.body.contains("onBehalfOfUser")
+    }
+
+    #[tokio::test]
+    async fn recommendations_go_as_the_account_until_switched_off() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = signed_in(&server);
+        it.home(&web(), None).await.unwrap();
+        it.home_continuation(&web(), "more").await.unwrap();
+        it.next(&web(), Some("aaaaaaaaaaa"), None).await.unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(as_account), "personal by default");
+
+        it.set_personal(false);
+        it.home(&web(), None).await.unwrap();
+        it.home_continuation(&web(), "more").await.unwrap();
+        it.next(&web(), Some("aaaaaaaaaaa"), Some("RDAMVMaaaaaaaaaaa"))
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 6);
+        assert!(
+            sent[3..].iter().all(|r| !as_account(r)),
+            "YouTube's general ones, as signed out"
+        );
+        assert!(it.is_logged_in(), "the sign-in itself stays");
+
+        // The library and every change are still the account's.
+        it.library_playlists(&web()).await.unwrap();
+        it.rate(&web(), "aaaaaaaaaaa", Rating::Like).await.unwrap();
+        let sent = server.requests();
+        assert!(sent[6..].iter().all(as_account));
+    }
+
+    #[tokio::test]
+    async fn searches_stay_anonymous_until_signed_in_search_is_on() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = signed_in(&server);
+        it.search_json(&web(), "road", None).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more")
+            .await
+            .unwrap();
+        it.search_suggestions(&web(), "roa").await.unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(|r| !as_account(r)), "anonymous by default");
+
+        it.set_signed_search(true);
+        it.search_json(&web(), "road", None).await.unwrap();
+        it.search_continuation_json(&web(), "road", None, "more")
+            .await
+            .unwrap();
+        it.search_suggestions(&web(), "roa").await.unwrap();
+        let sent = server.requests();
+        assert!(sent[3..].iter().all(as_account));
+    }
+
+    #[tokio::test]
+    async fn signed_out_nothing_goes_as_an_account_whatever_the_choices() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let mut it = InnerTube::new(Session::default(), None).unwrap();
+        it.set_base_url(&server.base_url);
+        it.set_signed_search(true);
+        it.home(&web(), None).await.unwrap();
+        it.search_json(&web(), "road", None).await.unwrap();
+        it.search_suggestions(&web(), "roa").await.unwrap();
+        assert!(server.requests().iter().all(|r| !as_account(r)));
     }
 }
