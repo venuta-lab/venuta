@@ -117,7 +117,7 @@ pub async fn ytm_link(root: String, name: String) -> Result<Option<LinkView>, St
 }
 
 /// Every link of a playlist that is there (to sync them at start, and every half hour at
-/// most). A deleted playlist's link stays, so Undo brings it back linked, but rests.
+/// most). A deleted playlist's link waits in Set aside (see `deleted`), never synced.
 #[tauri::command]
 pub fn ytm_links(root: String) -> Vec<Link> {
     let rootp = PathBuf::from(&root);
@@ -402,6 +402,18 @@ pub fn ytm_link_undo(root: String, name: String, copy: String) -> Result<(), Str
         ytm_links::save(&data, &link)?;
     }
     Ok(())
+}
+
+/// The playlist was deleted (its file is at `aside` in Set aside): its link goes aside with it,
+/// so only Undo brings it back and a new playlist with the name starts unlinked. If it can't be
+/// moved, it stays and rests (its playlist isn't there), as before.
+pub fn deleted(name: &str, aside: &Path) {
+    let _ = ytm_links::deleted(&data_dir(), name, aside);
+}
+
+/// Undo of a delete: the link comes back with its playlist.
+pub fn undeleted(name: &str, aside: &Path) {
+    let _ = ytm_links::undeleted(&data_dir(), name, aside);
 }
 
 /// The playlist was renamed: its link follows (called by the rename).

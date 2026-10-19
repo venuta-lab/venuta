@@ -214,6 +214,40 @@ pub fn rename(data_dir: &Path, from: &str, to: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a deleted playlist's link waits for Undo, under the name of its file in Set aside
+/// (which is never taken twice). Not read by `all`, so it never syncs.
+fn aside_file(data_dir: &Path, aside: &Path) -> PathBuf {
+    let of = aside
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dir(data_dir)
+        .join("set-aside")
+        .join(format!("{}.json", crate::plan::sanitize(&of, 140)))
+}
+
+/// The playlist was deleted (its file went to `aside` in Set aside): its link goes with it. A new
+/// playlist given the same name then starts unlinked, and only Undo brings this link back.
+pub fn deleted(data_dir: &Path, playlist: &str, aside: &Path) -> Result<(), String> {
+    let from = file(data_dir, playlist);
+    if !from.is_file() {
+        return Ok(());
+    }
+    let to = aside_file(data_dir, aside);
+    std::fs::create_dir_all(to.parent().unwrap_or(data_dir)).map_err(|e| e.to_string())?;
+    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
+/// Undo of a delete: the link comes back with its playlist (never over a link made since).
+pub fn undeleted(data_dir: &Path, playlist: &str, aside: &Path) -> Result<(), String> {
+    let from = aside_file(data_dir, aside);
+    let to = file(data_dir, playlist);
+    if !from.is_file() || to.exists() {
+        return Ok(());
+    }
+    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
 /// Every link there is.
 pub fn all(data_dir: &Path) -> Vec<Link> {
     let Ok(rd) = std::fs::read_dir(dir(data_dir)) else {
@@ -1201,5 +1235,38 @@ mod tests {
         forget(d.path(), "Long road").unwrap();
         assert!(all(d.path()).is_empty());
         forget(d.path(), "Long road").unwrap();
+    }
+
+    // Links are kept by the playlist's name. A deleted playlist's link goes to Set aside with
+    // it, so a new playlist given that name starts unlinked (it would have taken the old link
+    // over, and its first "Sync anyway" emptied the playlist there), and Undo brings it back.
+    #[test]
+    fn a_deleted_playlists_link_goes_aside_with_it_and_comes_back_with_undo() {
+        let d = tempfile::tempdir().unwrap();
+        let l = link(&["a"]);
+        save(d.path(), &l).unwrap();
+        let aside = d.path().join("Set aside/playlists/1700000000000-Road.m3u8");
+
+        deleted(d.path(), "Road", &aside).unwrap();
+        assert!(
+            load(d.path(), "Road").is_none(),
+            "a new “Road” is not linked"
+        );
+        assert!(all(d.path()).is_empty(), "and it isn't synced");
+
+        undeleted(d.path(), "Road", &aside).unwrap();
+        assert_eq!(load(d.path(), "Road"), Some(l.clone()));
+
+        // A playlist with no link deleted, and put back, has none.
+        deleted(d.path(), "Drive", &aside).unwrap();
+        undeleted(d.path(), "Drive", &aside).unwrap();
+        assert!(load(d.path(), "Drive").is_none());
+        // A link made since under the name is never replaced by the old one.
+        deleted(d.path(), "Road", &aside).unwrap();
+        let mut new = link(&[]);
+        new.playlist_id = "PL2".into();
+        save(d.path(), &new).unwrap();
+        undeleted(d.path(), "Road", &aside).unwrap();
+        assert_eq!(load(d.path(), "Road").unwrap().playlist_id, "PL2");
     }
 }
