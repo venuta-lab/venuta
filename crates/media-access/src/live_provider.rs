@@ -1427,16 +1427,23 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
     })
 }
 
-/// Whether a reading of a playlist got every song: no page failed or was left unread, every row
-/// is a song Venuta can name, and there are at least as many as the header says. Unsure reads as
-/// not whole, so a linked playlist waits instead of taking the songs it missed as taken out
-/// there (an unavailable song with no id would read just like that).
-fn read_whole(said: Option<u32>, rows: &[ytmusic::SongItem], failed: bool, left: bool) -> bool {
+/// Whether a reading of a playlist got every song YouTube lists: no page failed or was left
+/// unread, and every row is a song Venuta can name. Unsure reads as not whole, so a linked
+/// playlist waits instead of taking the songs it missed as taken out there. Songs the header
+/// counts beyond the list are hidden ones ([`hidden_of`]), not a short read.
+fn read_whole(rows: &[ytmusic::SongItem], failed: bool, left: bool) -> bool {
     let named = rows
         .iter()
         .filter(|r| !r.video_id.trim().is_empty())
         .count();
-    !failed && !left && named == rows.len() && said.is_none_or(|n| named >= n as usize)
+    !failed && !left && named == rows.len()
+}
+
+/// How many songs the header counts beyond those listed: YouTube hides unavailable songs from
+/// the list but not from the count (on a real account, half the playlists say more than they
+/// list). None of them is a song taken out.
+fn hidden_of(said: Option<u32>, listed: usize) -> usize {
+    said.map_or(0, |n| (n as usize).saturating_sub(listed))
 }
 
 impl YtmBackend {
@@ -1558,7 +1565,8 @@ impl crate::account::AccountAccess for YtmBackend {
             Ok((page, rest, failed, token.is_some()))
         })?;
         let all: Vec<ytmusic::SongItem> = page.items.iter().chain(rest.iter()).cloned().collect();
-        let complete = read_whole(page.song_count, &all, failed, left);
+        let complete = read_whole(&all, failed, left);
+        let hidden = hidden_of(page.song_count, all.len());
         let tracks = all.iter().filter_map(account_track_of).collect();
         Ok(crate::account::AccountPlaylist {
             playlist_id: playlist_id.trim_start_matches("VL").to_owned(),
@@ -1572,6 +1580,7 @@ impl crate::account::AccountAccess for YtmBackend {
             artwork_url: page.thumbnail,
             tracks,
             complete,
+            hidden,
             radio: page.radio.as_ref().map(crate::catalog_cards::endpoint_of),
         })
     }
@@ -2941,7 +2950,7 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_page_of, playlist_browse_id, playlist_radio, read_whole};
+    use super::{album_page_of, hidden_of, playlist_browse_id, playlist_radio, read_whole};
     use crate::types::RadioEndpoint;
 
     fn saved(name: &str) -> serde_json::Value {
@@ -3052,28 +3061,34 @@ mod tests {
     }
 
     // A reading that came back short must not count as whole: a linked playlist's sync would
-    // take every song it missed as taken out on YouTube Music.
+    // take every song it missed as taken out on YouTube Music. A header that counts more songs
+    // than YouTube lists is a whole reading with songs it hides (unavailable ones): checked on
+    // a real account, half its playlists say more than they list.
     #[test]
     fn a_playlist_reading_is_whole_only_when_nothing_is_missing_from_it() {
-        assert!(read_whole(Some(3), &rows(&["a", "b", "c"]), false, false));
+        assert!(read_whole(&rows(&["a", "b", "c"]), false, false));
         assert!(
-            read_whole(None, &rows(&["a", "b"]), false, false),
+            read_whole(&rows(&["a", "b"]), false, false),
             "no count to go by"
         );
         assert!(
-            !read_whole(Some(5), &rows(&["a", "b", "c"]), false, false),
-            "short of the header"
+            read_whole(&rows(&["a", "b", "c"]), false, false),
+            "the header counts songs YouTube hides"
         );
+        assert_eq!(hidden_of(Some(5), 3), 2);
+        assert_eq!(hidden_of(Some(3), 3), 0);
+        assert_eq!(hidden_of(Some(2), 3), 0);
+        assert_eq!(hidden_of(None, 3), 0);
         assert!(
-            !read_whole(Some(3), &rows(&["a", "b", "c"]), true, false),
+            !read_whole(&rows(&["a", "b", "c"]), true, false),
             "a page failed"
         );
         assert!(
-            !read_whole(Some(3), &rows(&["a", "b", "c"]), false, true),
+            !read_whole(&rows(&["a", "b", "c"]), false, true),
             "pages left unread"
         );
         // A row with no song to name (an unavailable one) can't be told from a song taken out.
-        assert!(!read_whole(Some(3), &rows(&["a", " ", "c"]), false, false));
+        assert!(!read_whole(&rows(&["a", " ", "c"]), false, false));
     }
 
     #[test]

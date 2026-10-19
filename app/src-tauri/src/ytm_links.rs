@@ -552,7 +552,11 @@ fn choose_and_sync(
     }
 
     let (entries, lib) = entries_of(root, name)?;
-    let plan = match ytm_links::plan(&entries, &link, &key, &there.tracks, there.complete, allow) {
+    let read = ytm_links::Read {
+        complete: there.complete,
+        hidden: there.hidden,
+    };
+    let plan = match ytm_links::plan(&entries, &link, &key, &there.tracks, read, allow) {
         Ok(p) => {
             link.held = false;
             p
@@ -690,6 +694,7 @@ mod tests {
             tracks: Vec::new(),
             radio: None,
             complete: true,
+            hidden: 0,
         }
     }
 

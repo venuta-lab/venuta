@@ -63,6 +63,10 @@ pub struct AccountPlaylist {
     /// Every page came: false when a later page failed, so a sync must not read a song missing
     /// from this list as one taken out.
     pub complete: bool,
+    /// Songs the playlist holds that YouTube didn't list (the header counts more): unavailable
+    /// ones it hides. A song missing from `tracks` may be one of these, not one taken out.
+    #[serde(default)]
+    pub hidden: usize,
     /// Its page's radio (the header's Start radio), as YouTube put it there.
     #[serde(default)]
     pub radio: Option<crate::types::RadioEndpoint>,

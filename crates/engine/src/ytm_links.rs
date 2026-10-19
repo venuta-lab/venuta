@@ -351,6 +351,25 @@ pub enum Side {
     YoutubeMusic,
 }
 
+/// What the reading of the playlist there says about itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Read {
+    /// Every page came.
+    pub complete: bool,
+    /// Songs it holds that YouTube didn't list: unavailable ones it hides. A song of the last
+    /// sync missing from the list may be one of these, so it is never taken as taken out.
+    pub hidden: usize,
+}
+
+impl From<bool> for Read {
+    fn from(complete: bool) -> Self {
+        Read {
+            complete,
+            hidden: 0,
+        }
+    }
+}
+
 /// What you said go ahead past, after a sync waited and asked. Each answer covers only the pause
 /// it was given for: "Sync again" after an Undo still asks when most songs are gone, and "Sync
 /// anyway" for one side still asks about the other.
@@ -412,9 +431,10 @@ pub fn plan(
     link: &Link,
     account: &str,
     remote: &[AccountTrack],
-    complete: bool,
+    read: impl Into<Read>,
     allow: Allow,
 ) -> Result<Plan, Pause> {
+    let read = read.into();
     if !link.account.is_empty() && link.account != account {
         return Err(Pause::OtherAccount {
             account: link.account.clone(),
@@ -423,7 +443,7 @@ pub fn plan(
     if link.held && !allow.held {
         return Err(Pause::Held);
     }
-    if !complete {
+    if !read.complete {
         return Err(Pause::Unread);
     }
     // Each line's song, its first time only (a second time stays as a line of yours).
@@ -456,7 +476,20 @@ pub fn plan(
         .copied()
         .chain(still_yours.iter().copied())
         .collect();
-    let in_r: HashSet<&str> = rids.iter().copied().collect();
+    let listed: HashSet<&str> = rids.iter().copied().collect();
+    // The playlist there hides songs YouTube can't play now (its header counts more than it
+    // lists). A song of the last sync still here but not listed there may be one of them: it
+    // stays, here and in the base, and is never sent again (it is there already, hidden). When
+    // more are missing than are hidden, some were taken out, but not which: all stay.
+    let maybe_hidden: Vec<&str> = if read.hidden > 0 {
+        base.iter()
+            .copied()
+            .filter(|b| in_l.contains(b) && !listed.contains(b))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let in_r: HashSet<&str> = listed.iter().copied().chain(maybe_hidden).collect();
 
     if !base.is_empty() {
         let lost = |have: &HashSet<&str>| base.iter().filter(|b| !have.contains(*b)).count();
@@ -966,6 +999,41 @@ mod tests {
         )
         .unwrap();
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn a_song_youtube_hides_now_stays_yours_and_is_not_sent_again() {
+        let mine = [online("a"), online("b"), online("c")];
+        let l = link(&["a", "b", "c"]);
+        let there = remote(&["a", "c"]);
+        let hides_one = Read {
+            complete: true,
+            hidden: 1,
+        };
+        let p = plan(&mine, &l, "me", &there, hides_one, Allow::default()).unwrap();
+        assert_eq!(lines(&p, &mine), ["a", "b", "c"]);
+        assert_eq!(p.dropped, 0);
+        assert!(p.add_remote.is_empty(), "it is there already, hidden");
+        assert_eq!(p.order, ["a", "b", "c"], "and stays in the base");
+        // Hiding nothing, the same answer is a song taken out there.
+        let p = plan(&mine, &l, "me", &there, true, Allow::default()).unwrap();
+        assert_eq!(p.dropped, 1);
+    }
+
+    #[test]
+    fn songs_youtube_hides_are_not_counted_as_most_gone() {
+        let mine: Vec<_> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|i| online(i))
+            .collect();
+        let l = link(&["a", "b", "c", "d", "e"]);
+        let there = remote(&["a", "b"]);
+        let hides = Read {
+            complete: true,
+            hidden: 3,
+        };
+        let p = plan(&mine, &l, "me", &there, hides, Allow::default()).unwrap();
+        assert_eq!(p.dropped, 0);
     }
 
     #[test]
