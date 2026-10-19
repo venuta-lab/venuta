@@ -98,6 +98,11 @@ pub fn choices_in_use(catalog: &dyn MediaAccess) -> Option<(String, YtmChoices)>
     Some((key, choices))
 }
 
+/// Likes and dislikes is on for the account in use (off when it can't be told which that is).
+pub fn rates_on_account(catalog: &dyn MediaAccess) -> bool {
+    choices_in_use(catalog).is_some_and(|(_, c)| c.likes)
+}
+
 /// The artists the catalog leaves out of what it picks: the ones you blocked while "Hide
 /// artists I blocked" is on, none while it is off. The list itself is kept either way.
 pub fn blocked_for_catalog(l: &engine::settings::Listening) -> Vec<(Option<String>, String)> {

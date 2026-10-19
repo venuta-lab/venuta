@@ -11,6 +11,7 @@ import {
   type OnlineTrack,
   type RadioEndpoint,
 } from './engine'
+import { undoOfDislike, upcomingCopies } from './dislikes'
 import { listening, loadListening, updateListening } from './listening'
 import { isLiked, setLiked } from './likes'
 import { notify } from './notify'
@@ -29,6 +30,7 @@ import {
   playItems,
   queueKey,
   readFrom,
+  removeAt,
   replaceUpcoming,
   toItem,
   toRemoteItem,
@@ -342,23 +344,31 @@ export async function chooseChip(index: number) {
 
 // --- Dislikes and blocks -----------------------------------------------------------------
 
-/** Dislike a song: radio and autoplay never play it again; it leaves Liked songs; if it is
- *  playing, the next song starts. */
+/** Dislike a song: radio and autoplay never play it again; it leaves Liked songs and what is
+ *  coming up (as YouTube Music's radio does); if it is playing, the next song starts. With Likes
+ *  and dislikes on, the account gets one thumbs down. Undo puts back the rating it had: a like
+ *  comes back as a like (the songs taken out of the queue stay out). */
 export async function dislike(root: string, q: QueueItem) {
   if (!(isOnline(q) && q.online?.kind === 'online')) return
   const key = `${q.online.provider}:${q.online.track_id}`
   await loadListening()
-  if (!listening().disliked.includes(key)) await updateListening({ disliked: [...listening().disliked, key] })
-  if (isLiked(q)) await setLiked(root, q, false)
+  const before = { liked: isLiked(q), disliked: listening().disliked.includes(key) }
+  if (!before.disliked) await updateListening({ disliked: [...listening().disliked, key] })
+  // The thumbs down replaces the like on the account: one rating, not an unlike and then it.
+  if (before.liked) await setLiked(root, q, false, { account: false })
   void rateOnAccount(q, 'dislike')
   const s = getPlayerState()
   const playing = s.queue[s.index]
+  if (!roomRoute()) for (const i of upcomingCopies(s.queue.map(queueKey), s.index, queueKey(q))) await removeAt(i)
   if (playing && queueKey(playing) === queueKey(q)) void next()
   notify(`Radio and autoplay won't play “${q.title}” again.`, {
     label: 'Undo',
     run: () => {
-      void updateListening({ disliked: listening().disliked.filter((d) => d !== key) })
-      void rateOnAccount(q, 'none')
+      const undo = undoOfDislike(before)
+      if (undo.undislike) void updateListening({ disliked: listening().disliked.filter((d) => d !== key) })
+      // Liked again here, and so (with the switch on) on the account too.
+      if (undo.relike) void setLiked(root, q, true)
+      else if (undo.account) void rateOnAccount(q, undo.account)
     },
   })
 }
