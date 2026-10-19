@@ -44,6 +44,8 @@ export interface RadioSession {
   markerRead: boolean
   /** The catalog's Related page for the song the session is about. */
   relatedId: string | null
+  /** The song that Related page is about (null: not known, so it is used for none). */
+  relatedFor: string | null
   relatedUsed: boolean
   /** Failed tries in a row of the step now due, and when the last one failed (ms). */
   failures: number
@@ -90,6 +92,7 @@ const blank = (key: string): RadioSession => ({
   list: null,
   markerRead: false,
   relatedId: null,
+  relatedFor: null,
   relatedUsed: false,
   failures: 0,
   failedAt: 0,
@@ -100,6 +103,14 @@ const blank = (key: string): RadioSession => ({
 const sameEndpoint = (a: RadioEndpoint | null | undefined, b: RadioEndpoint | null | undefined) =>
   !!a && !!b && (a.video_id ?? null) === (b.video_id ?? null) && (a.playlist_id ?? null) === (b.playlist_id ?? null) && (a.params ?? null) === (b.params ?? null)
 
+/** The song an answer is about (its Related page is that song's): the one it was asked with,
+ *  else the one it opens on. */
+const aboutOf = (radio: OnlineRadio, asked: RadioEndpoint | null | undefined) => asked?.video_id ?? radio.endpoint?.video_id ?? radio.tracks[0]?.track_id ?? null
+
+/** The Related page an answer names, with the song it is about; else the one known already. */
+const withRelated = (s: Pick<RadioSession, 'relatedId' | 'relatedFor'>, radio: OnlineRadio, asked: RadioEndpoint | null | undefined) =>
+  radio.related_id ? { relatedId: radio.related_id, relatedFor: aboutOf(radio, asked) } : { relatedId: s.relatedId, relatedFor: s.relatedFor }
+
 /** A radio's session from its first answer. */
 export function radioSession(key: string, radio: OnlineRadio, asked: RadioEndpoint | null = null): RadioSession {
   return {
@@ -109,8 +120,14 @@ export function radioSession(key: string, radio: OnlineRadio, asked: RadioEndpoi
     title: radio.title ?? null,
     chips: radio.chips ?? [],
     continueWith: radio.continue_with ?? null,
-    relatedId: radio.related_id ?? null,
+    ...withRelated(blank(key), radio, asked),
   }
+}
+
+/** What the Related tab asks for the song playing (`playing`: its catalog id): the session's
+ *  Related page when it is about that song, else the song's own (the engine finds it). */
+export function relatedAsk(s: Pick<RadioSession, 'relatedId' | 'relatedFor'> | null, playing: string) {
+  return { trackId: playing, relatedId: s && s.relatedId && s.relatedFor === playing ? s.relatedId : null }
 }
 
 /** The session of an album or playlist (`list`: its id in the catalog, when it has one). */
@@ -142,7 +159,8 @@ export function afterPage(s: RadioSession, page: OnlineRadio, now = Date.now()):
     loading: false,
     continuation: page.continuation ?? null,
     continueWith: page.continue_with ?? s.continueWith,
-    relatedId: s.relatedId ?? page.related_id ?? null,
+    // A later page's Related page is about no song known here: kept, used for none.
+    ...(s.relatedId ? {} : { relatedId: page.related_id ?? null, relatedFor: null }),
     chips: page.chips?.length ? page.chips : s.chips,
     title: s.title ?? page.title ?? null,
   }
@@ -167,7 +185,7 @@ export function afterContinue(s: RadioSession, radio: OnlineRadio): RadioSession
     // Never the same one again: an answer naming itself would be asked for ever.
     continueWith: sameEndpoint(named, used) || sameEndpoint(named, radio.endpoint) ? null : named,
     markerRead: true,
-    relatedId: radio.related_id ?? s.relatedId,
+    ...withRelated(s, radio, used),
   }
 }
 
@@ -179,7 +197,7 @@ export function afterMarker(s: RadioSession, answer: OnlineRadio): RadioSession 
     failures: 0,
     markerRead: true,
     continueWith: answer.continue_with ?? null,
-    relatedId: answer.related_id ?? s.relatedId,
+    ...withRelated(s, answer, answer.endpoint),
   }
 }
 
@@ -221,7 +239,7 @@ export function afterChip(s: RadioSession, index: number, radio: OnlineRadio): R
     chips,
     title: radio.title ?? s.title,
     continueWith: radio.continue_with ?? null,
-    relatedId: radio.related_id ?? s.relatedId,
+    ...withRelated(s, radio, null),
     relatedUsed: false,
     exhausted: null,
   }
@@ -246,6 +264,34 @@ export function hybridRows<M, R>(
     const yours = playMyCopy ? owns(t) : undefined
     return yours !== undefined ? mine(yours) : online(t)
   })
+}
+
+/** Sessions of queues that were replaced, the last `max` of them, by their queue: Undo puts a
+ *  replaced queue back, and with its session the radio goes on where it was (its pages, its
+ *  chips, its name) instead of starting over. Kept while the window is open. */
+export function sessionShelf(max = 3) {
+  let kept: RadioSession[] = []
+  return {
+    keep(s: RadioSession) {
+      kept = [...kept.filter((k) => k.key !== s.key), { ...s, loading: false }].slice(-max)
+    },
+    take(key: string): RadioSession | null {
+      const s = kept.find((k) => k.key === key) ?? null
+      if (s) kept = kept.filter((k) => k !== s)
+      return s
+    },
+  }
+}
+
+/** The radio of an album or a playlist for its Start radio: the endpoint its page's button
+ *  names, as it came; else, only when none was given, `RDAMPL` and the list's id (Liked music's
+ *  is `RDAMPLLM`), started the way YouTube's own Start radio starts it. Null for a list that is a
+ *  radio already, or none. */
+export function listRadio(endpoint: RadioEndpoint | null | undefined, list: string | null | undefined): RadioEndpoint | null {
+  if (endpoint && (endpoint.playlist_id || endpoint.video_id)) return endpoint
+  const id = (list ?? '').trim().replace(/^VL/, '')
+  if (!id || id.startsWith('RD')) return null
+  return { playlist_id: `RDAMPL${id}`, params: 'wAEB' }
 }
 
 /** The little a store needs (localStorage, or a stand-in in tests). */

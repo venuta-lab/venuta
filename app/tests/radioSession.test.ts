@@ -15,9 +15,12 @@ import {
   listSession,
   loadSession,
   matchMemory,
+  listRadio,
   nextStep,
   radioSession,
+  relatedAsk,
   saveSession,
+  sessionShelf,
   upcomingReplaced,
   type RadioSession,
 } from '../src/lib/radioSession.ts'
@@ -201,4 +204,58 @@ test('a file’s match in the catalog is remembered; a miss is not', () => {
   assert.equal(m.get('C:/Music/a.flac'), undefined)
   m.set('C:/Music/a.flac', 'vid1')
   assert.equal(matchMemory(() => store).get('C:/Music/a.flac'), 'vid1')
+})
+
+test('the Related page a session knows is used only for the song it is about', () => {
+  // The first answer's Related page is the seed's.
+  const s = radioSession('k', first, { video_id: 'seed', playlist_id: 'RDAMVMseed', params: 'wAEB' })
+  assert.equal(s.relatedFor, 'seed')
+  assert.deepEqual(relatedAsk(s, 'seed'), { trackId: 'seed', relatedId: 'MPTRt_seed' })
+  // Any other song asks for its own.
+  assert.deepEqual(relatedAsk(s, 'b'), { trackId: 'b', relatedId: null })
+  assert.deepEqual(relatedAsk(null, 'b'), { trackId: 'b', relatedId: null })
+  // A radio asked by its list alone: the Related page is its first song's.
+  const byList = radioSession('k', { ...first, endpoint: { playlist_id: 'RDAMPLx' } }, { playlist_id: 'RDAMPLx' })
+  assert.equal(byList.relatedFor, 'a')
+  // What the session went on with brings its own, about its own song.
+  const went = afterContinue({ ...s, continueWith: { video_id: 'z', playlist_id: 'RDAMVMz' } }, { ...first, endpoint: { video_id: 'z', playlist_id: 'RDAMVMz' }, related_id: 'MPTRt_z' })
+  assert.deepEqual(relatedAsk(went, 'z'), { trackId: 'z', relatedId: 'MPTRt_z' })
+  assert.deepEqual(relatedAsk(went, 'seed'), { trackId: 'seed', relatedId: null })
+  // An answer with none keeps the one known, still about its song.
+  const kept = afterChip(s, 1, { ...first, related_id: null })
+  assert.deepEqual(relatedAsk(kept, 'seed'), { trackId: 'seed', relatedId: 'MPTRt_seed' })
+})
+
+test('a replaced queue’s session is kept a while, so Undo brings the radio back too', () => {
+  const shelf = sessionShelf(2)
+  const a: RadioSession = { ...radioSession('a', first), loading: true }
+  shelf.keep(a)
+  shelf.keep(radioSession('b', first))
+  const back = shelf.take('a')
+  assert.ok(back)
+  assert.equal(back.continuation, 'TOKEN2', 'its pages go on where they were')
+  assert.equal(back.loading, false)
+  assert.equal(shelf.take('a'), null, 'taken once')
+  // Only the last few are kept.
+  shelf.keep(radioSession('c', first))
+  shelf.keep(radioSession('d', first))
+  assert.equal(shelf.take('b'), null)
+  assert.ok(shelf.take('d'))
+  // Kept again under the same queue: the newer one.
+  shelf.keep(radioSession('e', first))
+  shelf.keep({ ...radioSession('e', first), continuation: 'NEWER' })
+  assert.equal(shelf.take('e')?.continuation, 'NEWER')
+})
+
+test('Start radio on an album or a playlist replays the page’s own button, else its list’s radio', () => {
+  const button = { playlist_id: 'RDAMPLOLAK5uy_x', params: 'wAEB' }
+  assert.deepEqual(listRadio(button, 'OLAK5uy_x'), button)
+  assert.deepEqual(listRadio(null, 'OLAK5uy_x'), { playlist_id: 'RDAMPLOLAK5uy_x', params: 'wAEB' })
+  // A page id is the list's with VL in front; Liked music's radio is RDAMPLLM.
+  assert.deepEqual(listRadio(undefined, 'VLPL123'), { playlist_id: 'RDAMPLPL123', params: 'wAEB' })
+  assert.deepEqual(listRadio(null, 'LM'), { playlist_id: 'RDAMPLLM', params: 'wAEB' })
+  // A radio is its own radio; nothing to name, nothing made up.
+  assert.equal(listRadio(null, 'RDCLAK5uy_mix'), null)
+  assert.equal(listRadio(null, null), null)
+  assert.equal(listRadio(null, '  '), null)
 })
