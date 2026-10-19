@@ -370,10 +370,13 @@ export interface From {
   ref: string
   /** In words: "Hindi", "Taal", "Search: rahman". */
   label: string
-  /** A radio's own list id, to keep it going (kind `radio`). */
+  /** A radio's own list id (kind `radio`). */
   radio?: string | null
   /** The song a radio started from, to go back to it ("Back to …"). */
   seed?: string
+  /** The list's own id in the online catalog (an album's `OLAK5uy_…`, a playlist's `PL…`):
+   *  what Autoplay asks YouTube Music to go on with when it ends (lib/radio.ts). */
+  list?: string | null
 }
 const fromText = (f: From | string) => (typeof f === 'string' ? f : JSON.stringify(f))
 /** What the player's `from` says (older saves are plain words: a label only). */
@@ -615,6 +618,24 @@ export function enqueueItems(root: string, items: QueueItem[], nextUp: boolean) 
   }
   return call('player_enqueue', { root, items: fresh, next: nextUp })
 }
+/** Add the catalog's next songs at the end, as they came: a radio's next page, a song coming
+ *  round again and all (unlike `enqueueItems`, which never adds a song coming up already). */
+export function appendItems(root: string, items: QueueItem[]) {
+  if (!items.length || roomRoute()) return Promise.resolve()
+  if (isLocalOnly()) items = items.filter((q) => !isOnline(q))
+  if (!items.length) return Promise.resolve()
+  return call('player_enqueue', { root, items, next: false })
+}
+
+/** What is coming up (after the song playing) replaced with these: the songs played and the one
+ *  playing stay, and it plays on (a radio re-tuned by a chip). */
+export function replaceUpcoming(root: string, items: QueueItem[]) {
+  if (roomRoute() || state.index < 0 || !state.queue.length) return Promise.resolve()
+  if (isLocalOnly()) items = items.filter((q) => !isOnline(q))
+  const all = [...state.queue.slice(0, state.index + 1), ...items]
+  return call('player_follow', { root, items: all, index: state.index })
+}
+
 export const removeAt = (i: number) => call('player_remove', { index: i })
 export const move = (from: number, to: number) => call('player_move', { from, to })
 export const jumpTo = (i: number) => call('player_jump', { index: i })
