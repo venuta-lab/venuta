@@ -451,8 +451,9 @@ async function run(step: Step, room: boolean, root: string, key: string, last: S
         const id = await lastId()
         const s = live()
         if (!s) return
-        // A file with no song of its own on YouTube Music: nothing to ask what comes after it.
-        if (!id) return put({ ...s, loading: false, markerRead: true, relatedUsed: true }, room)
+        // A file with no song of its own on YouTube Music: nothing to ask what comes after it. It
+        // ends quietly (the queue says nothing comes next); a notice as it starts would only puzzle.
+        if (!id) return put(ended({ ...s, markerRead: true, relatedUsed: true }), room)
         // A list with no list of its own there (your files, a song played on its own): it goes on
         // with its last song's radio, as Start radio on that song would play it.
         if (!s.list) {
