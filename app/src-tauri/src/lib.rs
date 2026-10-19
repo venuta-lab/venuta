@@ -35,6 +35,7 @@ mod theme_packs;
 mod together;
 mod updates;
 mod ytm_account;
+mod ytm_accounts;
 mod ytm_library;
 mod ytm_links;
 
@@ -3224,6 +3225,10 @@ pub fn run() {
             ytm_library::ytm_invite,
             ytm_library::ytm_close_to_collaborators,
             ytm_library::ytm_join,
+            ytm_account::ytm_saved_accounts,
+            ytm_account::ytm_add_account,
+            ytm_account::ytm_switch_account,
+            ytm_account::ytm_forget_account,
             ytm_links::ytm_link,
             ytm_links::ytm_links,
             ytm_links::ytm_link_review,

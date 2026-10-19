@@ -1403,6 +1403,19 @@ export const ytmInvite = (playlistId: string) => invoke<string>('ytm_invite', { 
 export const ytmCloseToCollaborators = (playlistId: string, closed: boolean) => invoke<void>('ytm_close_to_collaborators', { playlistId, closed })
 export const ytmJoin = (link: string) => invoke<string>('ytm_join', { link })
 
+/** A Google sign-in kept on this computer, to switch to (never its cookies). */
+export interface YtmSavedAccount {
+  id: string
+  name: string | null
+  email: string | null
+  picture: string | null
+  current: boolean
+}
+export const ytmSavedAccounts = () => invoke<YtmSavedAccount[]>('ytm_saved_accounts')
+export const ytmAddAccount = () => invoke<void>('ytm_add_account')
+export const ytmSwitchAccount = (id: string) => invoke<void>('ytm_switch_account', { id })
+export const ytmForgetAccount = (id: string) => invoke<void>('ytm_forget_account', { id })
+
 /** What one sync of a linked playlist did. */
 export interface YtmSyncNote {
   at: number

@@ -190,11 +190,19 @@ pub async fn ytm_identities(pb: State<'_, Playback>) -> Result<Vec<AccountIdenti
 
 /// Act as this identity from now on (None: the sign-in's own), and remember it.
 #[tauri::command]
-pub fn ytm_use_identity(pb: State<'_, Playback>, id: Option<String>) -> Result<(), String> {
+pub fn ytm_use_identity(
+    app: tauri::AppHandle,
+    pb: State<'_, Playback>,
+    id: Option<String>,
+) -> Result<(), String> {
+    use tauri::Emitter;
     let a = account(&pb)?;
     a.use_identity(id.as_deref());
     crate::ytm_links::forget_account_key();
-    remember_identity(id.as_deref())
+    remember_identity(id.as_deref())?;
+    // Another channel's library from now on: everything shown for the last one is read again.
+    let _ = app.emit("ytm-account-changed", ());
+    Ok(())
 }
 
 /// Collaborators: an invite link for a playlist the account owns.

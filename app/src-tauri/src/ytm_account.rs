@@ -58,7 +58,11 @@ pub fn restore(app: &AppHandle) {
                 if kept.is_some() && now.is_some() && now != kept {
                     let Some(c) = &now else { continue };
                     match SystemVault.put(VAULT_KEY, c) {
-                        Ok(()) => kept = now,
+                        Ok(()) => {
+                            // The slot of the account in use follows too (for switching back).
+                            let _ = crate::ytm_accounts::keep_active(&SystemVault, c);
+                            kept = now
+                        }
                         Err(e) if !said => {
                             said = true;
                             let _ = app.emit("ytm-account-error", e);
@@ -119,6 +123,10 @@ fn finish_sign_in(app: AppHandle) {
             pb.online_catalog().set_account_cookie(Some(&jar));
             // A new sign-in starts as itself, not as the brand account chosen under the last one.
             crate::ytm_library::forget_identity();
+            // Kept on its own too, so you can switch back to it later.
+            if let Ok(Some(who)) = pb.online_catalog().account(&CancellationToken::default()) {
+                let _ = crate::ytm_accounts::remember(&SystemVault, &who, &jar);
+            }
             if let Some(w) = app.get_webview_window(WINDOW) {
                 let _ = w.close();
             }
@@ -151,6 +159,18 @@ pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(),
     SystemVault.delete(VAULT_KEY)?;
     pb.online_catalog().set_account_cookie(None);
     crate::ytm_library::forget_identity();
+    // Only this account is forgotten; others kept stay there to switch to.
+    if let Some(id) = crate::ytm_accounts::active(&SystemVault) {
+        let _ = crate::ytm_accounts::forget(&SystemVault, &id);
+    }
+    clear_web_session(&app);
+    let _ = app.emit("ytm-account-changed", ());
+    Ok(())
+}
+
+/// The sign-in window's Google session goes (so the next sign-in starts fresh). Your kept
+/// sign-ins are not touched.
+fn clear_web_session(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main")
         && let Ok(cookies) = main.cookies()
     {
@@ -167,8 +187,63 @@ pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(),
             }
         }
     }
+}
+
+/// The sign-ins kept, the one in use marked. One signed in before these were kept is added the
+/// first time it is listed.
+#[tauri::command]
+pub async fn ytm_saved_accounts(
+    pb: State<'_, Playback>,
+) -> Result<Vec<crate::ytm_accounts::SavedAccount>, String> {
+    let catalog = pb.online_catalog();
+    crate::blocking(move || {
+        if crate::ytm_accounts::active(&SystemVault).is_none()
+            && let Some(jar) = catalog.account_cookie()
+            && let Ok(Some(who)) = catalog.account(&CancellationToken::default())
+        {
+            let _ = crate::ytm_accounts::remember(&SystemVault, &who, &jar);
+        }
+        Ok(crate::ytm_accounts::list(&SystemVault))
+    })
+    .await
+}
+
+/// Add another Google account: the one in use stays kept, the sign-in window starts fresh, and
+/// the new sign-in becomes the one in use. Closing the window changes nothing.
+#[tauri::command]
+pub async fn ytm_add_account(app: AppHandle, pb: State<'_, Playback>) -> Result<(), String> {
+    if let Some(jar) = pb.online_catalog().account_cookie() {
+        crate::ytm_accounts::keep_active(&SystemVault, &jar)?;
+    }
+    clear_web_session(&app);
+    ytm_sign_in(app).await
+}
+
+/// Use another kept sign-in.
+#[tauri::command]
+pub async fn ytm_switch_account(
+    app: AppHandle,
+    pb: State<'_, Playback>,
+    id: String,
+) -> Result<(), String> {
+    let catalog = pb.online_catalog();
+    let now = catalog.account_cookie();
+    let jar = crate::ytm_accounts::switch(&SystemVault, &id, now.as_deref())?;
+    SystemVault.put(VAULT_KEY, &jar)?;
+    catalog.set_account_cookie(Some(&jar));
+    // Its own channel to start with; a brand account is chosen again under it.
+    crate::ytm_library::forget_identity();
     let _ = app.emit("ytm-account-changed", ());
     Ok(())
+}
+
+/// Forget a kept sign-in that isn't in use.
+#[tauri::command]
+pub fn ytm_forget_account(id: String) -> Result<(), String> {
+    if crate::ytm_accounts::active(&SystemVault).as_deref() == Some(id.as_str()) {
+        return Err("That's the account in use. Sign out of it instead.".into());
+    }
+    crate::ytm_accounts::forget(&SystemVault, &id)
 }
 
 /// Who is signed in to YouTube Music, or None.

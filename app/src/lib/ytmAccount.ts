@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import { useCallback, useEffect, useState } from 'react'
-import { inApp, libraryHome, ytmAccount, ytmBringInLikes, ytmRate, type YtmAccountInfo } from './engine'
+import { inApp, libraryHome, ytmAccount, ytmBringInLikes, ytmIdentities, ytmRate, ytmSavedAccounts, type YtmAccountInfo, type YtmIdentity, type YtmSavedAccount } from './engine'
 import { loadLikes } from './likes'
 import { listening, loadListening } from './listening'
 import { notify } from './notify'
@@ -56,4 +56,33 @@ export async function bringInYtmLikes(): Promise<string> {
   } catch (e) {
     return `Couldn't bring in your likes: ${String(e)}`
   }
+}
+
+/** The sign-ins kept on this computer and the channels of the one in use (brand accounts),
+ *  read again when the account changes. Channels are asked for only while signed in. */
+export function useYtmAccounts() {
+  const account = useYtmAccount()
+  const [saved, setSaved] = useState<YtmSavedAccount[]>([])
+  const [channels, setChannels] = useState<YtmIdentity[]>([])
+  const signedIn = !!account
+  useEffect(() => {
+    if (!inApp()) return
+    let live = true
+    const read = () => {
+      ytmSavedAccounts()
+        .then((s) => live && setSaved(s))
+        .catch(() => live && setSaved([]))
+      if (signedIn)
+        ytmIdentities()
+          .then((c) => live && setChannels(c))
+          .catch(() => live && setChannels([]))
+    }
+    read()
+    const stop = listen('ytm-account-changed', read)
+    return () => {
+      live = false
+      void stop.then((f) => f())
+    }
+  }, [signedIn])
+  return { account, saved, channels: signedIn ? channels : [] }
 }

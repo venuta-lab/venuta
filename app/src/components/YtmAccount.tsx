@@ -1,10 +1,11 @@
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { inApp, ytmSignIn, ytmSignOut } from '../lib/engine'
+import { inApp, ytmSignIn } from '../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../lib/listening'
 import { Switch } from './ui'
 import { bringInYtmLikes, useYtmAccount } from '../lib/ytmAccount'
-import { confirmAsk } from './Confirm'
+import { askSignOut } from './askSignOut'
+import { YtmAccountsSection } from './YtmProfile'
 import { notify } from '../lib/notify'
 import { RemoteArt } from './RemoteArt'
 
@@ -40,15 +41,7 @@ export function YtmAccount() {
       notify(String(e))
     }
   }
-  const signOut = async () => {
-    const ok = await confirmAsk({
-      title: 'Sign out of YouTube Music?',
-      text: 'Venuta forgets the sign-in on this computer. Online music keeps playing, for everyone rather than for you. Your playlists and likes in Venuta stay.',
-      confirm: 'Sign out',
-    })
-    if (!ok) return
-    await ytmSignOut().catch((e) => notify(String(e)))
-  }
+  const signOut = askSignOut
 
   if (account === undefined) return <div className="shimmer mt-3 h-16 rounded-2xl" aria-hidden />
   return (
@@ -75,6 +68,7 @@ export function YtmAccount() {
         </button>
       )}
     </div>
+    <YtmAccountsSection />
     {account && <YtmLikes />}
     </div>
   )
