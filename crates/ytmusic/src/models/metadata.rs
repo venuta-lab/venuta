@@ -228,11 +228,107 @@ pub struct SearchResult {
     pub items: Vec<SongItem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A watch endpoint as YouTube puts it on a button, a tuning chip or the automix marker: what
+/// `next` is asked with to open that queue (`InnerTube::next_watch`). Replayed as it came, never
+/// rebuilt: its `params` are opaque, and they are what makes a radio a radio, a shuffle a shuffle.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchEndpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlist_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlist_set_video_id: Option<String>,
+}
+
+/// `params` of YouTube's own "Start radio" endpoints (ytmusicapi's `radio=True`).
+pub const RADIO_PARAMS: &str = "wAEB";
+
+impl WatchEndpoint {
+    /// A song's radio when no button names one: `RDAMVM` + its id, started the way YouTube's own
+    /// "Start radio" starts it. The fallback only; a server-sent endpoint always wins.
+    pub fn song_radio(video_id: &str) -> Self {
+        WatchEndpoint {
+            video_id: Some(video_id.to_owned()),
+            playlist_id: Some(format!("RDAMVM{video_id}")),
+            params: Some(RADIO_PARAMS.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    /// True when it names nothing to play.
+    pub fn is_empty(&self) -> bool {
+        self.video_id.is_none() && self.playlist_id.is_none()
+    }
+
+    /// The fields of one `watchEndpoint` / `watchPlaylistEndpoint` object.
+    pub(crate) fn read(node: &Value) -> Option<Self> {
+        let s = |k: &str| {
+            node.get(k)
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let out = WatchEndpoint {
+            video_id: s("videoId"),
+            playlist_id: s("playlistId"),
+            params: s("params"),
+            index: node
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|i| u32::try_from(i).ok()),
+            playlist_set_video_id: s("playlistSetVideoId"),
+        };
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// The first watch endpoint inside `node` (either kind), as above.
+    pub(crate) fn within(node: &Value) -> Option<Self> {
+        find_all(node, "watchEndpoint")
+            .into_iter()
+            .chain(find_all(node, "watchPlaylistEndpoint"))
+            .find_map(Self::read)
+    }
+}
+
+/// One of the tuning chips above Up next ("All", "Familiar", "Deep cuts", a mood…): choosing it
+/// asks `next` with its endpoint and the answer replaces what is coming up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QueueChip {
+    pub text: String,
+    /// The chip YouTube marks as the one in effect.
+    pub selected: bool,
+    pub endpoint: WatchEndpoint,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct NextResult {
     pub items: Vec<SongItem>,
+    /// The next page of this queue (`playlistPanelRenderer.continuations`, a radio's
+    /// `nextRadioContinuationData` or a list's `nextContinuationData`); `None` on its last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continuation: Option<String>,
+    /// The queue's own list id, as the panel states it (a radio's `RDAMVM…`, a chip's `RDAT…`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_id: Option<String>,
+    /// What YouTube's player names the queue ("Kitni Baatein Radio"): the queue header's subtitle,
+    /// else the panel's own title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The tuning chips above the queue (radios only, first page only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub chips: Vec<QueueChip>,
+    /// The endpoint the panel's automix marker names: what Autoplay goes on with when this list
+    /// ends. [`Self::automix_playlist_id`] is its list id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub automix: Option<WatchEndpoint>,
+    /// The Related tab's browseId (`MPTRt…`, `MUSIC_PAGE_TYPE_TRACK_RELATED`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_browse_id: Option<String>,
     /// The lyrics tab's browseId (`MPLYt…`) — feed it to a lyrics `browse` (models::lyrics).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lyrics_browse_id: Option<String>,
@@ -303,15 +399,27 @@ pub fn parse_next(root: &Value) -> NextResult {
             items.push(item);
         }
     }
-    // The automix/radio continuation (context/08): the panel ends with a continuation token
-    // used to fetch the endless mix. Take the first continuation token we find.
-    let continuation = find_first_str(root, "continuation");
-    let automix_playlist_id = find_all(root, "automixPreviewVideoRenderer")
+    // The queue panel: `playlistPanelRenderer` on a first answer, `playlistPanelContinuation` on
+    // a page fetched with its continuation.
+    let panel = find_all(root, "playlistPanelRenderer")
         .into_iter()
-        .find_map(|n| find_first_str(n, "playlistId"));
+        .chain(find_all(root, "playlistPanelContinuation"))
+        .next();
+    let automix = find_all(root, "automixPreviewVideoRenderer")
+        .into_iter()
+        .find_map(WatchEndpoint::within);
+    let automix_playlist_id = automix.as_ref().and_then(|e| e.playlist_id.clone());
     NextResult {
         items,
-        continuation,
+        continuation: panel.and_then(panel_continuation),
+        playlist_id: panel
+            .and_then(|p| p.get("playlistId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        title: queue_title(root, panel),
+        chips: queue_chips(root),
+        automix,
+        related_browse_id: tab_browse_id(root, "MUSIC_PAGE_TYPE_TRACK_RELATED"),
         lyrics_browse_id: lyrics_browse_id(root),
         automix_playlist_id,
         // Scoped to the overlay on purpose: a bare `find_first_str` over the whole response would
@@ -354,11 +462,89 @@ fn panel_rows<'a>(node: &'a Value, out: &mut Vec<(&'a Value, Option<String>)>) {
     }
 }
 
+/// The queue panel's own next page: a radio's `nextRadioContinuationData`, a list's
+/// `nextContinuationData`. Read off the panel only, never the first token anywhere in the answer.
+fn panel_continuation(panel: &Value) -> Option<String> {
+    panel
+        .get("continuations")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|c| {
+            c.get("nextRadioContinuationData")
+                .or_else(|| c.get("nextContinuationData"))
+                .and_then(|d| d.get("continuation"))
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+/// What the queue is called: the queue header's subtitle, else the panel's title (a plain string
+/// on most answers, runs on some).
+fn queue_title(root: &Value, panel: Option<&Value>) -> Option<String> {
+    find_all(root, "musicQueueHeaderRenderer")
+        .into_iter()
+        .find_map(|h| runs_text(h.get("subtitle")))
+        .or_else(|| {
+            let t = panel?.get("title")?;
+            t.as_str().map(str::to_owned).or_else(|| runs_text(Some(t)))
+        })
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+}
+
+/// The tuning chips (`musicQueueRenderer.subHeaderChipCloud`), each with the endpoint its
+/// `queueUpdateCommand` fetches. A chip with no endpoint can't be chosen, so it isn't offered.
+fn queue_chips(root: &Value) -> Vec<QueueChip> {
+    let Some(cloud) = find_all(root, "subHeaderChipCloud").into_iter().next() else {
+        return Vec::new();
+    };
+    find_all(cloud, "chipCloudChipRenderer")
+        .into_iter()
+        .filter_map(|chip| {
+            let text = runs_text(chip.get("text")).or_else(|| {
+                chip.get("text")
+                    .and_then(|t| t.get("simpleText"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })?;
+            let nav = chip.get("navigationEndpoint")?;
+            let endpoint = nav
+                .get("queueUpdateCommand")
+                .and_then(|q| q.get("fetchContentsCommand"))
+                .and_then(WatchEndpoint::within)
+                .or_else(|| WatchEndpoint::within(nav))?;
+            Some(QueueChip {
+                text,
+                selected: chip
+                    .get("isSelected")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                endpoint,
+            })
+        })
+        .collect()
+}
+
+/// The songs on a Related page (`browse` of [`NextResult::related_browse_id`]): its list rows,
+/// in order. The page's playlists, artists and words are not songs and stay out.
+pub fn parse_related_songs(root: &Value) -> Vec<SongItem> {
+    find_all_shallow(root, "musicResponsiveListItemRenderer")
+        .into_iter()
+        .filter_map(parse_list_item)
+        .collect()
+}
+
 /// The lyrics tab's browseId from a `next` response: the browseEndpoint whose pageType is
 /// `MUSIC_PAGE_TYPE_TRACK_LYRICS`. context/08 §lyrics.
 fn lyrics_browse_id(root: &Value) -> Option<String> {
+    tab_browse_id(root, "MUSIC_PAGE_TYPE_TRACK_LYRICS")
+}
+
+/// The browseId of the tab whose page type is `page_type` (Lyrics, Related).
+fn tab_browse_id(root: &Value, page_type: &str) -> Option<String> {
     find_all(root, "browseEndpoint").into_iter().find_map(|be| {
-        (find_first_str(be, "pageType").as_deref() == Some("MUSIC_PAGE_TYPE_TRACK_LYRICS"))
+        (find_first_str(be, "pageType").as_deref() == Some(page_type))
             .then(|| {
                 be.get("browseId")
                     .and_then(Value::as_str)
@@ -1480,6 +1666,142 @@ mod tests {
         // The twin is kept on its primary for the Song/Video switch (#442), and only there.
         assert_eq!(out.items[0].counterpart.as_deref(), Some("video1"));
         assert_eq!(out.items[1].counterpart, None);
+    }
+
+    fn fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/next")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).expect("fixture")).expect("json")
+    }
+
+    // A radio's first answer is the whole session YouTube's own player keeps: the rows in their
+    // order (repeats and all), the radio's own id and name, the page after this one, the tuning
+    // chips, and the Related tab. Venuta plays exactly that, so every part has to come through.
+    #[test]
+    fn a_radio_answer_reads_as_youtube_sent_it() {
+        let out = parse_next(&fixture("radio_first.json"));
+        let ids: Vec<&str> = out.items.iter().map(|i| i.video_id.as_str()).collect();
+        // One row per song (the wrapper's twin rides on its primary), and the repeat stays.
+        assert_eq!(
+            ids,
+            [
+                "seedVid0001",
+                "radioVid0002",
+                "radioVid0003",
+                "radioVid0002"
+            ]
+        );
+        assert_eq!(out.items[0].counterpart.as_deref(), Some("seedVideoOMV"));
+        assert_eq!(out.playlist_id.as_deref(), Some("RDAMVMseedVid0001"));
+        assert_eq!(out.title.as_deref(), Some("Kitni Baatein Radio"));
+        assert_eq!(out.continuation.as_deref(), Some("CBQSRadioPage2Token"));
+        assert_eq!(out.related_browse_id.as_deref(), Some("MPTRt_seedRelated"));
+        assert_eq!(out.lyrics_browse_id.as_deref(), Some("MPLYt_seedLyrics"));
+        assert_eq!(out.automix, None);
+
+        let chips: Vec<(&str, bool)> = out
+            .chips
+            .iter()
+            .map(|c| (c.text.as_str(), c.selected))
+            .collect();
+        assert_eq!(
+            chips,
+            [("All", true), ("Familiar", false), ("Deep cuts", false)]
+        );
+        // Each chip's endpoint as YouTube put it on the chip, params and all.
+        assert_eq!(
+            out.chips[0].endpoint,
+            WatchEndpoint {
+                playlist_id: Some("RDAMVMseedVid0001".into()),
+                params: Some("wAEB8gECGAE%3D".into()),
+                index: Some(0),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            out.chips[1].endpoint,
+            WatchEndpoint {
+                video_id: Some("seedVid0001".into()),
+                playlist_id: Some("RDATiYvseedVid0001".into()),
+                params: Some("wAEB8gECKAE%3D".into()),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            out.chips[2].endpoint.playlist_id.as_deref(),
+            Some("RDATpXvseedVid0001")
+        );
+    }
+
+    // The next page of the same radio comes back under `continuationContents`, with no header and
+    // no chips: its rows (a song from earlier coming round again included) and the page after it.
+    #[test]
+    fn a_radio_continuation_page_reads_its_rows_and_the_next_token() {
+        let out = parse_next(&fixture("radio_continuation.json"));
+        let ids: Vec<&str> = out.items.iter().map(|i| i.video_id.as_str()).collect();
+        assert_eq!(ids, ["radioVid0004", "seedVid0001", "radioVid0005"]);
+        assert_eq!(out.continuation.as_deref(), Some("CBQSRadioPage3Token"));
+        assert_eq!(out.playlist_id.as_deref(), Some("RDAMVMseedVid0001"));
+        assert!(out.chips.is_empty());
+        assert_eq!(out.title, None);
+    }
+
+    // A list (an album, a playlist, one song) has no continuation of its own: it ends with the
+    // marker naming what YouTube's Autoplay goes on with, an endpoint with its own params.
+    #[test]
+    fn a_list_answer_names_what_it_continues_with() {
+        let out = parse_next(&fixture("song_automix.json"));
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(out.continuation, None);
+        assert_eq!(
+            out.automix,
+            Some(WatchEndpoint {
+                playlist_id: Some("RDAMPLOLAK5uy_fixtureAlbum".into()),
+                params: Some("OAHyAQIIAQ%3D%3D".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            out.automix_playlist_id.as_deref(),
+            Some("RDAMPLOLAK5uy_fixtureAlbum")
+        );
+        assert_eq!(out.playlist_id.as_deref(), Some("OLAK5uy_fixtureAlbum"));
+        assert_eq!(out.title.as_deref(), Some("Fixture Album"));
+        assert_eq!(out.related_browse_id.as_deref(), Some("MPTRt_lastRelated"));
+    }
+
+    // Only the queue's own continuation: a token anywhere else in the answer (comments, a tab)
+    // is not the next page of the radio.
+    #[test]
+    fn the_continuation_is_the_queue_panels_own() {
+        let root = json!({
+            "engagementPanels": [{ "continuations": [{ "nextContinuationData": { "continuation": "NOT_THE_QUEUE" } }] }],
+            "contents": { "playlistPanelRenderer": {
+                "contents": [],
+                "continuations": [{ "nextContinuationData": { "continuation": "QUEUE_NEXT" } }]
+            } }
+        });
+        assert_eq!(
+            parse_next(&root).continuation.as_deref(),
+            Some("QUEUE_NEXT")
+        );
+        let none = json!({
+            "engagementPanels": [{ "continuations": [{ "nextContinuationData": { "continuation": "NOT_THE_QUEUE" } }] }],
+            "contents": { "playlistPanelRenderer": { "contents": [] } }
+        });
+        assert_eq!(parse_next(&none).continuation, None);
+    }
+
+    // The Related tab's songs ("You might also like"): the fallback when a radio has nothing more.
+    #[test]
+    fn related_songs_are_the_list_rows_of_the_related_page() {
+        let songs = parse_related_songs(&fixture("related.json"));
+        let ids: Vec<&str> = songs.iter().map(|s| s.video_id.as_str()).collect();
+        assert_eq!(ids, ["relatedVid01", "relatedVid02"]);
+        assert_eq!(songs[0].title, "Related One");
+        assert_eq!(songs[0].artists, "Artist One");
+        assert_eq!(songs[0].duration.as_deref(), Some("3:33"));
     }
 
     // A real radio page has no automix marker — nothing to escalate to, and nothing to mistake a
