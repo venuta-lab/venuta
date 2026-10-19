@@ -257,8 +257,12 @@ pub fn restore_identity(pb: &Playback) {
     }
 }
 
-/// Signing out forgets the identity chosen too.
-pub fn forget_identity() {
+/// Signing in, out or switching forgets the identity chosen too: kept and in use (the catalog
+/// does that on a new cookie as well; this says it here, where the choice is kept).
+pub fn forget_identity(pb: &Playback) {
+    if let Some(a) = pb.online_catalog().account_access() {
+        a.use_identity(None);
+    }
     crate::ytm_links::forget_account_key();
     let _ = remember_identity(None);
 }

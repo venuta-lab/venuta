@@ -122,7 +122,7 @@ fn finish_sign_in(app: AppHandle) {
             let kept = SystemVault.put(VAULT_KEY, &jar);
             pb.online_catalog().set_account_cookie(Some(&jar));
             // A new sign-in starts as itself, not as the brand account chosen under the last one.
-            crate::ytm_library::forget_identity();
+            crate::ytm_library::forget_identity(&pb);
             // Kept on its own too, so you can switch back to it later.
             if let Ok(Some(who)) = pb.online_catalog().account(&CancellationToken::default()) {
                 let _ = crate::ytm_accounts::remember(&SystemVault, &who, &jar);
@@ -158,7 +158,7 @@ fn ytmusic_signed_in(jar: &str) -> bool {
 pub async fn ytm_sign_out(app: AppHandle, pb: State<'_, Playback>) -> Result<(), String> {
     SystemVault.delete(VAULT_KEY)?;
     pb.online_catalog().set_account_cookie(None);
-    crate::ytm_library::forget_identity();
+    crate::ytm_library::forget_identity(&pb);
     // Only this account is forgotten; others kept stay there to switch to.
     if let Some(id) = crate::ytm_accounts::active(&SystemVault) {
         let _ = crate::ytm_accounts::forget(&SystemVault, &id);
@@ -232,7 +232,7 @@ pub async fn ytm_switch_account(
     SystemVault.put(VAULT_KEY, &jar)?;
     catalog.set_account_cookie(Some(&jar));
     // Its own channel to start with; a brand account is chosen again under it.
-    crate::ytm_library::forget_identity();
+    crate::ytm_library::forget_identity(&pb);
     let _ = app.emit("ytm-account-changed", ());
     Ok(())
 }

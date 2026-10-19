@@ -788,6 +788,9 @@ impl LiveBackend for YtmBackend {
     }
 
     fn set_cookie(&self, cookie: Option<&str>) {
+        // Each sign-in (or sign-out) acts as itself: a brand channel chosen under the last one is
+        // chosen again under this one (the app does that at start, from what it kept).
+        self.it.set_data_sync_id(None);
         self.it.set_cookie(
             cookie
                 .map(str::to_owned)
@@ -2759,6 +2762,23 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert!(b.signed_in());
         assert!(!b.session_expired());
+    }
+
+    // A brand channel chosen under one sign-in must not ride along on the next one (its
+    // `onBehalfOfUser` with another account's cookie is refused), nor after signing out.
+    #[test]
+    fn a_new_sign_in_or_a_sign_out_acts_as_itself_again() {
+        use super::LiveBackend;
+        use crate::account::AccountAccess;
+        let b = super::YtmBackend::new().unwrap();
+        b.set_cookie(Some("SAPISID=first; PREF=x"));
+        b.use_identity(Some("brand-x"));
+        assert_eq!(b.it.data_sync_id().as_deref(), Some("brand-x"));
+        b.set_cookie(Some("SAPISID=second; PREF=x"));
+        assert_eq!(b.it.data_sync_id(), None, "another sign-in");
+        b.use_identity(Some("brand-y"));
+        b.set_cookie(None);
+        assert_eq!(b.it.data_sync_id(), None, "signed out");
     }
 
     #[test]
