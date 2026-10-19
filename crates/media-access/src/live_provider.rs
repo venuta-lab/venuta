@@ -1355,7 +1355,13 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
         }
         ytmusic::Error::WriteUncertain => AccessError::new(
             AccessErrorKind::Transport,
-            format!("YouTube Music didn't say whether {what} went through."),
+            format!(
+                "YouTube Music didn't say whether {what} went through. Look there before trying again."
+            ),
+        ),
+        ytmusic::Error::SlowDown => AccessError::new(
+            AccessErrorKind::Transport,
+            "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
         other => AccessError::new(
             AccessErrorKind::Transport,
@@ -1561,21 +1567,13 @@ impl crate::account::AccountAccess for YtmBackend {
                     E::Rename { title } => words.0 = Some(title.clone()),
                     E::Describe { description } => words.1 = Some(description.clone()),
                     E::Privacy { privacy } => words.2 = Some(privacy.clone()),
+                    // Each song once (one duplicate fails a batch), 50 at a time with a pause.
                     E::Add { video_ids } => {
-                        // One duplicate fails a batch, so each batch is unique; 50 at a time.
-                        let mut seen = std::collections::HashSet::new();
-                        let unique: Vec<String> = video_ids
-                            .iter()
-                            .filter(|v| seen.insert(*v))
-                            .cloned()
-                            .collect();
-                        for batch in unique.chunks(50) {
-                            placed.extend(
-                                self.it
-                                    .playlist_add_placed(client, playlist_id, batch)
-                                    .await?,
-                            );
-                        }
+                        placed.extend(
+                            self.it
+                                .playlist_add_batches(client, playlist_id, video_ids)
+                                .await?,
+                        );
                     }
                     E::Remove { items } => {
                         if !items.is_empty() {

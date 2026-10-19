@@ -29,6 +29,23 @@ pub const SW_JS_DATA_URL: &str = "https://music.youtube.com/sw.js_data";
 /// answered at all, including no listener: the crate stays pure, so it cannot require one.
 pub const HEAL_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// The longest an account write waits when YouTube asks it to slow down (HTTP 429), whatever
+/// `Retry-After` says: past that, the write stops and says so, and goes another time.
+pub const THROTTLE_CAP: Duration = Duration::from_secs(30);
+
+/// How many times an account write that was asked to slow down goes again before it stops.
+pub const THROTTLE_TRIES: usize = 3;
+
+/// How long to wait after a 429: what `Retry-After` asks in seconds, within [`THROTTLE_CAP`];
+/// without one (or with a date), two seconds, doubling each time asked again (`n`: times so far).
+pub(crate) fn throttle_wait(retry_after: Option<&str>, n: u32) -> Duration {
+    retry_after
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(2u64 << n.min(4)))
+        .min(THROTTLE_CAP)
+}
+
 tokio::task_local! {
     /// Set for the span of the app's own healing and auth work. See [`without_healing`].
     static NO_HEALING: ();
@@ -61,6 +78,9 @@ pub enum Error {
     SessionExpired,
     #[error("This track is already in the playlist.")]
     AlreadyInPlaylist,
+    /// YouTube went on asking to slow down (HTTP 429): the account write wasn't taken.
+    #[error("YouTube Music asked Venuta to slow down.")]
+    SlowDown,
     /// A post or reply that may have reached YouTube with its answer lost. See
     /// [`InnerTube::post_write`].
     #[error("The request may have reached YouTube.")]
@@ -538,7 +558,21 @@ impl InnerTube {
         body: &B,
         set_login: bool,
     ) -> Result<serde_json::Value, Error> {
-        self.post_inner(path, client, body, set_login, true, true)
+        self.post_inner(path, client, body, set_login, true, true, false)
+            .await
+    }
+
+    /// [`InnerTube::post`] for an account write that may go again (a removal, a move, a rename):
+    /// asked to slow down (HTTP 429), it waits as YouTube asks and goes again (see
+    /// [`THROTTLE_CAP`]), then stops with `Error::SlowDown`.
+    pub(crate) async fn post_account<B: Serialize>(
+        &self,
+        path: &str,
+        client: &YouTubeClient,
+        body: &B,
+        set_login: bool,
+    ) -> Result<serde_json::Value, Error> {
+        self.post_inner(path, client, body, set_login, true, true, true)
             .await
     }
 
@@ -551,13 +585,14 @@ impl InnerTube {
         body: &B,
         set_login: bool,
     ) -> Result<serde_json::Value, Error> {
-        self.post_inner(path, client, body, set_login, false, true)
+        self.post_inner(path, client, body, set_login, false, true, false)
             .await
     }
 
-    /// [`InnerTube::post`] for a write that is not idempotent (post, reply): never retried, since a
-    /// lost answer would mean a duplicate. A refusal is still healed and re-sent. A failure after
-    /// the request went out (timeout, reset, unreadable answer) is `Error::WriteUncertain`.
+    /// [`InnerTube::post`] for a write that is not idempotent (post, reply, a new playlist, songs
+    /// added): never retried, since a lost answer would mean a duplicate. A refusal is still healed
+    /// and re-sent, and so is one asked to slow down (a 429 was not taken). A failure after the
+    /// request went out (timeout, reset, unreadable answer) is `Error::WriteUncertain`.
     pub(crate) async fn post_write<B: Serialize>(
         &self,
         path: &str,
@@ -566,7 +601,7 @@ impl InnerTube {
         set_login: bool,
     ) -> Result<serde_json::Value, Error> {
         match self
-            .post_inner(path, client, body, set_login, true, false)
+            .post_inner(path, client, body, set_login, true, false, true)
             .await
         {
             Err(Error::Http(e)) if e.status().is_none() && !e.is_connect() && !e.is_builder() => {
@@ -582,7 +617,9 @@ impl InnerTube {
     }
 
     /// `heal`: a 401/403 on a signed-in request may wake the healer. `retry`: a connect error or
-    /// timeout is sent again. Both `true` for [`InnerTube::post`].
+    /// timeout is sent again. Both `true` for [`InnerTube::post`]. `throttle`: a 429 waits and
+    /// goes again (account writes only; a read is better failing at once).
+    #[allow(clippy::too_many_arguments)]
     async fn post_inner<B: Serialize>(
         &self,
         path: &str,
@@ -591,6 +628,7 @@ impl InnerTube {
         set_login: bool,
         heal: bool,
         retry: bool,
+        throttle: bool,
     ) -> Result<serde_json::Value, Error> {
         // `path` may already carry query params (e.g. browse continuations); chain accordingly.
         let sep = if path.contains('?') { '&' } else { '?' };
@@ -600,6 +638,7 @@ impl InnerTube {
         let mut delay = Duration::from_millis(500);
         let mut attempt = 0;
         let mut healed = false;
+        let mut slowed = 0;
 
         loop {
             attempt += 1;
@@ -612,8 +651,30 @@ impl InnerTube {
                 .headers(headers)
                 .body(body.clone())
                 .send()
-                .await
-                .and_then(|r| r.error_for_status());
+                .await;
+            // Asked to slow down: the write wasn't taken, so it waits as asked and goes again.
+            let slow_down = match &res {
+                Ok(r) if throttle && r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => Some(
+                    r.headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned),
+                ),
+                _ => None,
+            };
+            if let Some(asked) = slow_down {
+                if slowed >= THROTTLE_TRIES {
+                    tracing::warn!(path, "YouTube went on asking to slow down");
+                    return Err(Error::SlowDown);
+                }
+                let wait = throttle_wait(asked.as_deref(), slowed as u32);
+                tracing::warn!(path, ?wait, "asked to slow down, waiting");
+                tokio::time::sleep(wait).await;
+                slowed += 1;
+                attempt -= 1;
+                continue;
+            }
+            let res = res.and_then(|r| r.error_for_status());
 
             match res {
                 Ok(resp) => {
@@ -1109,6 +1170,73 @@ mod tests {
         );
         let shown = base.unwrap();
         assert_eq!(shown.len(), 40, "a sha1 hex digest, not the secret");
+    }
+
+    #[test]
+    fn a_wait_asked_for_is_honoured_within_reason() {
+        assert_eq!(throttle_wait(Some("3"), 0), Duration::from_secs(3));
+        assert_eq!(throttle_wait(Some("100000"), 0), THROTTLE_CAP);
+        // None said (or a date): two seconds, doubling each time asked again.
+        assert_eq!(throttle_wait(None, 0), Duration::from_secs(2));
+        assert_eq!(throttle_wait(None, 2), Duration::from_secs(8));
+        assert_eq!(
+            throttle_wait(Some("Wed, 21 Oct 2015 07:28:00 GMT"), 1),
+            Duration::from_secs(4)
+        );
+    }
+
+    /// A 429 means the write wasn't taken: an account write waits as long as YouTube asks and
+    /// goes again, once more each time, then stops and says so.
+    #[tokio::test]
+    async fn an_account_write_asked_to_slow_down_waits_and_goes_again() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = calls.clone();
+        let server = crate::test_server::MockServer::start_with_headers(move |_| {
+            if n.fetch_add(1, Ordering::SeqCst) == 0 {
+                (429, vec![("retry-after".into(), "1".into())], "{}".into())
+            } else {
+                (200, Vec::new(), "{}".into())
+            }
+        });
+        let it = signed_in_against(&server);
+        let clients = crate::clients::Clients::bundled();
+        let web = clients.get(crate::clients::METADATA_CLIENT).unwrap();
+
+        let started = std::time::Instant::now();
+        let got = it
+            .post_write("browse/edit_playlist", web, &serde_json::json!({}), true)
+            .await;
+        assert!(got.is_ok(), "{got:?}");
+        assert!(
+            started.elapsed() >= Duration::from_secs(1),
+            "it waited as asked"
+        );
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn asked_to_slow_down_again_and_again_a_write_stops_and_says_so() {
+        let server = crate::test_server::MockServer::start_with_headers(|_| {
+            (429, vec![("retry-after".into(), "0".into())], "{}".into())
+        });
+        let it = signed_in_against(&server);
+        let clients = crate::clients::Clients::bundled();
+        let web = clients.get(crate::clients::METADATA_CLIENT).unwrap();
+        let got = it
+            .post_account("browse/edit_playlist", web, &serde_json::json!({}), true)
+            .await;
+        assert!(matches!(got, Err(Error::SlowDown)), "{got:?}");
+        assert_eq!(server.requests().len(), THROTTLE_TRIES + 1);
+        assert!(
+            !it.session_refused(),
+            "a slow-down says nothing about the sign-in"
+        );
+
+        // Reads are not held up: a 429 there is a plain failure, at once.
+        let before = server.requests().len();
+        let read = it.post("browse", web, &serde_json::json!({}), true).await;
+        assert!(matches!(read, Err(Error::Http(_))), "{read:?}");
+        assert_eq!(server.requests().len() - before, 1);
     }
 
     /// A write is never sent twice by the transport, and a lost answer is "uncertain", not a plain

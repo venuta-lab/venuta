@@ -1165,14 +1165,15 @@ impl InnerTube {
         allow_duplicates: bool,
     ) -> Result<bool, Error> {
         match self
-            .edit_playlist(
+            .edit_playlist_send(
                 client,
                 playlist_id,
-                add_video_action(video_id, allow_duplicates),
+                vec![add_video_action(video_id, allow_duplicates)],
+                true,
             )
             .await
         {
-            Ok(()) => Ok(true),
+            Ok(_) => Ok(true),
             Err(Error::AlreadyInPlaylist) => Ok(false),
             Err(e) => Err(e),
         }
@@ -1191,8 +1192,9 @@ impl InnerTube {
             .iter()
             .map(|v| add_video_action(v, false))
             .collect();
-        self.edit_playlist_actions(client, playlist_id, actions)
+        self.edit_playlist_send(client, playlist_id, actions, true)
             .await
+            .map(|_| ())
     }
 
     /// Remove a video from a playlist. Needs `set_video_id` (the item's playlistSetVideoId).
@@ -1411,6 +1413,20 @@ impl InnerTube {
         playlist_id: &str,
         actions: Vec<serde_json::Value>,
     ) -> Result<serde_json::Value, Error> {
+        self.edit_playlist_send(client, playlist_id, actions, false)
+            .await
+    }
+
+    /// One `browse/edit_playlist`. `once`: it adds songs, so a lost answer is never sent again
+    /// (it would fail as already there, or add twice); the rest (remove, move, rename) may go
+    /// again. Either way a 429 waits as YouTube asks (see `InnerTube::post_account`).
+    async fn edit_playlist_send(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        actions: Vec<serde_json::Value>,
+        once: bool,
+    ) -> Result<serde_json::Value, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct EditBody {
@@ -1423,9 +1439,13 @@ impl InnerTube {
             playlist_id: strip_vl(playlist_id).to_owned(),
             actions,
         };
-        let value = self
-            .post("browse/edit_playlist", client, &body, true)
-            .await?;
+        let value = if once {
+            self.post_write("browse/edit_playlist", client, &body, true)
+                .await?
+        } else {
+            self.post_account("browse/edit_playlist", client, &body, true)
+                .await?
+        };
         match edit_rejection(&value) {
             Some(e) => Err(e),
             None => Ok(value),
@@ -1450,7 +1470,10 @@ impl InnerTube {
             title: title.to_owned(),
             privacy_status: "PRIVATE".to_owned(),
         };
-        let value = self.post("playlist/create", client, &body, true).await?;
+        // Never sent twice: a lost answer may still have made it (a second one would be a twin).
+        let value = self
+            .post_write("playlist/create", client, &body, true)
+            .await?;
         metadata::find_first_str(&value, "playlistId")
             .ok_or_else(|| Error::Other("create_playlist: no playlistId in response".into()))
     }
@@ -1471,7 +1494,8 @@ impl InnerTube {
             context: self.context_for(client),
             playlist_id: strip_vl(playlist_id).to_owned(),
         };
-        self.post("playlist/delete", client, &body, true).await?;
+        self.post_account("playlist/delete", client, &body, true)
+            .await?;
         Ok(())
     }
 
@@ -1561,9 +1585,34 @@ impl InnerTube {
             .map(|v| add_video_action(v, false))
             .collect();
         let value = self
-            .edit_playlist_value(client, playlist_id, actions)
+            .edit_playlist_send(client, playlist_id, actions, true)
             .await?;
         Ok(added_placements(&value))
+    }
+
+    /// Add many songs, each once, 50 to an edit with a pause between (a 2,000-song playlist is
+    /// 40 edits, not 40 at once). Where each landed, as `playlist_add_placed` says. Stopped part
+    /// way, what went before stays there and the error comes back; the caller reads again.
+    pub async fn playlist_add_batches(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        video_ids: &[String],
+    ) -> Result<Vec<(String, String)>, Error> {
+        let mut seen = std::collections::HashSet::new();
+        let unique: Vec<String> = video_ids
+            .iter()
+            .filter(|v| seen.insert(*v))
+            .cloned()
+            .collect();
+        let mut placed = Vec::new();
+        for (n, batch) in unique.chunks(ADD_BATCH).enumerate() {
+            if n > 0 {
+                tokio::time::sleep(ADD_BATCH_PACE).await;
+            }
+            placed.extend(self.playlist_add_placed(client, playlist_id, batch).await?);
+        }
+        Ok(placed)
     }
 
     /// Move one item (by its `setVideoId`) to just before another, or to the end with `None`.
@@ -1596,7 +1645,10 @@ impl InnerTube {
             privacy,
             video_ids,
         );
-        let value = self.post("playlist/create", client, &body, true).await?;
+        // Never sent twice: a lost answer may still have made it (a second one would be a twin).
+        let value = self
+            .post_write("playlist/create", client, &body, true)
+            .await?;
         metadata::find_first_str(&value, "playlistId")
             .ok_or_else(|| Error::Other("create_playlist: no playlistId in response".into()))
     }
@@ -1786,6 +1838,12 @@ fn strip_vl(id: &str) -> &str {
 /// `DEDUPE_OPTION_SKIP` skips YouTube's duplicate check: it is what the refusal's own "Add anyway"
 /// button sends (the capture in `duplicate_add_is_rejected`). Sent on an ordinary add, it stores a
 /// second copy instead of refusing.
+/// Songs to one add edit: one already there fails all of them, so batches stay small.
+const ADD_BATCH: usize = 50;
+
+/// The pause between two add edits of one change.
+pub const ADD_BATCH_PACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn add_video_action(video_id: &str, allow_duplicates: bool) -> serde_json::Value {
     let mut action = serde_json::json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id });
     if allow_duplicates {
@@ -2916,5 +2974,67 @@ mod report_play {
                 && ping.path.contains("cpn=")
         );
         assert!(ping.header("cookie").is_some(), "as the account");
+    }
+}
+
+/// Playlist writes: sent once, and paced.
+#[cfg(test)]
+mod playlist_writes {
+    use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
+    use crate::endpoints::ADD_BATCH_PACE;
+    use crate::test_server::MockServer;
+    use crate::transport::{Error, InnerTube, Session};
+
+    fn it_against(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture-sapisid; PREF=x".to_owned()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn web() -> YouTubeClient {
+        Clients::bundled().get(METADATA_CLIENT).unwrap().clone()
+    }
+
+    // A new playlist or songs added whose answer was lost are never sent again: that could make
+    // a second playlist, or fail as "already in the playlist". The caller reads again instead.
+    #[tokio::test]
+    async fn a_new_playlist_and_added_songs_are_sent_once() {
+        let server = MockServer::start(|_| (0, String::new())); // hang up
+        let it = it_against(&server);
+        let made = it
+            .create_playlist_with(&web(), "Road", None, "PRIVATE", &[])
+            .await;
+        assert!(matches!(made, Err(Error::WriteUncertain)), "{made:?}");
+        assert_eq!(server.requests().len(), 1);
+        let added = it.playlist_add_placed(&web(), "PL1", &["a".into()]).await;
+        assert!(matches!(added, Err(Error::WriteUncertain)), "{added:?}");
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    // Many songs go 50 at a time, with a pause between, each song once.
+    #[tokio::test]
+    async fn many_songs_go_in_batches_of_fifty_with_a_pause_between() {
+        let at = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = at.clone();
+        let server = MockServer::start(move |_| {
+            seen.lock().unwrap().push(std::time::Instant::now());
+            (200, "{}".into())
+        });
+        let it = it_against(&server);
+        let mut ids: Vec<String> = (0..120).map(|i| format!("v{i}")).collect();
+        ids.push("v0".into());
+        it.playlist_add_batches(&web(), "PL1", &ids).await.unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[0].body.matches("ACTION_ADD_VIDEO").count(), 50);
+        assert_eq!(sent[2].body.matches("ACTION_ADD_VIDEO").count(), 20);
+        let at = at.lock().unwrap();
+        for w in at.windows(2) {
+            assert!(w[1] - w[0] >= ADD_BATCH_PACE, "{:?}", w[1] - w[0]);
+        }
     }
 }
