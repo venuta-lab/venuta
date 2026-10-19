@@ -418,3 +418,35 @@ fn in_step_after_skips_a_seek_while_starting_a_pause_and_a_resume() {
         assert!(e.abs() < 40.0, "in step with the room: {e} ms off");
     }
 }
+
+/// Another output chosen in the middle of a song (headphones plugged in, Bluetooth, a DAC): the
+/// new device takes a moment to open while the room plays on. The player lines up again from
+/// silence at once, instead of coming back behind and waiting for the drift rule.
+#[test]
+fn another_output_mid_song_lines_up_with_the_room_at_once() {
+    let a = counting("switch-a", 30, 0);
+    let r = Run::new();
+    sleep(100);
+    r.load(&a, 0);
+    sleep(300);
+    let _t = r.start(0, 300);
+    sleep(1_500);
+    let next = Arc::new(Mutex::new(Captured {
+        open_delay: Some(Duration::from_millis(400)),
+        ..Captured::default()
+    }));
+    r.send(Cmd::Output(OutputChoice::PacedMemory(next.clone())));
+    sleep(1_500);
+    let e = r.error_at(Instant::now()).expect("an error reported");
+    assert!(e.abs() < 40.0, "in step after the switch: {e} ms off");
+    // On the new device: one stretch of music, from where the room was (no jump after it).
+    drop(r);
+    sleep(50);
+    let h = heard(&std::mem::take(&mut *next.lock().unwrap()));
+    let stretches = runs(&h);
+    assert_eq!(
+        stretches.len(),
+        1,
+        "one stretch on the new output: {stretches:?}"
+    );
+}

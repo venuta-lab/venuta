@@ -1210,6 +1210,21 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.dev_fmt = None;
         self.started = false;
+        // What the old device held is gone with it, and nothing comes out until another opens.
+        self.sounding = false;
+        self.flush_before_start = false;
+        // In a room, the next device (another output, or this one opened again) takes a moment
+        // to open while the room plays on: the song lines up again from silence when it starts,
+        // as at any start, instead of coming back behind and waiting for the drift rule.
+        if self.sync.is_some() {
+            self.sync_fresh = true;
+            self.sync_fine = false;
+            self.seek_after_fade = None;
+            self.fade_in_left = 0;
+            self.sync_avg = None;
+            self.sync_far_since = None;
+            self.sync_error_ms = None;
+        }
     }
 
     // --- Playing in step with a room ---------------------------------------------------------

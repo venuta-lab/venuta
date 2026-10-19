@@ -77,6 +77,9 @@ pub struct Changes {
     pub prepare: Option<(u64, usize, u64)>,
 }
 
+/// Within this, the room panel says someone is in sync (past it: catching up).
+const SHOWN_IN_SYNC_MS: i32 = 60;
+
 impl Changes {
     fn room() -> Self {
         Changes {
@@ -317,11 +320,20 @@ impl Room {
         Changes::room()
     }
 
+    /// How far off someone is, as their player says. Everyone's panel shows it, so the view goes
+    /// out when what it shows changes: in sync or catching up (60 ms), or the number by 10 ms.
     pub fn sync(&mut self, id: u32, error_ms: i32) -> Changes {
-        if let Some(p) = self.person(id) {
-            p.error_ms = Some(error_ms);
+        let Some(p) = self.person(id) else {
+            return Changes::default();
+        };
+        let was = p.error_ms.replace(error_ms);
+        let shown = |e: i32| e.abs() <= SHOWN_IN_SYNC_MS;
+        match was {
+            Some(w) if shown(w) == shown(error_ms) && (w - error_ms).abs() < 10 => {
+                Changes::default()
+            }
+            _ => Changes::room(),
         }
-        Changes::default()
     }
 
     /// A guest's round trip, for how far ahead starts are set: the slowest lately, easing back
@@ -1051,6 +1063,30 @@ mod tests {
         assert_eq!(c, Changes::default());
         assert_eq!(r.timeline(), Some(t), "the same start, the same place");
         assert_eq!(r.timeline().unwrap().position_at(6_500_000), 6_000);
+    }
+
+    #[test]
+    fn how_far_off_someone_is_reaches_everyone_when_what_they_see_changes() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        // The first word of it: everyone's panel shows it.
+        assert!(r.sync(ravi, 3).room);
+        // A millisecond or two either way: nothing anyone would see change.
+        assert!(!r.sync(ravi, 5).room);
+        // Ten or more: the number shown moves.
+        assert!(r.sync(ravi, 15).room);
+        // Past 60 ms ("catching up") and back in sync: shown at once.
+        assert!(r.sync(ravi, 70).room);
+        assert!(r.sync(ravi, 58).room);
+        // Whatever is said, the room keeps the latest.
+        assert!(!r.sync(ravi, 55).room);
+        let me = r
+            .view(false)
+            .members
+            .into_iter()
+            .find(|m| m.id == ravi)
+            .unwrap();
+        assert_eq!(me.error_ms, Some(55));
     }
 
     #[test]

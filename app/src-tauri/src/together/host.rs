@@ -352,7 +352,8 @@ impl Host {
                     self.apply(c);
                 }
                 ToHost::Sync { error_ms } => {
-                    self.room.lock().unwrap().sync(id, error_ms);
+                    let c = self.room.lock().unwrap().sync(id, error_ms);
+                    self.apply(c);
                 }
                 ToHost::Ask { action } => {
                     let r = self
@@ -675,7 +676,8 @@ impl Report for HostReport {
     }
     fn sync(&self, error_ms: i32) {
         if let Some(h) = self.0.upgrade() {
-            h.room.lock().unwrap().sync(HOST, error_ms);
+            let c = h.room.lock().unwrap().sync(HOST, error_ms);
+            h.apply(c);
         }
     }
     fn length(&self, ms: u64) {

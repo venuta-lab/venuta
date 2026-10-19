@@ -161,6 +161,8 @@ pub struct Captured {
     pub started_at: Option<std::time::Instant>,
     /// How many times the device was told to let go of what it held (stopped).
     pub flushes: usize,
+    /// How long opening it takes (a real device can take a moment): for checks.
+    pub open_delay: Option<std::time::Duration>,
 }
 
 pub struct MemoryDevice {
@@ -201,9 +203,15 @@ impl Device for MemoryDevice {
             valid_bits: src.bits.min(32),
             kind: SampleKind::Int,
         };
-        if let Ok(mut c) = self.captured.lock() {
+        let delay = if let Ok(mut c) = self.captured.lock() {
             c.formats.push(f.clone());
             c.frames.push(0);
+            c.open_delay
+        } else {
+            None
+        };
+        if let Some(d) = delay {
+            std::thread::sleep(d);
         }
         if let Some(p) = &mut self.paced {
             *p = Pace {

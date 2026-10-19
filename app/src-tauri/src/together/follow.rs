@@ -89,6 +89,9 @@ struct State {
     player_error: bool,
     /// The room has had the player (your own queue was set aside).
     took_over: bool,
+    /// A song readied silent for the room's start: the room's held timeline is no news for it,
+    /// only the start is (sending the held one would stop the device and start it again).
+    waiting_start: bool,
 }
 
 /// How long between tries while the player can't play (the output may be free again).
@@ -169,6 +172,7 @@ impl Follower {
     /// The player follows this plan (its start time kept, to see when the clock moves it).
     fn follow_plan(&self, st: &mut State, plan: SyncPlan) {
         st.anchor = plan.anchor;
+        st.waiting_start = false;
         let _ = self.pb().room_sync(Some(plan));
     }
 
@@ -185,15 +189,7 @@ impl Follower {
         let Some(plan) = self.plan(&t, st.same_room) else {
             return;
         };
-        // Apart, the player plays on through anything under 300 ms; telling it of every few ms
-        // the estimate moves would only be noise.
-        let tolerance = Duration::from_micros(if st.same_room { 1_000 } else { 50_000 });
-        let moved = match (st.anchor, plan.anchor) {
-            (None, Some(_)) => true,
-            (Some(a), Some(b)) => a.max(b) - a.min(b) > tolerance,
-            _ => false,
-        };
-        if moved {
+        if clock_moved(st.anchor, plan.anchor, st.waiting_start, st.same_room) {
             self.follow_plan(st, plan);
         }
     }
@@ -220,6 +216,7 @@ impl Follower {
                 key: song.key.clone(),
             });
             st.anchor = None;
+            st.waiting_start = true;
             let _ = self.pb().room_sync(Some(SyncPlan {
                 anchor: None,
                 position_ms,
@@ -237,6 +234,7 @@ impl Follower {
             Some(c) => {
                 let _ = self.pb().room_load(&self.root, c.item, position_ms, c.own);
                 st.anchor = None;
+                st.waiting_start = true;
                 let _ = self.pb().room_sync(Some(SyncPlan {
                     anchor: None,
                     position_ms,
@@ -334,6 +332,7 @@ impl Follower {
             failing: None,
             player_error: false,
             took_over: false,
+            waiting_start: false,
         };
         if self.hosting
             && let Some(lib) = &self.lib
@@ -586,9 +585,30 @@ pub fn start(mut f: Follower) -> Sender<In> {
     tx
 }
 
+/// Whether the start the player was given (`given`) is far enough from the room's start as the
+/// clock now puts it (`now`) to tell the player. A song readied silent for the room's start
+/// waits for that start, not for the held timeline. Apart, the player plays on through anything
+/// under 300 ms, so telling it of every few ms the estimate moves would only be noise.
+fn clock_moved(
+    given: Option<Instant>,
+    now: Option<Instant>,
+    waiting_start: bool,
+    same_room: bool,
+) -> bool {
+    if waiting_start {
+        return false;
+    }
+    let tolerance = Duration::from_micros(if same_room { 1_000 } else { 50_000 });
+    match (given, now) {
+        (None, Some(_)) => true,
+        (Some(a), Some(b)) => a.max(b) - a.min(b) > tolerance,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{OnFailure, RETRY, on_failure};
+    use super::{OnFailure, RETRY, clock_moved, on_failure};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -624,6 +644,43 @@ mod tests {
             on_failure(None, false, true, true, t0),
             (None, OnFailure::Nothing)
         );
+    }
+
+    #[test]
+    fn a_song_readied_for_the_rooms_start_is_not_sent_the_held_timeline() {
+        let t0 = Instant::now();
+        // Ready and waiting for the start: the held timeline isn't news, whatever it says.
+        assert!(!clock_moved(None, Some(t0), true, false));
+        assert!(!clock_moved(
+            Some(t0),
+            Some(t0 + Duration::from_secs(2)),
+            true,
+            false
+        ));
+        // Just joined, the clock known now: the song follows it.
+        assert!(clock_moved(None, Some(t0), false, false));
+        // Apart, under 50 ms is noise; past it, followed.
+        assert!(!clock_moved(
+            Some(t0),
+            Some(t0 + Duration::from_millis(40)),
+            false,
+            false
+        ));
+        assert!(clock_moved(
+            Some(t0),
+            Some(t0 + Duration::from_millis(60)),
+            false,
+            false
+        ));
+        // Same room: a millisecond matters.
+        assert!(clock_moved(
+            Some(t0),
+            Some(t0 + Duration::from_millis(2)),
+            false,
+            true
+        ));
+        // No start known: nothing to follow.
+        assert!(!clock_moved(Some(t0), None, false, false));
     }
 
     #[test]
