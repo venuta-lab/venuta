@@ -33,6 +33,17 @@ pub trait Vault {
 pub struct SystemVault;
 
 const VAULT_SERVICE: &str = "Venuta";
+/// A test copy (VENUTA_MULTI) keeps its sign-ins apart, so signing in or out there never
+/// touches the Venuta in use.
+const TEST_VAULT_SERVICE: &str = "Venuta test copy";
+
+fn vault_service() -> &'static str {
+    if std::env::var_os("VENUTA_MULTI").is_some() {
+        TEST_VAULT_SERVICE
+    } else {
+        VAULT_SERVICE
+    }
+}
 
 impl Vault for SystemVault {
     fn put(&self, key: &str, value: &str) -> Result<(), String> {
@@ -57,19 +68,19 @@ struct Keyring;
 
 impl Entries for Keyring {
     fn put(&self, key: &str, value: &str) -> Result<(), String> {
-        keyring::Entry::new(VAULT_SERVICE, key)
+        keyring::Entry::new(vault_service(), key)
             .and_then(|e| e.set_password(value))
             .map_err(|e| e.to_string())
     }
     fn get(&self, key: &str) -> Result<Option<String>, String> {
-        match keyring::Entry::new(VAULT_SERVICE, key).and_then(|e| e.get_password()) {
+        match keyring::Entry::new(vault_service(), key).and_then(|e| e.get_password()) {
             Ok(v) => Ok(Some(v)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.to_string()),
         }
     }
     fn delete(&self, key: &str) -> Result<(), String> {
-        match keyring::Entry::new(VAULT_SERVICE, key).and_then(|e| e.delete_credential()) {
+        match keyring::Entry::new(vault_service(), key).and_then(|e| e.delete_credential()) {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.to_string()),
         }
