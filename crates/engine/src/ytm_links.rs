@@ -13,7 +13,10 @@
 //!
 //! Guards: a reading of the YouTube Music playlist that didn't finish changes nothing; one side
 //! having lost most of its songs (or all) is never taken as deletions without asking; a link
-//! made on another account waits.
+//! made on another account waits. A file of yours that can't be found now is still in your
+//! playlist, so its song stays there; and after an Undo, what the undone sync brought in comes
+//! in again rather than going there. A song goes from YouTube Music only when you took it out of
+//! yours since the last sync.
 
 use crate::playlists::{Item, OnlineEntry, PlaylistEntry};
 use media_access::AccountTrack;
@@ -238,12 +241,37 @@ pub fn file_key(e: &PlaylistEntry) -> Option<String> {
     })
 }
 
-/// The YouTube Music song a line of your playlist is, if any.
+/// What a line of yours that is a file is known by, found or not: a file that can't be found now
+/// (a drive unplugged, a NAS asleep, moved before a rescan) is still known by the checksum its
+/// line was written with. None for a line with no way to tell which file it was.
+fn line_key(e: &PlaylistEntry) -> Option<String> {
+    if !e.missing {
+        return file_key(e);
+    }
+    let md5 = e
+        .audio_md5
+        .clone()
+        .or_else(|| e.want.as_ref().and_then(|w| w.md5.clone()))?;
+    Some(format!("md5:{}", md5.to_uppercase()))
+}
+
+/// The YouTube Music song a line of your playlist is, if any. A matched file that can't be
+/// found now is still its song: it is in your playlist, so it isn't taken out anywhere.
 pub fn video_of(e: &PlaylistEntry, link: &Link) -> Option<String> {
     if let Some(o) = &e.online {
         return (o.provider == PROVIDER && o.is_stable()).then(|| o.track_id.clone());
     }
-    file_key(e).and_then(|k| link.matches.get(&k).cloned())
+    line_key(e).and_then(|k| link.matches.get(&k).cloned())
+}
+
+/// You undid a sync: yours is back as it was before it. The songs that sync brought in are no
+/// longer ones both sides had, so the next sync brings them in again rather than taking them out
+/// on YouTube Music; and the link waits for you (`held`). A song the undone sync took out of
+/// yours (gone there) is yours again, so it goes back there.
+pub fn undone(link: &mut Link, entries: &[PlaylistEntry]) {
+    let have: HashSet<String> = entries.iter().filter_map(|e| video_of(e, link)).collect();
+    link.base.retain(|id| have.contains(id));
+    link.held = true;
 }
 
 /// The files of yours the matching review asks about: no YouTube Music song yet, and not
@@ -282,11 +310,22 @@ pub fn counts(entries: &[PlaylistEntry], link: &Link) -> (usize, usize) {
     (there, entries.len() - there)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
     Venuta,
     YoutubeMusic,
+}
+
+/// What you said go ahead past, after a sync waited and asked. Each answer covers only the pause
+/// it was given for: "Sync again" after an Undo still asks when most songs are gone, and "Sync
+/// anyway" for one side still asks about the other.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Allow {
+    /// "Sync again", after an Undo.
+    pub held: bool,
+    /// "Sync anyway": most songs gone on this side are taken as gone.
+    pub many_gone: Option<Side>,
 }
 
 /// Why a sync changed nothing and waits.
@@ -340,14 +379,14 @@ pub fn plan(
     account: &str,
     remote: &[AccountTrack],
     complete: bool,
-    force: bool,
+    allow: Allow,
 ) -> Result<Plan, Pause> {
     if !link.account.is_empty() && link.account != account {
         return Err(Pause::OtherAccount {
             account: link.account.clone(),
         });
     }
-    if link.held && !force {
+    if link.held && !allow.held {
         return Err(Pause::Held);
     }
     if !complete {
@@ -362,16 +401,36 @@ pub fn plan(
     let lids: Vec<&str> = local.iter().flatten().map(String::as_str).collect();
     let rids = firsts(remote.iter().map(|r| link.id_there(r)));
     let base: HashSet<&str> = link.base.iter().map(String::as_str).collect();
-    let in_l: HashSet<&str> = lids.iter().copied().collect();
+    // A file of yours that can't be found now and was matched by its path (no checksum): its
+    // line can't say which song it is, so every song matched by a path no line has now counts
+    // as still yours. It is never taken out there, and never comes in as a second line.
+    let unknown_line = entries
+        .iter()
+        .any(|e| e.online.is_none() && e.missing && line_key(e).is_none());
+    let keys_now: HashSet<String> = entries.iter().filter_map(line_key).collect();
+    let still_yours: HashSet<&str> = if unknown_line {
+        link.matches
+            .iter()
+            .filter(|(k, _)| k.starts_with("path:") && !keys_now.contains(*k))
+            .map(|(_, v)| v.as_str())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let in_l: HashSet<&str> = lids
+        .iter()
+        .copied()
+        .chain(still_yours.iter().copied())
+        .collect();
     let in_r: HashSet<&str> = rids.iter().copied().collect();
 
-    if !force && !base.is_empty() {
+    if !base.is_empty() {
         let lost = |have: &HashSet<&str>| base.iter().filter(|b| !have.contains(*b)).count();
-        let many = |have: &[&str], gone: usize| {
+        let many = |have: &HashSet<&str>, gone: usize| {
             have.is_empty() || (base.len() >= 4 && gone * 2 > base.len())
         };
         let gone_r = lost(&in_r);
-        if many(&rids, gone_r) && gone_r > 0 {
+        if many(&in_r, gone_r) && gone_r > 0 && allow.many_gone != Some(Side::YoutubeMusic) {
             return Err(Pause::ManyGone {
                 side: Side::YoutubeMusic,
                 gone: gone_r,
@@ -379,7 +438,7 @@ pub fn plan(
             });
         }
         let gone_l = lost(&in_l);
-        if many(&lids, gone_l) && gone_l > 0 {
+        if many(&in_l, gone_l) && gone_l > 0 && allow.many_gone != Some(Side::Venuta) {
             return Err(Pause::ManyGone {
                 side: Side::Venuta,
                 gone: gone_l,
@@ -439,6 +498,7 @@ pub fn plan(
     for id in &order {
         match line_of.get(id) {
             Some(&j) => lines.push(Some(j)),
+            None if still_yours.contains(id) => {}
             None => {
                 let Some(t) = track_of.get(id) else { continue };
                 pulled += 1;
@@ -665,10 +725,145 @@ mod tests {
             .collect()
     }
 
+    /// Nothing gone past: the sync that nobody answered yet.
+    const ASK: Allow = Allow {
+        held: false,
+        many_gone: None,
+    };
+    /// "Sync again" after an Undo.
+    const HELD: Allow = Allow {
+        held: true,
+        many_gone: None,
+    };
+    /// Past every pause there is an answer for (only for guards that come before them all).
+    const ANYWAY: Allow = Allow {
+        held: true,
+        many_gone: Some(Side::YoutubeMusic),
+    };
+    /// "Sync anyway" when most songs went on one side.
+    fn gone(side: Side) -> Allow {
+        Allow {
+            held: false,
+            many_gone: Some(side),
+        }
+    }
+
+    /// A file of yours that can't be found now (a drive unplugged), its line as written.
+    fn lost_file(md5: &str) -> PlaylistEntry {
+        PlaylistEntry {
+            path: String::new(),
+            title: "Night Drive".into(),
+            artist: "Someone".into(),
+            album: String::new(),
+            duration_ms: 0,
+            audio_md5: Some(md5.into()),
+            missing: true,
+            want: Some(crate::playlists::WantEntry {
+                title: "Night Drive".into(),
+                md5: Some(md5.into()),
+                ..Default::default()
+            }),
+            maybe: None,
+            online: None,
+        }
+    }
+
+    // The bug: Undo put yours back but kept the base of the sync it undid, so "Sync again" took
+    // out on YouTube Music the songs that sync had brought in from there.
+    #[test]
+    fn undo_then_sync_again_takes_nothing_out_on_youtube_music() {
+        let before = [online("a"), online("b")];
+        let mut l = link(&["a", "b"]);
+        let there = remote(&["a", "x", "b"]);
+        let p = plan(&before, &l, "me", &there, true, ASK).unwrap();
+        assert_eq!(p.pulled, 1);
+        l.base = p.order.clone();
+
+        // Undo: yours is back as it was before that sync.
+        undone(&mut l, &before);
+        assert!(l.held);
+        assert_eq!(
+            plan(&before, &l, "me", &there, true, ASK).err(),
+            Some(Pause::Held)
+        );
+        let again = plan(&before, &l, "me", &there, true, HELD).unwrap();
+        assert!(again.remove_remote.is_empty(), "{:?}", again.remove_remote);
+        assert_eq!(lines(&again, &before), ["a", "x", "b"], "it comes in again");
+    }
+
+    #[test]
+    fn sync_again_after_an_undo_still_asks_when_most_are_gone_there() {
+        let mine: Vec<_> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|i| online(i))
+            .collect();
+        let mut l = link(&["a", "b", "c", "d", "e"]);
+        undone(&mut l, &mine);
+        assert_eq!(
+            plan(&mine, &l, "me", &remote(&["a"]), true, HELD).err(),
+            Some(Pause::ManyGone {
+                side: Side::YoutubeMusic,
+                gone: 4,
+                of: 5
+            })
+        );
+    }
+
+    // "Sync anyway" answers the side it was asked about; the other side still asks.
+    #[test]
+    fn going_past_one_sides_losses_still_asks_about_the_other() {
+        let mine = [online("a"), online("c")];
+        let l = link(&["a", "b", "c", "d", "e"]);
+        let there = remote(&["a", "b"]);
+        assert_eq!(
+            plan(&mine, &l, "me", &there, true, gone(Side::YoutubeMusic)).err(),
+            Some(Pause::ManyGone {
+                side: Side::Venuta,
+                gone: 3,
+                of: 5
+            })
+        );
+    }
+
+    // A matched file that can't be found now is still in your playlist: its song stays there.
+    #[test]
+    fn a_matched_file_that_cant_be_found_now_keeps_its_song_there() {
+        let mine = [online("a"), lost_file("M2")];
+        let mut l = link(&["a", "y"]);
+        l.matches.insert("md5:M2".into(), "y".into());
+        let p = plan(&mine, &l, "me", &remote(&["a", "y"]), true, ASK).unwrap();
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(counts(&mine, &l), (2, 0));
+        assert!(unmatched(&mine, &l).is_empty(), "and it isn't asked about");
+
+        // Its line written again as a song to get keeps only the checksum it wants.
+        let mut want_only = lost_file("M2");
+        want_only.audio_md5 = None;
+        let mine = [online("a"), want_only];
+        let p = plan(&mine, &l, "me", &remote(&["a", "y"]), true, ASK).unwrap();
+        assert!(p.is_empty(), "{p:?}");
+    }
+
+    // Known by its path only, a missing file's song can't be told from the others: every song
+    // matched by a path no line has now stays there, and none comes in as a second line.
+    #[test]
+    fn a_missing_file_known_by_its_path_only_keeps_its_song_there() {
+        let mut lost = lost_file("M");
+        lost.audio_md5 = None;
+        lost.want.as_mut().unwrap().md5 = None;
+        let mine = [online("a"), lost];
+        let mut l = link(&["a", "y"]);
+        l.matches.insert("path:A/y.flac".into(), "y".into());
+        let p = plan(&mine, &l, "me", &remote(&["a", "y"]), true, ASK).unwrap();
+        assert!(p.remove_remote.is_empty(), "{:?}", p.remove_remote);
+        assert!(p.items.is_none());
+        assert_eq!(p.order, ["a", "y"]);
+    }
+
     #[test]
     fn linking_for_the_first_time_joins_both_and_takes_nothing_out() {
         let mine = [online("a"), online("b")];
-        let p = plan(&mine, &link(&[]), "me", &remote(&["b", "c"]), true, false).unwrap();
+        let p = plan(&mine, &link(&[]), "me", &remote(&["b", "c"]), true, ASK).unwrap();
         assert_eq!(p.order, ["a", "b", "c"]);
         assert_eq!(p.add_remote, ["a"]);
         assert!(p.remove_remote.is_empty());
@@ -685,7 +880,7 @@ mod tests {
             "me",
             &remote(&["a", "x", "b"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert_eq!(lines(&p, &mine), ["a", "x", "b"]);
@@ -701,7 +896,7 @@ mod tests {
             "me",
             &remote(&["a", "c"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert_eq!(lines(&p, &mine), ["a", "c"]);
@@ -717,7 +912,7 @@ mod tests {
             "me",
             &remote(&["a", "b", "c"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert_eq!(p.remove_remote, [("b".to_string(), "s-b".to_string())]);
@@ -733,7 +928,7 @@ mod tests {
             "me",
             &remote(&["a", "b"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert!(p.is_empty());
@@ -748,7 +943,7 @@ mod tests {
             "me",
             &remote(&["a"]),
             false,
-            true,
+            ANYWAY,
         );
         assert_eq!(r.err(), Some(Pause::Unread));
     }
@@ -756,7 +951,7 @@ mod tests {
     #[test]
     fn an_empty_answer_is_never_taken_as_every_song_deleted() {
         let mine = [online("a"), online("b")];
-        let r = plan(&mine, &link(&["a", "b"]), "me", &[], true, false);
+        let r = plan(&mine, &link(&["a", "b"]), "me", &[], true, ASK);
         assert_eq!(
             r.err(),
             Some(Pause::ManyGone {
@@ -776,14 +971,14 @@ mod tests {
         let l = link(&["a", "b", "c", "d", "e"]);
         let r = remote(&["a", "b"]);
         assert!(matches!(
-            plan(&mine, &l, "me", &r, true, false),
+            plan(&mine, &l, "me", &r, true, ASK),
             Err(Pause::ManyGone {
                 side: Side::YoutubeMusic,
                 gone: 3,
                 of: 5
             })
         ));
-        let p = plan(&mine, &l, "me", &r, true, true).unwrap();
+        let p = plan(&mine, &l, "me", &r, true, gone(Side::YoutubeMusic)).unwrap();
         assert_eq!(lines(&p, &mine), ["a", "b"]);
     }
 
@@ -795,7 +990,7 @@ mod tests {
             "me",
             &remote(&["a", "b"]),
             true,
-            false,
+            ASK,
         );
         assert!(matches!(
             r,
@@ -810,9 +1005,9 @@ mod tests {
     fn after_an_undo_nothing_is_sent_until_you_say_so() {
         let mut l = link(&["a", "b"]);
         l.held = true;
-        let r = plan(&[online("a")], &l, "me", &remote(&["a", "b"]), true, false);
+        let r = plan(&[online("a")], &l, "me", &remote(&["a", "b"]), true, ASK);
         assert_eq!(r.err(), Some(Pause::Held));
-        let p = plan(&[online("a")], &l, "me", &remote(&["a", "b"]), true, true).unwrap();
+        let p = plan(&[online("a")], &l, "me", &remote(&["a", "b"]), true, HELD).unwrap();
         assert_eq!(p.remove_remote.len(), 1);
     }
 
@@ -824,7 +1019,7 @@ mod tests {
             "someone else",
             &remote(&["a"]),
             true,
-            false,
+            ASK,
         );
         assert_eq!(
             r.err(),
@@ -843,7 +1038,7 @@ mod tests {
             "me",
             &remote(&["c", "a", "b"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert_eq!(p.order, ["c", "a", "b"]);
@@ -859,7 +1054,7 @@ mod tests {
             "me",
             &remote(&["c", "a", "b"]),
             true,
-            false,
+            ASK,
         )
         .unwrap();
         assert_eq!(p.order, ["b", "a", "c"]);
@@ -876,7 +1071,7 @@ mod tests {
         ];
         let mut l = link(&["a", "b"]);
         l.matches.insert("md5:M2".into(), "y".into());
-        let p = plan(&mine, &l, "me", &remote(&["a", "n", "b"]), true, false).unwrap();
+        let p = plan(&mine, &l, "me", &remote(&["a", "n", "b"]), true, ASK).unwrap();
         assert_eq!(p.add_remote, ["y"]);
         assert_eq!(lines(&p, &mine), ["a", "x.flac", "n", "y.flac", "b"]);
         assert_eq!(unmatched(&mine, &l), [1]);
@@ -890,7 +1085,7 @@ mod tests {
     #[test]
     fn a_song_twice_here_is_sent_once_and_both_lines_stay() {
         let mine = [online("a"), online("a")];
-        let p = plan(&mine, &link(&[]), "me", &[], true, false).unwrap();
+        let p = plan(&mine, &link(&[]), "me", &[], true, ASK).unwrap();
         assert_eq!(p.add_remote, ["a"]);
         assert!(p.items.is_none());
     }
@@ -945,25 +1140,21 @@ mod tests {
     fn a_song_swapped_for_another_version_there_is_still_the_same_song() {
         let mine = [online("a")];
         let mut l = link(&[]);
-        let p = plan(&mine, &l, "me", &[], true, false).unwrap();
+        let p = plan(&mine, &l, "me", &[], true, ASK).unwrap();
         assert_eq!(p.add_remote, ["a"]);
         let placed = [("a2".to_string(), "s-a2".to_string())];
         l.note_swaps(&p.add_remote, &placed);
         l.base = p.order.clone();
         let there = remote(&["a2"]);
         // Not taken as "a" gone there and "a2" new.
-        assert!(
-            plan(&mine, &l, "me", &there, true, false)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(plan(&mine, &l, "me", &there, true, ASK).unwrap().is_empty());
         let (now, want) = after_edits(&there, &[], &[], &l.base, &l.aliases);
         assert_eq!(
             (now, want),
             (vec!["s-a2".to_string()], vec!["s-a2".to_string()])
         );
         // Taken out here, it goes there by its own id.
-        let p = plan(&[online("b")], &l, "me", &there, true, false).unwrap();
+        let p = plan(&[online("b")], &l, "me", &there, true, ASK).unwrap();
         assert_eq!(p.remove_remote, [("a2".to_string(), "s-a2".to_string())]);
         assert_eq!(p.add_remote, ["b"]);
     }

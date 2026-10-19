@@ -34,7 +34,7 @@ export function pauseWords(name: string, p: PauseLike): string {
     case 'unread':
       return `YouTube Music didn’t send all of “${name}”, so nothing was changed. It tries again the next time.`
     case 'held':
-      return `You put “${name}” back as it was before a sync. Nothing is sent to YouTube Music until you sync again.`
+      return `You put “${name}” back as it was before a sync. Nothing is sent to YouTube Music until you sync again. Syncing again brings in what is still there. Nothing there is taken out.`
     case 'other_account':
       return `“${name}” is linked on another YouTube Music account (or another of its channels). Switch to that one, or unlink.`
     case 'many_gone':

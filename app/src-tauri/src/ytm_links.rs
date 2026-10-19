@@ -8,7 +8,7 @@
 
 use crate::playback::Playback;
 use engine::playlists::{self, Foreign, OnlineEntry, PlaylistEntry};
-use engine::ytm_links::{self, Link, Pause, SyncNote, Uploading};
+use engine::ytm_links::{self, Allow, Link, Pause, Side, SyncNote, Uploading};
 use media_access::{AccountAccess, CancellationToken, MediaAccess, PlaylistEdit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -300,7 +300,7 @@ pub async fn ytm_link_start(
             Path::new(&root),
             &name,
             choices,
-            false,
+            Allow::default(),
         )
     })
     .await
@@ -323,22 +323,29 @@ pub async fn ytm_link_choose(
             Path::new(&root),
             &name,
             choices,
-            false,
+            Allow::default(),
         )
     })
     .await
 }
 
-/// Sync now. `force`: you said go ahead after a sync waited (most songs gone on one side).
+/// Sync now. `force`: you said go ahead after a sync waited: "Sync again" after an Undo, or
+/// "Sync anyway" when most songs went on one side (`gone`, the side it asked about). Each
+/// answer covers only that pause; any other guard still asks.
 #[tauri::command]
 pub async fn ytm_link_sync(
     pb: State<'_, Playback>,
     root: String,
     name: String,
     force: bool,
+    gone: Option<Side>,
 ) -> Result<SyncReport, String> {
     let account = crate::ytm_library::account(&pb)?;
     let catalog = pb.catalog();
+    let allow = Allow {
+        held: force,
+        many_gone: gone.filter(|_| force),
+    };
     crate::blocking(move || {
         choose_and_sync(
             account.as_ref(),
@@ -346,7 +353,7 @@ pub async fn ytm_link_sync(
             Path::new(&root),
             &name,
             Choices::default(),
-            force,
+            allow,
         )
     })
     .await
@@ -359,13 +366,22 @@ pub fn ytm_unlink(name: String) -> Result<(), String> {
 }
 
 /// Undo what a sync did to yours: the copy kept before it comes back, and the link holds
-/// (the next sync waits for you, so the undo never takes songs out there by itself).
+/// (the next sync waits for you). What that sync brought in from YouTube Music is no longer
+/// counted as both sides', so syncing again brings it in again and never takes it out there.
 #[tauri::command]
 pub fn ytm_link_undo(root: String, name: String, copy: String) -> Result<(), String> {
-    playlists::restore_copy(Path::new(&root), &name, Path::new(&copy))?;
+    let rootp = Path::new(&root);
+    playlists::restore_copy(rootp, &name, Path::new(&copy))?;
     let data = data_dir();
     if let Some(mut link) = ytm_links::load(&data, &name) {
-        link.held = true;
+        match entries_of(rootp, &name) {
+            Ok((entries, _)) => ytm_links::undone(&mut link, &entries),
+            // Yours couldn't be read back: the next sync then only adds, as a first one does.
+            Err(_) => {
+                link.base.clear();
+                link.held = true;
+            }
+        }
         ytm_links::save(&data, &link)?;
     }
     Ok(())
@@ -404,7 +420,7 @@ fn choose_and_sync(
     root: &Path,
     name: &str,
     choices: Choices,
-    force: bool,
+    allow: Allow,
 ) -> Result<SyncReport, String> {
     let Some(_running) = Running::start(name) else {
         return Ok(SyncReport {
@@ -492,12 +508,18 @@ fn choose_and_sync(
             there.title
         ));
     }
-    let plan = match ytm_links::plan(&entries, &link, &key, &there.tracks, there.complete, force) {
+    let plan = match ytm_links::plan(&entries, &link, &key, &there.tracks, there.complete, allow) {
         Ok(p) => {
             link.held = false;
             p
         }
         Err(p) => {
+            // "Sync again" was pressed and most songs are gone on a side: the hold is answered, so
+            // that is what the page asks about next.
+            if allow.held && link.held && matches!(p, Pause::ManyGone { .. }) {
+                link.held = false;
+                ytm_links::save(&data, &link)?;
+            }
             report.paused = Some(p);
             return Ok(report);
         }

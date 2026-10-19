@@ -46,13 +46,18 @@ export async function reloadLink(root: string, name: string) {
 
 const nowSecs = () => Math.floor(Date.now() / 1000)
 
-/** Sync one linked playlist now. `quiet`: a sync nobody pressed says only what changed. */
-export async function syncLink(root: string, name: string, opts: { force?: boolean; quiet?: boolean } = {}) {
+/** Sync one linked playlist now. `quiet`: a sync nobody pressed says only what changed. `force`
+ *  answers the pause shown, and only that one (`gone`: the side "Sync anyway" was asked about). */
+export async function syncLink(
+  root: string,
+  name: string,
+  opts: { force?: boolean; gone?: 'venuta' | 'youtube_music'; quiet?: boolean } = {},
+) {
   if (!ytmReady() || stateOf(name).syncing) return
   set(name, { syncing: true, problem: '' })
   let report: YtmSyncReport | null = null
   try {
-    report = await ytmLinkSync(root, name, !!opts.force)
+    report = await ytmLinkSync(root, name, !!opts.force, opts.gone ?? null)
   } catch (e) {
     set(name, { syncing: false, problem: onlineProblem(e) })
     void ytmStatusRefresh()

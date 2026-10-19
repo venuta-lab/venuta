@@ -31,6 +31,8 @@ test('what came in and went out, both ways, in one line', () => {
 test('a sync that waits says why and what nothing changed means', () => {
   assert.match(pauseWords('Road', { kind: 'unread' }), /nothing was changed/)
   assert.match(pauseWords('Road', { kind: 'held' }), /until you sync again/)
+  // Syncing again after an Undo brings in what is there, and never takes songs out there.
+  assert.match(pauseWords('Road', { kind: 'held' }), /Nothing there is taken out\./)
   assert.match(pauseWords('Road', { kind: 'other_account', account: 'x' }), /another YouTube Music account/)
   assert.equal(
     pauseWords('Road', { kind: 'many_gone', side: 'youtube_music', gone: 12, of: 15 }),
