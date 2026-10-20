@@ -94,3 +94,11 @@ test('what Venuta tells YouTube Music is said plainly, as it is sent', () => {
   assert.match(line('How much I listened'), /skip/)
   for (const n of ['Count plays', 'How much I listened']) assert.doesNotMatch(line(n), /—/, 'no em dashes')
 })
+
+test('count plays says where a play lands, and where when the security check cannot be passed', () => {
+  const row = GROUPS.flatMap((g) => g.rows).find((r) => r.name === 'Count plays')!
+  assert.match(row.line, /YouTube Music history/)
+  assert.match(row.line, /security check/)
+  assert.match(row.line, /YouTube watch history/)
+  assert.ok(!row.line.includes(String.fromCharCode(0x2014)), 'no em dash')
+})

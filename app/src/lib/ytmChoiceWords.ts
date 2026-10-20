@@ -88,7 +88,7 @@ export const GROUPS: Group[] = [
         kind: 'account',
         key: 'count_plays',
         name: 'Count plays',
-        line: 'After 30 seconds of an online song, Venuta tells YouTube Music you played it, so it joins your YouTube history and recommendations learn from it. Your files are never sent.',
+        line: 'After 30 seconds of an online song, Venuta tells YouTube Music you played it, so it shows in your YouTube Music history and recommendations learn from it. If Venuta can’t pass YouTube’s security check, it tells YouTube through its web client instead, and the play shows in your YouTube watch history. Your files are never sent.',
       },
       {
         kind: 'account',
