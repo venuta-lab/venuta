@@ -162,8 +162,10 @@ pub struct WindowStatus {
     root: String,
     index: i64,
     playing: bool,
-    /// Current song still opening (remote body downloading).
+    /// Current song waiting for its stream: still opening (remote body downloading), or partway.
     buffering: bool,
+    /// Buffering partway through the song (all that arrived played), not opening.
+    stalled: bool,
     position_ms: u64,
     duration_ms: u64,
     shuffle: bool,
@@ -412,6 +414,11 @@ impl Playback {
             let (id, exclusive) = self.output.lock().map_err(|e| e.to_string())?.clone();
             // The current song and play state, to tell the media overlay only when they change.
             let mut last: (Option<String>, bool, u64) = (None, false, 0);
+            // The problem last written to the playback log: once each, not with every status
+            // while it stays on screen (that would push out what led up to it).
+            let mut logged_error = String::new();
+            // Since when the song has waited for its stream partway, to log when it plays on.
+            let mut stalled_since: Option<std::time::Instant> = None;
             let mut queue: Vec<QueueItem> = Vec::new();
             *slot = Some(Player::spawn(
                 OutputChoice::Device { id, exclusive },
@@ -522,7 +529,35 @@ impl Playback {
                         m.retain(|tx| tx.send(now.clone()).is_ok());
                     }
                     last = (key, s.playing, tick);
-                    if !s.error.is_empty() {
+                    // A song that stops for its stream partway: when, and when it plays on, so a
+                    // freeze in the log can be told from one the download explains.
+                    match (s.stalled, stalled_since) {
+                        (true, None) => {
+                            stalled_since = Some(std::time::Instant::now());
+                            note_play(
+                                &format!("waiting for the stream pos_ms={}", s.position_ms),
+                                "the player",
+                            );
+                        }
+                        (false, Some(since)) => {
+                            stalled_since = None;
+                            note_play(
+                                &format!(
+                                    "done waiting for the stream pos_ms={} after {} ms playing={} error={}",
+                                    s.position_ms,
+                                    since.elapsed().as_millis(),
+                                    s.playing,
+                                    !s.error.is_empty()
+                                ),
+                                "the player",
+                            );
+                        }
+                        _ => {}
+                    }
+                    if s.error.is_empty() {
+                        logged_error.clear();
+                    } else if s.error != logged_error {
+                        logged_error = s.error.clone();
                         note_play(
                             &format!(
                                 "error playing={} buffering={} pos_ms={}",
@@ -561,6 +596,7 @@ impl Playback {
                             index: s.index.map(|i| i as i64).unwrap_or(-1),
                             playing: s.playing,
                             buffering: s.buffering,
+                            stalled: s.stalled,
                             position_ms: s.position_ms,
                             duration_ms: s.duration_ms,
                             shuffle: s.shuffle,

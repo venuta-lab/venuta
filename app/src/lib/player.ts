@@ -17,6 +17,7 @@ import { keepPlayable, planEnqueue } from './queueRules'
 import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
+import { canSeekNow } from './streamWait'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -107,8 +108,10 @@ export interface PlayerState {
   queue: QueueItem[]
   index: number
   playing: boolean
-  /** Current song still opening (remote body downloading). */
+  /** Current song waiting for its stream: still opening (remote body downloading), or partway. */
   buffering: boolean
+  /** Buffering partway through the song (all that arrived played), not opening. */
+  stalled?: boolean
   position_ms: number
   /** The playing song's length, as the file says (0 until known). */
   duration_ms: number
@@ -138,6 +141,7 @@ const idle: PlayerState = {
   index: -1,
   playing: false,
   buffering: false,
+  stalled: false,
   position_ms: 0,
   duration_ms: 0,
   shuffle: false,
@@ -159,7 +163,7 @@ const tell = () => listeners.forEach((l) => l())
 
 /** Everything in a report but where the song is (and the sound's levels and path, which move with it). */
 const settled = (s: PlayerState) =>
-  `${s.index}|${s.playing}|${s.buffering}|${s.duration_ms}|${s.shuffle}|${s.repeat}|${s.volume}|${s.from}|${s.error}|${s.stop_after_current}|${s.sleep_in_s}|${JSON.stringify(s.sound)}`
+  `${s.index}|${s.playing}|${s.buffering}|${s.stalled}|${s.duration_ms}|${s.shuffle}|${s.repeat}|${s.volume}|${s.from}|${s.error}|${s.stop_after_current}|${s.sleep_in_s}|${JSON.stringify(s.sound)}`
 
 // A window that isn't on screen (lib/motion.ts) isn't drawn: while it is away, a report that only
 // moves the position is kept (getPlayerState has it) but not told; a new song, play or pause, the
@@ -516,6 +520,7 @@ export function playItems(root: string, items: QueueItem[], index = 0, from: Fro
     index,
     playing: true,
     buffering: opening,
+    stalled: false,
     position_ms: 0,
     duration_ms: row?.duration_ms || 0,
     from: f,
@@ -582,8 +587,8 @@ export const seek = (ms: number) => {
   const room = roomRoute()
   if (room) return room.seek(ms)
   // An online song still opening has nothing to seek in yet: every seek (bar, keys, lyrics,
-  // mini player) waits until it plays.
-  if (state.buffering) return Promise.resolve()
+  // mini player) waits until it plays. Partway, waiting for more of the stream, a seek goes.
+  if (!canSeekNow(state)) return Promise.resolve()
   set({ ...state, position_ms: ms })
   return call('player_seek', { ms: Math.max(0, Math.round(ms)) })
 }
