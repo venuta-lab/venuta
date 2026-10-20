@@ -880,7 +880,13 @@ impl InnerTube {
         cpn: &str,
         playlist_id: Option<&str>,
     ) -> Result<(), Error> {
-        let url = build_playback_url(base_url, &client.client_name, cpn, playlist_id);
+        let url = build_playback_url(
+            base_url,
+            &client.client_name,
+            &client.client_version,
+            cpn,
+            playlist_id,
+        );
         let headers = self.headers(client, true);
         let resp = self
             .http
@@ -904,7 +910,13 @@ impl InnerTube {
         cpn: &str,
         heard: &Watched,
     ) -> Result<(), Error> {
-        let url = build_watchtime_url(base_url, &client.client_name, cpn, heard);
+        let url = build_watchtime_url(
+            base_url,
+            &client.client_name,
+            &client.client_version,
+            cpn,
+            heard,
+        );
         let headers = self.headers(client, true);
         let resp = self
             .http
@@ -987,18 +999,21 @@ impl Drop for Healing {
 }
 
 /// Build the playback-tracking GET URL. context/01 §registerPlayback. Pure — unit-tested. The
-/// `base_url` already carries YouTube's own query params, so we chain onto it.
+/// `base_url` already carries YouTube's own query params, so we chain onto it. `c` and `cver`
+/// name the client the player answer was asked as, as YouTube's own web player names itself.
 fn build_playback_url(
     base_url: &str,
     client_name: &str,
+    client_version: &str,
     cpn: &str,
     playlist_id: Option<&str>,
 ) -> String {
     let sep = if base_url.contains('?') { '&' } else { '?' };
     let mut url = format!(
-        "{base_url}{sep}c={}&cpn={}&ver=2",
+        "{base_url}{sep}c={}&cpn={}&ver=2&cver={}",
         urlencoding::encode(client_name),
         urlencoding::encode(cpn),
+        urlencoding::encode(client_version),
     );
     if let Some(list) = playlist_id {
         let enc = urlencoding::encode(list);
@@ -1024,16 +1039,22 @@ fn seconds(ms: u64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
-/// Build the listening-time GET URL: the base URL with `ver`/`c`/`cpn`, `cmt` (where the song is),
-/// `st`/`et` (each stretch's start and end, in order, comma-separated), `len` and `state`. Any of
-/// those already in the base URL is replaced rather than sent twice; YouTube's own `len` stays
-/// when the length isn't known here. Pure — unit-tested.
-fn build_watchtime_url(base_url: &str, client_name: &str, cpn: &str, heard: &Watched) -> String {
+/// Build the listening-time GET URL: the base URL with `ver`/`c`/`cver`/`cpn`, `cmt` (where the
+/// song is), `st`/`et` (each stretch's start and end, in order, comma-separated), `len` and
+/// `state`. Any of those already in the base URL is replaced rather than sent twice; YouTube's own
+/// `len` stays when the length isn't known here. Pure — unit-tested.
+fn build_watchtime_url(
+    base_url: &str,
+    client_name: &str,
+    client_version: &str,
+    cpn: &str,
+    heard: &Watched,
+) -> String {
     let (path, query) = base_url.split_once('?').unwrap_or((base_url, ""));
     let ours: &[&str] = if heard.length_ms > 0 {
-        &["ver", "c", "cpn", "cmt", "st", "et", "len", "state"]
+        &["ver", "c", "cver", "cpn", "cmt", "st", "et", "len", "state"]
     } else {
-        &["ver", "c", "cpn", "cmt", "st", "et", "state"]
+        &["ver", "c", "cver", "cpn", "cmt", "st", "et", "state"]
     };
     let mut parts: Vec<String> = query
         .split('&')
@@ -1051,6 +1072,7 @@ fn build_watchtime_url(base_url: &str, client_name: &str, cpn: &str, heard: &Wat
     };
     parts.push("ver=2".into());
     parts.push(format!("c={}", urlencoding::encode(client_name)));
+    parts.push(format!("cver={}", urlencoding::encode(client_version)));
     parts.push(format!("cpn={}", urlencoding::encode(cpn)));
     parts.push(format!("cmt={}", seconds(heard.at_ms)));
     parts.push(format!("st={}", list(|s| s.0)));
@@ -1165,14 +1187,18 @@ mod tests {
         let u = build_playback_url(
             "https://s.youtube.com/api/stats/playback?cl=1&docid=abc",
             "WEB_REMIX",
+            "1.20261018.16.00",
             "CPN1234567890AB",
             Some("RDAMVMxyz"),
         );
-        assert!(u.contains("?cl=1&docid=abc&c=WEB_REMIX&cpn=CPN1234567890AB&ver=2"));
+        // The client and its version, as YouTube Music's own player names itself.
+        assert!(u.contains(
+            "?cl=1&docid=abc&c=WEB_REMIX&cpn=CPN1234567890AB&ver=2&cver=1.20261018.16.00"
+        ));
         assert!(u.contains("&list=RDAMVMxyz&referrer=RDAMVMxyz"));
         // No existing query → first param uses `?`, no playlist params.
-        let u2 = build_playback_url("https://s.youtube.com/x", "IOS", "abc", None);
-        assert_eq!(u2, "https://s.youtube.com/x?c=IOS&cpn=abc&ver=2");
+        let u2 = build_playback_url("https://s.youtube.com/x", "WEB", "2.1", "abc", None);
+        assert_eq!(u2, "https://s.youtube.com/x?c=WEB&cpn=abc&ver=2&cver=2.1");
     }
 
     // What a listening-time report says: the seconds heard since the last one (each stretch from
@@ -1188,15 +1214,17 @@ mod tests {
             playing: true,
         };
         let u = build_watchtime_url(
-            "https://s.youtube.com/api/stats/watchtime?cl=1&docid=abc&len=212&ns=yt",
+            "https://s.youtube.com/api/stats/watchtime?cl=1&docid=abc&len=212&ns=yt&cver=old",
             "WEB_REMIX",
+            "1.20261018.16.00",
             "CPN1234567890AB",
             &heard,
         );
         assert_eq!(
             u,
             "https://s.youtube.com/api/stats/watchtime?cl=1&docid=abc&ns=yt&ver=2&c=WEB_REMIX\
-             &cpn=CPN1234567890AB&cmt=10&st=0&et=10&len=213.061&state=playing"
+             &cver=1.20261018.16.00&cpn=CPN1234567890AB&cmt=10&st=0&et=10&len=213.061\
+             &state=playing"
         );
         // A seek in between: two stretches, in order; paused when the report went.
         let heard = Watched {
@@ -1205,7 +1233,13 @@ mod tests {
             length_ms: 0,
             playing: false,
         };
-        let u = build_watchtime_url("https://s.youtube.com/x?len=212", "WEB_REMIX", "c", &heard);
+        let u = build_watchtime_url(
+            "https://s.youtube.com/x?len=212",
+            "WEB_REMIX",
+            "1.2",
+            "c",
+            &heard,
+        );
         assert!(u.contains("&st=10,95&et=22.5,100.25&"), "{u}");
         assert!(u.ends_with("&state=paused"), "{u}");
         assert!(
