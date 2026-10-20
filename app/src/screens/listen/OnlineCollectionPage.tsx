@@ -4,13 +4,15 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { confirmAsk } from '../../components/Confirm'
 import { deleteYtmUpload, EPISODES_FOR_LATER } from '../../lib/actions'
-import { askDeletePlaylist, isUploadAlbum } from '../../lib/ytmAsk'
+import { askDeletePlaylist, askRemoveCover, isUploadAlbum } from '../../lib/ytmAsk'
+import { menuFromEvent } from '../../lib/menu'
 import { DragHandle } from '../../components/DragHandle'
 import { IconChevron, IconClose, IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { SavePlaylistButton, SavePodcastButton } from '../../components/YtmButtons'
-import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, ytmVote, type OnlineCollection, type OnlineTrack, type RadioEndpoint, type YtmContributor, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { onlineCollection, ytmCloseToCollaborators, ytmPlaylistCover, ytmPlaylistCoverClear, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, ytmVote, type OnlineCollection, type OnlineTrack, type RadioEndpoint, type YtmContributor, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
@@ -29,8 +31,8 @@ import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
   Online search. Back returns to where it was opened.
 
   Signed in, a playlist is read as your account sees it. One of yours can be changed here: its
-  name, words and privacy, its order by dragging, a song taken out, the whole playlist deleted
-  (asked first). Someone else's can be saved to your library. A collaborative one shows who added
+  name, words, privacy and cover, its order by dragging, a song taken out, the whole playlist
+  deleted (asked first). Someone else's can be saved to your library. A collaborative one shows who added
   each song, and its votes, which you can give or take back. A podcast can be saved to your
   library; your Episodes for later lets an episode be taken out; an uploaded album can be deleted
   (asked first).
@@ -154,6 +156,39 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
     }
   }
 
+  // Its own cover on YouTube Music: a picture you choose, or the one it makes from the songs.
+  const pickCover = async () => {
+    const path = await openDialog({ multiple: false, directory: false, title: `Choose a cover for “${title}”`, filters: [{ name: 'Pictures', extensions: ['jpg', 'jpeg', 'png'] }] })
+    if (typeof path !== 'string') return
+    try {
+      await ytmPlaylistCover(playlistId, path)
+      ytmLibraryChanged(['playlists'])
+      notify(`“${title}” has its new cover on YouTube Music.`)
+      setStamp((n) => n + 1)
+    } catch (e) {
+      notify(onlineProblem(e))
+    }
+  }
+  const clearCover = async () => {
+    if (!(await confirmAsk(askRemoveCover(title)))) return
+    try {
+      const made = await ytmPlaylistCoverClear(playlistId)
+      if (made) setMine((m) => (m ? { ...m, artwork_url: made } : m))
+      ytmLibraryChanged(['playlists'])
+      notify(`“${title}” has the cover YouTube Music makes from its songs again.`)
+      setStamp((n) => n + 1)
+    } catch (e) {
+      notify(onlineProblem(e))
+    }
+  }
+  const coverMenu = (e: React.MouseEvent) =>
+    menuFromEvent(e, [
+      [
+        { label: 'Choose a picture…', run: () => void pickCover() },
+        { label: 'Remove cover…', run: () => void clearCover(), danger: true },
+      ],
+    ])
+
   const playButton = (size: 'sm' | 'lg') => (
     <button
       disabled={!items.length}
@@ -217,6 +252,11 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
             </button>
             {asAccount && mine && !owned && !later && <SavePlaylistButton playlistId={playlistId} />}
             {podcast && <SavePodcastButton podcastId={c.collection_id} />}
+            {owned && (
+              <button onClick={coverMenu} className="btn-ghost btn-lg" title={`The cover of “${title}” on YouTube Music`}>
+                Cover
+              </button>
+            )}
             {owned && (
               <button onClick={() => void remove_all()} className="btn-ghost btn-lg">
                 Delete playlist

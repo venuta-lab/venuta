@@ -3232,6 +3232,8 @@ pub fn run() {
             ytm_library::ytm_menu_press,
             ytm_library::ytm_remove_past_search,
             ytm_library::ytm_delete_upload,
+            ytm_library::ytm_playlist_cover,
+            ytm_library::ytm_playlist_cover_clear,
             ytm_library::ytm_upload,
             ytm_library::ytm_identities,
             ytm_library::ytm_use_identity,

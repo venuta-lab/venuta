@@ -381,6 +381,34 @@ pub trait AccountAccess: Send + Sync {
         ))
     }
 
+    /// Give a playlist the account owns its own cover picture (a square JPEG or PNG works best).
+    fn set_playlist_cover(
+        &self,
+        playlist_id: &str,
+        image: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (playlist_id, image, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "playlist covers",
+        ))
+    }
+
+    /// Take a playlist's own cover away, so YouTube Music makes one from its songs again: the
+    /// address of that one, when it said.
+    fn clear_playlist_cover(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let _ = (playlist_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "playlist covers",
+        ))
+    }
+
     /// Delete one of the account's uploads, a song by its [`AccountTrack::delete_id`] or an
     /// album by its page's id. Asked first, in the app.
     fn delete_upload(

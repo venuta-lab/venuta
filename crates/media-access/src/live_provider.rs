@@ -1447,6 +1447,11 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
             AccessErrorKind::Transport,
             "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
+        // A custom cover on an account YouTube won't give one: its own reason, as it is.
+        ytmusic::Error::CoverRefused => AccessError::new(
+            AccessErrorKind::InvalidInput,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover.",
+        ),
         // It answered, and said no (a row's feedback token it would not take).
         ytmusic::Error::ActionRejected => AccessError::new(
             AccessErrorKind::InvalidInput,
@@ -1903,6 +1908,35 @@ impl crate::account::AccountAccess for YtmBackend {
             cancel,
             "taking it out of your search history",
             self.it.remove_search_suggestion(client, token),
+        )
+    }
+
+    fn set_playlist_cover(
+        &self,
+        playlist_id: &str,
+        image: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_set_cover(client, id, image),
+        )
+    }
+
+    fn clear_playlist_cover(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_clear_cover(client, id),
         )
     }
 
@@ -3408,6 +3442,16 @@ mod tests {
         assert_eq!(t.delete_id.as_deref(), Some("t_po_FIXTURE"));
         let plain = super::account_track_of(&rows(&["a"])[0]).unwrap();
         assert_eq!(plain.delete_id, None);
+    }
+
+    // A cover YouTube won't take is said as YouTube's own reason, not as a failure to answer.
+    #[test]
+    fn a_refused_cover_says_why() {
+        let said = super::account_error(ytmusic::Error::CoverRefused, "the cover").message;
+        assert_eq!(
+            said,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover."
+        );
     }
 
     // A song menu's press YouTube turns down is said in its own words.

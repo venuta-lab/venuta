@@ -3,7 +3,7 @@
 // (lib/ytmAsk.ts): every one in the same plain words, each allowed, none blocked.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACCOUNT_ASKS, askDeletePlaylist, askDeleteUpload, askRemoveFromHistory, askRemovePastSearch, isUploadAlbum } from '../src/lib/ytmAsk.ts'
+import { ACCOUNT_ASKS, askDeletePlaylist, askDeleteUpload, askRemoveFromHistory, askRemoveCover, askRemovePastSearch, isUploadAlbum } from '../src/lib/ytmAsk.ts'
 
 test('deleting a playlist asks with its name, on YouTube Music', () => {
   const a = askDeletePlaylist('Road trip')
@@ -22,6 +22,13 @@ test('deleting an upload says the file on this computer stays', () => {
 test('taking a play or a search out of the history asks too', () => {
   assert.equal(askRemoveFromHistory('Kesariya').title, 'Remove “Kesariya” from your YouTube Music history?')
   assert.equal(askRemovePastSearch('arijit singh').title, 'Remove “arijit singh” from your YouTube Music search history?')
+})
+
+test('taking a playlist’s own cover away asks, and says YouTube Music makes one again', () => {
+  const a = askRemoveCover('Road trip')
+  assert.equal(a.title, 'Remove the cover of “Road trip” on YouTube Music?')
+  assert.match(a.text, /makes one from its songs again/)
+  assert.equal(a.confirm, 'Remove cover')
 })
 
 test('every ask is the same plain shape: a question, why, and that Venuta can’t undo it', () => {

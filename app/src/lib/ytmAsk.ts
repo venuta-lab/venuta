@@ -41,6 +41,13 @@ export const askRemovePastSearch = (words: string): AccountAsk => ({
   danger: true,
 })
 
+export const askRemoveCover = (name: string): AccountAsk => ({
+  title: `Remove the cover of “${name}” on YouTube Music?`,
+  text: `YouTube Music makes one from its songs again. Venuta keeps no copy of the picture. ${UNDONE}`,
+  confirm: 'Remove cover',
+  danger: true,
+})
+
 /** Every ask, for one name (the tests read them side by side). */
 export const ACCOUNT_ASKS = (name: string): AccountAsk[] => [
   askDeletePlaylist(name),
@@ -48,6 +55,7 @@ export const ACCOUNT_ASKS = (name: string): AccountAsk[] => [
   askDeleteUpload(name, 'album'),
   askRemoveFromHistory(name),
   askRemovePastSearch(name),
+  askRemoveCover(name),
 ]
 
 /** One of your uploaded albums, by its page id (YouTube Music gives a privately owned release

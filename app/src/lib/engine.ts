@@ -1543,6 +1543,10 @@ export const ytmMenuPress = (token: string, press: Press) => invoke<void>('ytm_m
 export const ytmRemovePastSearch = (token: string) => invoke<void>('ytm_remove_past_search', { token })
 /** Delete one of your uploads on YouTube Music: a song by its `delete_id`, an album by its page id. */
 export const ytmDeleteUpload = (entityId: string) => invoke<void>('ytm_delete_upload', { entityId })
+/** Give a playlist of yours this picture (a JPEG or PNG file) as its cover on YouTube Music. */
+export const ytmPlaylistCover = (playlistId: string, path: string) => invoke<void>('ytm_playlist_cover', { playlistId, path })
+/** Take a playlist's own cover away; the one YouTube Music makes from its songs, when it said. */
+export const ytmPlaylistCoverClear = (playlistId: string) => invoke<string | null>('ytm_playlist_cover_clear', { playlistId })
 export const ytmUpload = (path: string) => invoke<void>('ytm_upload', { path })
 export const ytmIdentities = () => invoke<YtmIdentity[]>('ytm_identities')
 export const ytmUseIdentity = (id: string | null) => invoke<void>('ytm_use_identity', { id })
