@@ -126,8 +126,11 @@ pub const SAME_ROOM_SEEK_MS: f64 = 50.0;
 pub const MAX_PPM: f64 = 500.0;
 /// How long the error is smoothed over before it's acted on.
 pub const SMOOTHING: Duration = Duration::from_secs(1);
-/// How long a fade takes, either side of a seek that would otherwise be heard as a cut.
-pub const FADE: Duration = Duration::from_millis(12);
+/// How long music takes to fade in from silence: a start partway into a song, a resume, the
+/// far side of a seek.
+pub const FADE: Duration = Duration::from_millis(15);
+/// How long music takes to fade out to silence: before a pause, a stop, a seek, another song.
+pub const FADE_OUT: Duration = Duration::from_millis(30);
 
 /// How long an error past the seek line has to last before it is lined up: a stall or a burst
 /// of late clock readings passes; a real drift doesn't.

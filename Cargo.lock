@@ -5350,6 +5350,7 @@ dependencies = [
  "symphonia-adapter-libopus",
  "ureq",
  "wasapi",
+ "windows 0.61.3",
 ]
 
 [[package]]

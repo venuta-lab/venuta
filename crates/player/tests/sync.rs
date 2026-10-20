@@ -76,6 +76,19 @@ fn run(file: PathBuf, for_ms: u64, make: impl FnOnce(Instant) -> SyncPlan) -> (C
     (c, now)
 }
 
+/// Partway into a song the music rises from silence over its first 15 ms (720 frames): the
+/// song's frame at `first` (the first heard), read from where the rise is over.
+fn frame_at(h: &[i32], first: usize) -> i32 {
+    const RISE: usize = 720;
+    assert!(
+        (0..RISE)
+            .all(|k| h[first + k].unsigned_abs()
+                <= (h[first + RISE] - (RISE - k) as i32).unsigned_abs()),
+        "a fade in, never louder than the song"
+    );
+    h[first + RISE] - RISE as i32
+}
+
 #[test]
 fn a_room_start_waits_silent_then_plays_from_the_rooms_place() {
     let (c, now) = run(song("start"), 1_200, |now| SyncPlan {
@@ -100,10 +113,15 @@ fn a_room_start_waits_silent_then_plays_from_the_rooms_place() {
         off_ms.abs() < 5.0,
         "started {off_ms:.1} ms from the room's start"
     );
-    let from = h[first] - 1;
+    let from = frame_at(&h, first) - 1;
     assert_eq!(from, 48_000, "from the room's position, to the frame");
     // And it plays on in order from there, with nothing skipped.
-    assert!(h[first..].windows(2).take(20_000).all(|w| w[1] == w[0] + 1));
+    assert!(
+        h[first + 720..]
+            .windows(2)
+            .take(20_000)
+            .all(|w| w[1] == w[0] + 1)
+    );
 }
 
 #[test]
@@ -123,7 +141,7 @@ fn joining_late_lands_where_the_room_is_now() {
         + Duration::from_secs_f64(first as f64 / f64::from(RATE));
     let since_ms = heard_at.duration_since(now).as_secs_f64() * 1_000.0;
     let want = (2_000.0 + since_ms) * f64::from(RATE) / 1_000.0;
-    let off_ms = (f64::from(h[first] - 1) - want) * 1_000.0 / f64::from(RATE);
+    let off_ms = (f64::from(frame_at(&h, first) - 1) - want) * 1_000.0 / f64::from(RATE);
     assert!(off_ms.abs() < 40.0, "{off_ms:.1} ms from the room");
 }
 

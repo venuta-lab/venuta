@@ -165,6 +165,9 @@ pub struct Status<T: Serialize> {
     /// What was done to the music to stay with a room since the last status (every seek, every
     /// change of rate): none at all outside a room.
     pub sync_notes: Vec<SyncNote>,
+    /// How many times, since the player started, the device played all it had while music was
+    /// coming out (this thread late with the next period): each is a gap, heard as a click.
+    pub ran_dry: u64,
 }
 
 /// How playing in step with a room is going.
@@ -357,10 +360,43 @@ struct Engine<T: Item + Serialize> {
     flush_before_start: bool,
     /// Frames of fade-in still to come after such a seek.
     fade_in_left: usize,
+    /// Music fading out to silence, across periods (before a seek, a pause, another song), and
+    /// whether a command is waiting for it to be done (`fade_out_now`).
+    fade_out: Option<FadeOut>,
+    fading_out: bool,
     /// What was done to stay with the room, to say in the next status.
     notes: Vec<SyncNote>,
     /// The rate last said (parts per million faster), to say only when it changes.
     rate_said: i32,
+    /// How many times the device ran dry while music played (see `Status::ran_dry`).
+    ran_dry: u64,
+    /// The volume the last period ended at, and a change of it gliding (see `GainRamp`).
+    gain_out: Option<f64>,
+    gain_ramp: Option<GainRamp>,
+}
+
+/// Music fading out: `done` of `len` frames so far; once all are, silence comes out (`silent`
+/// frames of it so far) and nothing more is taken from the song.
+#[derive(Debug, Clone, Copy)]
+struct FadeOut {
+    done: usize,
+    len: usize,
+    silent: usize,
+}
+
+impl FadeOut {
+    fn over(&self) -> bool {
+        self.done >= self.len
+    }
+}
+
+/// A change of volume under way: from one gain to another over `len` frames, `done` so far.
+#[derive(Debug, Clone, Copy)]
+struct GainRamp {
+    from: f64,
+    to: f64,
+    done: usize,
+    len: usize,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -408,12 +444,21 @@ impl<T: Item + Serialize> Engine<T> {
             seek_after_fade: None,
             flush_before_start: false,
             fade_in_left: 0,
+            fade_out: None,
+            fading_out: false,
             notes: Vec::new(),
             rate_said: 0,
+            ran_dry: 0,
+            gain_out: None,
+            gain_ramp: None,
         }
     }
 
     fn run(mut self, rx: Receiver<Cmd<T>>) {
+        // The sound comes first: Windows schedules this thread as pro audio (MMCSS), so nothing
+        // else on the computer (a room's network, the window drawing) makes it late.
+        #[cfg(windows)]
+        let _pro_audio = crate::wasapi_out::ProAudio::enter();
         loop {
             // Commands first; when not playing, wait for one.
             // Playing with no device yet: the first song is still arriving, so look again soon
@@ -465,6 +510,8 @@ impl<T: Item + Serialize> Engine<T> {
                 play,
                 from,
             } => {
+                // What's playing fades out first (never cut off mid-wave).
+                self.fade_out_now();
                 // A new queue is never under an old room's plan: a room's follower sends its
                 // plan after loading its song; your own queue (a room's goodbye that never came,
                 // a window that thought it was out of the room) plays as it does alone.
@@ -483,8 +530,14 @@ impl<T: Item + Serialize> Engine<T> {
             Cmd::Play => self.set_playing(true),
             Cmd::Pause => self.set_playing(false),
             Cmd::Toggle => self.set_playing(!self.playing),
-            Cmd::Seek(ms) => self.seek(ms),
+            Cmd::Seek(ms) => {
+                // Out of the old place, in at the new one.
+                self.fade_out_now();
+                self.seek(ms);
+                self.fade_in_mid_song();
+            }
             Cmd::Next => {
+                self.fade_out_now();
                 let ahead = self.queue.peek_next();
                 if self.queue.skip_next().is_some() {
                     self.play_ahead_or_load(ahead);
@@ -493,6 +546,7 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Previous => {
+                self.fade_out_now();
                 // Into a song: back to its start. At its start: the one before.
                 if self.position_ms() > 3000 || self.queue.skip_previous().is_none() {
                     self.seek(0);
@@ -501,6 +555,7 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Jump(i) => {
+                self.fade_out_now();
                 // Same song again: rewind in place (no re-resolve / re-download).
                 if self.queue.index == Some(i) {
                     self.seek(0);
@@ -534,6 +589,9 @@ impl<T: Item + Serialize> Engine<T> {
             }
             Cmd::Remove(i) => {
                 let current = self.queue.index == Some(i);
+                if current {
+                    self.fade_out_now();
+                }
                 self.queue.remove(i);
                 self.queue_changed = true;
                 if current {
@@ -557,6 +615,7 @@ impl<T: Item + Serialize> Engine<T> {
                 self.queue_changed = true;
             }
             Cmd::Output(choice) => {
+                self.fade_out_now();
                 self.release();
                 self.choice = choice;
             }
@@ -583,11 +642,21 @@ impl<T: Item + Serialize> Engine<T> {
     }
 
     fn set_playing(&mut self, on: bool) {
+        if !on {
+            // Down to silence before the device stops (a stop mid-wave is a click), and only
+            // silence left in it for the next start.
+            self.fade_out_now();
+        }
         if on && self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(0);
         }
+        let resuming = on && !self.playing;
         self.playing = on && !self.segs.is_empty();
         if self.playing {
+            if resuming && !self.started {
+                // On again partway into the song: up from silence.
+                self.fade_in_mid_song();
+            }
             self.paused_at = None;
             if self.started
                 && let Some(d) = self.device.as_mut()
@@ -971,6 +1040,11 @@ impl<T: Item + Serialize> Engine<T> {
         } else {
             dev.available()?
         };
+        // Music was coming out and the device has played all it was given: it ran dry (a gap,
+        // heard as a click), because this thread was late.
+        if self.started && self.sounding && dev.queued_frames() == Some(0) {
+            self.ran_dry += 1;
+        }
         if want == 0 {
             // Stopped with its buffer full (paused mid-song): on again from what it holds.
             if !self.started {
@@ -996,7 +1070,12 @@ impl<T: Item + Serialize> Engine<T> {
         let mut taken: Vec<i32> = Vec::with_capacity(want * src_ch);
         // The room starts within this period: silence up to the very frame it starts on.
         taken.resize(lead * src_ch, 0);
-        let mut frames = lead;
+        // Faded out all the way: silence, the song held where the fade ended.
+        let mut frames = if self.fade_out.is_some_and(|f| f.over()) {
+            want
+        } else {
+            lead
+        };
         let mut reopen_after = false;
         while frames < want {
             let Some(front) = self.segs.front_mut() else {
@@ -1078,36 +1157,46 @@ impl<T: Item + Serialize> Engine<T> {
             }
         }
         // Silence for the rest of the period (end of the queue, or before a format change).
-        let music = frames.saturating_sub(lead);
+        let held = self.fade_out.is_some_and(|f| f.over());
+        let music = if held { 0 } else { frames.saturating_sub(lead) };
         taken.resize(want * src_ch, 0);
-        // Either side of a seek that would be heard: out to silence, then back up from it.
-        if self.seek_after_fade.is_some() || self.fade_in_left > 0 {
-            let len = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
-            let out = self.seek_after_fade.is_some();
-            for (i, frame) in taken.chunks_exact_mut(src_ch).enumerate().skip(lead) {
-                let k = i - lead;
-                let g = if out {
-                    // Down over the period's last `len` frames, silent after.
-                    let from = music.saturating_sub(len);
-                    if k < from {
-                        1.0
-                    } else {
-                        crate::sync::fade_gain(k - from, len, false)
-                    }
-                } else if k < self.fade_in_left {
-                    crate::sync::fade_gain(len - self.fade_in_left + k, len, true)
+        // Fading out (carried on across periods until it's all the way down, then silence), or
+        // fading in from silence.
+        if let Some(mut f) = self.fade_out {
+            for frame in taken.chunks_exact_mut(src_ch).skip(lead).take(music) {
+                let g = if f.done < f.len {
+                    crate::sync::fade_gain(f.done, f.len, false)
                 } else {
-                    1.0
+                    0.0
                 };
-                if g < 1.0 {
-                    frame.iter_mut().for_each(|x| *x = (*x as f32 * g) as i32);
+                f.done += 1;
+                frame
+                    .iter_mut()
+                    .for_each(|x| *x = (f64::from(*x) * f64::from(g)) as i32);
+            }
+            if held {
+                f.silent += want;
+            }
+            self.fade_out = Some(f);
+        } else if self.fade_in_left > 0 {
+            let len = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
+            for (k, frame) in taken
+                .chunks_exact_mut(src_ch)
+                .skip(lead)
+                .take(music)
+                .enumerate()
+            {
+                if k >= self.fade_in_left {
+                    break;
                 }
+                let g = crate::sync::fade_gain(len - self.fade_in_left + k + 1, len, true);
+                frame
+                    .iter_mut()
+                    .for_each(|x| *x = (f64::from(*x) * f64::from(g)) as i32);
             }
-            if !out {
-                self.fade_in_left = self.fade_in_left.saturating_sub(music);
-            }
+            self.fade_in_left = self.fade_in_left.saturating_sub(music);
         }
-        self.sounding = music > 0;
+        self.sounding = music > 0 && !self.fade_out.is_some_and(|f| f.over());
         // What's heard (after the sound tools), kept as mono for a spectrum display.
         if self.spectrum {
             let full = i32::MAX as f32;
@@ -1133,7 +1222,44 @@ impl<T: Item + Serialize> Engine<T> {
             }
             fade = (left / 10.0).min(1.0);
         }
-        output::encode(&self.mapped, &dev_fmt, self.volume * fade, &mut self.bytes);
+        // A change of volume glides over 20 ms on a raised-cosine curve, across periods, instead
+        // of stepping (a step is a click); a steady volume is applied as it is (bit-perfect at 1).
+        let gain = f64::from(self.volume * fade);
+        let gain_now = self.gain_out.unwrap_or(gain);
+        if self.gain_ramp.is_none_or(|r| r.to != gain) && (gain - gain_now).abs() > 1e-9 {
+            let len = (0.020 * f64::from(dev_fmt.rate)) as usize;
+            self.gain_ramp = Some(GainRamp {
+                from: gain_now,
+                to: gain,
+                done: 0,
+                len: len.max(1),
+            });
+        }
+        if let Some(mut r) = self.gain_ramp {
+            let ch = usize::from(dev_fmt.channels.max(1));
+            let mut g = gain_now;
+            for frame in self.mapped.chunks_exact_mut(ch) {
+                if r.done < r.len {
+                    r.done += 1;
+                    let t = r.done as f64 / r.len as f64;
+                    g = r.from + (r.to - r.from) * (1.0 - (std::f64::consts::PI * t).cos()) / 2.0;
+                } else {
+                    g = r.to;
+                }
+                for x in frame {
+                    *x = (f64::from(*x) * g)
+                        .round()
+                        .clamp(f64::from(i32::MIN), f64::from(i32::MAX))
+                        as i32;
+                }
+            }
+            output::encode(&self.mapped, &dev_fmt, 1.0, &mut self.bytes);
+            self.gain_out = Some(g);
+            self.gain_ramp = (r.done < r.len).then_some(r);
+        } else {
+            output::encode(&self.mapped, &dev_fmt, gain as f32, &mut self.bytes);
+            self.gain_out = Some(gain);
+        }
         let dev = self.device.as_mut().expect("opened");
         dev.write(&self.bytes, want)?;
         if !self.started {
@@ -1161,15 +1287,70 @@ impl<T: Item + Serialize> Engine<T> {
             self.dev_fmt = None;
             self.publish(true);
         }
-        // Faded out: now the seek, and a fade back in from it.
-        if let Some(to) = self.seek_after_fade.take() {
+        // Faded out all the way: now the seek, and a fade back in from it.
+        if self.fade_out.is_some_and(|f| f.over())
+            && let Some(to) = self.seek_after_fade.take()
+        {
+            self.fade_out = None;
+            let to = self.room_place_now().unwrap_or(to);
             self.realign(to, 600);
             // No closing-up a few frames after it: that would cut into the fade-in. The few ms a
-            // seek lands off aren't heard apart, and in one room the trimming takes them up.
+            // seek lands off aren't heard apart, and in one room the rate takes them up.
             self.sync_fine = false;
             self.fade_in_left = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
         }
         Ok(())
+    }
+
+    /// Music is coming out: fade it out to silence now, and wait until the device holds only
+    /// silence, so whatever comes next (a pause, a stop, a seek, another song, another output)
+    /// starts from silence instead of cutting the wave. Nothing happens when nothing sounds.
+    fn fade_out_now(&mut self) {
+        if self.fading_out
+            || !(self.playing && self.started && self.sounding)
+            || self.device.is_none()
+        {
+            return;
+        }
+        self.fading_out = true;
+        let Some(rate) = self.segs.front().map(|f| f.source.format.rate) else {
+            return;
+        };
+        let len = (crate::sync::FADE_OUT.as_secs_f64() * f64::from(rate)) as usize;
+        let hold = self
+            .device
+            .as_ref()
+            .map_or(0, |d| d.latency_frames())
+            .max(len / 2);
+        // A seek waiting for its fade is the fade already under way: it comes after.
+        let pending = self.seek_after_fade.take();
+        if !self.fade_out.is_some() {
+            self.fade_out = Some(FadeOut {
+                done: 0,
+                len,
+                silent: 0,
+            });
+        }
+        // Each step is a device period: the fade and then a device's worth of silence.
+        for _ in 0..200 {
+            if self.step().is_err() || !self.playing {
+                break;
+            }
+            match self.fade_out {
+                Some(f) if f.over() && f.silent >= hold => break,
+                Some(_) => {}
+                None => break,
+            }
+        }
+        self.fade_out = None;
+        self.sounding = false;
+        self.fading_out = false;
+        if let Some(to) = pending {
+            let to = self.room_place_now().unwrap_or(to);
+            self.realign(to, 600);
+            self.sync_fine = false;
+            self.fade_in_mid_song();
+        }
     }
 
     /// Mix the start of the next song into the end of this one (the last `crossfade_s`
@@ -1276,6 +1457,21 @@ impl<T: Item + Serialize> Engine<T> {
             self.sync_hold = false;
             return;
         }
+        // A plan that doesn't simply play on from here (a hold, a start ahead, a pause): the
+        // music fades out first, so the hold is silence, not a cut.
+        if let Some(p) = plan
+            && !(p.playing && p.anchor.is_some_and(|a| a <= Instant::now()))
+        {
+            self.fade_out_now();
+        }
+        // The next song just took over: its first plan is lined up with only if off by more
+        // than anyone hears (copies of a song differ by a few tens of ms; apart, the drift rule
+        // takes up what's left; in one room, the rate).
+        let limit_ms: i64 = match plan {
+            Some(p) if self.sync_hold && p.same_room => crate::sync::NUDGE_MS as i64,
+            Some(_) if self.sync_hold => crate::sync::APART_SEEK_MS as i64,
+            _ => 30,
+        };
         // Back to the song's own rate (gliding there, so nothing is heard).
         self.rate_target = 0.0;
         self.sync_error_ms = None;
@@ -1306,7 +1502,7 @@ impl<T: Item + Serialize> Engine<T> {
         };
         if self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(target);
-        } else if (self.position_ms() as i64 - target as i64).abs() > 30 {
+        } else if (self.position_ms() as i64 - target as i64).abs() > limit_ms {
             if plan.playing {
                 self.seek_heard(target as f64);
             } else {
@@ -1366,7 +1562,11 @@ impl<T: Item + Serialize> Engine<T> {
                 .unwrap_or(a)
         });
         // Before the start (or not started yet): silence, the song decoding ahead meanwhile.
-        if !starts.is_some_and(|s| now >= s) {
+        // Once this plan's music is coming out, never again: a start known a little later
+        // (the host's clock estimated better just after a start) would otherwise cut silence
+        // into the music; the usual rules take up the difference.
+        let begun = !self.sync_fresh && self.sounding;
+        if !begun && !starts.is_some_and(|s| now >= s) {
             // The start falls within this period: its first sound on the very frame (a start
             // from silence needs no lining up after).
             if let Some(s) = starts
@@ -1381,6 +1581,7 @@ impl<T: Item + Serialize> Engine<T> {
                     self.notes.push(SyncNote::Started {
                         position_ms: self.position_ms(),
                     });
+                    self.fade_in_mid_song();
                     return Ok(Some(lead));
                 }
             }
@@ -1415,6 +1616,10 @@ impl<T: Item + Serialize> Engine<T> {
             } else {
                 crate::sync::APART_NUDGE_MS
             };
+            // From silence partway into the song (joining, another output): faded in, not cut in.
+            if !self.sounding {
+                self.fade_in_mid_song();
+            }
             if off > limit {
                 self.seek_heard(expected + delay);
             } else {
@@ -1557,8 +1762,34 @@ impl<T: Item + Serialize> Engine<T> {
         self.say_rate(0);
         if self.sounding && self.playing {
             self.seek_after_fade = Some(to_ms);
+            if self.fade_out.is_none() {
+                let rate = self.segs.front().map_or(48_000, |f| f.source.format.rate);
+                self.fade_out = Some(FadeOut {
+                    done: 0,
+                    len: (crate::sync::FADE_OUT.as_secs_f64() * f64::from(rate)) as usize,
+                    silent: 0,
+                });
+            }
         } else {
             self.realign(to_ms, 600);
+        }
+    }
+
+    /// Where the room's song is heard now (milliseconds), when it plays: where a seek lands that
+    /// waited for a fade-out (the room went on meanwhile).
+    fn room_place_now(&self) -> Option<f64> {
+        let p = self.sync.filter(|p| p.playing)?;
+        Some(p.expected_ms(Instant::now())? + self.heard_delay_ms(&p))
+    }
+
+    /// Music about to come out of silence partway into the song: it fades in over a moment
+    /// (from its very start it rises on its own).
+    fn fade_in_mid_song(&mut self) {
+        if let Some(front) = self.segs.front()
+            && front.start_frame + front.played > 0
+        {
+            self.fade_in_left =
+                (crate::sync::FADE.as_secs_f64() * f64::from(front.source.format.rate)) as usize;
         }
     }
 
@@ -1741,6 +1972,7 @@ impl<T: Item + Serialize> Engine<T> {
             }),
             sync: self.sync.map(|_| self.sync_status()),
             sync_notes: std::mem::take(&mut self.notes),
+            ran_dry: self.ran_dry,
         };
         // The regular report, when it would only repeat the last one (paused, or nothing loaded),
         // is not sent: every window would otherwise redraw several times a second for nothing.

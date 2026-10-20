@@ -338,3 +338,37 @@ impl Device for WasapiDevice {
         self.client = None;
     }
 }
+
+/// This thread, scheduled by Windows as pro audio (the Multimedia Class Scheduler), while it
+/// lasts: ahead of ordinary work, so a busy computer doesn't make the sound late.
+pub struct ProAudio(Option<windows::Win32::Foundation::HANDLE>);
+
+impl ProAudio {
+    pub fn enter() -> Self {
+        let mut task = 0u32;
+        // SAFETY: a plain call with a valid task name and out pointer; the handle it returns is
+        // given back on drop, on this same thread.
+        let h = unsafe {
+            windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW(
+                windows::core::w!("Pro Audio"),
+                &mut task,
+            )
+        };
+        ProAudio(h.ok())
+    }
+
+    /// Whether Windows took it (the scheduler service can be off).
+    pub fn active(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl Drop for ProAudio {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            // SAFETY: the handle came from AvSetMmThreadCharacteristicsW on this thread.
+            let _ =
+                unsafe { windows::Win32::System::Threading::AvRevertMmThreadCharacteristics(h) };
+        }
+    }
+}

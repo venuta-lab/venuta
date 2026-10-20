@@ -166,6 +166,9 @@ pub struct Captured {
     /// A paced device: for each write, where it starts in `bytes` and when its first frame is
     /// heard (after what the device still held; at once when it had run dry).
     pub heard: Vec<(usize, std::time::Instant)>,
+    /// A paced device whose clock runs this many parts per million fast (negative: slow) against
+    /// the computer's, as every real sound card's does a little: for checks.
+    pub drift_ppm: f64,
 }
 
 impl Captured {
@@ -192,11 +195,39 @@ pub struct MemoryDevice {
 
 /// A memory device's clock: when it opened and how many frames it has taken, so a wait lasts
 /// until that many frames would have played (keeping `BUFFER_FRAMES` ahead, like a device).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Pace {
     since: Option<std::time::Instant>,
     taken: u64,
     rate: u32,
+    /// Its clock against the computer's (1: the same).
+    speed: f64,
+}
+
+impl Pace {
+    /// Frames played by now.
+    fn played(&self, since: std::time::Instant) -> u64 {
+        (since.elapsed().as_secs_f64() * f64::from(self.rate.max(1)) * self.speed) as u64
+    }
+
+    /// When frame `k` (counted from the first) is heard.
+    fn at(&self, since: std::time::Instant, k: u64) -> std::time::Instant {
+        since
+            + std::time::Duration::from_secs_f64(
+                k as f64 / f64::from(self.rate.max(1)) / self.speed,
+            )
+    }
+}
+
+impl Default for Pace {
+    fn default() -> Self {
+        Pace {
+            since: None,
+            taken: 0,
+            rate: 0,
+            speed: 1.0,
+        }
+    }
 }
 
 impl Pace {
@@ -220,12 +251,12 @@ impl Device for MemoryDevice {
             valid_bits: src.bits.min(32),
             kind: SampleKind::Int,
         };
-        let delay = if let Ok(mut c) = self.captured.lock() {
+        let (delay, drift) = if let Ok(mut c) = self.captured.lock() {
             c.formats.push(f.clone());
             c.frames.push(0);
-            c.open_delay
+            (c.open_delay, c.drift_ppm)
         } else {
-            None
+            (None, 0.0)
         };
         if let Some(d) = delay {
             std::thread::sleep(d);
@@ -235,6 +266,7 @@ impl Device for MemoryDevice {
                 since: None,
                 taken: 0,
                 rate: f.rate,
+                speed: 1.0 + drift / 1e6,
             };
         }
         Ok(f)
@@ -246,12 +278,11 @@ impl Device for MemoryDevice {
         if let Some(p) = &mut self.paced {
             let since = *p.since.get_or_insert_with(std::time::Instant::now);
             // Until there's room for another period after what has played.
-            let played = (since.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
-            let ahead = p.taken.saturating_sub(played);
+            let ahead = p.taken.saturating_sub(p.played(since));
             if ahead + self.period as u64 > Pace::BUFFER_FRAMES {
                 let over = ahead + self.period as u64 - Pace::BUFFER_FRAMES;
                 std::thread::sleep(std::time::Duration::from_secs_f64(
-                    over as f64 / f64::from(p.rate.max(1)),
+                    over as f64 / f64::from(p.rate.max(1)) / p.speed,
                 ));
             }
         }
@@ -267,18 +298,15 @@ impl Device for MemoryDevice {
     fn queued_frames(&self) -> Option<usize> {
         // Frame k plays k/rate after the first: what's taken and not played yet.
         let p = self.paced.as_ref()?;
-        let played = (p.since?.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
-        Some(p.taken.saturating_sub(played) as usize)
+        Some(p.taken.saturating_sub(p.played(p.since?)) as usize)
     }
     fn write(&mut self, bytes: &[u8], frames: usize) -> Result<(), String> {
         if let Some(p) = &mut self.paced {
             let since = *p.since.get_or_insert_with(std::time::Instant::now);
             // Run dry (nothing written for a while, as when stopped): what comes now is heard
             // from now, as on a real device.
-            let played = (since.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
-            p.taken = p.taken.max(played);
-            let at = since
-                + std::time::Duration::from_secs_f64(p.taken as f64 / f64::from(p.rate.max(1)));
+            p.taken = p.taken.max(p.played(since));
+            let at = p.at(since, p.taken);
             p.taken += frames as u64;
             if let Ok(mut c) = self.captured.lock() {
                 c.started_at.get_or_insert(since);

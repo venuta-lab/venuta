@@ -163,11 +163,20 @@ fn starting_part_way_lands_on_the_exact_sample() {
     let got = play_all(vec![a], 250);
     let v = values(&got.bytes, 24);
     let want = expected(48_000, 2, pattern(5, 24));
-    // 250 ms at 48 kHz is frame 12,000.
+    // 250 ms at 48 kHz is frame 12,000. It rises from silence over its first 15 ms (720
+    // frames, both channels), then every sample is the song's own.
+    let fade = 720 * 2;
     assert_eq!(
-        &v[..want.len() - 24_000],
-        &want[24_000..],
+        &v[fade..want.len() - 24_000],
+        &want[24_000 + fade..],
         "starts exactly at 250 ms"
+    );
+    assert!(
+        v[..fade]
+            .iter()
+            .zip(&want[24_000..])
+            .all(|(got, own)| got.unsigned_abs() <= own.unsigned_abs()),
+        "faded in from it, never louder"
     );
 }
 

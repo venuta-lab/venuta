@@ -258,16 +258,25 @@ fn end_room(when: When) -> (Vec<i32>, Status<PathBuf>, Vec<SyncNote>) {
 /// Your own song, heard from its frame at `from_ms`: (whether every frame follows the one before
 /// with nothing between, how many frames were heard).
 fn straight_from(h: &[i32], from_ms: u64) -> (bool, usize) {
-    // What the device held of the song before is played out first, as when playing anything.
-    let own = |x: i32| (OWN + 1..OWN + 30 * RATE as i32 + 1).contains(&x);
-    let Some(first) = h.iter().position(|&x| own(x)) else {
+    let expect = OWN + (from_ms * u64::from(RATE) / 1_000) as i32 + 1;
+    // Partway into a song it rises from silence over 15 ms (720 frames, each the song's own
+    // frame scaled, never louder); from there, every frame is exactly the next. (What the
+    // device held of the song before is played out first, as when playing anything.)
+    let fade = if from_ms > 0 { 720 } else { 0 };
+    let Some(exact) = h.iter().position(|&x| x == expect + fade as i32) else {
         return (false, 0);
     };
+    let Some(first) = exact.checked_sub(fade) else {
+        return (false, 0);
+    };
+    let faded = h[first..exact]
+        .iter()
+        .enumerate()
+        .all(|(k, &x)| x.unsigned_abs() <= (expect + k as i32).unsigned_abs());
     let last = h.iter().rposition(|&x| x != 0).unwrap();
-    let music = &h[first..=last];
-    let expect = OWN + (from_ms * u64::from(RATE) / 1_000) as i32 + 1;
-    let straight = music[0] == expect && music.windows(2).all(|w| w[1] == w[0] + 1);
-    (straight, music.len())
+    let rest = &h[exact..=last];
+    let straight = faded && rest.windows(2).all(|w| w[1] == w[0] + 1);
+    (straight, last + 1 - first)
 }
 
 #[test]
@@ -399,5 +408,21 @@ fn every_correction_in_a_room_is_said() {
         "faster to catch up, within 500 ppm: {rates:?}"
     );
     assert_eq!(rates.last(), Some(&0), "back to its own rate: {rates:?}");
+    drop(r.player);
+}
+
+#[test]
+fn waiting_silent_for_the_rooms_start_is_not_a_stall() {
+    let a = counting("not-a-stall", 4, 0);
+    let r = Run::new(&a);
+    // Readied and silent, the start a while off (others still getting ready).
+    sleep(800);
+    let s = r.status();
+    assert!(s.playing, "the device runs on in silence");
+    assert!(
+        !s.stalled && !s.buffering,
+        "ready, not waiting for a stream"
+    );
+    assert!(s.sync.is_some_and(|y| y.ready), "and says it's ready");
     drop(r.player);
 }
