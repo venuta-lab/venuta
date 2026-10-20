@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { askAddSongs, askAddToPlaylist } from '../components/AddToPlaylist'
 import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './actionModel'
-import { searchWeb, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
+import { searchWeb, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
 import type { MenuGroups, MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
@@ -11,6 +11,11 @@ import { enqueue, enqueueItems, onlineEntryFrom, playAll, songItemOf, toItem, to
 import { albumFrom, type Album, type Artist, type Nav } from '../screens/listen/model'
 import { fromWhere, playlistSongs, playPlaylist } from '../screens/playlists/common'
 import { deletePlaylist, duplicatePlaylist, exportPlaylist, goToPlaylists, renamePlaylist } from '../screens/playlists/ops'
+import { confirmAsk } from '../components/Confirm'
+import { onlineProblem } from './online'
+import { askDeleteUpload, askRemovePastSearch } from './ytmAsk'
+import { ytmLibraryChanged, ytmReady } from './ytmLibrary'
+import { songMenuItems, songMenus, type Press, type SongMenuItem, type TrackMenu } from './ytmSongMenu'
 
 /*
   What each action does, for one thing. lib/actionModel.ts says which actions a thing has and in
@@ -28,7 +33,7 @@ export function menuFor(kind: Kind, facts: Facts, work: Work): MenuGroups {
       const w = work[id]
       if (!w) return []
       if (Array.isArray(w)) return w
-      return [{ label: LABELS[id], run: w, danger: id === 'delete' }]
+      return [{ label: LABELS[id], run: w, danger: id === 'delete' || id === 'deleteUpload' }]
     }),
   )
 }
@@ -83,6 +88,89 @@ export function likeWork(root: string, q: QueueItem): MenuItem[] {
   return [{ label: liked ? 'Remove from Liked songs' : 'Add to Liked songs', run: () => void setLiked(root, q, !liked) }]
 }
 
+/** What a press on a song's own YouTube Music menu did, in words. */
+function pressedWords(i: SongMenuItem, title: string): string {
+  switch (i.press) {
+    case 'library':
+      return i.next ? `Saved “${title}” to your YouTube Music library.` : `Took “${title}” out of your YouTube Music library.`
+    case 'pin':
+      return i.next ? `Pinned “${title}” to Listen again.` : `Unpinned “${title}” from Listen again.`
+    case 'feedback':
+      return `Told YouTube Music “${i.label}” for “${title}”.`
+  }
+}
+
+async function pressSongMenu(key: string, title: string, i: SongMenuItem) {
+  try {
+    await ytmMenuPress(i.token, i.press)
+    if (i.press === 'feedback') songMenus.sent(key, i.token)
+    else songMenus.pressed(key, i.press, i.next)
+    if (i.press === 'library') ytmLibraryChanged(['songs'])
+    notify(pressedWords(i, title))
+  } catch (e) {
+    notify(onlineProblem(e))
+  }
+}
+
+/** An online song's own YouTube Music menu (key: its queue key; `came`: the menu it was listed
+ *  with here): Save to that library or Remove from it, Pin to Listen again or Unpin, Not
+ *  interested. Only what its listing carried; each press sends that one token. */
+export function ytmMenuWork(key: string, title: string, came?: TrackMenu | null): Work {
+  const items = songMenuItems(songMenus.menuOf(key, came))
+  const of = (press: Press): MenuItem[] | undefined => {
+    const list = items.filter((i) => i.press === press).map((i) => ({ label: i.label, run: () => void pressSongMenu(key, title, i) }))
+    return list.length ? list : undefined
+  }
+  return { ytmLibrary: of('library'), ytmPin: of('pin'), notInterested: of('feedback') }
+}
+
+/** Delete one of your uploads on YouTube Music, a song or an album, after asking. True when it
+ *  went: the lists that held it are read again. */
+export async function deleteYtmUpload(entityId: string, name: string, kind: 'song' | 'album'): Promise<boolean> {
+  if (!(await confirmAsk(askDeleteUpload(name, kind)))) return false
+  try {
+    await ytmDeleteUpload(entityId)
+    ytmLibraryChanged(['upload_songs', 'upload_albums'])
+    notify(`Deleted “${name}” on YouTube Music.`)
+    return true
+  } catch (e) {
+    notify(onlineProblem(e))
+    return false
+  }
+}
+
+/** Take one of your past searches out of your YouTube Music search history, after asking. True
+ *  when it went. */
+export async function removePastSearch(text: string, token: string): Promise<boolean> {
+  if (!(await confirmAsk(askRemovePastSearch(text)))) return false
+  try {
+    await ytmRemovePastSearch(token)
+    notify(`Took “${text}” out of your YouTube Music search history.`)
+    return true
+  } catch (e) {
+    notify(onlineProblem(e))
+    return false
+  }
+}
+
+/** YouTube Music's own list of podcast episodes saved for later. */
+export const EPISODES_FOR_LATER = 'SE'
+
+/** An online song that is a podcast episode. */
+export const isEpisode = (t: Pick<OnlineTrack, 'video_type'>) => t.video_type === 'PODCAST_EPISODE'
+
+/** Save a podcast episode to your Episodes for later on YouTube Music. */
+export async function saveEpisodeForLater(t: Pick<OnlineTrack, 'track_id' | 'title'>) {
+  try {
+    await ytmPlaylistEdit(EPISODES_FOR_LATER, [{ kind: 'add', video_ids: [t.track_id] }])
+    ytmLibraryChanged(['podcasts'])
+    notify(`Saved “${t.title}” to Episodes for later.`)
+  } catch (e) {
+    const said = onlineProblem(e)
+    notify(said === 'Already in the playlist.' ? `“${t.title}” is in Episodes for later already.` : said)
+  }
+}
+
 /** What online song actions need: the library root, and how to open an artist or an album. */
 type GoOnline = Pick<Nav, 'root' | 'openArtistNamed' | 'openOnlineAlbum'>
 
@@ -114,8 +202,13 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
       : undefined,
     share: () => copySongLink(t),
     web: () => void searchWeb(`${t.title} ${t.artists[0] ?? ''}`.trim()),
+    saveEpisode: isEpisode(t) && ytmReady() ? () => void saveEpisodeForLater(t) : undefined,
+    ...ytmMenuWork(`online:${t.provider}:${t.track_id}`, t.title, t.menu),
   }
 }
+
+/** What is true of an online song, for its menu. */
+export const onlineSongFacts = (t: Pick<OnlineTrack, 'artists' | 'video_type'>): Facts => ({ online: true, noArtist: !t.artists.length, episode: isEpisode(t) })
 
 export function albumWork(nav: Go, a: Album): Work {
   const from = albumFrom(a)

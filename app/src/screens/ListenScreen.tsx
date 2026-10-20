@@ -11,6 +11,7 @@ import { onlineProblem } from '../lib/online'
 import { useCatalog } from '../lib/catalog'
 import { current, isOnline, queueKey, readFrom, songItemOf, toItem, toRemoteItem, usePlayer, usePlayerValue } from '../lib/player'
 import { playWithRadio } from '../lib/radio'
+import { removePastSearch } from '../lib/actions'
 import { askAddSongs } from '../components/AddToPlaylist'
 import type { Target } from '../lib/drag'
 import { recentSearches } from '../lib/recentSearches'
@@ -501,6 +502,7 @@ function Listen(props: Props) {
       onlineSuggest(text).then((found) => ({
         queries: found.queries,
         items: found.items.flatMap((item): Suggestion[] => suggestionRow(item, { root, nav })),
+        past: (found.past ?? []).map((p) => ({ text: p.text, remove: p.remove_token ? () => removePastSearch(p.text, p.remove_token ?? '') : undefined })),
       })),
     [root, nav],
   )

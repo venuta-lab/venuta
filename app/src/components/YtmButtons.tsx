@@ -5,8 +5,8 @@ import { onlineProblem } from '../lib/online'
 import { useYtmPart, useYtmStatus, ytmLibraryChanged } from '../lib/ytmLibrary'
 
 /*
-  One press on your YouTube Music account, on the page of the thing it's about: save an album or a
-  playlist to your library, follow an artist. Shown only when you're signed in; each press is
+  One press on your YouTube Music account, on the page of the thing it's about: save an album, a
+  playlist or a podcast to your library, follow an artist. Shown only when you're signed in; each press is
   the whole change, said back when YouTube doesn't take it.
 */
 
@@ -66,6 +66,32 @@ export function SavePlaylistButton({ playlistId }: { playlistId: string }) {
     try {
       await ytmSave(bare, !saved)
       ytmLibraryChanged(['playlists'])
+      notify(saved ? 'Taken out of your YouTube Music library.' : 'Saved to your YouTube Music library.')
+    } catch (e) {
+      notify(onlineProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <Toggle on={saved} busy={busy} onLabel="Saved" offLabel="Save" title="In your YouTube Music library" onClick={() => void press()} />
+}
+
+/** A podcast's own list id, whichever way it is named (`MPSPPL…`, `VLPL…`, `PL…`). */
+const podcastList = (id: string) => id.replace(/^VL/, '').replace(/^MPSP/, '')
+
+/** Save a podcast to your YouTube Music library (or take it out), as its page's Save does there. */
+export function SavePodcastButton({ podcastId }: { podcastId: string }) {
+  const { signed_in } = useYtmStatus()
+  const { value } = useYtmPart<OnlineSuggestion[]>('podcasts')
+  const [busy, setBusy] = useState(false)
+  const bare = podcastList(podcastId)
+  const saved = (value ?? []).some((c) => c.kind === 'playlist' && podcastList(c.collection.collection_id) === bare)
+  if (!signed_in || value === null || !bare) return null
+  const press = async () => {
+    setBusy(true)
+    try {
+      await ytmSave(bare, !saved)
+      ytmLibraryChanged(['podcasts'])
       notify(saved ? 'Taken out of your YouTube Music library.' : 'Saved to your YouTube Music library.')
     } catch (e) {
       notify(onlineProblem(e))

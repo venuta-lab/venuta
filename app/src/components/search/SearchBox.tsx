@@ -8,7 +8,9 @@ import { IconClose, IconSearch } from '../Icons'
   only, each one removable). While you type: things that match, your own first (an artist, an
   album, a song, each with its picture and what it is), then the online catalog's, then
   completions of the words, then "All results for …". Picking a thing opens or plays it;
-  picking words (or Enter) searches for them. Up and Down move through it all.
+  picking words (or Enter) searches for them. Up and Down move through it all. A completion that
+  is one of your own past YouTube Music searches (Signed-in search) says so, and can be taken out
+  of that history with its × (asked first).
 */
 
 /** A thing that matches: what it is, what it says, its picture, and what picking it does. */
@@ -33,6 +35,14 @@ export interface Suggestion {
 export interface OnlineSuggestions {
   items: Suggestion[]
   queries: string[]
+  /** Completions that are your own past searches there, and how to take each out (true: it went). */
+  past?: PastQuery[]
+}
+
+/** One of your past searches on the account, as a completion. */
+export interface PastQuery {
+  text: string
+  remove?: () => Promise<boolean>
 }
 
 const SUGGEST_AFTER_MS = 120
@@ -45,7 +55,7 @@ const QUERIES_SHOWN = 6
 type Row =
   | { key: string; type: 'recent'; label: string; value: string }
   | { key: string; type: 'thing'; s: Suggestion }
-  | { key: string; type: 'query'; label: string; value: string }
+  | { key: string; type: 'query'; label: string; value: string; past?: PastQuery }
   | { key: string; type: 'all'; label: string; value: string }
 
 export function SearchBox(props: {
@@ -89,6 +99,8 @@ export function SearchBox(props: {
 
   // The online catalog's, a moment later; an answer for older words is dropped.
   const [online, setOnline] = useState<{ for: string; found: OnlineSuggestions }>({ for: '', found: { items: [], queries: [] } })
+  // Past searches taken out of the account's history this time: gone from the panel at once.
+  const [gonePast, setGonePast] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
     if (!text || !onlineSuggest) return
     let live = true
@@ -110,10 +122,11 @@ export function SearchBox(props: {
     // Yours first; the catalog's fill the rest, without one you already have by name.
     const seen = new Set(mine.map((s) => `${s.kind}:${s.label.toLowerCase()}`))
     const things = [...mine, ...theirs.items.filter((s) => !seen.has(`${s.kind}:${s.label.toLowerCase()}`))].slice(0, THINGS_SHOWN)
-    const queries = theirs.queries.filter((q) => q.trim().toLowerCase() !== text.toLowerCase()).slice(0, QUERIES_SHOWN)
+    const queries = theirs.queries.filter((q) => q.trim().toLowerCase() !== text.toLowerCase() && !gonePast.has(q)).slice(0, QUERIES_SHOWN)
+    const pastOf = (q: string) => theirs.past?.find((p) => p.text === q)
     return [
       ...things.map((s) => ({ key: `thing:${s.key}`, type: 'thing' as const, s })),
-      ...queries.map((q) => ({ key: `query:${q}`, type: 'query' as const, label: q, value: q })),
+      ...queries.map((q) => ({ key: `query:${q}`, type: 'query' as const, label: q, value: q, past: pastOf(q) })),
       { key: 'all', type: 'all' as const, label: `All results for “${text}”`, value: props.value },
     ]
   })()
@@ -250,6 +263,22 @@ export function SearchBox(props: {
                   <>
                     <IconSearch width={15} height={15} className="shrink-0 text-ink/45" />
                     <span className={`min-w-0 flex-1 truncate ${r.type === 'all' ? 'text-[13px] text-ink/65' : ''}`}>{r.label}</span>
+                    {r.type === 'query' && r.past && <span className="shrink-0 text-[11.5px] text-ink/45">Your past search</span>}
+                    {r.type === 'query' && r.past?.remove && (
+                      <button
+                        tabIndex={-1}
+                        aria-label={`Remove “${r.label}” from your YouTube Music search history`}
+                        title="Remove from your YouTube Music search history"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const text = r.label
+                          void r.past?.remove?.().then((gone) => gone && setGonePast((g) => new Set(g).add(text)))
+                        }}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink/40 opacity-0 hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
+                      >
+                        <IconClose width={12} height={12} />
+                      </button>
+                    )}
                     {r.type === 'recent' && (
                       <button
                         tabIndex={-1}

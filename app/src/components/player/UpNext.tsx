@@ -7,7 +7,7 @@ import { RemoteArt } from '../RemoteArt'
 import { Chip } from '../ui'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
 import { PlayingFrom } from './PlayingFrom'
-import { goToEach, menuFor } from '../../lib/actions'
+import { goToEach, menuFor, ytmMenuWork } from '../../lib/actions'
 import { useCovers } from '../../lib/covers'
 import type { OnlineSuggestion, OnlineTrack } from '../../lib/engine'
 import { useLocalOnly } from '../../lib/localOnly'
@@ -218,6 +218,8 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
           ? undefined
           : () => go({ kind: 'album', ref: q.dir, label: q.album }),
       remove: isCurrent ? undefined : () => void removeAt(r.at),
+      // An online song's own YouTube Music menu, as it was listed (save, pin, not interested).
+      ...(online ? ytmMenuWork(queueKey(q), q.title) : {}),
     })
   }
 
@@ -414,6 +416,7 @@ function RelatedSongs({ tracks, root, label }: { tracks: OnlineTrack[]; root: st
             queue: () => void enqueueItems(root, [item], false),
             radio: () => void startRadio(root, item),
             playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
+            ...ytmMenuWork(queueKey(item), t.title, t.menu),
           },
         )
         return (
