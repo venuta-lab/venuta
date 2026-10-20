@@ -163,6 +163,23 @@ pub struct Captured {
     pub flushes: usize,
     /// How long opening it takes (a real device can take a moment): for checks.
     pub open_delay: Option<std::time::Duration>,
+    /// A paced device: for each write, where it starts in `bytes` and when its first frame is
+    /// heard (after what the device still held; at once when it had run dry).
+    pub heard: Vec<(usize, std::time::Instant)>,
+}
+
+impl Captured {
+    /// When the frame starting at byte `at` of `bytes` was heard, on a paced device, given its
+    /// bytes per frame and rate.
+    pub fn heard_at(&self, at: usize, frame_bytes: usize, rate: u32) -> Option<std::time::Instant> {
+        let k = self
+            .heard
+            .partition_point(|(from, _)| *from <= at)
+            .checked_sub(1)?;
+        let (from, when) = self.heard[k];
+        let frames = (at - from) / frame_bytes.max(1);
+        Some(when + std::time::Duration::from_secs_f64(frames as f64 / f64::from(rate.max(1))))
+    }
 }
 
 pub struct MemoryDevice {
@@ -256,9 +273,17 @@ impl Device for MemoryDevice {
     fn write(&mut self, bytes: &[u8], frames: usize) -> Result<(), String> {
         if let Some(p) = &mut self.paced {
             let since = *p.since.get_or_insert_with(std::time::Instant::now);
+            // Run dry (nothing written for a while, as when stopped): what comes now is heard
+            // from now, as on a real device.
+            let played = (since.elapsed().as_secs_f64() * f64::from(p.rate.max(1))) as u64;
+            p.taken = p.taken.max(played);
+            let at = since
+                + std::time::Duration::from_secs_f64(p.taken as f64 / f64::from(p.rate.max(1)));
             p.taken += frames as u64;
             if let Ok(mut c) = self.captured.lock() {
                 c.started_at.get_or_insert(since);
+                let from = c.bytes.len();
+                c.heard.push((from, at));
             }
         }
         if let Ok(mut c) = self.captured.lock() {

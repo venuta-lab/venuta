@@ -9,7 +9,7 @@ use crate::decode::{FileInfo, Source, SourceFormat};
 use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
 use crate::queue::{Queue, Repeat};
-use crate::sync::{Correction, SyncPlan, Trimmer};
+use crate::sync::{Correction, Resampler, SyncNote, SyncPlan};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -159,6 +159,9 @@ pub struct Status<T: Serialize> {
     pub bands: Option<Vec<u8>>,
     /// While playing in step with a room: ready to start, and how far off it is.
     pub sync: Option<SyncStatus>,
+    /// What was done to the music to stay with a room since the last status (every seek, every
+    /// change of rate): none at all outside a room.
+    pub sync_notes: Vec<SyncNote>,
 }
 
 /// How playing in step with a room is going.
@@ -315,10 +318,14 @@ struct Engine<T: Item + Serialize> {
     scratch: Vec<i32>,
     mapped: Vec<i32>,
     bytes: Vec<u8>,
-    /// Playing in step with a room: the room's plan, the frames trimmer, the last error, and
-    /// until when a fresh start or seek is left to settle.
+    /// Playing in step with a room: the room's plan, the last error, and until when a fresh
+    /// start or seek is left to settle.
     sync: Option<SyncPlan>,
-    trimmer: Trimmer,
+    /// One room: plays the song a hair faster or slower (idle, and bit-perfect, otherwise), the
+    /// rate it is asked for (parts per million faster), and where its frames are made.
+    resampler: Resampler,
+    rate_target: f64,
+    resampled: Vec<i32>,
     sync_error_ms: Option<f32>,
     settle_until: Option<Instant>,
     /// A new plan whose sound hasn't come out yet: lined up exactly when it first does.
@@ -333,8 +340,6 @@ struct Engine<T: Item + Serialize> {
     sync_avg: Option<f64>,
     /// Since when the error has been past the seek line (it is lined up only once it lasts).
     sync_far_since: Option<Instant>,
-    /// The last frames changed went this way (ahead): trimming starts over when it turns.
-    sync_trim_ahead: Option<bool>,
     /// Decoding last fell behind (a stream waiting for bytes): no lining up for a while, so a
     /// stall plays late instead of skipping ahead into what hasn't arrived.
     starved_at: Option<Instant>,
@@ -347,6 +352,10 @@ struct Engine<T: Item + Serialize> {
     flush_before_start: bool,
     /// Frames of fade-in still to come after such a seek.
     fade_in_left: usize,
+    /// What was done to stay with the room, to say in the next status.
+    notes: Vec<SyncNote>,
+    /// The rate last said (parts per million faster), to say only when it changes.
+    rate_said: i32,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -379,7 +388,9 @@ impl<T: Item + Serialize> Engine<T> {
             mapped: Vec::new(),
             bytes: Vec::new(),
             sync: None,
-            trimmer: Trimmer::default(),
+            resampler: Resampler::default(),
+            rate_target: 0.0,
+            resampled: Vec::new(),
             sync_error_ms: None,
             settle_until: None,
             sync_fresh: false,
@@ -387,12 +398,13 @@ impl<T: Item + Serialize> Engine<T> {
             sync_hold: false,
             sync_avg: None,
             sync_far_since: None,
-            sync_trim_ahead: None,
             starved_at: None,
             sounding: false,
             seek_after_fade: None,
             flush_before_start: false,
             fade_in_left: 0,
+            notes: Vec::new(),
+            rate_said: 0,
         }
     }
 
@@ -599,6 +611,7 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.segs.clear();
         self.seek_waiting = None;
+        self.resampler.reset();
         // A seek or fade-in meant for the song before is not this one's.
         self.seek_after_fade = None;
         self.fade_in_left = 0;
@@ -637,6 +650,8 @@ impl<T: Item + Serialize> Engine<T> {
 
     fn seek(&mut self, ms: u64) {
         self.seek_waiting = None;
+        // Another place: nothing before it for the resampler to carry on from.
+        self.resampler.reset();
         if !self.playing {
             self.flush_before_start = true;
         }
@@ -701,6 +716,7 @@ impl<T: Item + Serialize> Engine<T> {
                 .get(1)
                 .is_some_and(|s| !(s.ended && s.frames() == 0));
         if usable {
+            self.resampler.reset();
             self.segs.pop_front();
             self.segs.truncate(1);
             self.seek_waiting = None;
@@ -963,6 +979,10 @@ impl<T: Item + Serialize> Engine<T> {
         } else {
             0
         };
+        // One room's rate (or gliding back from it): the period's frames made at that rate.
+        if lead == 0 && (self.sync.is_some_and(|p| p.same_room) || !self.resampler.idle()) {
+            self.rate_front(want);
+        }
         let src_ch = usize::from(fmt.channels.max(1));
         let mut taken: Vec<i32> = Vec::with_capacity(want * src_ch);
         // The room starts within this period: silence up to the very frame it starts on.
@@ -1012,8 +1032,9 @@ impl<T: Item + Serialize> Engine<T> {
                 }
                 continue;
             }
-            // This song is over: on to the next.
+            // This song is over: on to the next (the rate came back to its own before its end).
             self.segs.pop_front();
+            self.resampler.reset();
             // In a room, the next song plays straight on until the room's plan for it comes.
             if self.sync.is_some() {
                 self.sync_hold = true;
@@ -1212,6 +1233,7 @@ impl<T: Item + Serialize> Engine<T> {
         if let Some(mut d) = self.device.take() {
             d.close();
         }
+        self.resampler.reset();
         self.dev_fmt = None;
         self.started = false;
         // What the old device held is gone with it, and nothing comes out until another opens.
@@ -1245,12 +1267,12 @@ impl<T: Item + Serialize> Engine<T> {
             self.sync_hold = false;
             return;
         }
-        self.trimmer.reset();
+        // Back to the song's own rate (gliding there, so nothing is heard).
+        self.rate_target = 0.0;
         self.sync_error_ms = None;
         self.sync_hold = false;
         self.sync_avg = None;
         self.sync_far_since = None;
-        self.sync_trim_ahead = None;
         // A seek still waiting for its fade-out was the old plan's place: never carried into
         // this one (a pause stops the device before it runs, and it would land later, in a
         // resumed or the next song, as a jump back to where that pause was).
@@ -1281,6 +1303,11 @@ impl<T: Item + Serialize> Engine<T> {
             } else {
                 // Paused: the device stops now, so nothing of the move is heard; made at once,
                 // and what it holds from before the move is let go before it starts again.
+                self.notes.push(SyncNote::Seek {
+                    from_ms: self.position_ms(),
+                    to_ms: target,
+                    faded: false,
+                });
                 self.realign(target as f64, 600);
                 self.flush_before_start = true;
             }
@@ -1342,6 +1369,9 @@ impl<T: Item + Serialize> Engine<T> {
                 if lead < want {
                     self.sync_fresh = false;
                     self.settle_until = Some(now + Duration::from_millis(400));
+                    self.notes.push(SyncNote::Started {
+                        position_ms: self.position_ms(),
+                    });
                     return Ok(Some(lead));
                 }
             }
@@ -1391,13 +1421,20 @@ impl<T: Item + Serialize> Engine<T> {
             let frames = (error.abs() * rate / 1_000.0).round() as usize;
             if error < -1.0 && frames > 0 {
                 // Behind: past the first few frames just decoded.
-                if self.skip_front(frames) < frames {
+                let skipped = self.skip_front(frames);
+                if skipped < frames {
                     self.sync_fine = true;
                 }
+                self.notes.push(SyncNote::Fine {
+                    frames: skipped as i64,
+                });
                 return Ok(Some(0));
             }
             if error > 1.0 && frames > 0 && frames < want {
                 // Ahead: a moment of silence first.
+                self.notes.push(SyncNote::Fine {
+                    frames: -(frames as i64),
+                });
                 return Ok(Some(frames));
             }
         }
@@ -1416,13 +1453,23 @@ impl<T: Item + Serialize> Engine<T> {
         let starved = self
             .starved_at
             .is_some_and(|t| now.duration_since(t) < Duration::from_secs(3));
+        if starved {
+            // Nothing chased while a stream catches up.
+            self.rate_target = 0.0;
+        }
         if settling || starved {
             self.sync_far_since = None;
             return Ok(Some(0));
         }
         match crate::sync::correction(avg, plan.same_room, false) {
-            Correction::None => {
+            Correction::None | Correction::Trim { .. } => {
                 self.sync_far_since = None;
+                // One room: a hair faster or slower, gliding, until in step (apart: never).
+                self.rate_target = if plan.same_room {
+                    crate::sync::rate_for(avg, self.rate_target != 0.0)
+                } else {
+                    0.0
+                };
                 Ok(Some(0))
             }
             Correction::Seek => {
@@ -1434,24 +1481,71 @@ impl<T: Item + Serialize> Engine<T> {
                 }
                 Ok(Some(0))
             }
-            Correction::Trim { ppm, ahead } => {
-                self.sync_far_since = None;
-                if self.sync_trim_ahead != Some(ahead) {
-                    self.sync_trim_ahead = Some(ahead);
-                    self.trimmer.reset();
-                }
-                let n = self.trimmer.due(want, ppm);
-                if n > 0 {
-                    self.trim_front(want, n, ahead);
-                }
-                Ok(Some(0))
-            }
         }
+    }
+
+    /// The next `want` frames of the playing song, a hair faster or slower when one room asks
+    /// (and while the rate glides back to the song's own, and lands on a whole frame). Idle, it
+    /// only keeps the last frames in one room (the filter's left side for a correction to come);
+    /// outside a room it does nothing at all.
+    fn rate_front(&mut self, want: usize) {
+        let same_room = self.sync.is_some_and(|p| p.same_room);
+        let Some(front) = self.segs.front_mut() else {
+            return;
+        };
+        let ch = usize::from(front.source.format.channels.max(1));
+        let rate = front.source.format.rate;
+        // The last second of a song: back to its own rate, so the next one follows exactly.
+        let near_end = front.source.frames.is_some_and(|total| {
+            total.saturating_sub(front.start_frame + front.played) < u64::from(rate)
+        });
+        let target = if same_room && !near_end {
+            self.rate_target
+        } else {
+            0.0
+        };
+        if self.resampler.idle() && target == 0.0 {
+            if same_room {
+                let n = want.min(front.frames()) * ch;
+                let head = front.samples.make_contiguous();
+                self.resampler.played_as_is(&head[..n], ch);
+            }
+            return;
+        }
+        let mut out = std::mem::take(&mut self.resampled);
+        out.clear();
+        let ended = front.ended;
+        let input = front.samples.make_contiguous();
+        match self
+            .resampler
+            .process(input, ch, rate, ended, want, target, &mut out, None)
+        {
+            Some(used) => {
+                let used = used.min(front.frames());
+                front.samples.drain(..used * ch);
+                for &v in out.iter().rev() {
+                    front.samples.push_front(v);
+                }
+                // The count of frames played stays true to the song (the loop adds `want`).
+                front.played = (front.played + used as u64).saturating_sub(want as u64);
+            }
+            // Not decoded far enough to work out (a stream that stalled): as it is, from here.
+            None => self.resampler.reset(),
+        }
+        self.resampled = out;
+        let ppm = self.resampler.ppm().round() as i32;
+        self.say_rate(ppm);
     }
 
     /// A seek that may be heard: while music is coming out, this period fades out and the seek
     /// comes after it, fading back in; from silence, at once.
     fn seek_heard(&mut self, to_ms: f64) {
+        self.notes.push(SyncNote::Seek {
+            from_ms: self.position_ms(),
+            to_ms: to_ms.max(0.0) as u64,
+            faded: self.sounding && self.playing,
+        });
+        self.say_rate(0);
         if self.sounding && self.playing {
             self.seek_after_fade = Some(to_ms);
         } else {
@@ -1459,11 +1553,21 @@ impl<T: Item + Serialize> Engine<T> {
         }
     }
 
+    /// Say the rate when it changed by enough to matter (or to or from the song's own).
+    fn say_rate(&mut self, ppm: i32) {
+        let changed = (ppm == 0) != (self.rate_said == 0) || (ppm - self.rate_said).abs() >= 100;
+        if changed {
+            self.rate_said = ppm;
+            self.notes.push(SyncNote::Rate { ppm });
+        }
+    }
+
     /// Line up with the room by a seek to `to_ms` (where it will be when this is heard); what
     /// the seek itself takes is closed on the next period.
     fn realign(&mut self, to_ms: f64, settle_ms: u64) {
         self.seek(to_ms.max(0.0) as u64);
-        self.trimmer.reset();
+        self.resampler.reset();
+        self.rate_target = 0.0;
         self.sync_fine = true;
         self.settle_until = Some(Instant::now() + Duration::from_millis(settle_ms));
     }
@@ -1478,35 +1582,6 @@ impl<T: Item + Serialize> Engine<T> {
         front.samples.drain(..k * ch);
         front.played += k as u64;
         k
-    }
-
-    /// Repeat (`ahead`) or take out `n` frames among the next `want` of the playing song, keeping
-    /// its count of frames played true to the song.
-    fn trim_front(&mut self, want: usize, n: usize, ahead: bool) {
-        let Some(front) = self.segs.front_mut() else {
-            return;
-        };
-        let ch = usize::from(front.source.format.channels.max(1));
-        let span = if ahead {
-            want.saturating_sub(n)
-        } else {
-            want + n
-        }
-        .min(front.frames());
-        if span <= n {
-            return;
-        }
-        let mut head: Vec<i32> = front.samples.drain(..span * ch).collect();
-        if ahead {
-            crate::sync::repeat_frames(&mut head, ch, n);
-            front.played = front.played.saturating_sub(n as u64);
-        } else {
-            crate::sync::drop_frames(&mut head, ch, n);
-            front.played += n as u64;
-        }
-        for v in head.into_iter().rev() {
-            front.samples.push_front(v);
-        }
     }
 
     /// A period of silence (the device keeps its clock while the room hasn't started).
@@ -1645,12 +1720,17 @@ impl<T: Item + Serialize> Engine<T> {
                 crate::spectrum::levels(self.recent.make_contiguous(), rate)
             }),
             sync: self.sync.map(|_| self.sync_status()),
+            sync_notes: std::mem::take(&mut self.notes),
         };
         // The regular report, when it would only repeat the last one (paused, or nothing loaded),
         // is not sent: every window would otherwise redraw several times a second for nothing.
         // A command always gets its answer (`now`), and so does a new queue.
         let said = Said::of(&status);
-        if !now && status.queue.is_none() && self.said.as_ref() == Some(&said) {
+        if !now
+            && status.queue.is_none()
+            && status.sync_notes.is_empty()
+            && self.said.as_ref() == Some(&said)
+        {
             return;
         }
         self.said = Some(said);

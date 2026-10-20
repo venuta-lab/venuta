@@ -10,7 +10,7 @@
 
 use player::engine::{Cmd, OutputChoice, Player, Status};
 use player::output::Captured;
-use player::sync::SyncPlan;
+use player::sync::{SyncNote, SyncPlan};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -77,6 +77,8 @@ struct Run {
     player: Player<PathBuf>,
     captured: Arc<Mutex<Captured>>,
     last: Arc<Mutex<Option<Status<PathBuf>>>>,
+    /// Everything the player said it did to stay with the room, as it said it.
+    notes: Arc<Mutex<Vec<(Instant, SyncNote)>>>,
     moved: std::sync::mpsc::Receiver<Option<usize>>,
 }
 
@@ -85,11 +87,18 @@ impl Run {
         let captured = Arc::new(Mutex::new(Captured::default()));
         let last = Arc::new(Mutex::new(None));
         let seen = last.clone();
+        let notes = Arc::new(Mutex::new(Vec::new()));
+        let noted = notes.clone();
         let (tx, moved) = std::sync::mpsc::channel();
         let player = Player::spawn(
             OutputChoice::PacedMemory(captured.clone()),
             move |s: Status<PathBuf>| {
                 let _ = tx.send(s.index);
+                let now = Instant::now();
+                noted
+                    .lock()
+                    .unwrap()
+                    .extend(s.sync_notes.iter().map(|n| (now, n.clone())));
                 *seen.lock().unwrap() = Some(s);
             },
         );
@@ -107,6 +116,7 @@ impl Run {
             player,
             captured,
             last,
+            notes,
             moved,
         }
     }
@@ -122,6 +132,17 @@ impl Run {
     /// What came out from byte `from` on.
     fn heard_since(&self, from: usize) -> Vec<i32> {
         samples(&self.captured.lock().unwrap().bytes[from..])
+    }
+
+    /// What the player did for the room since `at`.
+    fn notes_since(&self, at: Instant) -> Vec<SyncNote> {
+        self.notes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(t, _)| *t >= at)
+            .map(|(_, n)| n.clone())
+            .collect()
     }
 
     fn status(&self) -> Status<PathBuf> {
@@ -149,7 +170,7 @@ enum When {
 /// Run a room until it is `when`, end it as every way of ending does (the follower says the
 /// player is on its own again, then gives your queue back, paused), then press play: what is
 /// heard from the press on.
-fn end_room(when: When) -> (Vec<i32>, Status<PathBuf>) {
+fn end_room(when: When) -> (Vec<i32>, Status<PathBuf>, Vec<SyncNote>) {
     let name = format!("{when:?}");
     let a = counting(&format!("{name}-a"), 4, 0);
     let own = counting(&format!("{name}-own"), 30, OWN);
@@ -224,12 +245,14 @@ fn end_room(when: When) -> (Vec<i32>, Status<PathBuf>) {
     });
     sleep(200);
     let from = r.written();
+    let pressed = Instant::now();
     r.send(Cmd::Play);
     sleep(2_500);
     let heard = r.heard_since(from);
     let status = r.status();
+    let notes = r.notes_since(pressed);
     drop(r.player);
-    (heard, status)
+    (heard, status, notes)
 }
 
 /// Your own song, heard from its frame at `from_ms`: (whether every frame follows the one before
@@ -257,7 +280,8 @@ fn after_a_room_ends_your_music_plays_sample_for_sample() {
         When::NextSongTookOver,
         When::Paused,
     ] {
-        let (h, status) = end_room(when);
+        let (h, status, notes) = end_room(when);
+        assert_eq!(notes, [], "{when:?}: nothing done to your music for a room");
         let (straight, frames) = straight_from(&h, 1_000);
         assert!(
             straight,
@@ -320,4 +344,60 @@ fn your_own_queue_never_plays_under_a_rooms_plan() {
         );
         assert!(status.sync.is_none(), "{left:?}: the plan is gone");
     }
+}
+
+#[test]
+fn every_correction_in_a_room_is_said() {
+    // Apart, the room suddenly 900 ms on (a long stall somewhere): one seek, faded.
+    let a = counting("said-apart", 12, 0);
+    let r = Run::new(&a);
+    let start = Instant::now() + Duration::from_millis(300);
+    r.send(Cmd::Sync(Some(plan(Some(start), 0, true, false))));
+    sleep(1_500);
+    let t0 = Instant::now();
+    r.send(Cmd::Sync(Some(plan(
+        Some(start - Duration::from_millis(900)),
+        0,
+        true,
+        false,
+    ))));
+    sleep(4_500);
+    let seeks: Vec<_> = r
+        .notes_since(t0)
+        .into_iter()
+        .filter(|n| matches!(n, SyncNote::Seek { .. }))
+        .collect();
+    assert!(
+        matches!(seeks[..], [SyncNote::Seek { faded: true, from_ms, to_ms }] if to_ms > from_ms + 800),
+        "one faded seek on: {seeks:?}"
+    );
+    drop(r.player);
+
+    // One room, 4 ms off: the rate goes up a little, then back to the song's own.
+    let b = counting("said-same", 12, 0);
+    let r = Run::new(&b);
+    r.send(Cmd::Sync(Some(plan(Some(start), 0, true, true))));
+    sleep(1_200);
+    let t0 = Instant::now();
+    r.send(Cmd::Sync(Some(plan(
+        Some(start - Duration::from_millis(4)),
+        0,
+        true,
+        true,
+    ))));
+    sleep(10_000);
+    let rates: Vec<i32> = r
+        .notes_since(t0)
+        .into_iter()
+        .filter_map(|n| match n {
+            SyncNote::Rate { ppm } => Some(ppm),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        rates.iter().any(|&p| p > 0) && rates.iter().all(|&p| p.abs() <= 500),
+        "faster to catch up, within 500 ppm: {rates:?}"
+    );
+    assert_eq!(rates.last(), Some(&0), "back to its own rate: {rates:?}");
+    drop(r.player);
 }
