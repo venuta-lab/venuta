@@ -170,6 +170,9 @@ pub struct RemoteAlbum {
     /// "Album", "Single", "EP"… as the catalog labels it (a ranking hint).
     #[serde(default)]
     pub kind: Option<String>,
+    /// Its card's "tell me less of this" presses (Home's "Not interested"), signed in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
 }
 
 /// A whole playlist from the online catalog: its name and every song, in order (ids and what to
@@ -451,6 +454,9 @@ pub struct RemoteCollection {
     /// as it came, rather than a radio rebuilt from the id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub play: Option<RadioEndpoint>,
+    /// Its card's "tell me less of this" presses (Home's "Not interested"), signed in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
 }
 
 /// One thing the catalog suggests while words are typed: a song to play, or an album, artist

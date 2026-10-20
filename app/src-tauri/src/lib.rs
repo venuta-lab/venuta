@@ -3230,6 +3230,8 @@ pub fn run() {
             ytm_library::ytm_history_remove,
             ytm_library::ytm_vote,
             ytm_library::ytm_menu_press,
+            ytm_library::ytm_taste_profile,
+            ytm_library::ytm_set_taste_profile,
             ytm_library::ytm_remove_past_search,
             ytm_library::ytm_delete_upload,
             ytm_library::ytm_playlist_cover,

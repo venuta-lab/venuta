@@ -32,7 +32,7 @@ pub use access::{
 pub use account::{
     AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, Contributor, FollowState,
     Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, MenuPress, Placements, PlaylistEdit,
-    SavedState, TrackVotes, Vote, VoteButton,
+    SavedState, TasteArtist, TrackVotes, Vote, VoteButton,
 };
 pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;

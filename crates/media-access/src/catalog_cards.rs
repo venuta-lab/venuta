@@ -162,7 +162,13 @@ pub(crate) fn collection_of(item: &BrowseItem, kind: &str) -> Option<RemoteColle
         artwork_url: art(item.thumbnail.as_deref()),
         kind: kind.to_owned(),
         play: item.play.as_ref().map(endpoint_of),
+        feedback: feedback_of(&item.menu),
     })
+}
+
+/// A card menu's "tell me less of this" presses, as Venuta's.
+pub(crate) fn feedback_of(m: &RowMenu) -> Vec<MenuFeedback> {
+    menu_of(m).map(|t| t.feedback).unwrap_or_default()
 }
 
 /// One suggestion card as something to play or open; None for kinds Venuta doesn't show.
@@ -192,6 +198,7 @@ pub(crate) fn suggestion_of(item: &BrowseItem) -> Option<RemoteSuggestion> {
                         .rfind(|part| is_year(part))
                         .map(str::to_owned)
                 }),
+                feedback: feedback_of(&item.menu),
                 ..Default::default()
             },
             subtitle,
@@ -825,6 +832,39 @@ mod tests {
         with_menus(&mut tracks, &raw);
         assert_eq!(tracks[0].menu, Some(saved_menu()));
         assert_eq!(tracks[1].menu, None);
+    }
+
+    // A Home album or playlist card brings its Not interested; a card with none brings nothing.
+    #[test]
+    fn album_and_playlist_cards_bring_their_not_interested() {
+        let ni = ytmusic::RowMenu {
+            feedback: vec![ytmusic::MenuFeedback {
+                icon: "NOT_INTERESTED".into(),
+                label: "Not interested".into(),
+                token: "NI".into(),
+            }],
+            ..Default::default()
+        };
+        let want = vec![MenuFeedback {
+            icon: "NOT_INTERESTED".into(),
+            label: "Not interested".into(),
+            token: "NI".into(),
+        }];
+        let mut album = card("album", "MPREb_x", "An album", "Album • Someone • 2024");
+        album.menu = ni.clone();
+        let Some(RemoteSuggestion::Album { album, .. }) = suggestion_of(&album) else {
+            panic!("an album")
+        };
+        assert_eq!(album.feedback, want);
+        let mut list = card("playlist", "VLPLx", "A playlist", "Someone");
+        list.menu = ni;
+        assert_eq!(collection_of(&list, "playlist").unwrap().feedback, want);
+        assert!(
+            collection_of(&card("playlist", "VLPLy", "B", "C"), "playlist")
+                .unwrap()
+                .feedback
+                .is_empty()
+        );
     }
 
     // Past searches come with the suggestions as the completions they are, and on their own

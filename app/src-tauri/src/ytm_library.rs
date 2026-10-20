@@ -8,7 +8,7 @@ use crate::playback::Playback;
 use media_access::{
     AccessError, AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack,
     CancellationToken, FollowState, HistoryDay, LibraryShelf, MenuPress, Placements, PlaylistEdit,
-    RemoteSuggestion, SavedState,
+    RemoteSuggestion, SavedState, TasteArtist,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -185,6 +185,28 @@ pub async fn ytm_menu_press(
     press: MenuPress,
 ) -> Result<(), String> {
     with_account(&pb, move |a, c| a.menu_press(&token, press, c)).await
+}
+
+/// The artists YouTube Music's taste builder offers ("Choose artists you like").
+#[tauri::command]
+pub async fn ytm_taste_profile(pb: State<'_, Playback>) -> Result<Vec<TasteArtist>, String> {
+    with_account(&pb, |a, c| a.taste_profile(c)).await
+}
+
+/// Tell YouTube Music the artists chosen (only on Done): every one shown, and the chosen ones.
+#[tauri::command]
+pub async fn ytm_set_taste_profile(
+    pb: State<'_, Playback>,
+    impressions: Vec<String>,
+    selected: Vec<String>,
+) -> Result<(), String> {
+    if selected.is_empty() {
+        return Err("Choose at least one artist first.".into());
+    }
+    with_account(&pb, move |a, c| {
+        a.set_taste_profile(&impressions, &selected, c)
+    })
+    .await
 }
 
 /// Take one past search out of the account's search history (asked first, in the search box).

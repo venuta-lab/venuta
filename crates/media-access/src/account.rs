@@ -24,6 +24,10 @@ pub enum LibraryShelf {
     Podcasts,
     /// Albums the account uploaded itself.
     UploadAlbums,
+    /// The podcast channels followed.
+    PodcastChannels,
+    /// The artists of the account's uploads, each opening on their uploaded songs.
+    UploadArtists,
 }
 
 /// One song as the account's lists hold it: the song, and where it sits in the list (the handle
@@ -176,6 +180,28 @@ pub enum PlaylistEdit {
         set_video_id: String,
         before: Option<String>,
     },
+    /// A whole playlist (or an album's list) copied in, on YouTube Music's side, in one edit.
+    AddPlaylist {
+        playlist_id: String,
+    },
+    /// New songs go to the top (`on`) or to the end.
+    AddToTop {
+        on: bool,
+    },
+}
+
+/// One artist the taste builder offers ("Choose artists you like"), and the two values its
+/// answer is made of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TasteArtist {
+    pub name: String,
+    pub selection_value: String,
+    pub impression_value: String,
+    #[serde(default)]
+    pub picture: Option<String>,
+    /// Chosen already, when YouTube Music said so.
+    #[serde(default)]
+    pub selected: bool,
 }
 
 /// Where each added song landed: `(videoId, setVideoId)`.
@@ -406,6 +432,30 @@ pub trait AccountAccess: Send + Sync {
         Err(AccessError::new(
             crate::AccessErrorKind::Unsupported,
             "playlist covers",
+        ))
+    }
+
+    /// The artists YouTube Music's taste builder offers.
+    fn taste_profile(&self, cancel: &CancellationToken) -> Result<Vec<TasteArtist>, AccessError> {
+        let _ = cancel;
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "choosing artists",
+        ))
+    }
+
+    /// Tell YouTube Music the artists chosen: every one shown (`impressions`), the chosen ones
+    /// (`selected`), by their [`TasteArtist`] values.
+    fn set_taste_profile(
+        &self,
+        impressions: &[String],
+        selected: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (impressions, selected, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "choosing artists",
         ))
     }
 
