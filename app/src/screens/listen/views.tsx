@@ -19,6 +19,7 @@ import {
   type Library,
 } from './model'
 import { Detail, InBar, Segmented, Switch } from '../../components/ui'
+import { CHIP_FADE, ScrollRow } from '../../components/ScrollRow'
 import { arrange, CARD_WIDTHS, move, readLayout, reorder, saveLayout, toggle as toggleHome, type CardSize, type HomeLayout } from '../../lib/homeLayout'
 import { useShortcuts } from '../../lib/shortcuts'
 import { FamiliarArtists, HomeChips, OnlineShelves, QuickPicks, useOnlineHome, useRecentOnline, useRecentPlays } from './HomeOnline'
@@ -527,11 +528,11 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
     return (
       <div>
         <InBar>
-          <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+          <ScrollRow fade={CHIP_FADE} className="-mx-1 gap-1 px-1">
             {chip('all', 'All', lib.albums.length)}
             {chipMaybe('ytm:albums', 'On YouTube Music', ytmAlbums)}
             {!!ytmUploads && chipMaybe('ytm:upload_albums', 'Your uploads', ytmUploads)}
-          </div>
+          </ScrollRow>
         </InBar>
         {filter === 'ytm:albums' ? (
           <YtmGrid part="albums" label="Your YouTube Music albums" empty="No albums saved on YouTube Music yet. Save one from its page." />
@@ -543,7 +544,7 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
   return (
     <div className="pb-16">
       <InBar>
-        <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+        <ScrollRow fade={CHIP_FADE} className="-mx-1 gap-1 px-1">
           {chip('all', 'All', lib.albums.length)}
           {lib.hiRes.length > 0 && chip(HI_RES, 'Hi-Res', lib.hiRes.length)}
           {lib.categories.map(([c, n]) => chip(c, c, n))}
@@ -552,7 +553,7 @@ export const AlbumsView = memo(function AlbumsView(props: { lib: Library; filter
           {/* Your YouTube Music library, beside your own: online, so not in All. */}
           {signed_in && chipMaybe('ytm:albums', 'On YouTube Music', ytmAlbums)}
           {signed_in && !!ytmUploads && chipMaybe('ytm:upload_albums', 'Your uploads', ytmUploads)}
-        </div>
+        </ScrollRow>
       </InBar>
       {online && (
         <div className="mb-5 flex items-center gap-3 text-[13px] text-ink/60">
@@ -579,11 +580,11 @@ export const SongsView = memo(function SongsView({ tracks }: { tracks: CatalogTr
   )
   const chips = signed_in && (
     <InBar>
-      <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+      <ScrollRow fade={CHIP_FADE} className="-mx-1 gap-1 px-1">
         {chip('all', 'All', tracks.length)}
         {chip('songs', 'On YouTube Music')}
         {chip('upload_songs', 'Your uploads')}
-      </div>
+      </ScrollRow>
     </InBar>
   )
   if (signed_in && view !== 'all')
@@ -617,11 +618,11 @@ export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Art
   )
   const chips = signed_in && (
     <InBar>
-      <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+      <ScrollRow fade={CHIP_FADE} className="-mx-1 gap-1 px-1">
         {chip('all', 'All', artists.length)}
         {chip('artists', 'On YouTube Music', ytmArtists)}
         {chip('subscriptions', 'Following', following)}
-      </div>
+      </ScrollRow>
     </InBar>
   )
   if (signed_in && view !== 'all')

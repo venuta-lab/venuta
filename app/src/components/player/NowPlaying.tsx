@@ -68,7 +68,10 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: ()
   return (
     <div
       ref={box}
-      onWheel={() => (userScrolled.current = Date.now())}
+      // Up and down only: a sideways wheel doesn't move the lyrics, so they keep following.
+      onWheel={(e) => {
+        if (e.deltaY) userScrolled.current = Date.now()
+      }}
       className="no-scrollbar relative h-full overflow-y-auto py-[30vh]"
       style={{ maskImage: 'linear-gradient(transparent, black 18%, black 82%, transparent)' }}
     >

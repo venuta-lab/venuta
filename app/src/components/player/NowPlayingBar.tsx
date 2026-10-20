@@ -346,7 +346,10 @@ function Volume(props: { volume: number }) {
   return (
     <div
       className="group/vol relative flex items-center gap-2"
-      onWheel={(e) => void setVolume(props.volume + (e.deltaY < 0 ? 0.05 : -0.05))}
+      // Up and down only: a sideways wheel (tilt, touchpad) leaves the volume as it is.
+      onWheel={(e) => {
+        if (e.deltaY) void setVolume(props.volume + (e.deltaY < 0 ? 0.05 : -0.05))
+      }}
       title="Volume (Ctrl ↑ / ↓). At 100% nothing changes the sound."
     >
       <button

@@ -4,6 +4,7 @@ import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { IconMore, IconPlay, IconPlaylistAdd } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import { Segmented } from '../../components/ui'
+import { CARD_FADE, ScrollRow } from '../../components/ScrollRow'
 import type { OnlineAlbum, OnlineTrack } from '../../lib/engine'
 import { OFFLINE } from '../../lib/online'
 import { songLength, enqueueItems, playItems, toRemoteItem } from '../../lib/player'
@@ -267,7 +268,7 @@ export function OnlineResults(props: {
             {show.albums && results.albums.length > 0 && (
               <div>
                 <h2 className="mb-3 text-[19px] font-semibold tracking-[-0.02em]">Albums</h2>
-                <div className="no-scrollbar -mx-3 -my-2 flex gap-4 overflow-x-auto px-3 py-2">
+                <ScrollRow arrows={{ top: 56 }} fade={CARD_FADE} className="-mx-3 -my-2 snap-x gap-4 px-3 py-2 [&>*]:snap-start" style={{ scrollPaddingInline: 12 }}>
                   {results.albums.map((a) => (
                     <OnlineAlbumCard
                     key={`${a.provider}:${a.album_id}`}
@@ -278,7 +279,7 @@ export function OnlineResults(props: {
                       onAdd={() => void withAlbum(a, (t) => askAddSongs(songs(t), a.title))}
                     />
                   ))}
-                </div>
+                </ScrollRow>
               </div>
             )}
             {show.artists && results.artists.length > 0 && (

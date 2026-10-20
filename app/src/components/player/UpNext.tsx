@@ -5,6 +5,7 @@ import { DragHandle, MOVE_KEYS } from '../DragHandle'
 import { IconClose, IconMore } from '../Icons'
 import { RemoteArt } from '../RemoteArt'
 import { Chip } from '../ui'
+import { CARD_FADE, CHIP_FADE, ScrollRow } from '../ScrollRow'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
 import { PlayingFrom } from './PlayingFrom'
 import { goToEach, menuFor } from '../../lib/actions'
@@ -75,11 +76,11 @@ export function QueueChips({ className = '' }: { className?: string }) {
   const chips = chipsShown(view)
   if (!chips.length) return null
   return (
-    <div role="group" aria-label="Tune the radio" aria-busy={view?.loading || undefined} className={`no-scrollbar flex gap-1 overflow-x-auto ${className}`}>
+    <ScrollRow role="group" aria-label="Tune the radio" aria-busy={view?.loading || undefined} fade={CHIP_FADE} className={`gap-1 ${className}`}>
       {chips.map((c, i) => (
         <Chip key={`${c.text}:${i}`} on={c.selected} label={c.text} group="queue-chip" onClick={() => !view?.loading && void chooseChip(i)} />
       ))}
-    </div>
+    </ScrollRow>
   )
 }
 
@@ -328,13 +329,13 @@ function RelatedCards({ title, items, label }: { title: string; items: OnlineSug
   return (
     <section aria-label={title}>
       {title && <h3 className={shelfHead}>{title}</h3>}
-      <div className="no-scrollbar flex gap-3 overflow-x-auto px-2 pb-1">
+      <ScrollRow arrows={{ top: Math.round(CARD_W * 0.38), inside: true }} fade={CARD_FADE} className="snap-x gap-3 px-2 pb-1" style={{ scrollPaddingInline: 8 }}>
         {cards.map((c) => (
-          <div key={c.key} className="shrink-0" style={{ width: CARD_W }}>
+          <div key={c.key} className="shrink-0 snap-start" style={{ width: CARD_W }}>
             {c.node}
           </div>
         ))}
-      </div>
+      </ScrollRow>
     </section>
   )
 }
