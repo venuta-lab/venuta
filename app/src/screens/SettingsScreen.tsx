@@ -17,7 +17,7 @@ import {
 } from '../lib/engine'
 import { reducedMotion, resolvedTheme, setPrefs, surfaceShown, themeInfo, usePrefs, type Prefs } from '../lib/prefs'
 import { ACCENTS, accentRoles, colourDistance } from '../lib/themes'
-import { Themes, useRemembered } from '../components/themes/ThemeBrowser'
+import { AppearanceChoice, Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
 import { SpotifyAccount } from '../components/SpotifyAccount'
@@ -348,8 +348,8 @@ function AppIconPicker() {
 }
 
 /**
- * Look and feel: the theme first (in use, recent, and every theme a click away), then the rest
- * as drawers that say what they're set to, so nothing needs opening to know it.
+ * Look and feel: light or dark beside the title, then every theme as a gallery to choose from,
+ * then the rest as drawers that say what they're set to, so nothing needs opening to know it.
  */
 function LookAndFeel() {
   const p = usePrefs()
@@ -366,14 +366,16 @@ function LookAndFeel() {
     p.motion === 'system' ? `Match Windows (${reducedMotion(p) ? 'reduced' : 'full'} now)` : p.motion === 'full' ? 'Full' : 'Reduced'
   return (
     <div>
-      <h2 className="title text-[22px]">Look and feel</h2>
-      <p className="mt-1 text-[13px] text-ink/55">Changes apply as you choose them.</p>
+      <div className="flex min-h-[32px] flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h2 className="title text-[22px]">Look and feel</h2>
+        <AppearanceChoice />
+      </div>
 
       <div className="mt-5">
         <Themes />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-8">
         {info.accent === 'yours' && (
           <Drawer id="colour" title="Colour" summary={<ColourSummary />}>
             <ColourRows />
@@ -458,10 +460,6 @@ function LookAndFeel() {
   )
 }
 
-/**
- * A part of Look and feel as one line saying what it is set to, opened to change it. Whether it
- * was left open is remembered.
- */
 /** The size the window draws at, kept current when Ctrl + or Ctrl - changes it. */
 function useZoom() {
   const [zoom, setZoomShown] = useState(readZoom)
@@ -491,6 +489,10 @@ function InterfaceSize() {
   )
 }
 
+/**
+ * A part of Look and feel as one line saying what it is set to, opened to change it. Whether it
+ * was left open is remembered.
+ */
 function Drawer(props: { id: string; title: string; summary: React.ReactNode; children: React.ReactNode }) {
   const [open, setOpen] = useRemembered(`look-open:${props.id}`, false)
   return (
