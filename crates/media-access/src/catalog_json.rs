@@ -115,13 +115,16 @@ fn first_string<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     found
 }
 
-/// What page a run links to ("MUSIC_PAGE_TYPE_ARTIST"…), and its browse id.
+/// What page a run links to ("MUSIC_PAGE_TYPE_ARTIST"…), and its browse id. A playlist row's
+/// album column can link the album by its id (`MPRE…`) alone, with no page type beside it.
 fn run_link(run: &Value) -> Option<(&str, &str)> {
     let browse = run.pointer("/navigationEndpoint/browseEndpoint")?;
+    let id = browse.get("browseId").and_then(Value::as_str)?;
     let page = browse
         .pointer("/browseEndpointContextSupportedConfigs/browseEndpointContextMusicConfig/pageType")
-        .and_then(Value::as_str)?;
-    Some((page, browse.get("browseId").and_then(Value::as_str)?))
+        .and_then(Value::as_str)
+        .or_else(|| id.starts_with("MPRE").then_some("MUSIC_PAGE_TYPE_ALBUM"))?;
+    Some((page, id))
 }
 
 fn runs_of(text: Option<&Value>) -> Vec<&Value> {
@@ -987,6 +990,47 @@ mod tests {
         assert!(read_playlist_continuation(&next).is_some_and(|t| t != token));
         // The last page has none.
         assert!(read_playlist_continuation(&saved("playlist-last.json")).is_none());
+    }
+
+    // A playlist row's album column links the album by its browse id (`MPREb_…`), with or
+    // without the page type beside it: either way the song keeps its album, so Go to album
+    // works for songs from a YouTube Music playlist.
+    #[test]
+    fn a_playlist_row_keeps_the_album_its_album_column_links() {
+        let tracks = tracks_from_hits(
+            &read_hits(&saved("playlist-album-column.json")),
+            "remote_catalog",
+        );
+        let albums: Vec<_> = tracks
+            .iter()
+            .map(|t| {
+                (
+                    t.track_id.as_str(),
+                    t.album.as_deref(),
+                    t.album_id.as_deref(),
+                    t.duration_ms,
+                )
+            })
+            .collect();
+        assert_eq!(
+            albums,
+            [
+                (
+                    "maandVid001",
+                    Some("Suno"),
+                    Some("MPREb_SANITIZEDSUNO"),
+                    Some(225_000)
+                ),
+                (
+                    "kasoorVid01",
+                    Some("The Way That Lovers Do"),
+                    Some("MPREb_SANITIZEDLOVERS"),
+                    Some(171_000)
+                ),
+            ]
+        );
+        // The album's name is not taken for an artist.
+        assert_eq!(tracks[0].artists, ["Bayaan"]);
     }
 
     #[test]

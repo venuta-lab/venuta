@@ -1,7 +1,7 @@
 // node --test tests/   (Node runs the TypeScript as is)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, saveName } from '../src/lib/upNext.ts'
+import { canPlayNext, chipsShown, learnLength, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, rowLength, saveName } from '../src/lib/upNext.ts'
 import type { RadioView } from '../src/lib/radio.ts'
 
 const view = (more: Partial<RadioView> = {}): RadioView => ({
@@ -61,6 +61,30 @@ test('a row says what it is to a screen reader', () => {
   assert.equal(rowLabel({ title: 'Maand', artists: ['Bayaan'], length: '3:45', where: 'Online', place: 'next' }), 'Maand, Bayaan, 3:45, Online')
   assert.equal(rowLabel({ title: 'Ravi', artists: [], length: '', where: 'Local', place: 'current' }), 'Ravi, Local, playing now')
   assert.equal(rowLabel({ title: 'Bewajah', artists: ['A', 'B'], length: '4:01', where: null, place: 'played' }), 'Bewajah, A, B, 4:01, played')
+})
+
+test('a row’s length: as listed, else as the song said when it opened, else nothing (never a dash)', () => {
+  // Listed with the song (a radio's lengthText, a playlist's column).
+  assert.equal(rowLength(225_000, undefined, 0), '3:45')
+  // Listed without one: the length it had when it was opened, then the player's while it plays.
+  assert.equal(rowLength(0, 241_000, 0), '4:01')
+  assert.equal(rowLength(0, undefined, 199_000), '3:19')
+  // Truly not known: nothing at all.
+  assert.equal(rowLength(0, undefined, 0), '')
+})
+
+test('a song opened says its length for its row from then on', () => {
+  const lengths = new Map<string, number>()
+  learnLength(lengths, 'online:remote_catalog:aaaaaaaaaaa', 225_000)
+  assert.equal(lengths.get('online:remote_catalog:aaaaaaaaaaa'), 225_000)
+  // Nothing known yet, or no song: nothing kept.
+  learnLength(lengths, 'online:remote_catalog:bbbbbbbbbbb', 0)
+  learnLength(lengths, null, 180_000)
+  assert.equal(lengths.size, 1)
+  // Only so many are kept: the oldest go first.
+  for (let i = 0; i < 3000; i++) learnLength(lengths, `k${i}`, 1000)
+  assert.ok(lengths.size <= 2000)
+  assert.equal(lengths.get('k2999'), 1000)
 })
 
 test('saving the queue as a playlist suggests the radio’s name', () => {

@@ -1528,6 +1528,8 @@ export interface YtmIdentity {
   email: string | null
   picture: string | null
   current: boolean
+  /** The sign-in's own channel (not a brand account): used by choosing no identity. */
+  own: boolean
 }
 export const ytmStatus = () => invoke<YtmStatus>('ytm_status')
 export const ytmLibrary = (shelf: YtmShelf) => invoke<OnlineSuggestion[]>('ytm_library', { shelf })

@@ -237,6 +237,9 @@ pub struct AccountIdentityInfo {
     pub picture: Option<String>,
     /// The one in use now.
     pub current: bool,
+    /// The login's own channel (not a brand account): acted as with no identity chosen.
+    #[serde(default)]
+    pub own: bool,
 }
 
 /// Whether the account has an album or a playlist saved, and the id to save it by.

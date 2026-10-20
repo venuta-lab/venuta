@@ -967,6 +967,25 @@ mod tests {
         }
     }
 
+    // Each radio row's length (its panel row's `lengthText`) comes through as the queue row's, so
+    // the queue never has to show a song as of unknown length that YouTube said the length of.
+    #[test]
+    fn a_radio_row_keeps_the_length_youtube_sent() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ytmusic/tests/fixtures/next/radio_first.json");
+        let raw = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let next = ytmusic::models::metadata::parse_next(&raw);
+        let lengths: Vec<Option<u64>> = radio_of(&next, Some("seedVid0001"))
+            .iter()
+            .map(|t| t.duration_ms)
+            .collect();
+        assert_eq!(lengths.len(), 3);
+        assert!(
+            lengths.iter().all(|l| l.is_some_and(|ms| ms > 0)),
+            "{lengths:?}"
+        );
+    }
+
     // The catalog's queue as it sent it: a song coming round again stays, and the seed leading
     // the answer (the song playing) is the only row left out. Later on, the seed is a repeat
     // like any other and stays too.

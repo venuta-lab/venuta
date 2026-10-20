@@ -2151,6 +2151,7 @@ impl crate::account::AccountAccess for YtmBackend {
                 current: using
                     .as_deref()
                     .map_or(a.is_selected, |u| u == a.data_sync_id),
+                own: a.own,
                 id: a.data_sync_id,
                 name: a.name,
                 handle: a.handle,

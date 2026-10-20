@@ -23,12 +23,12 @@ import {
   jumpTo,
   move,
   onlineEntryFrom,
+  openedLength,
   openFrom,
   queueKey,
   readFrom,
   removeAt,
   songItemOf,
-  songLength,
   toRemoteItem,
   toggle,
   usePlayer,
@@ -37,7 +37,7 @@ import {
   type QueueItem,
 } from '../../lib/player'
 import { chooseChip, playWithRadio, relatedPage, startRadio, useRadioSession } from '../../lib/radio'
-import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, saveName, type RelatedPart } from '../../lib/upNext'
+import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, rowLength, saveName, type RelatedPart } from '../../lib/upNext'
 import { openMusicPage } from '../../lib/musicPage'
 import { CardWidth, NavContext, type Nav } from '../../screens/listen/model'
 import { useOnlineCards } from '../../screens/listen/useOnlineCards'
@@ -127,9 +127,9 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
   const online = isOnline(props.item)
   const local = !online ? cover(props.item.dir) : null
   // A song YouTube queued without its length (often the one it opens with): while it plays, the
-  // player knows it.
+  // player knows it, and once it has opened its row keeps it. Not known: nothing, not a dash.
   const playingLength = usePlayerValue((s) => s.duration_ms)
-  const length = props.item.duration_ms || (props.current ? playingLength : 0)
+  const length = rowLength(props.item.duration_ms, openedLength(props.item), props.current ? playingLength : 0)
   return (
     <>
       <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
@@ -146,7 +146,7 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
       {props.badge && <AvailabilityBadge quiet availability={availabilityOf(props.item)} />}
-      <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(length)}</span>
+      <span className="text-[11.5px] tabular-nums text-ink/45">{length}</span>
       {props.onRemove ? (
         <button
           aria-label={`Remove ${props.item.title} from the queue`}
@@ -233,7 +233,7 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
     return (
       <div
         role="listitem"
-        aria-label={rowLabel({ title: r.q.title, artists: r.q.artists, length: r.q.duration_ms > 0 ? songLength(r.q.duration_ms) : '', where, place })}
+        aria-label={rowLabel({ title: r.q.title, artists: r.q.artists, length: rowLength(r.q.duration_ms, openedLength(r.q), isCurrent ? s.duration_ms : 0), where, place })}
         aria-current={isCurrent || undefined}
         aria-keyshortcuts={grab ? `${MOVE_KEYS} Delete Shift+F10` : isCurrent ? 'Shift+F10' : 'Delete Shift+F10'}
         tabIndex={0}

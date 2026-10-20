@@ -317,10 +317,23 @@ pub async fn ytm_upload(pb: State<'_, Playback>, path: String) -> Result<(), Str
 /// The identities the sign-in can act as (itself and its brand accounts).
 #[tauri::command]
 pub async fn ytm_identities(pb: State<'_, Playback>) -> Result<Vec<AccountIdentityInfo>, String> {
-    with_account(&pb, |a, c| a.identities(c)).await
+    let all = with_account(&pb, |a, c| a.identities(c)).await?;
+    let own = all.iter().find(|i| i.own).map(|i| i.id.clone());
+    // Your own channel kept as a choice (by its id, from before): no choice at all, so it is
+    // acted as without `onBehalfOfUser` and uploads are allowed again.
+    if let Some(id) = chosen_identity()
+        && brand_choice(Some(&id), own.as_deref()).is_none()
+    {
+        forget_identity(&pb);
+    }
+    if let Ok(mut o) = OWN_CHANNEL.lock() {
+        *o = own;
+    }
+    Ok(all)
 }
 
-/// Act as this identity from now on (None: the sign-in's own), and remember it.
+/// Act as this identity from now on (None: the sign-in's own), and remember it. Your own
+/// channel, chosen by its id, is no identity: it is acted as by sending none.
 #[tauri::command]
 pub fn ytm_use_identity(
     app: tauri::AppHandle,
@@ -329,9 +342,11 @@ pub fn ytm_use_identity(
 ) -> Result<(), String> {
     use tauri::Emitter;
     let a = account(&pb)?;
-    a.use_identity(id.as_deref());
+    let own = OWN_CHANNEL.lock().ok().and_then(|o| o.clone());
+    let id = brand_choice(id.as_deref(), own.as_deref());
+    a.use_identity(id);
     crate::ytm_links::forget_account_key();
-    remember_identity(id.as_deref())?;
+    remember_identity(id)?;
     // Another channel's library from now on: everything shown for the last one is read again.
     let _ = app.emit("ytm-account-changed", ());
     Ok(())
@@ -366,6 +381,15 @@ pub async fn ytm_join(pb: State<'_, Playback>, link: String) -> Result<String, S
 
 const IDENTITY_KEY: &str = "account:youtube-music:identity";
 
+/// The sign-in's own channel's id, as the channel list last said it (None until it is read).
+static OWN_CHANNEL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The brand identity a choice is: none for your own channel (`own`), which YouTube acts as
+/// when no identity is sent. Only a brand channel is kept as a choice.
+fn brand_choice<'a>(id: Option<&'a str>, own: Option<&str>) -> Option<&'a str> {
+    id.filter(|id| Some(*id) != own)
+}
+
 fn remember_identity(id: Option<&str>) -> Result<(), String> {
     use engine::accounts::{SystemVault, Vault};
     match id {
@@ -397,6 +421,10 @@ pub fn forget_identity(pb: &Playback) {
     }
     crate::ytm_links::forget_account_key();
     let _ = remember_identity(None);
+    // Another sign-in has another own channel: read again with its channel list.
+    if let Ok(mut o) = OWN_CHANNEL.lock() {
+        *o = None;
+    }
 }
 
 /// The identity chosen (None: the sign-in's own).
@@ -407,7 +435,25 @@ pub fn chosen_identity() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::cover_file_ok;
+    use super::{brand_choice, cover_file_ok};
+
+    // Your own channel is acted as by sending no identity: choosing it (by its id, as the list
+    // gives it) keeps no choice, so uploads stay allowed and no `onBehalfOfUser` goes out.
+    #[test]
+    fn choosing_your_own_channel_keeps_no_brand_identity() {
+        assert_eq!(brand_choice(Some("own-sync"), Some("own-sync")), None);
+        assert_eq!(brand_choice(None, Some("own-sync")), None);
+        assert_eq!(
+            brand_choice(Some("brand-page"), Some("own-sync")),
+            Some("brand-page")
+        );
+        // Not knowing which is your own (the list not read yet), a choice is kept as it came.
+        assert_eq!(brand_choice(Some("brand-page"), None), Some("brand-page"));
+        assert!(
+            crate::ytm_links::uploads_allowed(brand_choice(Some("own-sync"), Some("own-sync")))
+                .is_ok()
+        );
+    }
 
     // A cover is a picture YouTube Music takes: a JPEG or a PNG, with something in it, and not a
     // whole camera roll's worth of bytes. Said in words, before anything is sent.

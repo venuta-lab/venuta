@@ -494,6 +494,9 @@ pub struct AccountIdentity {
     pub data_sync_id: String,
     /// YouTube's current/default marker. The app's persisted choice may deliberately differ.
     pub is_selected: bool,
+    /// The sign-in's own channel, not a brand account: a row with no `pageIdToken`, which only
+    /// brand accounts carry. It is acted as by sending no `onBehalfOfUser` at all.
+    pub own: bool,
 }
 
 /// Parse a `search` response into song items. context/08.
@@ -806,6 +809,7 @@ fn parse_account_identity(
         .then_some(response_id)
         .flatten()
         .map(str::to_owned);
+    let own = page_id.is_none();
     let data_sync_id = token_data_sync_id.or(page_id).or(selected_response_id)?;
 
     Some(AccountIdentity {
@@ -816,6 +820,7 @@ fn parse_account_identity(
         channel_id: channel_browse_id(item),
         data_sync_id,
         is_selected,
+        own,
     })
 }
 
@@ -2908,6 +2913,7 @@ mod tests {
         assert_eq!(identity.channel_id.as_deref(), Some("UCSANITIZEDPERSONAL"));
         assert_eq!(identity.data_sync_id, "personal-sync");
         assert!(identity.is_selected);
+        assert!(identity.own, "the sign-in's own channel");
     }
 
     #[test]
@@ -2928,6 +2934,11 @@ mod tests {
         assert_eq!(persisted.name, "Brand channel");
         assert_eq!(persisted.channel_id.as_deref(), Some("UCSANITIZEDBRAND"));
         assert!(!persisted.is_selected);
+
+        // Only a brand account carries a page id: the row without one is the sign-in's own
+        // channel, which is acted as by sending no identity at all.
+        assert!(identities[0].own);
+        assert!(!persisted.own);
     }
 
     #[test]
