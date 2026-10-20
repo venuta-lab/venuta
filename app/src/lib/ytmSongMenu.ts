@@ -22,6 +22,8 @@ export interface TrackMenu {
   library?: MenuToggle | null
   pin?: MenuToggle | null
   feedback?: MenuFeedback[]
+  /** When it was listed (ms since 1970, the app's own clock). */
+  listed_at?: number
 }
 
 export type Press = 'library' | 'pin' | 'feedback'
@@ -62,14 +64,14 @@ const same = (a: TrackMenu, b: TrackMenu) => JSON.stringify(a) === JSON.stringif
 
 /**
  * The menus of the songs listed this session, by song key, with the presses made on them. The
- * latest listing's tokens are kept (YouTube Music mints new ones with every listing, and either
- * does the same); a press made here holds over every listing of the song for the session, since
- * a listing can't say whether it came before the press or after. The oldest are let go past
- * `limit`.
+ * newest listing is kept (an older page shown again never takes its place; YouTube Music mints
+ * new tokens with every listing, and either does the same). A press stands over a listing made
+ * before it; a listing made after a press is the truth, so a change on the phone shows here once
+ * the song is listed again. The oldest are let go past `limit`.
  */
 export class SongMenus {
   private menus = new Map<string, TrackMenu>()
-  private presses = new Map<string, { library?: boolean; pin?: boolean; sent?: Set<string> }>()
+  private presses = new Map<string, { library?: { on: boolean; at: number }; pin?: { on: boolean; at: number }; sent?: Set<string> }>()
   private readonly limit: number
 
   constructor(limit = 3000) {
@@ -80,7 +82,7 @@ export class SongMenus {
   remember(key: string, menu: TrackMenu | null | undefined) {
     if (!menu) return
     const kept = this.menus.get(key)
-    if (kept && same(kept, menu)) return
+    if (kept && (same(kept, menu) || (kept.listed_at ?? 0) > (menu.listed_at ?? 0))) return
     this.menus.delete(key)
     this.menus.set(key, menu)
     while (this.menus.size > this.limit) {
@@ -98,16 +100,20 @@ export class SongMenus {
     if (!menu) return null
     const p = this.presses.get(key)
     if (!p) return menu
+    const listed = menu.listed_at ?? 0
+    const stands = <T extends MenuToggle>(t: T | null | undefined, press?: { on: boolean; at: number }) =>
+      t && press && press.at > listed ? { ...t, on: press.on } : t
     return {
-      library: menu.library && p.library !== undefined ? { ...menu.library, on: p.library } : menu.library,
-      pin: menu.pin && p.pin !== undefined ? { ...menu.pin, on: p.pin } : menu.pin,
+      ...menu,
+      library: stands(menu.library, p.library),
+      pin: stands(menu.pin, p.pin),
       feedback: (menu.feedback ?? []).filter((f) => !p.sent?.has(f.token)),
     }
   }
 
-  /** A toggle was pressed and YouTube Music took it: the song stands `on` now. */
-  pressed(key: string, which: 'library' | 'pin', on: boolean) {
-    this.presses.set(key, { ...this.presses.get(key), [which]: on })
+  /** A toggle was pressed and YouTube Music took it (`at`): the song stands `on` now. */
+  pressed(key: string, which: 'library' | 'pin', on: boolean, at = Date.now()) {
+    this.presses.set(key, { ...this.presses.get(key), [which]: { on, at } })
   }
 
   /** A one-way press was sent: it isn't offered again for this listing. */

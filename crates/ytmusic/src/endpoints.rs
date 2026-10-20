@@ -1862,6 +1862,130 @@ impl InnerTube {
         .await
     }
 
+    /// One song's own menu as the account sees it, for a song listed without one (a search sent
+    /// signed out): the signed-in `next` for that one video id, whose first row is the song with
+    /// its menu (Save to library, Pin to Listen again…). Only the song's id goes; nothing it was
+    /// found by. None when YouTube gave no menu for it.
+    pub async fn song_menu(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+    ) -> Result<Option<metadata::RowMenu>, Error> {
+        let endpoint = WatchEndpoint {
+            video_id: Some(video_id.to_owned()),
+            ..Default::default()
+        };
+        let mut body = watch_body(&endpoint, None);
+        body.insert(
+            "context".into(),
+            serde_json::to_value(self.context_for(client))?,
+        );
+        let value = self.post("next", client, &body, true).await?;
+        let next = metadata::parse_next(&value);
+        Ok(next
+            .items
+            .iter()
+            .find(|s| s.video_id == video_id || s.counterpart.as_deref() == Some(video_id))
+            .map(SongItem::menu)
+            .filter(|m| !m.is_empty()))
+    }
+
+    /// The podcast channels the account follows (`FEmusic_library_non_music_audio_channels_list`,
+    /// ytmusicapi `get_library_channels`): list rows, one per channel. Needs login.
+    pub async fn library_channels(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
+        self.library_grid(client, "FEmusic_library_non_music_audio_channels_list")
+            .await
+    }
+
+    /// The artists of the account's uploads (`FEmusic_library_privately_owned_artists`, ytmusicapi
+    /// `get_library_upload_artists`). Each opens on its own uploads page, a list of its songs read
+    /// like the library's (`library_songs` with the artist's browse id). Needs login.
+    pub async fn upload_artists(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
+        self.library_grid(client, "FEmusic_library_privately_owned_artists")
+            .await
+    }
+
+    /// The artists YouTube Music's taste builder offers ("Tell us which artists you like",
+    /// `FEmusic_tastebuilder`, ytmusicapi `get_tasteprofile`). Needs login.
+    pub async fn taste_profile(
+        &self,
+        client: &YouTubeClient,
+    ) -> Result<Vec<crate::TasteArtist>, Error> {
+        let value = self
+            .browse(client, Some("FEmusic_tastebuilder"), None)
+            .await?;
+        Ok(crate::models::taste::parse_taste_profile(&value))
+    }
+
+    /// Tell YouTube Music the artists chosen in its taste builder: every artist shown goes as an
+    /// impression, the chosen ones as selections, in one `browse` of `FEmusic_home` with that
+    /// form (ytmusicapi `set_tasteprofile`). Choosing the same again leaves it as it was.
+    pub async fn set_taste_profile(
+        &self,
+        client: &YouTubeClient,
+        impressions: &[String],
+        selected: &[String],
+    ) -> Result<(), Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form {
+            impression_values: Vec<String>,
+            selected_values: Vec<String>,
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TasteBody {
+            context: Context,
+            browse_id: String,
+            form_data: Form,
+        }
+        let body = TasteBody {
+            context: self.context_for(client),
+            browse_id: "FEmusic_home".to_owned(),
+            form_data: Form {
+                impression_values: impressions.to_vec(),
+                selected_values: selected.to_vec(),
+            },
+        };
+        self.post_account("browse", client, &body, true).await?;
+        Ok(())
+    }
+
+    /// Copy a whole playlist (or an album's `OLAK5uy_…` list) into one the account can change,
+    /// on YouTube's side, in one edit (ytmusicapi `add_playlist_items` with `source_playlist`:
+    /// `ACTION_ADD_PLAYLIST`, then the empty add it notes keeps the edit's answer whole). Never
+    /// sent twice: a lost answer may have added them all.
+    pub async fn playlist_add_playlist(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        source_id: &str,
+    ) -> Result<(), Error> {
+        let actions = vec![
+            serde_json::json!({ "action": "ACTION_ADD_PLAYLIST", "addedFullListId": strip_vl(source_id) }),
+            serde_json::json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": null, "dedupeOption": "DEDUPE_OPTION_SKIP" }),
+        ];
+        self.edit_playlist_send(client, playlist_id, actions, true)
+            .await
+            .map(|_| ())
+    }
+
+    /// The playlist's "new songs go to the top" setting (ytmusicapi `edit_playlist` `addToTop`:
+    /// `ACTION_SET_ADD_TO_TOP`). Off, the default for a new playlist, they go to the end.
+    pub async fn playlist_set_add_to_top(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        on: bool,
+    ) -> Result<(), Error> {
+        self.edit_playlist(
+            client,
+            playlist_id,
+            serde_json::json!({ "action": "ACTION_SET_ADD_TO_TOP", "addToTop": if on { "true" } else { "false" } }),
+        )
+        .await
+    }
+
     /// Delete one of the account's uploads (a song or an album) by its entity id: a song's from its
     /// row's Delete item, an album's its browse id less the privately-owned prefix, as ytmusicapi
     /// `delete_upload_entity` sends it. Paced like the other account writes; going again is harmless.
@@ -3897,6 +4021,172 @@ mod choices {
 }
 
 /// Playlist writes: sent once, and paced.
+#[cfg(test)]
+mod account_more {
+    use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
+    use crate::test_server::MockServer;
+    use crate::transport::{InnerTube, Session};
+
+    fn it_against(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture-sapisid; PREF=x".to_owned()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn web() -> YouTubeClient {
+        Clients::bundled().get(METADATA_CLIENT).unwrap().clone()
+    }
+
+    fn body(req: &crate::test_server::Seen) -> serde_json::Value {
+        serde_json::from_str(&req.body).unwrap()
+    }
+
+    const TASTE: &str = include_str!("../tests/fixtures/tastebuilder.json");
+
+    // The taste builder is read as the account, and an answer sends every artist shown as seen
+    // and the chosen ones as chosen, to Home, as YouTube Music's own does.
+    #[tokio::test]
+    async fn the_taste_builder_is_read_and_answered_as_the_account() {
+        let server = MockServer::start(|_| (200, TASTE.to_owned()));
+        let it = it_against(&server);
+        let artists = it.taste_profile(&web()).await.unwrap();
+        assert_eq!(artists.len(), 3);
+        let seen: Vec<String> = artists.iter().map(|a| a.impression_value.clone()).collect();
+        it.set_taste_profile(&web(), &seen, &[artists[0].selection_value.clone()])
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(body(&sent[0])["browseId"], "FEmusic_tastebuilder");
+        assert!(sent[0].header("cookie").is_some(), "read as the account");
+        let answer = body(&sent[1]);
+        assert!(sent[1].path.contains("/browse?"), "{}", sent[1].path);
+        assert_eq!(answer["browseId"], "FEmusic_home");
+        assert_eq!(
+            answer["formData"]["impressionValues"],
+            serde_json::json!([
+                "FIXTURE-SEEN-ARIJIT",
+                "FIXTURE-SEEN-SHREYA",
+                "FIXTURE-SEEN-RAHMAN"
+            ])
+        );
+        assert_eq!(
+            answer["formData"]["selectedValues"],
+            serde_json::json!(["FIXTURE-SELECT-ARIJIT"])
+        );
+        assert!(sent[1].header("cookie").is_some(), "told as the account");
+    }
+
+    // A song listed with no menu has it read on its own: the signed-in next for that one id,
+    // and the menu of the row that is that song.
+    #[tokio::test]
+    async fn one_songs_menu_is_read_signed_in_by_its_id_alone() {
+        let answer = serde_json::json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": { "watchNextTabbedResultsRenderer": { "tabs": [ { "tabRenderer": { "content": { "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+            { "playlistPanelVideoRenderer": {
+                "videoId": "BddP6PYo2gs",
+                "title": { "runs": [ { "text": "Kesariya" } ] },
+                "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": {
+                    "defaultText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+                    "defaultIcon": { "iconType": "KEEP_OFF" },
+                    "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "UNPIN" } },
+                    "toggledText": { "runs": [ { "text": "Pin to Listen again" } ] },
+                    "toggledIcon": { "iconType": "KEEP" },
+                    "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "PIN" } }
+                } } ] } }
+            } },
+            { "playlistPanelVideoRenderer": { "videoId": "other", "title": { "runs": [ { "text": "Next up" } ] } } }
+        ] } } } } } } ] } } } } });
+        let reply = answer.to_string();
+        let server = MockServer::start(move |_| (200, reply.clone()));
+        let it = it_against(&server);
+        let menu = it.song_menu(&web(), "BddP6PYo2gs").await.unwrap().unwrap();
+        let pin = menu.pin.unwrap();
+        assert!(pin.pinned);
+        assert_eq!(pin.unpin_token.as_deref(), Some("UNPIN"));
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/next?"), "{}", sent[0].path);
+        let b = body(&sent[0]);
+        assert_eq!(b["videoId"], "BddP6PYo2gs");
+        assert!(b.get("query").is_none(), "no search words go with it");
+        assert!(sent[0].header("cookie").is_some(), "as the account");
+        // A song with no menu in the answer has none.
+        assert!(it.song_menu(&web(), "nothing").await.unwrap().is_none());
+    }
+
+    // Podcast channels and upload artists are their own library lists.
+    #[tokio::test]
+    async fn podcast_channels_and_upload_artists_are_read_from_their_own_lists() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = it_against(&server);
+        it.library_channels(&web()).await.unwrap();
+        it.upload_artists(&web()).await.unwrap();
+        let sent = server.requests();
+        assert_eq!(
+            body(&sent[0])["browseId"],
+            "FEmusic_library_non_music_audio_channels_list"
+        );
+        assert_eq!(
+            body(&sent[1])["browseId"],
+            "FEmusic_library_privately_owned_artists"
+        );
+    }
+
+    // A whole playlist goes in one edit by its list id, sent once; the empty add follows it.
+    #[tokio::test]
+    async fn a_whole_playlist_is_copied_in_one_edit() {
+        let server = MockServer::start(|_| (200, r#"{"status":"STATUS_SUCCEEDED"}"#.to_owned()));
+        let it = it_against(&server);
+        it.playlist_add_playlist(&web(), "VLPLMINE", "VLOLAK5uy_album")
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(
+            sent[0].path.contains("browse/edit_playlist"),
+            "{}",
+            sent[0].path
+        );
+        let b = body(&sent[0]);
+        assert_eq!(b["playlistId"], "PLMINE");
+        assert_eq!(b["actions"][0]["action"], "ACTION_ADD_PLAYLIST");
+        assert_eq!(b["actions"][0]["addedFullListId"], "OLAK5uy_album");
+        assert_eq!(b["actions"][1]["action"], "ACTION_ADD_VIDEO");
+        assert!(b["actions"][1]["addedVideoId"].is_null());
+
+        let hang = MockServer::start(|_| (0, String::new()));
+        let it = it_against(&hang);
+        let lost = it.playlist_add_playlist(&web(), "PLMINE", "PLOTHER").await;
+        assert!(
+            matches!(lost, Err(crate::Error::WriteUncertain)),
+            "{lost:?}"
+        );
+        assert_eq!(hang.requests().len(), 1, "never sent twice");
+    }
+
+    // New songs to the top, or to the end again: the setting as its own edit.
+    #[tokio::test]
+    async fn new_songs_go_to_the_top_or_the_end() {
+        let server = MockServer::start(|_| (200, r#"{"status":"STATUS_SUCCEEDED"}"#.to_owned()));
+        let it = it_against(&server);
+        it.playlist_set_add_to_top(&web(), "PLMINE", true)
+            .await
+            .unwrap();
+        it.playlist_set_add_to_top(&web(), "PLMINE", false)
+            .await
+            .unwrap();
+        let sent = server.requests();
+        let a = body(&sent[0]);
+        assert_eq!(a["actions"][0]["action"], "ACTION_SET_ADD_TO_TOP");
+        assert_eq!(a["actions"][0]["addToTop"], "true");
+        assert_eq!(body(&sent[1])["actions"][0]["addToTop"], "false");
+    }
+}
+
 #[cfg(test)]
 mod playlist_writes {
     use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};

@@ -43,6 +43,7 @@ pub use models::player::{
     find_format, find_video_format, AudioQuality, Format, PlaybackTracking, PlayerResponse,
     StreamingData,
 };
+pub use models::taste::TasteArtist;
 pub use transport::{
     cookie_sapisid, generate_cpn, without_healing, Error, Healing, InnerTube, Session, Watched,
 };

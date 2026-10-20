@@ -63,16 +63,33 @@ test('after a press, the song stands the new way wherever it shows', () => {
   )
 })
 
-test('a press holds over the same song listed elsewhere, with that listing’s tokens', () => {
+test('a press holds over a listing from before it, with the newest listing’s tokens', () => {
   const m = new SongMenus()
-  m.remember('k', saved())
-  m.pressed('k', 'library', false)
-  // The same song on another shelf, listed before the press with tokens of its own. Either
+  m.remember('k', { ...saved(), listed_at: 100 })
+  m.pressed('k', 'library', false, 200)
+  // The same song on another shelf, listed before the press with tokens of its own: either
   // listing's tokens do the same, and sending one twice leaves things as once did.
-  const elsewhere = { ...saved(), library: { on: true, on_token: 'ADD-2', off_token: 'REMOVE-2' } }
+  const elsewhere = { ...saved(), library: { on: true, on_token: 'ADD-2', off_token: 'REMOVE-2' }, listed_at: 150 }
   assert.equal(m.menuOf('k', elsewhere)?.library?.on, false)
   assert.equal(m.menuOf('k')?.library?.on_token, 'ADD-2')
-  assert.equal(m.menuOf('k', saved())?.library?.on, false)
+})
+
+test('a song listed after a press is told as that listing says', () => {
+  const m = new SongMenus()
+  m.remember('k', { ...saved(), listed_at: 100 })
+  m.pressed('k', 'pin', true, 200)
+  assert.equal(m.menuOf('k')?.pin?.on, true)
+  // Unpinned on the phone since, and listed again here after the press: the listing wins.
+  const later = { ...saved(), pin: { on: false, on_token: 'PIN-3', off_token: 'UNPIN-3' }, listed_at: 300 }
+  assert.equal(m.menuOf('k', later)?.pin?.on, false)
+  assert.equal(m.menuOf('k')?.pin?.on_token, 'PIN-3')
+})
+
+test('an older listing shown again never takes the place of a newer one', () => {
+  const m = new SongMenus()
+  m.remember('k', { ...saved(), pin: { on: true, on_token: 'PIN', off_token: 'UNPIN' }, listed_at: 500 })
+  m.remember('k', { ...saved(), listed_at: 100 })
+  assert.equal(m.menuOf('k')?.pin?.on, true)
 })
 
 test('not interested, once sent, is not offered again for that song', () => {

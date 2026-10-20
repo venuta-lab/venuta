@@ -7,6 +7,7 @@ import { ThemeFx } from './components/ThemeFx'
 import { Rail, type Section } from './components/Rail'
 import { TitleBar } from './components/TitleBar'
 import { YtmWelcome } from './components/YtmWelcome'
+import { YtmTaste } from './components/YtmTaste'
 import { scheduleLinks } from './lib/ytmLinks'
 import { CommandPalette, ShortcutSheet, type Command } from './components/CommandPalette'
 import { Toast } from './components/Toast'
@@ -1257,6 +1258,7 @@ export default function App() {
         <ConfirmHost />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />
         <YtmWelcome />
+        <YtmTaste />
       </div>
     </MotionConfig>
   )

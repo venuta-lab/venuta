@@ -104,7 +104,8 @@ export function OnlineAlbumPage({ album: a, lib, onBack }: { album: OnlineAlbum;
   const length = page?.length?.replaceAll(' • ', ' · ')
   const about = page?.description?.trim()
   const artists = page?.artists.length ? page.artists : a.artists.map((name) => ({ name, artist_id: null }))
-  const addAll = () => songs.length && askAddSongs(songs.map((s) => (s.where === 'library' ? { path: s.track.path } : { online: onlineEntryFrom(s.track) })), title)
+  // The album's own list goes in one copy on YouTube Music when every song of it is online.
+  const addAll = () => songs.length && askAddSongs(songs.map((s) => (s.where === 'library' ? { path: s.track.path } : { online: onlineEntryFrom(s.track) })), title, undefined, list ?? undefined)
 
   const playButton = (size: 'sm' | 'lg') => (
     <button

@@ -30,3 +30,12 @@ export function addPlan(videoIds: string[], there: ThereLike, label?: string): {
   const was = already ? ` ${already} ${already === 1 ? 'was' : 'were'} there already.` : ''
   return { send, words: `Added ${what} to ${where}.${was}` }
 }
+
+/** Whether a whole list (`source`: the playlist's or the album's own list) can go in as one copy
+ *  on YouTube Music's side, rather than song by song: only when every song of it is an online one,
+ *  each once, and none is in `there` already (a copy can't leave any out). */
+export function copyWhole(source: string | null | undefined, videoIds: string[], plan: { send: string[] }, filesOfYours: number): boolean {
+  if (!source?.trim() || filesOfYours > 0 || !videoIds.length) return false
+  const once = new Set(videoIds)
+  return once.size === videoIds.length && plan.send.length === videoIds.length
+}

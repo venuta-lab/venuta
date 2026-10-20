@@ -14,6 +14,7 @@ import { keyFor, matcher } from '../../lib/textsearch'
 import type { OnlineCollection, OnlineSuggestion } from '../../lib/engine'
 import { useYtmAccount } from '../../lib/ytmAccount'
 import { CollectionCard } from '../listen/OnlineCards'
+import { useOnlineCards } from '../listen/useOnlineCards'
 import { useYtmLibraryShown } from '../../lib/ytmChoices'
 import { useYtmPart } from '../../lib/ytmLibrary'
 import { YtmSignInAgain } from '../listen/YtmLibrary'
@@ -157,6 +158,11 @@ export function PlaylistsHome(props: {
   const podcasts = collections(useYtmPart<OnlineSuggestion[]>('podcasts', shownHere).value)
   const ytmShown = ytm.filter((c) => match({ name: c.title } as PlaylistSummary))
   const podcastsShown = podcasts.filter((c) => match({ name: c.title } as PlaylistSummary))
+  // The podcast channels you follow, beside the podcasts (YouTube Music's Library, Podcasts).
+  const channels = (useYtmPart<OnlineSuggestion[]>('podcast_channels', shownHere).value ?? []).filter(
+    (c) => c.kind === 'artist' && match({ name: c.artist.name } as PlaylistSummary),
+  )
+  const channelCards = useOnlineCards(channels, 'Podcast channels you follow')
   // Liked songs leads what you made.
   const yours = all
     .filter((p) => !p.smart && !smartNames.has(p.name) && !p.source && p.tracks > 0 && match(p))
@@ -290,6 +296,15 @@ export function PlaylistsHome(props: {
               <div className="flex flex-wrap gap-x-5 gap-y-7">
                 {podcastsShown.map((c) => (
                   <CollectionCard key={c.collection_id} collection={c} />
+                ))}
+              </div>,
+            )}
+          {channelCards.length > 0 &&
+            section(
+              'Podcast channels you follow',
+              <div className="grid grid-cols-[repeat(auto-fill,168px)] gap-x-5 gap-y-7">
+                {channelCards.map((c) => (
+                  <div key={c.key}>{c.node}</div>
                 ))}
               </div>,
             )}

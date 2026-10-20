@@ -90,6 +90,9 @@ pub struct RemoteTrack {
     /// the account carry it; each press sends one of its tokens and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu: Option<TrackMenu>,
+    /// The lead artist's channel (`UC…`), when the row links one: what Follow in its menu follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_id: Option<String>,
 }
 
 /// A song's own account menu, as the catalog listed it with the song ([`RemoteTrack::menu`]).
@@ -104,6 +107,10 @@ pub struct TrackMenu {
     /// "Tell me less of this" presses ("Not interested"), in the catalog's own words.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feedback: Vec<MenuFeedback>,
+    /// When it was listed (milliseconds since 1970): a press made later stands over it, and a
+    /// listing made later than a press stands over the press.
+    #[serde(default)]
+    pub listed_at: u64,
 }
 
 impl TrackMenu {
@@ -170,6 +177,9 @@ pub struct RemoteAlbum {
     /// "Album", "Single", "EP"… as the catalog labels it (a ranking hint).
     #[serde(default)]
     pub kind: Option<String>,
+    /// Its card's "tell me less of this" presses (Home's "Not interested"), signed in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
 }
 
 /// A whole playlist from the online catalog: its name and every song, in order (ids and what to
@@ -451,6 +461,9 @@ pub struct RemoteCollection {
     /// as it came, rather than a radio rebuilt from the id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub play: Option<RadioEndpoint>,
+    /// Its card's "tell me less of this" presses (Home's "Not interested"), signed in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
 }
 
 /// One thing the catalog suggests while words are typed: a song to play, or an album, artist

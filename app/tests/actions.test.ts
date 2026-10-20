@@ -169,3 +169,24 @@ test('a podcast episode can be saved for later, beside Add to playlist', () => {
   assert.ok(!ids(actionsFor('song', { online: true })).includes('saveEpisode'))
   assert.ok(ids(actionsFor('queued', { online: true, episode: true })).includes('saveEpisode'))
 })
+
+test('an online album or playlist card starts its radio, shares its link and can be not interested in', () => {
+  const a = actionsFor('album', { online: true })
+  assert.deepEqual(a[0], PLAY)
+  assert.deepEqual(a[1], ['radio'])
+  for (const id of ['share', 'notInterested'] as const) assert.ok(ids(a).includes(id), id)
+  for (const id of ['radio', 'share', 'notInterested'] as const) assert.ok(!ids(actionsFor('album', {})).includes(id), `your own album: ${id}`)
+})
+
+test('an online artist card plays every way, starts their radio and shares their link', () => {
+  const ar = ids(actionsFor('artist', { online: true }))
+  for (const id of [...PLAY, 'radio', 'share'] as const) assert.ok(ar.includes(id), id)
+  assert.ok(!ids(actionsFor('artist', {})).includes('share'))
+})
+
+test('an online song can follow its artist on YouTube Music, beside Go to artist', () => {
+  const o = actionsFor('song', { online: true })
+  assert.ok(o[3].includes('follow'))
+  assert.ok(!ids(actionsFor('song', { online: true, noArtist: true })).includes('follow'))
+  assert.ok(!ids(actionsFor('song', {})).includes('follow'))
+})

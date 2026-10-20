@@ -349,7 +349,7 @@ export function OnlineTrackRow(props: {
     <div
       role="button"
       tabIndex={0}
-      onContextMenu={(e) => menuFromEvent(e, menu())}
+      onContextMenu={(e) => menuFromEvent(e, menu)}
       {...dragSource(() => ({ label: t.title, count: 1, cover: t.artwork_url ?? undefined, songs: async () => [toRemoteItem(t)] }))}
       onClick={(e) => !(e.target as HTMLElement).closest('button') && props.onPlay()}
       onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && props.onPlay()}
@@ -383,7 +383,7 @@ export function OnlineTrackRow(props: {
         >
           <IconPlaylistAdd width={17} height={17} />
         </button>
-        <button onClick={(e) => menuFromEvent(e, menu())} aria-label={`More for ${t.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/10 hover:text-ink">
+        <button onClick={(e) => menuFromEvent(e, menu)} aria-label={`More for ${t.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/60 hover:bg-ink/10 hover:text-ink">
           <IconMore />
         </button>
       </span>
@@ -402,7 +402,7 @@ export function OnlineAlbumCard(props: { album: OnlineAlbum; onOpen: () => void;
     )
   return (
     <div className="group relative w-[148px] shrink-0">
-      <button onClick={props.onOpen} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${a.title}”`} className="block w-full text-left">
+      <button onClick={props.onOpen} onContextMenu={(e) => menuFromEvent(e, menu)} title={`Open “${a.title}”`} className="block w-full text-left">
         <span className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-ink/[0.06] text-[28px] text-ink/25">
           <RemoteArt url={a.artwork_url} seed={a.title} size={148} imgClassName="h-full w-full object-cover" />
         </span>

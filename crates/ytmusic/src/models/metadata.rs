@@ -1320,35 +1320,55 @@ fn feedback_token(endpoint: Option<&Value>) -> Option<String> {
     find_first_str(endpoint?.get("feedbackEndpoint")?, "feedbackToken")
 }
 
-/// The `toggleMenuServiceItemRenderer` whose two icons are one of `turns_on` and one of
-/// `turns_off`, each way sending a `feedbackEndpoint` token. Which way it stands is the side the
-/// menu shows now: its toggled side when `isToggled` is true (a Library ▸ Songs row: "Remove from
-/// library" over a "Save to library" default), else its default side. With no flag at all the
-/// default side is the one on offer, which is how search rows send it (the icons swapped instead).
+/// The `toggleMenuServiceItemRenderer` wearing one of `turns_on` / `turns_off` as an icon, each
+/// way sending a `feedbackEndpoint` token. Which way each side goes is its own words where they
+/// say it plainly ("Unpin from Listen again" unpins), else its icon (KEEP pins, KEEP_OFF unpins;
+/// BOOKMARK_BORDER saves, BOOKMARK removes), so a token is never sent the wrong way round. Which
+/// way it stands is the side the menu shows now: its toggled side when `isToggled` is true (a
+/// Library ▸ Songs row: "Remove from library" over a "Save to library" default), else its default
+/// side (a pinned song swaps the item round instead, with no flag: live-checked 2026-10-19).
 /// Signed out, a side asks you to sign in (`modalEndpoint`) and there is nothing to send: none.
 fn feedback_toggle(node: &Value, turns_on: &[&str], turns_off: &[&str]) -> Option<FeedbackToggle> {
     find_all(row_menu_node(node), "toggleMenuServiceItemRenderer")
         .into_iter()
         .find_map(|toggle| {
             let icon = |key: &str| find_first_str(toggle.get(key)?, "iconType");
+            let (default_icon, toggled_icon) = (icon("defaultIcon")?, icon("toggledIcon")?);
+            let ours = |i: &str| turns_on.contains(&i) || turns_off.contains(&i);
+            // This toggle, not its neighbour (a like, the other feedback toggle): told by icons.
+            if !ours(&default_icon) && !ours(&toggled_icon) {
+                return None;
+            }
             let default = feedback_token(toggle.get("defaultServiceEndpoint"))?;
             let toggled = feedback_token(toggle.get("toggledServiceEndpoint"))?;
-            let (default_icon, toggled_icon) = (icon("defaultIcon")?, icon("toggledIcon")?);
-            let (default_icon, toggled_icon) = (default_icon.as_str(), toggled_icon.as_str());
-            let default_turns_on =
-                if turns_on.contains(&default_icon) && turns_off.contains(&toggled_icon) {
-                    true
-                } else if turns_off.contains(&default_icon) && turns_on.contains(&toggled_icon) {
-                    false
-                } else {
-                    return None;
-                };
+            // Which way each side goes: its words where they say it plainly, else its icon.
+            let goes_on = |text_key: &str, icon: &str| {
+                side_words_turn_on(toggle.get(text_key)).or_else(|| {
+                    if turns_on.contains(&icon) {
+                        Some(true)
+                    } else if turns_off.contains(&icon) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+            };
+            let default_turns_on = goes_on("defaultText", &default_icon)?;
+            let toggled_turns_on = goes_on("toggledText", &toggled_icon)?;
+            // Both sides the same way: nothing here can be trusted to send the right one.
+            if default_turns_on == toggled_turns_on {
+                return None;
+            }
             let shows_toggled = toggle
                 .get("isToggled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             // The side on offer turns it on: then it is off now.
-            let offered_turns_on = default_turns_on != shows_toggled;
+            let offered_turns_on = if shows_toggled {
+                toggled_turns_on
+            } else {
+                default_turns_on
+            };
             let (on_token, off_token) = if default_turns_on {
                 (default, toggled)
             } else {
@@ -1362,11 +1382,24 @@ fn feedback_toggle(node: &Value, turns_on: &[&str], turns_off: &[&str]) -> Optio
         })
 }
 
+/// What a toggle side's words say it does, where they say it plainly in English: "Pin to …" or
+/// "Save to library" turns it on, "Unpin from …" or "Remove from library" turns it off. None in
+/// another language, where the icons decide.
+fn side_words_turn_on(text: Option<&Value>) -> Option<bool> {
+    let words = runs_text(text)?.trim().to_ascii_lowercase();
+    let first = words.split_whitespace().next()?;
+    match first {
+        "pin" | "save" | "add" => Some(true),
+        "unpin" | "remove" => Some(false),
+        _ => None,
+    }
+}
+
 /// The row menu's "tell me less of this" items, by their icons (the words are localised): a
 /// plain `menuServiceItemRenderer` whose endpoint is a `feedbackEndpoint`. NOT_INTERESTED and
 /// DISMISS are "Not interested"; REMOVE / REMOVE_CIRCLE are YouTube's "Don't recommend …".
 /// Needs a live check: no live song menu has carried one in front of Venuta yet.
-fn menu_feedback(node: &Value) -> Vec<MenuFeedback> {
+pub(crate) fn menu_feedback(node: &Value) -> Vec<MenuFeedback> {
     const LESS: [&str; 4] = ["NOT_INTERESTED", "DISMISS", "REMOVE", "REMOVE_CIRCLE"];
     let Some(menu) = node.get("menu") else {
         return Vec::new();
@@ -1977,6 +2010,122 @@ mod tests {
             "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "T" } }
         } } ] } } });
         assert_eq!(pin_toggle(&signed_out), None);
+    }
+
+    // Pin to Listen again as a real account sends it: no isToggled, the item swapped round on a
+    // pinned song. Pinned reads pinned, and each way sends its own token: pressing Unpin must
+    // never send the pin token, nor Pin the unpin one.
+    #[test]
+    fn a_pin_reads_pinned_or_not_and_each_way_sends_its_own_token() {
+        let root = row_fixture("pin_toggle_states.json");
+        let pinned = pin_toggle(&root["pinned"]).unwrap();
+        assert_eq!(
+            pinned,
+            PinToggle {
+                pinned: true,
+                pin_token: Some("FIXTURE-PIN-TOKEN".into()),
+                unpin_token: Some("FIXTURE-UNPIN-TOKEN".into()),
+            }
+        );
+        let unpinned = pin_toggle(&root["unpinned"]).unwrap();
+        assert_eq!(
+            unpinned,
+            PinToggle {
+                pinned: false,
+                pin_token: Some("FIXTURE-PIN-TOKEN".into()),
+                unpin_token: Some("FIXTURE-UNPIN-TOKEN".into()),
+            }
+        );
+        // The library toggle both ways it comes: saved by isToggled, and saved by the swap.
+        for row in ["saved_library_row", "saved_swapped"] {
+            let lib = library_toggle(&root[row]).unwrap();
+            assert!(lib.in_library, "{row}");
+            assert_eq!(
+                lib.add_token.as_deref(),
+                Some("FIXTURE-SAVE-TOKEN"),
+                "{row}"
+            );
+            assert_eq!(
+                lib.remove_token.as_deref(),
+                Some("FIXTURE-REMOVE-TOKEN"),
+                "{row}"
+            );
+        }
+    }
+
+    // Which way each side goes is its words where they say it plainly (English), else its icon:
+    // a side whose words say "Unpin" unpins whatever icon it wears, and in another language the
+    // icons alone decide.
+    #[test]
+    fn a_toggle_side_goes_the_way_its_words_say_else_its_icon() {
+        let side = |text: &str, icon: &str, token: &str| {
+            (
+                json!({ "runs": [{ "text": text }] }),
+                json!({ "iconType": icon }),
+                json!({ "feedbackEndpoint": { "feedbackToken": token } }),
+            )
+        };
+        let toggle = |d: (Value, Value, Value), t: (Value, Value, Value), on: Option<bool>| {
+            let mut r = json!({
+                "defaultText": d.0, "defaultIcon": d.1, "defaultServiceEndpoint": d.2,
+                "toggledText": t.0, "toggledIcon": t.1, "toggledServiceEndpoint": t.2
+            });
+            if let Some(on) = on {
+                r["isToggled"] = json!(on);
+            }
+            json!({ "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": r } ] } } })
+        };
+        // Words and icons disagree: the words win.
+        let odd = pin_toggle(&toggle(
+            side("Unpin from Listen again", "KEEP", "U"),
+            side("Pin to Listen again", "KEEP_OFF", "P"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                odd.pinned,
+                odd.pin_token.as_deref(),
+                odd.unpin_token.as_deref()
+            ),
+            (true, Some("P"), Some("U"))
+        );
+        // Words not in English: the icons.
+        let other = pin_toggle(&toggle(
+            side("Aus „Erneut hören“ lösen", "KEEP_OFF", "U"),
+            side("An „Erneut hören“ anpinnen", "KEEP", "P"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                other.pinned,
+                other.pin_token.as_deref(),
+                other.unpin_token.as_deref()
+            ),
+            (true, Some("P"), Some("U"))
+        );
+        // isToggled on top of either: the toggled side is the one on offer.
+        let lib = library_toggle(&toggle(
+            side("Save to library", "BOOKMARK_BORDER", "S"),
+            side("Remove from library", "BOOKMARK", "R"),
+            Some(true),
+        ))
+        .unwrap();
+        assert!(lib.in_library);
+        assert_eq!(
+            (lib.add_token.as_deref(), lib.remove_token.as_deref()),
+            (Some("S"), Some("R"))
+        );
+        // Both sides saying the same way can't be read: no toggle rather than a wrong one.
+        assert_eq!(
+            pin_toggle(&toggle(
+                side("Pin to Listen again", "KEEP", "A"),
+                side("Pin to Listen again", "KEEP", "B"),
+                None,
+            )),
+            None
+        );
     }
 
     // An upload's row carries the id that deletes it, inside its Delete item's confirm dialog

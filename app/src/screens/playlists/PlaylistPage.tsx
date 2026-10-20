@@ -1038,7 +1038,7 @@ function PlaylistRow(props: {
       style={props.style}
       aria-label={get ? `${r.title}${r.artist ? `, ${r.artist}` : ''}: not in your library` : undefined}
       tabIndex={0}
-      onContextMenu={(e) => menuFromEvent(e, rowMenu())}
+      onContextMenu={(e) => menuFromEvent(e, rowMenu)}
       role={props.pick ? 'checkbox' : 'listitem'}
       aria-checked={props.pick ? props.pick.picked : undefined}
       onClick={(e) => {
@@ -1157,7 +1157,7 @@ function PlaylistRow(props: {
       </span>
       <span className="text-right text-[12.5px] tabular-nums text-ink/55">{songLength(r.duration_ms)}</span>
       {props.smart || get ? (
-        <button onClick={(e) => menuFromEvent(e, rowMenu())} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
+        <button onClick={(e) => menuFromEvent(e, rowMenu)} aria-label={`More for ${r.title}`} className="grid h-8 w-8 place-items-center rounded-full text-ink/55 opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">
           <IconMore />
         </button>
       ) : (

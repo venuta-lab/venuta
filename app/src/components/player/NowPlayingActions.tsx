@@ -325,7 +325,7 @@ export function SongActions(props: {
               <IconAlbum width={18} height={18} />
             </IconAction>
           )}
-          <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu())}>
+          <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu)}>
             <IconMore width={18} height={18} />
           </IconAction>
         </div>

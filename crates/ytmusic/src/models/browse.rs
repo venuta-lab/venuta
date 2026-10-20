@@ -14,8 +14,8 @@ use super::metadata::{
     album_id, artist_runs, artists_from_runs, duration_from_runs, find_all, find_all_shallow,
     find_first_str, first_artist_id, flex_column_text, flex_runs, is_explicit, is_upload_endpoint,
     is_upload_row, is_video_endpoint, is_video_row, is_video_type, last_thumbnail,
-    list_item_video_id, parse_episode_item, parse_list_item, play_count, row_menu, runs_text,
-    runs_text_opt, ArtistRun, RowMenu, SongItem, WatchEndpoint,
+    list_item_video_id, menu_feedback, parse_episode_item, parse_list_item, play_count, row_menu,
+    runs_text, runs_text_opt, ArtistRun, RowMenu, SongItem, WatchEndpoint,
 };
 
 /// One clickable card in a home carousel or library grid. Flat + `kind`-tagged so the UI can
@@ -1469,6 +1469,15 @@ fn parse_carousel_item(node: &Value) -> Option<BrowseItem> {
     })
 }
 
+/// An album's or a playlist's card menu: only its "tell me less of this" items (Home's "Not
+/// interested"). Its library toggle is a like, not a token, and is read on its page instead.
+fn card_menu(node: &Value) -> RowMenu {
+    RowMenu {
+        feedback: menu_feedback(node),
+        ..RowMenu::default()
+    }
+}
+
 /// A `musicTwoRowItemRenderer` → one card. Kind inferred from its navigation endpoint.
 fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
     let title = runs_text(node.get("title"))?;
@@ -1528,7 +1537,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
             is_upload: false,
             explicit: is_explicit(node),
             play: card_play(node).or_else(|| nav.and_then(WatchEndpoint::within)),
-            menu: RowMenu::default(),
+            menu: card_menu(node),
         });
     }
     // Otherwise a browseEndpoint → playlist/album/artist by browseId prefix.
@@ -1559,7 +1568,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
         is_upload: false,
         explicit: is_explicit(node),
         play: (kind == "playlist").then(|| card_play(node)).flatten(),
-        menu: RowMenu::default(),
+        menu: card_menu(node),
     })
 }
 /// A card's own play button (`thumbnailOverlay`): the endpoint YouTube plays it with.
@@ -2535,6 +2544,35 @@ mod tests {
         // A normal playlist response has no signInEndpoint.
         let ok = json!({ "contents": { "musicPlaylistShelfRenderer": { "contents": [] } } });
         assert!(!is_signed_out(&ok));
+    }
+
+    // A Home album or playlist card's "Not interested" rides on the card, in YouTube's words.
+    // Shape as YouTube sends feedback items elsewhere: no live Home card has shown one yet.
+    #[test]
+    fn a_home_card_carries_its_not_interested() {
+        let card = |page: &str, id: &str| {
+            json!({
+                "title": { "runs": [{ "text": "A card" }] },
+                "navigationEndpoint": { "browseEndpoint": { "browseId": id,
+                    "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": page } } } },
+                "menu": { "menuRenderer": { "items": [
+                    { "menuServiceItemRenderer": {
+                        "text": { "runs": [{ "text": "Not interested" }] },
+                        "icon": { "iconType": "NOT_INTERESTED" },
+                        "serviceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-NI" } }
+                    } }
+                ] } }
+            })
+        };
+        for (page, id) in [
+            ("MUSIC_PAGE_TYPE_ALBUM", "MPREb_x"),
+            ("MUSIC_PAGE_TYPE_PLAYLIST", "VLPLx"),
+        ] {
+            let item = parse_two_row_item(&card(page, id)).unwrap();
+            assert_eq!(item.menu.feedback.len(), 1, "{page}");
+            assert_eq!(item.menu.feedback[0].token, "FIXTURE-NI");
+            assert_eq!(item.menu.feedback[0].label, "Not interested");
+        }
     }
 
     #[test]

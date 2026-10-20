@@ -24,6 +24,14 @@ use crate::types::{
 };
 use ytmusic::{ArtistRun, BrowseItem, RowMenu, SongItem};
 
+/// The first artist in a line that links a channel (`UC…`).
+fn lead_artist(runs: &[ArtistRun]) -> Option<String> {
+    runs.iter()
+        .filter_map(|r| r.id.as_deref())
+        .find(|id| id.starts_with("UC"))
+        .map(str::to_owned)
+}
+
 /// A row's own account menu as a track's: what each press sends. None when it offers nothing (a
 /// row read signed out, or one Venuta built).
 pub(crate) fn menu_of(m: &RowMenu) -> Option<TrackMenu> {
@@ -47,6 +55,9 @@ pub(crate) fn menu_of(m: &RowMenu) -> Option<TrackMenu> {
                 token: f.token.clone(),
             })
             .collect(),
+        listed_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
     };
     (!menu.is_empty()).then_some(menu)
 }
@@ -125,6 +136,7 @@ pub(crate) fn track_of_card(item: &BrowseItem) -> Option<RemoteTrack> {
         plays: item.play_count.as_deref().and_then(plays),
         video_type: item.is_video.then(|| "OMV".to_owned()),
         menu: menu_of(&item.menu),
+        artist_id: lead_artist(&item.artist_runs),
         ..Default::default()
     })
 }
@@ -148,6 +160,11 @@ pub(crate) fn track_of_row(s: &SongItem) -> Option<RemoteTrack> {
         plays: s.play_count.as_deref().and_then(plays),
         video_type: s.is_video.then(|| "OMV".to_owned()),
         menu: menu_of(&s.menu()),
+        artist_id: s
+            .artist_id
+            .clone()
+            .filter(|id| id.starts_with("UC"))
+            .or_else(|| lead_artist(&s.artist_runs)),
         ..Default::default()
     })
 }
@@ -162,7 +179,13 @@ pub(crate) fn collection_of(item: &BrowseItem, kind: &str) -> Option<RemoteColle
         artwork_url: art(item.thumbnail.as_deref()),
         kind: kind.to_owned(),
         play: item.play.as_ref().map(endpoint_of),
+        feedback: feedback_of(&item.menu),
     })
+}
+
+/// A card menu's "tell me less of this" presses, as Venuta's.
+pub(crate) fn feedback_of(m: &RowMenu) -> Vec<MenuFeedback> {
+    menu_of(m).map(|t| t.feedback).unwrap_or_default()
 }
 
 /// One suggestion card as something to play or open; None for kinds Venuta doesn't show.
@@ -192,6 +215,7 @@ pub(crate) fn suggestion_of(item: &BrowseItem) -> Option<RemoteSuggestion> {
                         .rfind(|part| is_year(part))
                         .map(str::to_owned)
                 }),
+                feedback: feedback_of(&item.menu),
                 ..Default::default()
             },
             subtitle,
@@ -766,7 +790,16 @@ mod tests {
                 off_token: Some("FIXTURE-UNPIN".into()),
             }),
             feedback: Vec::new(),
+            listed_at: 0,
         }
+    }
+
+    /// A menu as listed, its listing time aside (that is now, every time).
+    fn bare(m: Option<TrackMenu>) -> Option<TrackMenu> {
+        m.map(|m| {
+            assert!(m.listed_at > 0, "stamped when listed");
+            TrackMenu { listed_at: 0, ..m }
+        })
     }
 
     // A song row read as the account brings its own menu to the track: in the library, its pin,
@@ -776,7 +809,7 @@ mod tests {
         let raw = row_menu_fixture();
         let song = ytmusic::models::browse::song_rows(&raw);
         let t = track_of_row(&song[0]).unwrap();
-        assert_eq!(t.menu, Some(saved_menu()));
+        assert_eq!(bare(t.menu), Some(saved_menu()));
 
         let mut feedback = row("x", "X");
         feedback.feedback = vec![ytmusic::MenuFeedback {
@@ -803,7 +836,7 @@ mod tests {
         let song = &ytmusic::models::browse::song_rows(&raw)[0];
         let mut c = card("song", "BddP6PYo2gs", "Kesariya", "Pritam");
         c.menu = song.menu();
-        assert_eq!(track_of_card(&c).unwrap().menu, Some(saved_menu()));
+        assert_eq!(bare(track_of_card(&c).unwrap().menu), Some(saved_menu()));
         assert_eq!(
             track_of_card(&card("song", "a", "A", "B")).unwrap().menu,
             None
@@ -823,8 +856,76 @@ mod tests {
         };
         let mut tracks = vec![plain("BddP6PYo2gs"), plain("other")];
         with_menus(&mut tracks, &raw);
-        assert_eq!(tracks[0].menu, Some(saved_menu()));
+        assert_eq!(bare(tracks[0].menu.clone()), Some(saved_menu()));
         assert_eq!(tracks[1].menu, None);
+    }
+
+    // A song brings its lead artist's channel, for Follow in its menu; an album link is no artist.
+    #[test]
+    fn a_song_brings_its_lead_artists_channel() {
+        let mut s = row("a", "A");
+        s.artist_runs = vec![
+            ArtistRun {
+                text: "Album".into(),
+                id: Some("MPREb_x".into()),
+            },
+            ArtistRun {
+                text: "Pritam".into(),
+                id: Some("UCpritam".into()),
+            },
+        ];
+        assert_eq!(
+            track_of_row(&s).unwrap().artist_id.as_deref(),
+            Some("UCpritam")
+        );
+        s.artist_id = Some("UClead".into());
+        assert_eq!(
+            track_of_row(&s).unwrap().artist_id.as_deref(),
+            Some("UClead")
+        );
+        assert_eq!(track_of_row(&row("b", "B")).unwrap().artist_id, None);
+        let mut c = card("song", "c", "C", "Someone");
+        c.artist_runs = vec![ArtistRun {
+            text: "Someone".into(),
+            id: Some("UCsome".into()),
+        }];
+        assert_eq!(
+            track_of_card(&c).unwrap().artist_id.as_deref(),
+            Some("UCsome")
+        );
+    }
+
+    // A Home album or playlist card brings its Not interested; a card with none brings nothing.
+    #[test]
+    fn album_and_playlist_cards_bring_their_not_interested() {
+        let ni = ytmusic::RowMenu {
+            feedback: vec![ytmusic::MenuFeedback {
+                icon: "NOT_INTERESTED".into(),
+                label: "Not interested".into(),
+                token: "NI".into(),
+            }],
+            ..Default::default()
+        };
+        let want = vec![MenuFeedback {
+            icon: "NOT_INTERESTED".into(),
+            label: "Not interested".into(),
+            token: "NI".into(),
+        }];
+        let mut album = card("album", "MPREb_x", "An album", "Album • Someone • 2024");
+        album.menu = ni.clone();
+        let Some(RemoteSuggestion::Album { album, .. }) = suggestion_of(&album) else {
+            panic!("an album")
+        };
+        assert_eq!(album.feedback, want);
+        let mut list = card("playlist", "VLPLx", "A playlist", "Someone");
+        list.menu = ni;
+        assert_eq!(collection_of(&list, "playlist").unwrap().feedback, want);
+        assert!(
+            collection_of(&card("playlist", "VLPLy", "B", "C"), "playlist")
+                .unwrap()
+                .feedback
+                .is_empty()
+        );
     }
 
     // Past searches come with the suggestions as the completions they are, and on their own

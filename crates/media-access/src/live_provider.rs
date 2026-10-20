@@ -1055,6 +1055,7 @@ fn album_page_of(page: &ytmusic::AlbumPage, album_id: &str) -> RemoteAlbumPage {
                 .first()
                 .map(|w| (*w).to_owned())
                 .filter(|w| !w.is_empty()),
+            feedback: Vec::new(),
         },
         artists,
         subtitle,
@@ -1471,6 +1472,17 @@ fn signed_out() -> AccessError {
     )
 }
 
+/// A taste builder artist as Venuta's.
+fn taste_artist_of(a: ytmusic::TasteArtist) -> crate::account::TasteArtist {
+    crate::account::TasteArtist {
+        name: a.name,
+        selection_value: a.selection_value,
+        impression_value: a.impression_value,
+        picture: clean_artwork_url(a.thumbnail),
+        selected: a.selected,
+    }
+}
+
 /// A song row as the account's lists hold it: the song, its place, whether it's an upload.
 fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTrack> {
     Some(crate::account::AccountTrack {
@@ -1646,6 +1658,8 @@ impl crate::account::AccountAccess for YtmBackend {
                 S::Subscriptions => self.it.library_subscriptions(client).await,
                 S::Podcasts => self.it.library_podcasts(client).await,
                 S::UploadAlbums => self.it.upload_albums(client).await,
+                S::PodcastChannels => self.it.library_channels(client).await,
+                S::UploadArtists => self.it.upload_artists(client).await,
             }
         })?;
         Ok(cards
@@ -1654,8 +1668,12 @@ impl crate::account::AccountAccess for YtmBackend {
                 // Podcasts come as playlist-like cards: opened as podcasts.
                 (S::Podcasts, _) => crate::catalog_cards::collection_of(c, "podcast")
                     .map(|collection| crate::RemoteSuggestion::Playlist { collection }),
-                // Library artists and subscriptions come as list rows the card reader calls songs.
-                (S::Artists | S::Subscriptions, _) => {
+                // An upload artist opens on the list of their uploaded songs.
+                (S::UploadArtists, _) => crate::catalog_cards::collection_of(c, "playlist")
+                    .map(|collection| crate::RemoteSuggestion::Playlist { collection }),
+                // Library artists, subscriptions and podcast channels come as list rows the card
+                // reader calls songs.
+                (S::Artists | S::Subscriptions | S::PodcastChannels, _) => {
                     (!c.id.trim().is_empty()).then(|| crate::RemoteSuggestion::Artist {
                         artist: crate::RemoteArtist {
                             provider: PROVIDER.into(),
@@ -1793,6 +1811,16 @@ impl crate::account::AccountAccess for YtmBackend {
                             .playlist_move(client, playlist_id, set_video_id, before.as_deref())
                             .await?;
                     }
+                    E::AddPlaylist { playlist_id: from } => {
+                        self.it
+                            .playlist_add_playlist(client, playlist_id, from)
+                            .await?;
+                    }
+                    E::AddToTop { on } => {
+                        self.it
+                            .playlist_set_add_to_top(client, playlist_id, *on)
+                            .await?;
+                    }
                 }
             }
             if words != (None, None, None) {
@@ -1921,6 +1949,20 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, press.what(), self.it.menu_feedback(client, token))
     }
 
+    fn song_menu(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::TrackMenu>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let menu = self.account_call(
+            cancel,
+            "the song's menu",
+            self.it.song_menu(client, video_id),
+        )?;
+        Ok(menu.as_ref().and_then(crate::catalog_cards::menu_of))
+    }
+
     fn remove_past_search(
         &self,
         token: &str,
@@ -1931,6 +1973,33 @@ impl crate::account::AccountAccess for YtmBackend {
             cancel,
             "taking it out of your search history",
             self.it.remove_search_suggestion(client, token),
+        )
+    }
+
+    fn taste_profile(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::account::TasteArtist>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let artists = self.account_call(
+            cancel,
+            "the artists to choose",
+            self.it.taste_profile(client),
+        )?;
+        Ok(artists.into_iter().map(taste_artist_of).collect())
+    }
+
+    fn set_taste_profile(
+        &self,
+        impressions: &[String],
+        selected: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the artists you chose",
+            self.it.set_taste_profile(client, impressions, selected),
         )
     }
 
@@ -2394,6 +2463,7 @@ impl MediaAccess for LiveCatalogAccess {
                     release_date: a.year,
                     artwork_url: clean_artwork_url(a.thumbnail),
                     kind: a.kind,
+                    feedback: Vec::new(),
                 })
                 .collect()
         };
@@ -2557,6 +2627,7 @@ impl MediaAccess for LiveCatalogAccess {
             artists: vec![page.name.clone()],
             track_count: None,
             artwork_url: clean_artwork_url(c.thumbnail),
+            feedback: Vec::new(),
         };
         Ok(RemoteArtistPage {
             provider: PROVIDER.into(),
@@ -3123,6 +3194,11 @@ fn playlist_browse_id(playlist_id: &str) -> Result<String, AccessError> {
             "playlist id must not be empty",
         ));
     }
+    // The account's own library pages (an uploaded album, an upload artist's songs) open by
+    // their own ids, which are no playlist's.
+    if id.starts_with("FEmusic_") {
+        return Ok(id.to_owned());
+    }
     let id = id
         .strip_prefix("MPSP")
         .filter(|rest| !rest.is_empty())
@@ -3502,6 +3578,23 @@ mod tests {
         assert_eq!(plain.delete_id, None);
     }
 
+    // A taste builder artist keeps both values its answer needs, and a sharp picture.
+    #[test]
+    fn a_taste_artist_keeps_what_its_answer_needs() {
+        let a = super::taste_artist_of(ytmusic::TasteArtist {
+            name: "Arijit Singh".into(),
+            selection_value: "SEL".into(),
+            impression_value: "IMP".into(),
+            thumbnail: Some("https://lh3.googleusercontent.com/x=w120-h120-l90-rj".into()),
+            selected: true,
+        });
+        assert_eq!(
+            (a.selection_value.as_str(), a.impression_value.as_str()),
+            ("SEL", "IMP")
+        );
+        assert!(a.selected && a.picture.is_some());
+    }
+
     // A cover YouTube won't take is said as YouTube's own reason, not as a failure to answer.
     #[test]
     fn a_refused_cover_says_why() {
@@ -3557,5 +3650,14 @@ mod tests {
         // A podcast's page is its episode list.
         assert_eq!(playlist_browse_id("MPSPPL123").unwrap(), "VLPL123");
         assert!(playlist_browse_id("  ").is_err());
+        // Uploads open by their own library page ids, as they came.
+        assert_eq!(
+            playlist_browse_id("FEmusic_library_privately_owned_release_detailb_po_x").unwrap(),
+            "FEmusic_library_privately_owned_release_detailb_po_x"
+        );
+        assert_eq!(
+            playlist_browse_id("FEmusic_library_privately_owned_artist_detaile_po_x").unwrap(),
+            "FEmusic_library_privately_owned_artist_detaile_po_x"
+        );
     }
 }

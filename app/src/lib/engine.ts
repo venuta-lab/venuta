@@ -2,7 +2,7 @@
 import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core'
 import type { YtmChoices as YtmAccountChoices } from './ytmChoiceWords'
 import type { Vote } from './ytmVotes'
-import type { Press, TrackMenu } from './ytmSongMenu'
+import type { MenuFeedback, Press, TrackMenu } from './ytmSongMenu'
 
 export interface ScanReport {
   files_seen: number
@@ -891,6 +891,8 @@ export interface OnlineTrack {
   /** What its own YouTube Music menu offers the account, where it was listed signed in
    *  (lib/ytmSongMenu.ts): save to that library, pin, not interested. */
   menu?: TrackMenu | null
+  /** The lead artist's channel (`UC…`), when the catalog linked one: what Follow follows. */
+  artist_id?: string | null
 }
 
 export interface OnlineAlbum {
@@ -903,6 +905,8 @@ export interface OnlineAlbum {
   artwork_url: string | null
   /** "Album", "Single", "EP"… as the catalog labels it. */
   kind?: string | null
+  /** Its card's "Not interested" (Home, signed in), in YouTube Music's words. */
+  feedback?: MenuFeedback[]
 }
 
 export interface OnlineArtist {
@@ -1242,6 +1246,8 @@ export interface OnlineCollection {
   kind: 'playlist' | 'podcast'
   /** What the card's own play button plays (a mix's endpoint, `params` and all), when it has one. */
   play?: RadioEndpoint | null
+  /** Its card's "Not interested" (Home, signed in), in YouTube Music's words. */
+  feedback?: MenuFeedback[]
 }
 
 /** One thing the catalog suggests while typing: a song to play, or something to open. */
@@ -1432,7 +1438,7 @@ export interface YtmStatus {
   signed_in: boolean
   expired: boolean
 }
-export type YtmShelf = 'playlists' | 'albums' | 'artists' | 'subscriptions' | 'podcasts' | 'upload_albums'
+export type YtmShelf = 'playlists' | 'albums' | 'artists' | 'subscriptions' | 'podcasts' | 'upload_albums' | 'podcast_channels' | 'upload_artists'
 /** A song as the account's lists hold it: the song, and its place in the list. */
 export interface YtmTrack extends OnlineTrack {
   set_video_id?: string | null
@@ -1495,6 +1501,10 @@ export type YtmEdit =
   | { kind: 'add'; video_ids: string[] }
   | { kind: 'remove'; items: [string, string][] }
   | { kind: 'move'; set_video_id: string; before: string | null }
+  /** A whole playlist (or an album's list) copied in, on YouTube Music's side. */
+  | { kind: 'add_playlist'; playlist_id: string }
+  /** New songs go to the top (`on`) or to the end. */
+  | { kind: 'add_to_top'; on: boolean }
 export interface YtmSaved {
   playlist_id: string
   saved: boolean
@@ -1537,6 +1547,19 @@ export const ytmHistory = () => invoke<YtmHistoryDay[]>('ytm_history')
 export const ytmHistoryRemove = (token: string) => invoke<void>('ytm_history_remove', { token })
 /** Vote on a song of a collaborative playlist, or take the vote back: the token its button sends. */
 export const ytmVote = (token: string) => invoke<void>('ytm_vote', { token })
+/** One artist YouTube Music's taste builder offers, and the two values its answer is made of. */
+export interface TasteArtist {
+  name: string
+  selection_value: string
+  impression_value: string
+  picture: string | null
+  selected: boolean
+}
+/** One online song's own menu as the account sees it, for one listed without (by its id alone). */
+export const ytmSongMenu = (trackId: string) => invoke<TrackMenu | null>('ytm_song_menu', { trackId })
+export const ytmTasteProfile = () => invoke<TasteArtist[]>('ytm_taste_profile')
+/** Tell YouTube Music the artists chosen: every one shown, and the chosen ones. */
+export const ytmSetTasteProfile = (impressions: string[], selected: string[]) => invoke<void>('ytm_set_taste_profile', { impressions, selected })
 /** One press on an online song's own menu: the token its menu holds for that way. */
 export const ytmMenuPress = (token: string, press: Press) => invoke<void>('ytm_menu_press', { token, press })
 /** Take one past search out of your YouTube Music search history, by its token. */

@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlists as loadPlaylists, ytmPlaylist, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { playlists as loadPlaylists, ytmPlaylist, ytmPlaylistCreate, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useYtmLibraryShown } from '../lib/ytmChoices'
-import { useYtmPart } from '../lib/ytmLibrary'
+import { useYtmPart, ytmLibraryChanged } from '../lib/ytmLibrary'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
 import { RemoteArt } from './RemoteArt'
@@ -11,13 +11,15 @@ import { addSongsTo } from '../screens/playlists/ops'
 import { nameNote, newPlaylistName } from '../lib/playlistName'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
-import { addPlan, canAddTo } from '../lib/ytmAdd'
+import { addPlan, canAddTo, copyWhole } from '../lib/ytmAdd'
 
 /*
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
   picker for the whole app. Any code asks with askAddToPlaylist(); <AddToPlaylist> shows it.
 */
-type Request = { items: PlaylistItem[]; label: string; name?: string }
+/** `source`: the whole list the songs are (a playlist's or an album's own list), so YouTube
+ *  Music can take it in one copy. */
+type Request = { items: PlaylistItem[]; label: string; name?: string; source?: string }
 let request: Request | null = null
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
@@ -30,11 +32,28 @@ export const askAddToPlaylist = (paths: string[], label: string) =>
   )
 
 /** Open the picker for any songs: library files, and online songs by their stable id. `name`:
- *  the name a new playlist takes until one is typed (the queue's radio). */
-export function askAddSongs(items: PlaylistItem[], label: string, name?: string) {
+ *  the name a new playlist takes until one is typed (the queue's radio). `source`: the online
+ *  list they are, whole (copied in one go on YouTube Music when it can be). */
+export function askAddSongs(items: PlaylistItem[], label: string, name?: string, source?: string) {
   if (!items.length) return
-  request = { items, label, name }
+  request = { items, label, name, source }
   emit()
+}
+
+/** Songs to a YouTube Music playlist: a whole list in one copy when it can go so (lib/ytmAdd.ts),
+ *  else, or if YouTube Music turns the copy down, the new ones song by song. */
+async function addToYtmPlaylist(id: string, source: string | undefined, videoIds: string[], plan: { send: string[] }, onlyHere: number) {
+  if (source && copyWhole(source, videoIds, plan, onlyHere)) {
+    try {
+      await ytmPlaylistEdit(id, [{ kind: 'add_playlist', playlist_id: source }])
+      return
+    } catch (e) {
+      // Not known to have gone or not (a lost answer): sending them again could add them twice.
+      if (/didn.t say whether/.test(String(e))) throw e
+      // Turned down (a list it won't copy): the songs go one by one instead.
+    }
+  }
+  await ytmPlaylistEdit(id, [{ kind: 'add', video_ids: plan.send }])
 }
 
 /** YouTube Music playlists found to be someone else's (saved ones): not offered again. */
@@ -115,9 +134,28 @@ export function AddToPlaylist({ root }: { root: string }) {
         notify(plan.words)
         return
       }
-      if (plan.send.length) await ytmPlaylistEdit(id, [{ kind: 'add', video_ids: plan.send }])
+      if (plan.send.length) await addToYtmPlaylist(id, req.source, videoIds, plan, onlyHere)
       const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
       notify(`${plan.words}${kept}`)
+      close()
+    } catch (e) {
+      notify(onlineProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // A new playlist on YouTube Music, made with the online songs, seen by whom you choose.
+  const [privacy, setPrivacy] = useState('PRIVATE')
+  async function newOnYtm(title: string) {
+    if (!req || busy || !videoIds.length || !title.trim()) return
+    setBusy(true)
+    try {
+      const songs = [...new Set(videoIds)]
+      await ytmPlaylistCreate(title.trim(), privacy, songs)
+      ytmLibraryChanged(['playlists'])
+      const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
+      notify(`Made “${title.trim()}” on YouTube Music with ${songs.length === 1 ? 'the song' : `${songs.length} songs`}.${kept}`)
       close()
     } catch (e) {
       notify(onlineProblem(e))
@@ -226,9 +264,31 @@ export function AddToPlaylist({ root }: { root: string }) {
                   </span>
                 </button>
               ))}
-              {signed_in && videoIds.length > 0 && ytmShown.length > 0 && (
+              {signed_in && videoIds.length > 0 && (
                 <>
-                  <div className="px-2.5 pb-1 pt-3 text-[12px] font-medium text-ink/50">On YouTube Music</div>
+                  <div className="flex items-center gap-2 px-2.5 pb-1 pt-3 text-[12px] font-medium text-ink/50">
+                    <span className="flex-1">On YouTube Music</span>
+                    <label className="flex items-center gap-1.5 font-normal">
+                      A new one is
+                      <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} aria-label="Who can see a new YouTube Music playlist" className="field h-7 rounded-full px-2 text-[12px]">
+                        <option value="PRIVATE">Private</option>
+                        <option value="UNLISTED">Unlisted</option>
+                        <option value="PUBLIC">Public</option>
+                      </select>
+                    </label>
+                  </div>
+                  {fresh && (
+                    <button
+                      onClick={() => void newOnYtm(fresh)}
+                      className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
+                    >
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink/[0.08] text-[20px] leading-none text-ink/70">+</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14px] font-medium">New playlist “{fresh}” on YouTube Music</span>
+                        <span className="block text-[12px] text-ink/55">Made with {videoIds.length === 1 ? 'this song' : `these ${new Set(videoIds).size} online songs`}</span>
+                      </span>
+                    </button>
+                  )}
                   {ytmShown.map((c) => (
                     <button
                       key={c.collection_id}

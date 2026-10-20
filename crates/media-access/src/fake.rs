@@ -101,6 +101,7 @@ impl MediaAccess for FakeMediaAccess {
                 release_date: Some("2026".into()),
                 artwork_url: None,
                 kind: Some("Album".into()),
+                feedback: Vec::new(),
             }]
             .into_iter()
             .take(page.limit)
