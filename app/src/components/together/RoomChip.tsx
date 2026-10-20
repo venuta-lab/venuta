@@ -45,15 +45,16 @@ const ROLES: [Role, string][] = [
   ['listen', 'Just listen'],
 ]
 
-const INITIAL_COLORS = ['#CECBF6', '#9FE1CB', '#F5C4B3', '#F4C0D1', '#B5D4F4', '#C0DD97', '#FAC775', '#D3D1C7']
-const INK = ['#3C3489', '#085041', '#712B13', '#72243E', '#0C447C', '#27500A', '#633806', '#444441']
+// Each person's initial in the theme's own accent, a little stronger or softer per person so faces
+// side by side stay apart; never colours of their own that clash with the theme.
+const TINTS = [34, 22, 46, 28, 40, 18]
 
 function Initial({ m, size = 22 }: { m: { id: number; name: string }; size?: number }) {
-  const i = m.id % INITIAL_COLORS.length
+  const tint = TINTS[m.id % TINTS.length]
   return (
     <span
-      className="grid shrink-0 place-items-center rounded-full font-semibold"
-      style={{ width: size, height: size, fontSize: size * 0.48, background: INITIAL_COLORS[i], color: INK[i] }}
+      className="grid shrink-0 place-items-center rounded-full font-semibold text-accent-ink"
+      style={{ width: size, height: size, fontSize: size * 0.48, background: `color-mix(in oklab, var(--accent) ${tint}%, transparent)` }}
       aria-hidden
     >
       {(m.name.trim()[0] ?? '?').toUpperCase()}
@@ -118,7 +119,14 @@ export function RoomChip() {
   const inRoom = v.state === 'hosting' || v.state === 'in' || v.state === 'reconnecting' || v.state === 'waiting'
   const people = v.room?.members ?? []
   const off = people.reduce((n, m) => n + (m.error_ms !== null && Math.abs(m.error_ms) > 60 ? 1 : 0), 0)
-  const ring = v.state === 'reconnecting' ? 'shadow-[0_0_0_1.5px_rgb(140_140_140/0.7)]' : off ? 'shadow-[0_0_0_1.5px_rgb(220_160_40/0.8)]' : 'shadow-[0_0_0_1.5px_rgb(60_180_120/0.75)]'
+  // The room's state in the theme's colours: in sync is the accent, someone catching up the
+  // theme's warning colour, reconnecting faded.
+  const ring =
+    v.state === 'reconnecting'
+      ? 'shadow-[0_0_0_1.5px_color-mix(in_oklab,var(--ink)_35%,transparent)]'
+      : off
+        ? 'shadow-[0_0_0_1.5px_color-mix(in_oklab,var(--problem)_75%,transparent)]'
+        : 'shadow-[0_0_0_1.5px_var(--accent)]'
 
   return (
     <div ref={box} className="relative mr-1 flex items-center">
@@ -138,7 +146,7 @@ export function RoomChip() {
             ))}
           </span>
           {people.length > 3 && <span>+{people.length - 3}</span>}
-          {waiting > 0 && <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-[#e0a030]" aria-label={`${waiting} waiting`} />}
+          {waiting > 0 && <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-accent" aria-label={`${waiting} waiting`} />}
           {v.state === 'waiting' && <span className="ml-1">Waiting…</span>}
         </button>
       ) : (
@@ -147,15 +155,15 @@ export function RoomChip() {
           aria-expanded={open}
           aria-label={TOGETHER}
           title={TOGETHER}
-          className="flex h-8 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[12.5px] text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded-full text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink"
         >
+          {/* Icon only, as the title bar's other buttons; its name is on hover and for screen readers. */}
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <circle cx="9" cy="8" r="3.2" />
             <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
             <circle cx="16.5" cy="9" r="2.6" />
             <path d="M15.5 14.2c2.4-.3 4.4 1.2 5 4.3" />
           </svg>
-          <span className="hidden @[1240px]/title:inline">{TOGETHER}</span>
         </button>
       )}
       <AnimatePresence>
@@ -387,7 +395,7 @@ function HostPanel({ v }: { v: TogetherView }) {
         </div>
       )}
       {room.waiting.map(([id, name]) => (
-        <div key={id} className="mb-1.5 flex items-center gap-2 rounded-xl bg-[color-mix(in_oklab,#e0a030_18%,transparent)] px-2.5 py-1.5">
+        <div key={id} className="mb-1.5 flex items-center gap-2 rounded-xl bg-[color-mix(in_oklab,var(--accent)_16%,transparent)] px-2.5 py-1.5">
           <span className="min-w-0 flex-1 truncate">{name} wants to join</span>
           <button onClick={() => void admit(id)} className="btn btn-sm">
             Let in
