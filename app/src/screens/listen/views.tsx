@@ -610,9 +610,10 @@ export const SongsView = memo(function SongsView({ tracks }: { tracks: CatalogTr
 
 export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Artist[] }) {
   const signed_in = useYtmLibraryShown()
-  const [view, setView] = useState<'all' | 'artists' | 'subscriptions'>('all')
+  const [view, setView] = useState<'all' | 'artists' | 'subscriptions' | 'upload_artists'>('all')
   const ytmArtists = useYtmCount('artists', signed_in)
   const following = useYtmCount('subscriptions', signed_in)
+  const uploaders = useYtmCount('upload_artists', signed_in)
   const chip = (id: typeof view, label: string, count: number | null) => (
     <Chip key={id} group="listen-artist-filter" on={view === id} label={label} count={count ?? undefined} onClick={() => setView(id)} />
   )
@@ -622,6 +623,7 @@ export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Art
         {chip('all', 'All', artists.length)}
         {chip('artists', 'On YouTube Music', ytmArtists)}
         {chip('subscriptions', 'Following', following)}
+        {!!uploaders && chip('upload_artists', 'Your uploads', uploaders)}
       </ScrollRow>
     </InBar>
   )
@@ -631,8 +633,14 @@ export const ArtistsView = memo(function ArtistsView({ artists }: { artists: Art
         {chips}
         <YtmGrid
           part={view}
-          label={view === 'artists' ? 'Your YouTube Music artists' : 'Artists you follow'}
-          empty={view === 'artists' ? 'No artists in your YouTube Music library yet.' : 'You follow no artists on YouTube Music yet.'}
+          label={view === 'artists' ? 'Your YouTube Music artists' : view === 'upload_artists' ? 'Artists of your uploads' : 'Artists you follow'}
+          empty={
+            view === 'artists'
+              ? 'No artists in your YouTube Music library yet.'
+              : view === 'upload_artists'
+                ? 'No uploads on YouTube Music.'
+                : 'You follow no artists on YouTube Music yet.'
+          }
         />
       </div>
     )

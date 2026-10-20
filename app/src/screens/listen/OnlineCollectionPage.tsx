@@ -101,7 +101,9 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
 
   const items = useMemo(() => (tracks ?? []).map(toRemoteItem), [tracks])
   // Its own list in the catalog: what Autoplay asks YouTube Music to go on with when it ends.
-  const list = c.kind === 'podcast' ? null : listIdOf(playlistId)
+  // Your own uploads' pages (an album, an artist) are no list of YouTube Music's: no radio of theirs.
+  const ownPage = c.collection_id.replace(/^VL/, '').startsWith('FEmusic_')
+  const list = c.kind === 'podcast' || ownPage ? null : listIdOf(playlistId)
   const from: From = useMemo(() => ({ kind: 'search', ref: c.title, label: `Online: ${c.title}`, list }), [c.title, list])
   // Start radio: the radio its page's button names, else the playlist's list's (Liked music's is
   // RDAMPLLM). A podcast has none, and a radio is its own.
@@ -251,7 +253,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
               <IconPlaylistAdd width={18} height={18} />
               Add to playlist
             </button>
-            {asAccount && mine && !owned && !later && <SavePlaylistButton playlistId={playlistId} />}
+            {asAccount && mine && !owned && !later && !ownPage && <SavePlaylistButton playlistId={playlistId} />}
             {podcast && <SavePodcastButton podcastId={c.collection_id} />}
             {owned && (
               <button onClick={coverMenu} className="btn-ghost btn-lg" title={`The cover of “${title}” on YouTube Music`}>
@@ -402,6 +404,8 @@ function Details(props: { mine: YtmPlaylist; onSave: (edits: YtmEdit[], next: Pa
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(mine.title)
   const [words, setWords] = useState(mine.description ?? '')
+  // Where new songs go: YouTube Music doesn't say on the page, so it shows once set here.
+  const [toTop, setToTop] = useState<boolean | null>(null)
   const save = () => {
     const edits: YtmEdit[] = []
     const n = name.trim()
@@ -465,6 +469,26 @@ function Details(props: { mine: YtmPlaylist; onSave: (edits: YtmEdit[], next: Pa
               {l}
             </option>
           ))}
+        </select>
+      </label>
+      <label className="mt-2 flex items-center gap-2 text-[13px] text-ink/65">
+        New songs go
+        <select
+          value={toTop === null ? '' : toTop ? 'top' : 'end'}
+          onChange={(e) => {
+            const on = e.target.value === 'top'
+            setToTop(on)
+            props.onSave([{ kind: 'add_to_top', on }], {})
+          }}
+          className="field h-8 rounded-full px-3 text-[13px]"
+        >
+          {toTop === null && (
+            <option value="" disabled>
+              As YouTube Music has it
+            </option>
+          )}
+          <option value="end">To the end</option>
+          <option value="top">To the top</option>
         </select>
       </label>
     </div>

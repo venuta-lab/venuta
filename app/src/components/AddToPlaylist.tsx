@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { playlists as loadPlaylists, ytmPlaylist, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
+import { playlists as loadPlaylists, ytmPlaylist, ytmPlaylistCreate, ytmPlaylistEdit, type OnlineCollection, type OnlineSuggestion, type PlaylistItem, type PlaylistSummary } from '../lib/engine'
 import { useYtmLibraryShown } from '../lib/ytmChoices'
-import { useYtmPart } from '../lib/ytmLibrary'
+import { useYtmPart, ytmLibraryChanged } from '../lib/ytmLibrary'
 import { notify } from '../lib/notify'
 import { onlineProblem } from '../lib/online'
 import { RemoteArt } from './RemoteArt'
@@ -145,6 +145,25 @@ export function AddToPlaylist({ root }: { root: string }) {
     }
   }
 
+  // A new playlist on YouTube Music, made with the online songs, seen by whom you choose.
+  const [privacy, setPrivacy] = useState('PRIVATE')
+  async function newOnYtm(title: string) {
+    if (!req || busy || !videoIds.length || !title.trim()) return
+    setBusy(true)
+    try {
+      const songs = [...new Set(videoIds)]
+      await ytmPlaylistCreate(title.trim(), privacy, songs)
+      ytmLibraryChanged(['playlists'])
+      const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
+      notify(`Made “${title.trim()}” on YouTube Music with ${songs.length === 1 ? 'the song' : `${songs.length} songs`}.${kept}`)
+      close()
+    } catch (e) {
+      notify(onlineProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function add(name: string) {
     if (!req || busy) return
     setBusy(true)
@@ -245,9 +264,31 @@ export function AddToPlaylist({ root }: { root: string }) {
                   </span>
                 </button>
               ))}
-              {signed_in && videoIds.length > 0 && ytmShown.length > 0 && (
+              {signed_in && videoIds.length > 0 && (
                 <>
-                  <div className="px-2.5 pb-1 pt-3 text-[12px] font-medium text-ink/50">On YouTube Music</div>
+                  <div className="flex items-center gap-2 px-2.5 pb-1 pt-3 text-[12px] font-medium text-ink/50">
+                    <span className="flex-1">On YouTube Music</span>
+                    <label className="flex items-center gap-1.5 font-normal">
+                      A new one is
+                      <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} aria-label="Who can see a new YouTube Music playlist" className="field h-7 rounded-full px-2 text-[12px]">
+                        <option value="PRIVATE">Private</option>
+                        <option value="UNLISTED">Unlisted</option>
+                        <option value="PUBLIC">Public</option>
+                      </select>
+                    </label>
+                  </div>
+                  {fresh && (
+                    <button
+                      onClick={() => void newOnYtm(fresh)}
+                      className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/[0.07] active:bg-ink/[0.1]"
+                    >
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink/[0.08] text-[20px] leading-none text-ink/70">+</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14px] font-medium">New playlist “{fresh}” on YouTube Music</span>
+                        <span className="block text-[12px] text-ink/55">Made with {videoIds.length === 1 ? 'this song' : `these ${new Set(videoIds).size} online songs`}</span>
+                      </span>
+                    </button>
+                  )}
                   {ytmShown.map((c) => (
                     <button
                       key={c.collection_id}

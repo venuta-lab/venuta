@@ -14,6 +14,7 @@ import { OnlineSongCard } from './OnlineCards'
 import { ArtistCard } from './views'
 import { useLocalOnly } from '../../lib/localOnly'
 import { useYtmStatus } from '../../lib/ytmLibrary'
+import { openTasteBuilder } from '../../lib/ytmChoices'
 
 /*
   Home's parts from your listening and the online catalog: the catalog's mood chips and its
@@ -65,6 +66,7 @@ export function useOnlineHome(chip: string | null) {
 
 /** The catalog's mood chips: one picked filters the online rows to it. */
 export function HomeChips({ chips, chip, onChip }: { chips: HomeChip[]; chip: string | null; onChip: (params: string | null) => void }) {
+  const { signed_in } = useYtmStatus()
   if (!chips.length) return null
   const pill = (on: boolean) =>
     `shrink-0 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${on ? 'accent-fill text-on-accent' : 'bg-ink/[0.07] text-ink/75 shadow-[inset_0_0_0_1px_var(--edge)] hover:bg-ink/[0.12] hover:text-ink'}`
@@ -80,6 +82,12 @@ export function HomeChips({ chips, chip, onChip }: { chips: HomeChip[]; chip: st
           {c.title}
         </button>
       ))}
+      {/* Signed in: YouTube Music's own taste builder, as its Home offers it. */}
+      {signed_in && (
+        <button onClick={openTasteBuilder} className={pill(false)} title="Tell YouTube Music which artists you like">
+          Choose artists you like
+        </button>
+      )}
     </ScrollRow>
   )
 }
