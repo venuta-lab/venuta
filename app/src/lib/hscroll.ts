@@ -8,13 +8,16 @@
     sideways wheel anywhere.
   - A wheel that turns in clicks (a mouse's tilt wheel, Shift and the wheel) glides the row by
     each click, on a row of cards a card or more a click. The row glides itself: the browser's
-    own scroll animation follows Windows' "Animation effects" alone, and Venuta's Motion setting
-    decides here (with less motion, the row moves at once).
+    own scroll animation follows Windows' "Animation effects" alone, and a row glides even with
+    those off. Only less motion chosen in Venuta's Motion setting moves it at once.
   - A touchpad's two fingers sideways (and a free-spinning wheel) are the browser's: it already
     follows the fingers and glides on after them, better than a row could.
   - Up and down on the wheel over a row scrolls the page, as anywhere else: a row never takes it.
   - Ctrl and the wheel is zoom: never the row's.
 */
+
+/** Whether rows glide, from Venuta's Motion choice ("system" glides even with Windows' animations off). */
+export const rowsGlide = (motion: string | undefined) => motion !== 'reduced'
 
 export interface WheelLike {
   deltaX: number

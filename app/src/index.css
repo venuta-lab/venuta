@@ -153,7 +153,7 @@ body {
 .hrow[data-fade][data-more-end] {
   --hrow-end: var(--hrow-fade);
 }
-:root[data-motion="reduced"] .hrow[data-fade] {
+:root[data-motion-choice="reduced"] .hrow[data-fade] {
   transition: none;
 }
 

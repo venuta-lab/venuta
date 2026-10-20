@@ -12,6 +12,7 @@ import {
   revealLeft,
   rowEnds,
   rowWheel,
+  rowsGlide,
   scrollTarget,
   stepItem,
   wheelPixels,
@@ -153,4 +154,11 @@ test('Left and Right move between a row’s items and stop at its ends', () => {
   assert.equal(stepItem(4, 'ArrowRight', 5), null)
   assert.equal(stepItem(2, 'ArrowDown', 5), null)
   assert.equal(stepItem(-1, 'ArrowRight', 5), null)
+})
+
+test('rows glide even when Windows animations are off; only less motion chosen in Venuta stops them', () => {
+  assert.equal(rowsGlide('system'), true)
+  assert.equal(rowsGlide('full'), true)
+  assert.equal(rowsGlide('reduced'), false)
+  assert.equal(rowsGlide(undefined), true)
 })

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react'
 import { IconChevron } from './Icons'
-import { GLIDE_MS, glideAt, pageBy, revealLeft, rowEnds, rowWheel, scrollTarget, stepItem } from '../lib/hscroll'
+import { GLIDE_MS, glideAt, pageBy, revealLeft, rowEnds, rowWheel, rowsGlide, scrollTarget, stepItem } from '../lib/hscroll'
 
 /*
   Every row that scrolls sideways (shelves of cards, rows of chips), so they all behave the
@@ -154,9 +154,9 @@ const editable = (t: EventTarget) =>
   t instanceof HTMLElement && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')
 
 /**
- * Glides a row sideways, frame by frame, so Venuta's Motion setting decides how it moves (the
- * browser's own smooth scrolling follows Windows' animation setting alone). With less motion it
- * moves at once. The row's snapping rests while it glides (it would pull every frame back to a
+ * Glides a row sideways, frame by frame, so it glides even with Windows' animations off (the
+ * browser's own smooth scrolling follows that setting alone). With less motion chosen in Venuta
+ * it moves at once. The row's snapping rests while it glides (it would pull every frame back to a
  * card) and every glide ends on a card in a row that snaps. A touchpad or a drag in the middle
  * of a glide takes over from it.
  */
@@ -204,7 +204,7 @@ class Glider {
   to(left: number) {
     const el = this.el
     cancelAnimationFrame(this.frame)
-    if (document.documentElement.dataset.motion === 'reduced') {
+    if (!rowsGlide(document.documentElement.dataset.motionChoice)) {
       this.end()
       el.scrollLeft = left
       return
