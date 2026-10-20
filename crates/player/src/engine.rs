@@ -448,6 +448,10 @@ impl<T: Item + Serialize> Engine<T> {
                 play,
                 from,
             } => {
+                // A new queue is never under an old room's plan: a room's follower sends its
+                // plan after loading its song; your own queue (a room's goodbye that never came,
+                // a window that thought it was out of the room) plays as it does alone.
+                self.set_sync(None);
                 let shuffle = self.queue.shuffled();
                 self.queue.set(items, index);
                 if shuffle {
@@ -1252,7 +1256,12 @@ impl<T: Item + Serialize> Engine<T> {
         // resumed or the next song, as a jump back to where that pause was).
         self.seek_after_fade = None;
         let Some(plan) = plan else {
+            // On its own again: nothing of the room is left to act on the music.
             self.sync = None;
+            self.sync_fresh = false;
+            self.sync_fine = false;
+            self.settle_until = None;
+            self.starved_at = None;
             return;
         };
         let now = Instant::now();
