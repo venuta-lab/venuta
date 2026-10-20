@@ -31,8 +31,8 @@ pub use access::{
 };
 pub use account::{
     AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, Contributor, FollowState,
-    Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, Placements, PlaylistEdit, SavedState,
-    TrackVotes, Vote, VoteButton,
+    Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, Placements, PlayCounts, PlaylistEdit,
+    SavedState, TrackVotes, Vote, VoteButton,
 };
 pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;
@@ -52,3 +52,6 @@ pub use types::{
     RemotePlaylist, RemoteRadio, RemoteRating, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion,
     RemoteTrack, SearchSuggestions,
 };
+/// YouTube's security check (PO tokens): where it runs is installed by the app.
+#[cfg(feature = "live-provider")]
+pub use ytmusic::potoken;
