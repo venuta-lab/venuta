@@ -215,6 +215,14 @@ impl<L> Signals<L> {
 /// The account in use, as what is told goes to it.
 struct Account(Arc<dyn AccountAccess>);
 
+/// What telling the account came to, in the playback log (no addresses, no song ids).
+fn said(what: &str, told: &Result<(), String>) {
+    media_access::note_timing(&match told {
+        Ok(()) => format!("told YouTube Music {what}"),
+        Err(e) => format!("couldn't tell YouTube Music {what}: {e}"),
+    });
+}
+
 impl Tell for Account {
     type Listen = Listen;
 
@@ -225,15 +233,21 @@ impl Tell for Account {
     }
 
     fn play(&self, video_id: &str) -> Result<(), String> {
-        self.0
+        let told = self
+            .0
             .report_play(video_id, &CancellationToken::default())
-            .map_err(|e| e.message)
+            .map_err(|e| e.message);
+        said("a play", &told);
+        told
     }
 
     fn listen_play(&self, listen: &Listen) -> Result<(), String> {
-        self.0
+        let told = self
+            .0
             .report_listen_play(listen, &CancellationToken::default())
-            .map_err(|e| e.message)
+            .map_err(|e| e.message);
+        said("a play", &told);
+        told
     }
 
     fn heard(&self, listen: &Listen, heard: &Listened) -> Result<(), String> {
@@ -263,15 +277,29 @@ pub fn reporter(catalog: Arc<dyn MediaAccess>, local_only: Arc<AtomicBool>) -> R
                     .then(|| catalog.account_access())
                     .flatten()
                     .filter(|a| a.signed_in());
+                let is_play = matches!(told, Told::Play { .. });
                 let Some(account) = account else {
+                    if is_play {
+                        media_access::note_timing(
+                            "a play was not told: no YouTube Music account in use",
+                        );
+                    }
                     signals.handle(&Nobody, told, None);
                     continue;
                 };
                 let in_use = crate::ytm_choices::choices_in_use(catalog.as_ref());
+                if is_play && in_use.is_none() {
+                    media_access::note_timing(
+                        "a play was not told: which account is in use isn't known",
+                    );
+                }
                 let now = match in_use {
                     Some((key, choices)) => allowed(Some(key), choices, offline),
                     None => None,
                 };
+                if is_play && now.as_ref().is_some_and(|n| !n.plays) {
+                    media_access::note_timing("a play was not told: Count plays is off");
+                }
                 signals.handle(&Account(account), told, now.as_ref());
             }
         });
