@@ -1,8 +1,9 @@
 // The places of the app and the rail that reaches them.
 //
 // The rail is four groups: what you listen to (Home, Search, Library), your library at a glance
-// (Stats, Health), managing it (Organize, Devices), and Settings at the bottom. Activity is
-// reached from the title bar and Ctrl+H; Metadata became Health's Fix details.
+// (Stats, Health), managing it (Organize, Devices), and Settings at the bottom. Activity is a
+// page of Settings, reached there, with Ctrl+H and from the title bar while work runs; Metadata
+// became Health's Fix details.
 
 export type Place = 'home' | 'search' | 'library' | 'stats' | 'health' | 'organize' | 'devices' | 'activity' | 'settings'
 

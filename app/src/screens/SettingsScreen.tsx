@@ -29,7 +29,8 @@ import { readZoom, setZoom, ZOOM_EVENT } from '../lib/zoom'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
-import { takeSettingsSection, type SettingsPage } from './settingsPage'
+import { onSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
+import { ActivityPage } from './ActivityScreen'
 import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
 import { PlaybackSettings } from './settings/PlaybackSettings'
 import { LyricWindowsSettings } from './settings/LyricWindowsSettings'
@@ -39,7 +40,7 @@ const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
 type Page = SettingsPage
 // One subject a page: how it looks, what plays, where lyrics come from, where your music lives,
-// what goes online, and how Venuta runs on Windows.
+// what goes online, how Venuta runs on Windows, and (last) what it changed, each with Undo.
 const PAGES: { id: Page; label: string; line: string }[] = [
   { id: 'look', label: 'Look and feel', line: 'Theme, colour, size' },
   { id: 'playback', label: 'Playback', line: 'Sound, what plays' },
@@ -47,6 +48,7 @@ const PAGES: { id: Page; label: string; line: string }[] = [
   { id: 'library', label: 'Library', line: 'Folders and details' },
   { id: 'online', label: 'Online', line: 'Accounts and rooms' },
   { id: 'system', label: 'System', line: 'Windows, updates, about' },
+  { id: 'activity', label: 'Activity', line: 'Changes and undo' },
 ]
 
 export function SettingsScreen(props: {
@@ -67,6 +69,15 @@ export function SettingsScreen(props: {
     const p = takeSettingsSection() ?? props.page ?? 'look'
     return p
   })
+  // Asked for while Settings is open (Ctrl+H, a change's "See all"): that page, at once.
+  useEffect(
+    () =>
+      onSettingsSection(() => {
+        const p = takeSettingsSection()
+        if (p) setPage(p)
+      }),
+    [],
+  )
   return (
     <Frame title="Settings" line="Set up once: how it looks, what plays, where your music lives.">
       <div className="flex items-start gap-6">
@@ -119,6 +130,7 @@ export function SettingsScreen(props: {
         )}
         {page === 'online' && <OnlinePage />}
         {page === 'system' && <SystemPage onShortcuts={props.onShortcuts} />}
+        {page === 'activity' && <ActivityPage root={props.root} />}
       </motion.section>
       </div>
     </Frame>

@@ -88,7 +88,6 @@ import { desktopLyricsOpen, lockDesktopLyrics, openBigScreen, openDesktopLyrics,
 // Places opened now and then load the first time they are opened, so the start is quicker.
 const InboxScreen = lazy(() => import('./screens/InboxScreen').then((m) => ({ default: m.InboxScreen })))
 const CardsScreen = lazy(() => import('./screens/CardsScreen').then((m) => ({ default: m.CardsScreen })))
-const ActivityScreen = lazy(() => import('./screens/ActivityScreen').then((m) => ({ default: m.ActivityScreen })))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen').then((m) => ({ default: m.SettingsScreen })))
 const SetupScreen = lazy(() => import('./screens/SetupScreen').then((m) => ({ default: m.SetupScreen })))
 
@@ -372,7 +371,18 @@ export default function App() {
 
   const go = useCallback(
     (where: Where) => {
-      const id: Place = where === 'listen' ? (isMusicPlace(active) ? active : lastMusic.current) : where === 'details' ? 'health' : where
+      // Activity is a page of Settings now: Ctrl+H, the palette and "See all" all open it there.
+      if (where === 'activity') settingsSection('activity')
+      const id: Place =
+        where === 'listen'
+          ? isMusicPlace(active)
+            ? active
+            : lastMusic.current
+          : where === 'details'
+            ? 'health'
+            : where === 'activity'
+              ? 'settings'
+              : where
       if (where === 'details') setHealthView('details')
       else if (where === 'health' && active !== 'health') setHealthView('overview')
       // Going anywhere (even to the place underneath) closes the full-window views over it.
@@ -1120,8 +1130,6 @@ export default function App() {
         )
       case 'devices':
         return <CardsScreen root={root} library={home ?? root} />
-      case 'activity':
-        return <ActivityScreen root={root} />
       case 'settings':
         return (
           <SettingsScreen

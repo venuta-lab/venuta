@@ -66,8 +66,8 @@ export function JobRow({ job, now }: { job: Job; now: number }) {
 }
 
 /**
- * Activity, in the title bar: when nothing runs, a button to every change (each with Undo); while
- * work runs, that work at a glance, and on click everything running and the way to the changes.
+ * Work running, in the title bar: only while something runs, that work at a glance, and on click
+ * everything running and the way to the changes (Settings, Activity). Nothing shows otherwise.
  */
 export function ActivityIndicator(props: { onAll: () => void }) {
   const jobs = useJobs()
@@ -86,20 +86,7 @@ export function ActivityIndicator(props: { onAll: () => void }) {
   useEscape(open, () => setOpen(false))
 
   return (
-    <div ref={box} className="relative mr-2 flex items-center">
-      {!lead && (
-        <button
-          onClick={props.onAll}
-          title="Every change Venuta made, each with Undo (Ctrl+H)"
-          className="flex h-8 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[12.5px] text-ink/65 transition-colors hover:bg-ink/10 hover:text-ink"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-            <circle cx="12" cy="12" r="8.5" />
-            <path d="M12 7.5V12l3 2" />
-          </svg>
-          <span className="hidden @[1240px]/title:inline">Activity</span>
-        </button>
-      )}
+    <div ref={box} className={`relative flex items-center ${lead ? 'mr-2' : ''}`}>
       <AnimatePresence>
         {lead && (
           <motion.button

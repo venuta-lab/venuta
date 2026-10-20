@@ -14,7 +14,7 @@ import {
 import { notify } from '../lib/notify'
 import { syncWords } from '../lib/ytmLinkWords'
 import { RunRow } from '../components/AlbumRow'
-import { Page } from '../components/ui'
+import { PageHead } from './settings/parts'
 import { when } from '../lib/format'
 import { lyricsChanged } from '../lib/lyrics'
 
@@ -59,8 +59,8 @@ function describeAnswer(id: string, choice: string): { what: string; answer: str
   }
 }
 
-/** Everything that changed, newest first, each with undo. */
-export function ActivityScreen(props: { root: string }) {
+/** Settings, Activity: everything that changed, newest first, each with undo. */
+export function ActivityPage(props: { root: string }) {
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [edits, setEdits] = useState<EditChange[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
@@ -98,10 +98,11 @@ export function ActivityScreen(props: { root: string }) {
     }
   }
   return (
-    <Page title="Activity" line="Everything that changed, newest first. Undo puts things back exactly; your originals are never touched by a build.">
-      <div className="max-w-[880px]">
+    <div className="grid gap-6">
+      <PageHead title="Activity" line="Everything Venuta changed, newest first. Undo puts things back exactly; your originals are never touched by a build." />
+      <div>
       {nothing && (
-        <div className="glass grid place-items-center rounded-[24px] px-6 py-14 text-center">
+        <div className="grid place-items-center rounded-2xl bg-ink/[0.04] px-6 py-12 text-center">
           <span className="grid h-14 w-14 place-items-center rounded-2xl bg-ink/[0.07] text-ink/60" aria-hidden>
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="8.5" />
@@ -185,7 +186,7 @@ export function ActivityScreen(props: { root: string }) {
         </section>
       )}
       </div>
-    </Page>
+    </div>
   )
 }
 
