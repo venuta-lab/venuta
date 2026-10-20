@@ -1,5 +1,44 @@
 # Changes
 
+## Unreleased
+
+- **Up next from YouTube Music.** What plays next is what YouTube Music's own player plays: one
+  radio session, kept and never restarted, more of it as you near the end, its tuning chips
+  above the queue, and with Autoplay on an album or playlist goes on with what YouTube Music
+  says it goes on with. Every way music starts plays this way, and a song of yours played on
+  its own plays at once, then, with Autoplay on, the same song's radio.
+- **A queue you can see and steer.** Played songs above, the one playing, then what comes, each
+  marked LOCAL or ONLINE. Drag or Alt+arrows to move a song, take one out, Play next, Start
+  radio, Go to artist and Go to album, online songs included. Undo brings a replaced radio back.
+- **Related, as YouTube Music shows it.** The songs like the one playing, then rows of similar
+  artists, albums and playlists to open or play, and a few words about the artist.
+- **Start radio** on online album and playlist pages, and a mix on Home plays the way its own
+  play button plays it. Mixed for you's See all opens every mix made for you.
+- **Play my copy when I have it** (on by default): a song in the queue that is in your library
+  as the same song plays from your file, in its place.
+- **Your YouTube Music choices, per account and channel.** Asked once at sign-in. What only
+  reads is on, what writes to your account is off until you turn it on. Recommendations for me
+  decides whether Home, radios and Up next are yours or YouTube's general ones.
+- **Likes and dislikes** on YouTube Music too, with their own switch. A thumbs down leaves what
+  is coming up, and Undo keeps your like.
+- **How much I listened**: with Count plays on, YouTube Music hears how long you listened, the
+  way its own player tells it. Settings says plainly what Count plays and How much I listened
+  send.
+- **Signed-in search** goes as your account only for the words you type, and once per search,
+  so your YouTube search history holds just what you searched for.
+- **A sign-in that stays healthy.** Renewed cookies are kept, one refusal no longer signs you
+  out, and signing out always signs out.
+- **Multiple accounts and channels**: switch between Google accounts and brand channels.
+- **Your YouTube Music library inside Library**, your history in Stats, and one press to save
+  an album, follow an artist or add to your YouTube Music playlists.
+- **Edit your YouTube Music playlists** in Venuta, and **collaborative playlists**: invite, join
+  and see who added each song.
+- **Linked playlists** stay the same in Venuta and on YouTube Music, changes going both ways.
+  Nothing is deleted as a side effect, songs YouTube hides are kept, every sync is in Activity
+  with Undo, and writes are sent once and paced.
+- **Uploads**: your files can go to your YouTube Music uploads when you link a playlist, only
+  after the account and the playlist are checked.
+
 ## 0.3.0 (2026-10-18)
 
 - **Listen together.** Start a room from the title bar and send the invite. Everyone hears the
