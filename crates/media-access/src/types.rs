@@ -104,6 +104,10 @@ pub struct TrackMenu {
     /// "Tell me less of this" presses ("Not interested"), in the catalog's own words.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feedback: Vec<MenuFeedback>,
+    /// When it was listed (milliseconds since 1970): a press made later stands over it, and a
+    /// listing made later than a press stands over the press.
+    #[serde(default)]
+    pub listed_at: u64,
 }
 
 impl TrackMenu {

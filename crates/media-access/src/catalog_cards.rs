@@ -47,6 +47,9 @@ pub(crate) fn menu_of(m: &RowMenu) -> Option<TrackMenu> {
                 token: f.token.clone(),
             })
             .collect(),
+        listed_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
     };
     (!menu.is_empty()).then_some(menu)
 }
@@ -773,7 +776,16 @@ mod tests {
                 off_token: Some("FIXTURE-UNPIN".into()),
             }),
             feedback: Vec::new(),
+            listed_at: 0,
         }
+    }
+
+    /// A menu as listed, its listing time aside (that is now, every time).
+    fn bare(m: Option<TrackMenu>) -> Option<TrackMenu> {
+        m.map(|m| {
+            assert!(m.listed_at > 0, "stamped when listed");
+            TrackMenu { listed_at: 0, ..m }
+        })
     }
 
     // A song row read as the account brings its own menu to the track: in the library, its pin,
@@ -783,7 +795,7 @@ mod tests {
         let raw = row_menu_fixture();
         let song = ytmusic::models::browse::song_rows(&raw);
         let t = track_of_row(&song[0]).unwrap();
-        assert_eq!(t.menu, Some(saved_menu()));
+        assert_eq!(bare(t.menu), Some(saved_menu()));
 
         let mut feedback = row("x", "X");
         feedback.feedback = vec![ytmusic::MenuFeedback {
@@ -810,7 +822,7 @@ mod tests {
         let song = &ytmusic::models::browse::song_rows(&raw)[0];
         let mut c = card("song", "BddP6PYo2gs", "Kesariya", "Pritam");
         c.menu = song.menu();
-        assert_eq!(track_of_card(&c).unwrap().menu, Some(saved_menu()));
+        assert_eq!(bare(track_of_card(&c).unwrap().menu), Some(saved_menu()));
         assert_eq!(
             track_of_card(&card("song", "a", "A", "B")).unwrap().menu,
             None
@@ -830,7 +842,7 @@ mod tests {
         };
         let mut tracks = vec![plain("BddP6PYo2gs"), plain("other")];
         with_menus(&mut tracks, &raw);
-        assert_eq!(tracks[0].menu, Some(saved_menu()));
+        assert_eq!(bare(tracks[0].menu.clone()), Some(saved_menu()));
         assert_eq!(tracks[1].menu, None);
     }
 
