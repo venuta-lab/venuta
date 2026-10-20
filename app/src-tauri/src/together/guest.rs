@@ -14,7 +14,7 @@ use iroh::endpoint::Connection;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use together::clock::Sample;
 use together::invite::Invite;
 use together::proto::{self, Action, Hearing, RoomView, ToGuest, ToHost};
@@ -37,6 +37,8 @@ pub struct Guest {
     ep: Endpoint,
     conn: Mutex<Option<Connection>>,
     out: Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    /// What was asked while the connection was down, to send once it's back.
+    held: Mutex<Vec<Vec<u8>>>,
     local: Clock,
     clock: Arc<Mutex<together::clock::Clock>>,
     pub me: Mutex<Option<u32>>,
@@ -85,6 +87,7 @@ impl Guest {
             follow: Mutex::default(),
             host_stream: Mutex::default(),
             server: Mutex::default(),
+            held: Mutex::default(),
             covers: Default::default(),
             asking_covers: Arc::new(tokio::sync::Semaphore::new(3)),
             app: app.clone(),
@@ -186,6 +189,10 @@ impl Guest {
             let _ = send.finish();
         });
         *self.conn.lock().unwrap() = Some(conn.clone());
+        // What was asked while the connection was down goes first.
+        for line in std::mem::take(&mut *self.held.lock().unwrap()) {
+            let _ = out.send(line);
+        }
         *self.out.lock().unwrap() = Some(out);
         // Its news.
         let g = self.clone();
@@ -401,8 +408,23 @@ impl Guest {
         }
     }
 
+    /// A press: to the host now, or as soon as the connection is back (never dropped quietly).
     pub fn ask(&self, action: Action) {
-        self.send(ToHost::Ask { action });
+        let m = ToHost::Ask { action };
+        if self.out.lock().unwrap().is_some() {
+            self.send(m);
+            return;
+        }
+        if *self.stage.lock().unwrap() == Stage::Reconnecting {
+            let mut held = self.held.lock().unwrap();
+            if held.len() < 20 {
+                held.push(proto::line(&m));
+            }
+            let _ = self.app.emit(
+                "together-note",
+                "Reconnecting: your press will reach the room as soon as the connection is back.",
+            );
+        }
     }
 
     pub fn to_follower(&self, m: follow::In) {

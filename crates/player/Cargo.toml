@@ -25,7 +25,7 @@ md-5 = "0.10"
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.19"
 # The player's thread scheduled as pro audio (MMCSS); the same version wasapi uses.
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Performance"] }
 
 [dev-dependencies]
 media-access = { path = "../media-access" }

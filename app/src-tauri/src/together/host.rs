@@ -28,6 +28,8 @@ pub struct Host {
     pub room: Mutex<Room>,
     /// Each person's way to send to them: in the room, or waiting at the door.
     conns: Mutex<HashMap<u32, (Out, Connection)>>,
+    /// Each guest's last few round trips (ms), for whether same room can stay on.
+    trips: Mutex<HashMap<u32, Vec<u32>>>,
     waiting: Mutex<HashMap<u32, (Out, Connection)>>,
     pub files: HostFiles,
     /// The covers of the host's songs in the room (made here, served to the people in it).
@@ -98,6 +100,7 @@ impl Host {
             room: Mutex::new(room),
             conns: Mutex::default(),
             waiting: Mutex::default(),
+            trips: Mutex::default(),
             files,
             covers: Default::default(),
             root: root.clone(),
@@ -329,13 +332,19 @@ impl Host {
                         t3: self.clock.now_us(),
                     }));
                     pings += 1;
-                    if pings.is_multiple_of(8)
-                        && let Some(rtt) = net::path_of(&conn).rtt_ms
-                    {
-                        self.room.lock().unwrap().round_trip(i64::from(rtt) * 1_000);
-                        // Someone farther than this network now: same room goes back to apart.
+                    if pings.is_multiple_of(8) {
+                        let path = net::path_of(&conn);
+                        if let Some(rtt) = path.rtt_ms {
+                            self.room.lock().unwrap().round_trip(i64::from(rtt) * 1_000);
+                        }
+                        // Someone farther than this network now (not one slow reading: their
+                        // last few, mostly): same room goes back to apart.
                         let same_room = self.room.lock().unwrap().view(true).same_room;
-                        if same_room && !self.all_on_one_network() {
+                        if same_room && self.too_far_for_same_room(id, path) {
+                            super::trace(&format!(
+                                "room: same room off, {id} is too far now ({:?} ms)",
+                                path.rtt_ms
+                            ));
                             self.set(|room| room.set_same_room(false));
                         }
                     }
@@ -513,6 +522,25 @@ impl Host {
         let c = self.room.lock().unwrap().undo(HOST, self.clock.now_us())?;
         self.apply(c);
         Ok(())
+    }
+
+    /// Whether this guest's connection has become too far for same room: not direct any more,
+    /// or the middle one of their last three round trips over the line (one slow reading, as a
+    /// busy moment gives, leaves it on).
+    fn too_far_for_same_room(&self, id: u32, path: net::Path) -> bool {
+        if !path.direct {
+            return true;
+        }
+        let Some(rtt) = path.rtt_ms else {
+            return false;
+        };
+        let mut trips = self.trips.lock().unwrap();
+        let t = trips.entry(id).or_default();
+        t.push(rtt);
+        if t.len() > 3 {
+            t.remove(0);
+        }
+        net::too_far(t)
     }
 
     /// Whether everyone is on this network (same room can work).

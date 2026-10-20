@@ -126,6 +126,21 @@ pub fn same_room_possible(paths: &[Path]) -> bool {
         .all(|p| p.direct && p.rtt_ms.is_some_and(|r| r <= SAME_NETWORK_RTT_MS))
 }
 
+/// Past this round trip for a while, same room goes back to apart (well over the line it is
+/// switched on at, so it doesn't flicker on a network at the edge).
+pub const LEAVE_SAME_ROOM_RTT_MS: u32 = 15;
+
+/// Whether a guest's recent round trips (ms, oldest first) say they are too far for same room
+/// now: the middle one of the last three over the line. Fewer than three readings: not yet.
+pub fn too_far(trips: &[u32]) -> bool {
+    if trips.len() < 3 {
+        return false;
+    }
+    let mut last: Vec<u32> = trips[trips.len() - 3..].to_vec();
+    last.sort_unstable();
+    last[1] > LEAVE_SAME_ROOM_RTT_MS
+}
+
 pub fn path_of(conn: &Connection) -> Path {
     let paths = conn.paths();
     let selected = paths.iter().find(|p| p.is_selected());
@@ -219,6 +234,19 @@ impl Clock {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_room_goes_only_when_someone_stays_far() {
+        use super::too_far;
+        // One slow reading (a busy moment) doesn't end it; three mostly slow ones do.
+        assert!(!too_far(&[3]));
+        assert!(!too_far(&[3, 40]));
+        assert!(!too_far(&[3, 40, 4]));
+        assert!(!too_far(&[40, 4, 5]));
+        assert!(too_far(&[4, 40, 22]));
+        assert!(too_far(&[16, 17, 16]));
+        assert!(!too_far(&[15, 15, 15]), "on the line still counts as near");
+    }
+
     #[test]
     fn same_room_needs_one_network() {
         use super::{Path, same_room_possible};

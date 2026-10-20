@@ -201,7 +201,9 @@ impl WasapiDevice {
                 &Direction::Render,
                 &StreamMode::EventsShared {
                     autoconvert: true,
-                    buffer_duration_hns: def.max(200_000),
+                    // 50 ms: a music player needs no low latency, and a bigger buffer rides
+                    // out a late period (the latency is measured, not guessed, for a room).
+                    buffer_duration_hns: def.max(500_000),
                 },
             )
             .map_err(|e| format!("The sound output refused to open ({e})."))?;
@@ -311,9 +313,18 @@ impl Device for WasapiDevice {
     }
     fn queued_frames(&self) -> Option<usize> {
         let (clock, freq) = self.clock.as_ref()?;
-        let (pos, _) = clock.get_position().ok()?;
-        let heard = (u128::from(pos) * u128::from(self.rate) / u128::from(*freq)) as u64;
-        Some(self.written.saturating_sub(heard) as usize)
+        // The position comes with the moment it was read at (the performance counter, in
+        // 100 ns units): what has played since then is counted on, so a driver that reports
+        // its position only every millisecond or ten is no noise in the measure.
+        let (pos, at) = clock.get_position().ok()?;
+        let mut heard = u128::from(pos) * u128::from(self.rate) / u128::from(*freq);
+        if at > 0
+            && let Some(now) = qpc_100ns()
+            && now > at
+        {
+            heard += u128::from(now - at) * u128::from(self.rate) / 10_000_000;
+        }
+        Some(self.written.saturating_sub(heard as u64) as usize)
     }
     fn start(&mut self) -> Result<(), String> {
         self.client
@@ -337,6 +348,19 @@ impl Device for WasapiDevice {
         self.clock = None;
         self.client = None;
     }
+}
+
+/// The performance counter now, in 100 ns units (what `IAudioClock::GetPosition` stamps its
+/// position with).
+fn qpc_100ns() -> Option<u64> {
+    use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+    let (mut count, mut freq) = (0i64, 0i64);
+    // SAFETY: plain calls with valid out pointers.
+    unsafe {
+        QueryPerformanceCounter(&mut count).ok()?;
+        QueryPerformanceFrequency(&mut freq).ok()?;
+    }
+    (freq > 0).then(|| (u128::from(count as u64) * 10_000_000 / u128::from(freq as u64)) as u64)
 }
 
 /// This thread, scheduled by Windows as pro audio (the Multimedia Class Scheduler), while it
