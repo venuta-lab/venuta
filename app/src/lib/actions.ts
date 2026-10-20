@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { askAddSongs, askAddToPlaylist } from '../components/AddToPlaylist'
 import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './actionModel'
-import { searchWeb, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, ytmSongMenu, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
+import { searchWeb, ytmArtistFollowed, ytmSubscribe, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, ytmSongMenu, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
 import { rebuildMenu, type MenuGroups, type MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
@@ -181,6 +181,21 @@ export async function removePastSearch(text: string, token: string): Promise<boo
   }
 }
 
+/** Follow an artist on YouTube Music from a song of theirs (asked how it stands first, so a
+ *  second press never says it followed again). */
+export async function followArtist(artistId: string, name: string) {
+  try {
+    const state = await ytmArtistFollowed(artistId)
+    if (!state) return notify(`YouTube Music gave no way to follow ${name}.`)
+    if (state.subscribed) return notify(`You follow ${name} on YouTube Music already.`)
+    await ytmSubscribe(state.channel_id, true)
+    ytmLibraryChanged(['subscriptions'])
+    notify(`Following ${name} on YouTube Music.`)
+  } catch (e) {
+    notify(onlineProblem(e))
+  }
+}
+
 /** YouTube Music's own list of podcast episodes saved for later. */
 export const EPISODES_FOR_LATER = 'SE'
 
@@ -231,6 +246,7 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
     share: () => copySongLink(t),
     web: () => void searchWeb(`${t.title} ${t.artists[0] ?? ''}`.trim()),
     saveEpisode: isEpisode(t) && ytmReady() ? () => void saveEpisodeForLater(t) : undefined,
+    follow: t.artist_id && t.artists[0] && ytmReady() ? [{ label: `Follow ${t.artists[0]} on YouTube Music`, run: () => void followArtist(t.artist_id ?? '', t.artists[0]) }] : undefined,
     ...ytmMenuWork(`online:${t.provider}:${t.track_id}`, t.title, t.menu),
   }
 }

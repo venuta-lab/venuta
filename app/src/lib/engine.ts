@@ -891,6 +891,8 @@ export interface OnlineTrack {
   /** What its own YouTube Music menu offers the account, where it was listed signed in
    *  (lib/ytmSongMenu.ts): save to that library, pin, not interested. */
   menu?: TrackMenu | null
+  /** The lead artist's channel (`UC…`), when the catalog linked one: what Follow follows. */
+  artist_id?: string | null
 }
 
 export interface OnlineAlbum {

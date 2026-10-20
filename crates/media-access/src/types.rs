@@ -90,6 +90,9 @@ pub struct RemoteTrack {
     /// the account carry it; each press sends one of its tokens and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu: Option<TrackMenu>,
+    /// The lead artist's channel (`UC…`), when the row links one: what Follow in its menu follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_id: Option<String>,
 }
 
 /// A song's own account menu, as the catalog listed it with the song ([`RemoteTrack::menu`]).

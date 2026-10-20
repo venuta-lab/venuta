@@ -24,6 +24,14 @@ use crate::types::{
 };
 use ytmusic::{ArtistRun, BrowseItem, RowMenu, SongItem};
 
+/// The first artist in a line that links a channel (`UC…`).
+fn lead_artist(runs: &[ArtistRun]) -> Option<String> {
+    runs.iter()
+        .filter_map(|r| r.id.as_deref())
+        .find(|id| id.starts_with("UC"))
+        .map(str::to_owned)
+}
+
 /// A row's own account menu as a track's: what each press sends. None when it offers nothing (a
 /// row read signed out, or one Venuta built).
 pub(crate) fn menu_of(m: &RowMenu) -> Option<TrackMenu> {
@@ -128,6 +136,7 @@ pub(crate) fn track_of_card(item: &BrowseItem) -> Option<RemoteTrack> {
         plays: item.play_count.as_deref().and_then(plays),
         video_type: item.is_video.then(|| "OMV".to_owned()),
         menu: menu_of(&item.menu),
+        artist_id: lead_artist(&item.artist_runs),
         ..Default::default()
     })
 }
@@ -151,6 +160,11 @@ pub(crate) fn track_of_row(s: &SongItem) -> Option<RemoteTrack> {
         plays: s.play_count.as_deref().and_then(plays),
         video_type: s.is_video.then(|| "OMV".to_owned()),
         menu: menu_of(&s.menu()),
+        artist_id: s
+            .artist_id
+            .clone()
+            .filter(|id| id.starts_with("UC"))
+            .or_else(|| lead_artist(&s.artist_runs)),
         ..Default::default()
     })
 }
@@ -844,6 +858,41 @@ mod tests {
         with_menus(&mut tracks, &raw);
         assert_eq!(bare(tracks[0].menu.clone()), Some(saved_menu()));
         assert_eq!(tracks[1].menu, None);
+    }
+
+    // A song brings its lead artist's channel, for Follow in its menu; an album link is no artist.
+    #[test]
+    fn a_song_brings_its_lead_artists_channel() {
+        let mut s = row("a", "A");
+        s.artist_runs = vec![
+            ArtistRun {
+                text: "Album".into(),
+                id: Some("MPREb_x".into()),
+            },
+            ArtistRun {
+                text: "Pritam".into(),
+                id: Some("UCpritam".into()),
+            },
+        ];
+        assert_eq!(
+            track_of_row(&s).unwrap().artist_id.as_deref(),
+            Some("UCpritam")
+        );
+        s.artist_id = Some("UClead".into());
+        assert_eq!(
+            track_of_row(&s).unwrap().artist_id.as_deref(),
+            Some("UClead")
+        );
+        assert_eq!(track_of_row(&row("b", "B")).unwrap().artist_id, None);
+        let mut c = card("song", "c", "C", "Someone");
+        c.artist_runs = vec![ArtistRun {
+            text: "Someone".into(),
+            id: Some("UCsome".into()),
+        }];
+        assert_eq!(
+            track_of_card(&c).unwrap().artist_id.as_deref(),
+            Some("UCsome")
+        );
     }
 
     // A Home album or playlist card brings its Not interested; a card with none brings nothing.

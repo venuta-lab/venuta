@@ -183,3 +183,10 @@ test('an online artist card plays every way, starts their radio and shares their
   for (const id of [...PLAY, 'radio', 'share'] as const) assert.ok(ar.includes(id), id)
   assert.ok(!ids(actionsFor('artist', {})).includes('share'))
 })
+
+test('an online song can follow its artist on YouTube Music, beside Go to artist', () => {
+  const o = actionsFor('song', { online: true })
+  assert.ok(o[3].includes('follow'))
+  assert.ok(!ids(actionsFor('song', { online: true, noArtist: true })).includes('follow'))
+  assert.ok(!ids(actionsFor('song', {})).includes('follow'))
+})

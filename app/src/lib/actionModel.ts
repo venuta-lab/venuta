@@ -45,6 +45,7 @@ export type ActionId =
   | 'notInterested'
   | 'deleteUpload'
   | 'saveEpisode'
+  | 'follow'
 
 export type Kind = 'song' | 'album' | 'artist' | 'playlist' | 'wanted' | 'queued'
 
@@ -117,6 +118,7 @@ export const LABELS: Record<ActionId, string> = {
   notInterested: 'Not interested',
   deleteUpload: 'Delete upload…',
   saveEpisode: 'Save episode for later',
+  follow: 'Follow on YouTube Music',
 }
 
 const PLAY: ActionId[] = ['play', 'shuffle', 'next', 'queue']
@@ -131,7 +133,7 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
           ['play', 'next', 'queue'],
           ['radio', 'like', ...when(f.online, 'dislike')],
           ['playlist', ...when(f.online, 'ytmLibrary', 'ytmPin'), ...when(f.online && f.episode, 'saveEpisode')],
-          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'moreOnline', 'block'), ...when(f.online, 'notInterested')],
+          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'follow', 'moreOnline', 'block'), ...when(f.online, 'notInterested')],
           [
             ...when(f.nowPlaying && !f.online, 'lyrics'),
             ...when(!f.online, 'details', 'folder'),
