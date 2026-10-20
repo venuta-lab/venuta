@@ -7,7 +7,7 @@
 use crate::playback::Playback;
 use media_access::{
     AccessError, AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack,
-    CancellationToken, FollowState, HistoryDay, LibraryShelf, Placements, PlaylistEdit,
+    CancellationToken, FollowState, HistoryDay, LibraryShelf, MenuPress, Placements, PlaylistEdit,
     RemoteSuggestion, SavedState,
 };
 use std::sync::Arc;
@@ -174,6 +174,33 @@ pub async fn ytm_history_remove(pb: State<'_, Playback>, token: String) -> Resul
 #[tauri::command]
 pub async fn ytm_vote(pb: State<'_, Playback>, token: String) -> Result<(), String> {
     with_account(&pb, move |a, c| a.vote(&token, c)).await
+}
+
+/// One press on an online song's own menu: Save to library or Remove from library, Pin to Listen
+/// again or Unpin, Not interested. The token is the one its menu holds for that way.
+#[tauri::command]
+pub async fn ytm_menu_press(
+    pb: State<'_, Playback>,
+    token: String,
+    press: MenuPress,
+) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.menu_press(&token, press, c)).await
+}
+
+/// Take one past search out of the account's search history (asked first, in the search box).
+#[tauri::command]
+pub async fn ytm_remove_past_search(pb: State<'_, Playback>, token: String) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.remove_past_search(&token, c)).await
+}
+
+/// Delete one of the account's uploads, a song or an album (asked first, where it is pressed).
+#[tauri::command]
+pub async fn ytm_delete_upload(pb: State<'_, Playback>, entity_id: String) -> Result<(), String> {
+    let id = entity_id.trim().to_owned();
+    if id.is_empty() {
+        return Err("YouTube Music gave no way to delete that upload.".into());
+    }
+    with_account(&pb, move |a, c| a.delete_upload(&id, c)).await
 }
 
 /// Send one of your files to the account's uploads. Only the person picks which.
