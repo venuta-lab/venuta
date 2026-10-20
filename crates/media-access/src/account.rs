@@ -37,6 +37,58 @@ pub struct AccountTrack {
     /// The account uploaded it: only it can play the song.
     #[serde(default)]
     pub upload: bool,
+    /// Who put it in the playlist, on a collaborative one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<Contributor>,
+    /// Its votes, on a collaborative playlist that has them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub votes: Option<TrackVotes>,
+}
+
+/// The person who added a song to a collaborative playlist, as the row shows them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contributor {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub picture: Option<String>,
+    /// Their channel, to open.
+    #[serde(default)]
+    pub channel_id: Option<String>,
+}
+
+/// A song's votes in a collaborative playlist, and what each button sends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackVotes {
+    /// How the account voted, as the list came.
+    pub mine: Vote,
+    /// The net count, as the list came.
+    pub votes: i64,
+    /// The count as YouTube writes it with no vote of yours, with yours up, with yours down.
+    #[serde(default)]
+    pub count: Option<String>,
+    #[serde(default)]
+    pub count_up: Option<String>,
+    #[serde(default)]
+    pub count_down: Option<String>,
+    pub up: VoteButton,
+    pub down: VoteButton,
+}
+
+/// One vote button: what it sends to vote, and what it sends pressed again to take it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoteButton {
+    pub token: String,
+    #[serde(default)]
+    pub undo_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Vote {
+    Up,
+    Down,
+    Neutral,
 }
 
 /// One of the account's playlists, whole.
@@ -107,7 +159,16 @@ pub type Placements = Vec<(String, String)>;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HistoryDay {
     pub title: String,
-    pub tracks: Vec<RemoteTrack>,
+    pub tracks: Vec<HistoryPlay>,
+}
+
+/// One play in the history: the song, and the token that takes this play out of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryPlay {
+    #[serde(flatten)]
+    pub track: RemoteTrack,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_token: Option<String>,
 }
 
 /// An identity the signed-in Google login can act as (itself, or a brand account).
@@ -253,6 +314,17 @@ pub trait AccountAccess: Send + Sync {
 
     /// The account's history, as YouTube keeps it.
     fn history(&self, cancel: &CancellationToken) -> Result<Vec<HistoryDay>, AccessError>;
+
+    /// Take one play out of the history, by its [`HistoryPlay::remove_token`].
+    fn remove_from_history(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError>;
+
+    /// Vote on a song of a collaborative playlist, or take the vote back: the token is the one
+    /// its [`VoteButton`] sends in the state it is in.
+    fn vote(&self, token: &str, cancel: &CancellationToken) -> Result<(), AccessError>;
 
     /// Tell the account a song was played (history, and what its recommendations learn from).
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError>;

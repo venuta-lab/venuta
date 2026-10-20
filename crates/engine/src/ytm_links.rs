@@ -762,6 +762,8 @@ mod tests {
                 },
                 set_video_id: Some(format!("s-{id}")),
                 upload: false,
+                added_by: None,
+                votes: None,
             })
             .collect()
     }
