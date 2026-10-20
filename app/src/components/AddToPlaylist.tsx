@@ -11,13 +11,15 @@ import { addSongsTo } from '../screens/playlists/ops'
 import { nameNote, newPlaylistName } from '../lib/playlistName'
 import { Mosaic } from './Mosaic'
 import { keyFor, matcher } from '../lib/textsearch'
-import { addPlan, canAddTo } from '../lib/ytmAdd'
+import { addPlan, canAddTo, copyWhole } from '../lib/ytmAdd'
 
 /*
   "Add to playlist…" from anywhere (a song's or an album's menu, Now Playing, the queue): one
   picker for the whole app. Any code asks with askAddToPlaylist(); <AddToPlaylist> shows it.
 */
-type Request = { items: PlaylistItem[]; label: string; name?: string }
+/** `source`: the whole list the songs are (a playlist's or an album's own list), so YouTube
+ *  Music can take it in one copy. */
+type Request = { items: PlaylistItem[]; label: string; name?: string; source?: string }
 let request: Request | null = null
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
@@ -30,11 +32,28 @@ export const askAddToPlaylist = (paths: string[], label: string) =>
   )
 
 /** Open the picker for any songs: library files, and online songs by their stable id. `name`:
- *  the name a new playlist takes until one is typed (the queue's radio). */
-export function askAddSongs(items: PlaylistItem[], label: string, name?: string) {
+ *  the name a new playlist takes until one is typed (the queue's radio). `source`: the online
+ *  list they are, whole (copied in one go on YouTube Music when it can be). */
+export function askAddSongs(items: PlaylistItem[], label: string, name?: string, source?: string) {
   if (!items.length) return
-  request = { items, label, name }
+  request = { items, label, name, source }
   emit()
+}
+
+/** Songs to a YouTube Music playlist: a whole list in one copy when it can go so (lib/ytmAdd.ts),
+ *  else, or if YouTube Music turns the copy down, the new ones song by song. */
+async function addToYtmPlaylist(id: string, source: string | undefined, videoIds: string[], plan: { send: string[] }, onlyHere: number) {
+  if (source && copyWhole(source, videoIds, plan, onlyHere)) {
+    try {
+      await ytmPlaylistEdit(id, [{ kind: 'add_playlist', playlist_id: source }])
+      return
+    } catch (e) {
+      // Not known to have gone or not (a lost answer): sending them again could add them twice.
+      if (/didn.t say whether/.test(String(e))) throw e
+      // Turned down (a list it won't copy): the songs go one by one instead.
+    }
+  }
+  await ytmPlaylistEdit(id, [{ kind: 'add', video_ids: plan.send }])
 }
 
 /** YouTube Music playlists found to be someone else's (saved ones): not offered again. */
@@ -115,7 +134,7 @@ export function AddToPlaylist({ root }: { root: string }) {
         notify(plan.words)
         return
       }
-      if (plan.send.length) await ytmPlaylistEdit(id, [{ kind: 'add', video_ids: plan.send }])
+      if (plan.send.length) await addToYtmPlaylist(id, req.source, videoIds, plan, onlyHere)
       const kept = onlyHere ? ` ${onlyHere === 1 ? 'One is a file of yours and stays' : `${onlyHere} are files of yours and stay`} in Venuta.` : ''
       notify(`${plan.words}${kept}`)
       close()

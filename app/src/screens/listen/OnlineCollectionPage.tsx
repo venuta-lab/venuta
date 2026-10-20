@@ -116,7 +116,8 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
   const total = (tracks ?? []).reduce((n, t) => n + (t.duration_ms ?? 0), 0)
   const podcast = c.kind === 'podcast'
   const unit = podcast ? 'episode' : 'song'
-  const addAll = () => tracks?.length && askAddSongs(tracks.map((t) => ({ online: onlineEntryFrom(t) })), title)
+  // The whole list goes in one copy on YouTube Music when it can (an upload's page or a podcast is no such list).
+  const addAll = () => tracks?.length && askAddSongs(tracks.map((t) => ({ online: onlineEntryFrom(t) })), title, undefined, list && !upload && !later ? list : undefined)
 
   /** Send changes; on a refusal the page is read again, so it never shows what didn't happen. */
   const send = async (edits: YtmEdit[], done?: string) => {

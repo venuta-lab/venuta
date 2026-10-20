@@ -144,10 +144,10 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
         ]
       case 'album':
         return f.online
-          ? [PLAY, ['playlist', 'shortcut'], ['open'], when(f.upload, 'deleteUpload')]
+          ? [PLAY, ['radio'], ['playlist', 'shortcut'], ['open', 'share'], ['notInterested'], when(f.upload, 'deleteUpload')]
           : [PLAY, ['playlist', 'shortcut'], ['artist'], ['details', 'folder']]
       case 'artist':
-        return [PLAY, ['radio'], ['playlist', 'shortcut'], ['open']]
+        return [PLAY, ['radio'], ['playlist', 'shortcut'], ['open', ...when(f.online, 'share')]]
       case 'playlist':
         return [
           PLAY,

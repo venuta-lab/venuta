@@ -16,6 +16,7 @@ import { moodArt } from '../../lib/moodArt'
 import { Shelf } from './parts'
 import { isVideo } from './onlineSearch'
 import { useOnlineCards } from './useOnlineCards'
+import { collectionCardWork } from './cardWork'
 
 /*
   Cards for the browse side of the online catalog: a playlist or podcast to open (or play from
@@ -66,11 +67,13 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
           void onlineCollection(c.collection_id)
             .then((p) => p.tracks.length && askAddSongs(p.tracks.map((t) => ({ online: onlineEntryFrom(t) })), c.title))
             .catch((e) => notify(onlineProblem(e))),
+        // Shuffle, its radio, the whole list in one copy, its link, Not interested.
+        ...collectionCardWork(root, c, from),
       },
     )
   return (
     <div className="group relative shrink-0" style={{ width }}>
-      <button onClick={() => openOnlineCollection(c)} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${c.title}”`} className="block w-full text-left">
+      <button onClick={() => openOnlineCollection(c)} onContextMenu={(e) => menuFromEvent(e, menu)} title={`Open “${c.title}”`} className="block w-full text-left">
         <span className={`relative grid w-full place-items-center overflow-hidden bg-ink/[0.06] text-[28px] text-ink/25 shadow-lg shadow-black/20 ${wide ? 'aspect-video rounded-xl' : 'aspect-square rounded-2xl'}`}>
           <RemoteArt url={c.artwork_url} seed={c.title} size={width} imgClassName="h-full w-full object-cover" />
         </span>
@@ -134,7 +137,7 @@ export function OnlineSongCard({ track: t, now, onPlay, width: asked }: { track:
   return (
     <button
       onClick={() => (now ? void toggle() : onPlay())}
-      onContextMenu={(e) => menuFromEvent(e, menu())}
+      onContextMenu={(e) => menuFromEvent(e, menu)}
       aria-current={now || undefined}
       title={`Play “${t.title}”`}
       className="group block shrink-0 text-left"

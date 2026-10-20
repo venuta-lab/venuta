@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { askAddSongs, askAddToPlaylist } from '../components/AddToPlaylist'
 import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './actionModel'
-import { searchWeb, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
-import type { MenuGroups, MenuItem } from './menu'
+import { searchWeb, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, ytmSongMenu, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
+import { rebuildMenu, type MenuGroups, type MenuItem } from './menu'
 import { notify } from './notify'
 import { isLiked, setLiked } from './likes'
 import { blockArtist, dislike, playWithRadio, startRadio } from './radio'
@@ -74,13 +74,16 @@ export const songFacts = (t: CatalogTrack): Facts => ({ noArtist: !artistsOf(t).
 /** The catalog's own page for an online song, to share. */
 export const onlineSongLink = (t: Pick<OnlineTrack, 'track_id'>) => `https://music.youtube.com/watch?v=${encodeURIComponent(t.track_id)}`
 
-/** Put a song's link on the clipboard, and say so. */
-export function copySongLink(t: Pick<OnlineTrack, 'track_id' | 'title'>) {
+/** Put a link on the clipboard, and say so. */
+export function copyLink(url: string, name: string) {
   navigator.clipboard
-    .writeText(onlineSongLink(t))
-    .then(() => notify(`Link to “${t.title}” copied.`))
+    .writeText(url)
+    .then(() => notify(`Link to “${name}” copied.`))
     .catch(() => notify("Couldn't reach the clipboard."))
 }
+
+/** Put a song's link on the clipboard, and say so. */
+export const copySongLink = (t: Pick<OnlineTrack, 'track_id' | 'title'>) => copyLink(onlineSongLink(t), t.title)
 
 /** Like a song, or take it out of Liked songs when it is in. */
 export function likeWork(root: string, q: QueueItem): MenuItem[] {
@@ -112,11 +115,36 @@ async function pressSongMenu(key: string, title: string, i: SongMenuItem) {
   }
 }
 
+/** A catalog song's queue key, and its id. */
+const SONG_KEY = /^online:remote_catalog:(.+)$/
+/** Songs whose own menu is being read, or was read and YouTube Music gave none. */
+const lazyMenus = new Map<string, 'reading' | 'none'>()
+
+/** One song's menu, read as the account by its id (only when its menu shows), then the menu
+ *  built again with what it offers. */
+function readSongMenu(key: string, id: string) {
+  if (lazyMenus.has(key)) return
+  lazyMenus.set(key, 'reading')
+  ytmSongMenu(id)
+    .then((m) => {
+      if (m) {
+        songMenus.remember(key, m)
+        lazyMenus.delete(key)
+      } else lazyMenus.set(key, 'none')
+    })
+    .catch(() => lazyMenus.set(key, 'none'))
+    .finally(rebuildMenu)
+}
+
 /** An online song's own YouTube Music menu (key: its queue key; `came`: the menu it was listed
  *  with here): Save to that library or Remove from it, Pin to Listen again or Unpin, Not
  *  interested. Only what its listing carried; each press sends that one token. */
 export function ytmMenuWork(key: string, title: string, came?: TrackMenu | null): Work {
-  const items = songMenuItems(songMenus.menuOf(key, came))
+  const known = songMenus.menuOf(key, came)
+  // Listed with no menu (a search sent signed out): read when the menu shows, by its id alone.
+  const id = SONG_KEY.exec(key)?.[1]
+  if (!known && id && ytmReady() && lazyMenus.get(key) !== 'none') return { ytmLibrary: [{ label: 'Reading YouTube Music options…', disabled: true, run: () => {}, load: () => readSongMenu(key, id) }] }
+  const items = songMenuItems(known)
   const of = (press: Press): MenuItem[] | undefined => {
     const list = items.filter((i) => i.press === press).map((i) => ({ label: i.label, run: () => void pressSongMenu(key, title, i) }))
     return list.length ? list : undefined

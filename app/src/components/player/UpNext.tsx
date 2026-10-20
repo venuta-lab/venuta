@@ -240,7 +240,7 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
         style={style}
         data-current={isCurrent}
         onPointerDown={grab?.onGrab}
-        onContextMenu={(e) => menuFromEvent(e, rowMenu(r))}
+        onContextMenu={(e) => menuFromEvent(e, () => rowMenu(r))}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button') || grab?.justDropped()) return
           void (isCurrent ? toggle() : jumpTo(r.at))
@@ -408,18 +408,19 @@ function RelatedSongs({ tracks, root, label }: { tracks: OnlineTrack[]; root: st
     <ul aria-label={label} className="grid gap-0.5">
       {tracks.map((t, i) => {
         const item = toRemoteItem(t)
-        const menu = menuFor(
-          'song',
-          { online: true, noArtist: true },
-          {
-            play: () => void playWithRadio(root, item),
-            next: () => void enqueueItems(root, [item], true),
-            queue: () => void enqueueItems(root, [item], false),
-            radio: () => void startRadio(root, item),
-            playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
-            ...ytmMenuWork(queueKey(item), t.title, t.menu),
-          },
-        )
+        const menu = () =>
+          menuFor(
+            'song',
+            { online: true, noArtist: true },
+            {
+              play: () => void playWithRadio(root, item),
+              next: () => void enqueueItems(root, [item], true),
+              queue: () => void enqueueItems(root, [item], false),
+              radio: () => void startRadio(root, item),
+              playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
+              ...ytmMenuWork(queueKey(item), t.title, t.menu),
+            },
+          )
         return (
           <li key={`${t.track_id}#${i}`} className="group flex min-w-0 items-center gap-1 rounded-xl hover:bg-ink/[0.05]" onContextMenu={(e) => menuFromEvent(e, menu)}>
             <button onClick={() => void playWithRadio(root, item)} title={`Play “${t.title}” and songs like it`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left">
