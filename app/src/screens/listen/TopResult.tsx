@@ -4,7 +4,7 @@ import { IconPlay } from '../../components/Icons'
 import { RemoteArt } from '../../components/RemoteArt'
 import { loadCovers, useCovers } from '../../lib/covers'
 import type { CatalogTrack, OnlineAlbum, OnlineArtist, OnlineTrack } from '../../lib/engine'
-import { play, playItems } from '../../lib/player'
+import { play, playItems, toItem } from '../../lib/player'
 import { playWithRadio } from '../../lib/radio'
 import { recentSearches } from '../../lib/recentSearches'
 import type { TopPick } from '../../lib/searchRank'
@@ -72,7 +72,9 @@ export function TopResult({ pick, from }: { pick: TopPick; from: TopSources }) {
     kind = 'Song'
     title = t.title
     line = [t.artists.join(', '), t.album].filter(Boolean).join(' · ')
-    onPlay = () => void play(root, from.tracks, pick.index, { kind: 'search', ref: q, label: `Search: ${q}` })
+    // Your song, then the same song's YouTube Music radio (as one played anywhere else), not the
+    // rest of the search list.
+    onPlay = () => void playWithRadio(root, toItem(t))
     onOpen = () => nav.openAlbum(t.dir)
   } else if (pick.kind === 'song') {
     const t = from.songs[pick.index]
