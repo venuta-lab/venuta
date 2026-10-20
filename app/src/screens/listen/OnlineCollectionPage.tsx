@@ -4,11 +4,11 @@ import { askAddSongs } from '../../components/AddToPlaylist'
 import { AvailabilityBadge } from '../../components/AvailabilityBadge'
 import { confirmAsk } from '../../components/Confirm'
 import { DragHandle } from '../../components/DragHandle'
-import { IconClose, IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
+import { IconChevron, IconClose, IconPause, IconPlay, IconPlaylistAdd, IconRadio, IconShuffle } from '../../components/Icons'
 import { RemoteArt, artUrl } from '../../components/RemoteArt'
 import { Detail } from '../../components/ui'
 import { SavePlaylistButton } from '../../components/YtmButtons'
-import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, type OnlineCollection, type OnlineTrack, type RadioEndpoint, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
+import { onlineCollection, ytmCloseToCollaborators, ytmInvite, ytmPlaylist, ytmPlaylistDelete, ytmPlaylistEdit, ytmVote, type OnlineCollection, type OnlineTrack, type RadioEndpoint, type YtmContributor, type YtmEdit, type YtmPlaylist, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { current, enqueueItems, fromIs, onlineEntryFrom, playAllItems, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
@@ -17,6 +17,7 @@ import { radioOfCard } from '../../lib/mixes'
 import { listRadio } from '../../lib/radioSession'
 import { useYtmStatus, ytmLibraryChanged } from '../../lib/ytmLibrary'
 import { movesBetween } from '../../lib/ytmMoves'
+import { voteCount, votePress, type Vote } from '../../lib/ytmVotes'
 import { minutes, plural, spring, useNav } from './model'
 import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
 
@@ -27,7 +28,8 @@ import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
 
   Signed in, a playlist is read as your account sees it. One of yours can be changed here: its
   name, words and privacy, its order by dragging, a song taken out, the whole playlist deleted
-  (asked first). Someone else's can be saved to your library.
+  (asked first). Someone else's can be saved to your library. A collaborative one shows who added
+  each song, and its votes, which you can give or take back.
 */
 
 const keyOf = (t: OnlineTrack) => `online:${t.provider}:${t.track_id}`
@@ -236,7 +238,7 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
             {owned || collab ? (
               <Reorder.Group axis="y" values={tracks} onReorder={(next) => owned && setTracks(next)} className="mt-1 grid gap-0.5">
                 {tracks.map((t, i) => (
-                  <OwnedRow key={t.set_video_id ?? `${keyOf(t)}:${i}`} track={t} canDrag={owned} onRemove={() => remove(t)} onDrop={() => owned && reorder(tracks)}>
+                  <OwnedRow key={t.set_video_id ?? `${keyOf(t)}:${i}`} track={t} canDrag={owned} collab={collab} onRemove={() => remove(t)} onDrop={() => owned && reorder(tracks)}>
                     {row(t, i)}
                   </OwnedRow>
                 ))}
@@ -256,13 +258,16 @@ export function OnlineCollectionPage({ collection: c, onBack }: { collection: On
 }
 
 /** A song of your own playlist: dragged by its grip, taken out with ×. In a collaborative one
- *  you don't own, only ×: YouTube Music lets each person take out what they added. */
-function OwnedRow(props: { track: YtmTrack; canDrag: boolean; onRemove: () => void; onDrop: () => void; children: React.ReactNode }) {
+ *  you don't own, only ×: YouTube Music lets each person take out what they added. A
+ *  collaborative one also shows who added each song, and its votes. */
+function OwnedRow(props: { track: YtmTrack; canDrag: boolean; collab: boolean; onRemove: () => void; onDrop: () => void; children: React.ReactNode }) {
   const drag = useDragControls()
   return (
     <Reorder.Item value={props.track} dragListener={false} dragControls={drag} onDragEnd={props.onDrop} className="group flex items-center gap-1">
       {props.canDrag && <DragHandle label={props.track.title} onPointerDown={(e) => drag.start(e)} />}
       <div className="min-w-0 flex-1">{props.children}</div>
+      {props.collab && <AddedBy who={props.track.added_by} />}
+      {props.collab && <Votes track={props.track} />}
       <button
         aria-label={`Take ${props.track.title} out of the playlist`}
         onClick={props.onRemove}
@@ -272,6 +277,72 @@ function OwnedRow(props: { track: YtmTrack; canDrag: boolean; onRemove: () => vo
         <IconClose width={14} height={14} />
       </button>
     </Reorder.Item>
+  )
+}
+
+/** Who added a song to a collaborative playlist: their picture, their name on hover and to a
+ *  screen reader. A song with no one named keeps the space, so the rows stay in line. */
+function AddedBy({ who }: { who?: YtmContributor | null }) {
+  if (!who) return <span className="h-6 w-6 shrink-0" aria-hidden />
+  const label = who.name ? `Added by ${who.name}` : 'Added by someone in the playlist'
+  const initial = who.name?.slice(0, 1) ?? ''
+  return (
+    <span role="img" aria-label={label} title={label} className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full bg-ink/[0.08] text-[11px] font-semibold text-ink/60">
+      {who.picture ? <RemoteArt url={who.picture} size={24} fallback={initial} imgClassName="h-full w-full object-cover" /> : initial}
+    </span>
+  )
+}
+
+/** A song's votes in a collaborative playlist: up, the count, down. A press sends that button's
+ *  vote at once, or takes yours back if it is the one you gave; the count and the button change
+ *  at once, and go back if YouTube Music doesn't take it. */
+function Votes({ track }: { track: YtmTrack }) {
+  const v = track.votes
+  // Your press since the list came, over the vote it came with. A list read again with another
+  // vote than the one pressed over wins, so a stale press never shows.
+  const came: Vote = v?.mine ?? 'neutral'
+  const [pressed, setPressed] = useState<{ over: Vote; now: Vote } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const mine = pressed && pressed.over === came ? pressed.now : came
+  if (!v) return <span className="w-[76px] shrink-0" aria-hidden />
+  const press = async (which: 'up' | 'down') => {
+    const sent = votePress(v, mine, which)
+    if (!sent || busy) return
+    const before = pressed
+    setPressed({ over: came, now: sent.next })
+    setBusy(true)
+    try {
+      await ytmVote(sent.token)
+    } catch (e) {
+      setPressed(before)
+      notify(onlineProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const button = (which: 'up' | 'down') => {
+    const on = mine === which
+    return (
+      <button
+        onClick={() => void press(which)}
+        disabled={busy || !votePress(v, mine, which)}
+        aria-pressed={on}
+        aria-label={on ? `Take back your vote on ${track.title}` : `Vote ${track.title} ${which}`}
+        title={on ? 'Take back your vote' : `Vote ${which}`}
+        className={`grid h-7 w-7 place-items-center rounded-full hover:bg-ink/10 disabled:opacity-40 ${on ? 'text-accent-ink' : 'text-ink/45 hover:text-ink'}`}
+      >
+        <IconChevron width={14} height={14} className={which === 'up' ? '-rotate-90' : 'rotate-90'} strokeWidth={on ? 2.4 : 1.7} />
+      </button>
+    )
+  }
+  return (
+    <span role="group" aria-label={`Votes on ${track.title}`} className="flex w-[76px] shrink-0 items-center justify-center">
+      {button('up')}
+      <span aria-live="polite" className="min-w-[2ch] text-center text-[12.5px] tabular-nums text-ink/60">
+        {voteCount(v, mine)}
+      </span>
+      {button('down')}
+    </span>
   )
 }
 

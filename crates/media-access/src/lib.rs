@@ -30,8 +30,9 @@ pub use access::{
     default_media_access, live_catalog_env_enabled,
 };
 pub use account::{
-    AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, FollowState, Heard,
-    HistoryDay, LibraryShelf, Listen, Placements, PlaylistEdit, SavedState,
+    AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, Contributor, FollowState,
+    Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, Placements, PlaylistEdit, SavedState,
+    TrackVotes, Vote, VoteButton,
 };
 pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;

@@ -164,6 +164,18 @@ pub async fn ytm_history(pb: State<'_, Playback>) -> Result<Vec<HistoryDay>, Str
     with_account(&pb, |a, c| a.history(c)).await
 }
 
+/// Take one play out of the account's history (its row's × in Stats).
+#[tauri::command]
+pub async fn ytm_history_remove(pb: State<'_, Playback>, token: String) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.remove_from_history(&token, c)).await
+}
+
+/// Vote on a song of a collaborative playlist, or take the vote back: the token its button sends.
+#[tauri::command]
+pub async fn ytm_vote(pb: State<'_, Playback>, token: String) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.vote(&token, c)).await
+}
+
 /// Send one of your files to the account's uploads. Only the person picks which.
 #[tauri::command]
 pub async fn ytm_upload(pb: State<'_, Playback>, path: String) -> Result<(), String> {

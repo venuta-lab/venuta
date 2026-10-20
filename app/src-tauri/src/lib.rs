@@ -3227,6 +3227,8 @@ pub fn run() {
             ytm_library::ytm_artist_followed,
             ytm_library::ytm_subscribe,
             ytm_library::ytm_history,
+            ytm_library::ytm_history_remove,
+            ytm_library::ytm_vote,
             ytm_library::ytm_upload,
             ytm_library::ytm_identities,
             ytm_library::ytm_use_identity,

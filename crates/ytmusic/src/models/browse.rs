@@ -1827,6 +1827,41 @@ mod tests {
         assert_eq!(groups[1].items.len(), 1);
     }
 
+    // Older plays come in month shelves ("October 2026"), each row with its own "Remove from
+    // history" token: the shelves stay as they are, and every row keeps the token it came with.
+    #[test]
+    fn history_rows_keep_their_month_shelf_and_their_remove_token() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/history_remove_item.json"
+        ))
+        .unwrap();
+        let row = |id: &str, token: &str| {
+            let mut item = fixture["menuServiceItemRenderer"].clone();
+            item["serviceEndpoint"]["feedbackEndpoint"]["feedbackToken"] = json!(token);
+            json!({ "musicResponsiveListItemRenderer": {
+                "playlistItemData": { "videoId": id },
+                "flexColumns": [{ "musicResponsiveListItemFlexColumnRenderer": {
+                    "text": { "runs": [{ "text": id }] } } }],
+                "menu": { "menuRenderer": { "items": [{ "menuServiceItemRenderer": item }] } }
+            } })
+        };
+        let root = json!({ "contents": { "sectionListRenderer": { "contents": [
+            { "musicShelfRenderer": {
+                "title": fixture["musicShelfTitle"].clone(),
+                "contents": [row("aaaaaaaaaaa", "TOK-A"), row("bbbbbbbbbbb", "TOK-B")]
+            } }
+        ] } } });
+        let groups = parse_history(&root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].title, "October 2026");
+        let tokens: Vec<_> = groups[0]
+            .items
+            .iter()
+            .map(|s| s.remove_from_history.as_deref())
+            .collect();
+        assert_eq!(tokens, [Some("TOK-A"), Some("TOK-B")]);
+    }
+
     #[test]
     fn parses_home_carousel() {
         let root = json!({
@@ -2219,6 +2254,23 @@ mod tests {
             ["https://yt3.ggpht.com/a", "https://yt3.ggpht.com/b"]
         );
         assert_eq!(p.people_text.as_deref(), Some("Aakash and 1 other"));
+    }
+
+    /// The facepile as a real collaborative playlist sends it: its pictures, and in place of the
+    /// words only a "more" icon on a blank. No caption comes of that, rather than a blank one.
+    #[test]
+    fn a_real_facepile_gives_its_people_and_no_blank_caption() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/collab_playlist_row.json"
+        ))
+        .unwrap();
+        let page = json!({ "contents": { "sectionListRenderer": { "contents": [
+            { "musicResponsiveHeaderRenderer": { "facepile": fixture["headerFacepile"].clone() } }
+        ] } } });
+        let p = parse_playlist(&page);
+        assert!(p.collaborative);
+        assert_eq!(p.people.len(), 2);
+        assert_eq!(p.people_text, None);
     }
 
     /// An owned playlist's page carries a suggestions section ("add more to this playlist") with a

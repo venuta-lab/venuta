@@ -1445,6 +1445,11 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
             AccessErrorKind::Transport,
             "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
+        // It answered, and said no (a row's feedback token it would not take).
+        ytmusic::Error::ActionRejected => AccessError::new(
+            AccessErrorKind::InvalidInput,
+            format!("YouTube Music didn't take {what}."),
+        ),
         other => AccessError::new(
             AccessErrorKind::Transport,
             format!("YouTube Music didn't answer about {what}: {other}"),
@@ -1465,7 +1470,72 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
         track: crate::catalog_cards::track_of_row(row)?,
         set_video_id: row.set_video_id.clone(),
         upload: row.is_upload,
+        added_by: contributor_of(row),
+        votes: row.vote.as_ref().map(votes_of),
     })
+}
+
+/// Who added a collaborative playlist's song, when the row names anyone.
+fn contributor_of(row: &ytmusic::SongItem) -> Option<crate::account::Contributor> {
+    let picture = row.added_by_avatars.first().cloned();
+    (row.added_by.is_some() || picture.is_some()).then(|| crate::account::Contributor {
+        name: row.added_by.clone(),
+        picture,
+        channel_id: row.added_by_channel.clone(),
+    })
+}
+
+fn votes_of(v: &ytmusic::PlaylistVote) -> crate::account::TrackVotes {
+    use crate::account::{Vote, VoteButton};
+    let button = |b: &ytmusic::VoteButton| VoteButton {
+        token: b.token.clone(),
+        undo_token: b.undo_token.clone(),
+    };
+    crate::account::TrackVotes {
+        mine: match v.mine {
+            ytmusic::VoteChoice::Up => Vote::Up,
+            ytmusic::VoteChoice::Down => Vote::Down,
+            ytmusic::VoteChoice::Neutral => Vote::Neutral,
+        },
+        votes: v.votes,
+        count: v.count.clone(),
+        count_up: v.count_up.clone(),
+        count_down: v.count_down.clone(),
+        up: button(&v.up),
+        down: button(&v.down),
+    }
+}
+
+/// One day (or month) of the history as YouTube named it, each play with the token that takes it
+/// out. None when no song in it can be named.
+fn history_day_of(g: &ytmusic::HistoryGroup) -> Option<crate::account::HistoryDay> {
+    let tracks: Vec<_> = g
+        .items
+        .iter()
+        .filter_map(|row| {
+            Some(crate::account::HistoryPlay {
+                track: crate::catalog_cards::track_of_row(row)?,
+                remove_token: row.remove_from_history.clone(),
+            })
+        })
+        .collect();
+    (!tracks.is_empty()).then(|| crate::account::HistoryDay {
+        title: g.title.clone(),
+        tracks,
+    })
+}
+
+/// A play taken out of the history, failed. Turned down while a channel is chosen, say why it may
+/// be: YouTube doesn't take these on a brand account (ytmusicapi says so).
+fn history_refusal(e: ytmusic::Error, channel: bool) -> AccessError {
+    let refused = matches!(e, ytmusic::Error::ActionRejected);
+    let mut err = account_error(e, "it out of your history");
+    if refused && channel {
+        err.message.push_str(
+            " It may not on a brand channel: switch to your own channel and try again there.",
+        );
+    }
+    err
 }
 
 /// Whether a reading of a playlist got every song YouTube lists: no page failed or was left
@@ -1495,6 +1565,16 @@ impl YtmBackend {
         what: &str,
         call: impl Future<Output = Result<T, ytmusic::Error>> + Send,
     ) -> Result<T, AccessError> {
+        self.account_call_told(cancel, call, |e| account_error(e, what))
+    }
+
+    /// [`YtmBackend::account_call`] with its failure put in words of the caller's own.
+    fn account_call_told<T: Send>(
+        &self,
+        cancel: &CancellationToken,
+        call: impl Future<Output = Result<T, ytmusic::Error>> + Send,
+        told: impl FnOnce(ytmusic::Error) -> AccessError + Send,
+    ) -> Result<T, AccessError> {
         if !self.it.is_logged_in() {
             return Err(signed_out());
         }
@@ -1506,7 +1586,7 @@ impl YtmBackend {
             if got.is_ok() {
                 it.session_accepted();
             }
-            got.map_err(|e| account_error(e, what))
+            got.map_err(told)
         }))
     }
 }
@@ -1777,18 +1857,27 @@ impl crate::account::AccountAccess for YtmBackend {
     ) -> Result<Vec<crate::account::HistoryDay>, AccessError> {
         let client = self.client(PAGES_CLIENT)?;
         let groups = self.account_call(cancel, "your history", self.it.history(client))?;
-        Ok(groups
-            .iter()
-            .map(|g| crate::account::HistoryDay {
-                title: g.title.clone(),
-                tracks: g
-                    .items
-                    .iter()
-                    .filter_map(crate::catalog_cards::track_of_row)
-                    .collect(),
-            })
-            .filter(|d| !d.tracks.is_empty())
-            .collect())
+        Ok(groups.iter().filter_map(history_day_of).collect())
+    }
+
+    fn remove_from_history(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        // A channel chosen (`onBehalfOfUser`): a brand account, as far as Venuta can tell.
+        let channel = self.it.data_sync_id().is_some();
+        self.account_call_told(
+            cancel,
+            self.it.remove_history_item(client, token),
+            move |e| history_refusal(e, channel),
+        )
+    }
+
+    fn vote(&self, token: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(cancel, "the vote", self.it.vote(client, token))
     }
 
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
@@ -3163,6 +3252,126 @@ mod tests {
         );
         // A row with no song to name (an unavailable one) can't be told from a song taken out.
         assert!(!read_whole(&rows(&["a", " ", "c"]), false, false));
+    }
+
+    fn collab_row() -> ytmusic::SongItem {
+        ytmusic::SongItem {
+            video_id: "PIFUWHvSixw".into(),
+            title: "Don't Stop Believin'".into(),
+            set_video_id: Some("56B44F6D10557CC6".into()),
+            added_by: Some("Akash Kore".into()),
+            added_by_avatars: vec!["https://yt3.ggpht.com/fixture-adder=s48".into()],
+            added_by_channel: Some("UCbBecQPKuJnY1eKo8dVfI0g".into()),
+            vote: Some(ytmusic::PlaylistVote {
+                mine: ytmusic::VoteChoice::Up,
+                votes: 1,
+                count: Some("0".into()),
+                count_up: Some("1".into()),
+                count_down: Some("-1".into()),
+                up: ytmusic::VoteButton {
+                    token: "UP".into(),
+                    undo_token: Some("UNDO-UP".into()),
+                },
+                down: ytmusic::VoteButton {
+                    token: "DOWN".into(),
+                    undo_token: None,
+                },
+            }),
+            ..Default::default()
+        }
+    }
+
+    // A collaborative playlist's song says who added it (name, picture, channel) and carries its
+    // votes with the tokens each button sends, so the page can show both and vote.
+    #[test]
+    fn a_collaborative_song_carries_who_added_it_and_its_votes() {
+        use crate::account::{Contributor, TrackVotes, Vote, VoteButton};
+        let t = super::account_track_of(&collab_row()).unwrap();
+        assert_eq!(
+            t.added_by,
+            Some(Contributor {
+                name: Some("Akash Kore".into()),
+                picture: Some("https://yt3.ggpht.com/fixture-adder=s48".into()),
+                channel_id: Some("UCbBecQPKuJnY1eKo8dVfI0g".into()),
+            })
+        );
+        assert_eq!(
+            t.votes,
+            Some(TrackVotes {
+                mine: Vote::Up,
+                votes: 1,
+                count: Some("0".into()),
+                count_up: Some("1".into()),
+                count_down: Some("-1".into()),
+                up: VoteButton {
+                    token: "UP".into(),
+                    undo_token: Some("UNDO-UP".into()),
+                },
+                down: VoteButton {
+                    token: "DOWN".into(),
+                    undo_token: None,
+                },
+            })
+        );
+        // An ordinary playlist's song: no one named, nothing to vote on.
+        let plain = super::account_track_of(&rows(&["a"])[0]).unwrap();
+        assert_eq!((plain.added_by, plain.votes), (None, None));
+        // Read back from what the app kept before either existed.
+        let old: crate::account::AccountTrack = serde_json::from_value(serde_json::json!({
+            "provider": "youtube_music", "track_id": "a", "title": "A", "artists": []
+        }))
+        .unwrap();
+        assert_eq!((old.added_by, old.votes), (None, None));
+    }
+
+    // The history keeps its days as YouTube names them, and each play its own token to be taken
+    // out by.
+    #[test]
+    fn history_keeps_its_days_and_each_plays_remove_token() {
+        let mut items = rows(&["a", "b"]);
+        items[0].remove_from_history = Some("TOK-A".into());
+        let day = super::history_day_of(&ytmusic::HistoryGroup {
+            title: "October 2026".into(),
+            items,
+        })
+        .unwrap();
+        assert_eq!(day.title, "October 2026");
+        let tokens: Vec<_> = day
+            .tracks
+            .iter()
+            .map(|t| (t.track.track_id.as_str(), t.remove_token.as_deref()))
+            .collect();
+        assert_eq!(tokens, [("a", Some("TOK-A")), ("b", None)]);
+        // A day with no song to name is no day.
+        let empty = ytmusic::HistoryGroup {
+            title: "Today".into(),
+            items: rows(&[" "]),
+        };
+        assert!(super::history_day_of(&empty).is_none());
+    }
+
+    // A vote or a play YouTube turns down is said plainly; on a channel chosen, why it may be.
+    #[test]
+    fn a_refused_vote_or_removal_says_so_plainly() {
+        let vote = super::account_error(ytmusic::Error::ActionRejected, "the vote");
+        assert_eq!(vote.message, "YouTube Music didn't take the vote.");
+        let own = super::history_refusal(ytmusic::Error::ActionRejected, false);
+        assert_eq!(
+            own.message,
+            "YouTube Music didn't take it out of your history."
+        );
+        let brand = super::history_refusal(ytmusic::Error::ActionRejected, true);
+        assert!(
+            brand
+                .message
+                .starts_with("YouTube Music didn't take it out of your history.")
+                && brand.message.contains("brand channel"),
+            "{}",
+            brand.message
+        );
+        // Anything else is told as it is, channel or not.
+        let slow = super::history_refusal(ytmusic::Error::SlowDown, true);
+        assert!(!slow.message.contains("brand"), "{}", slow.message);
     }
 
     #[test]

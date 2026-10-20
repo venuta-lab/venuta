@@ -1221,6 +1221,49 @@ impl InnerTube {
         }
     }
 
+    /// Vote a song of a collaborative playlist up or down, or take the vote back: the token is the
+    /// one the row's button sends in the state it is in ([`crate::PlaylistVote`]).
+    pub async fn vote(&self, client: &YouTubeClient, token: &str) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
+    /// Take one play out of the account's history, by the token its history row came with.
+    /// ytmusicapi notes this doesn't work on a brand account: YouTube turns it down there.
+    pub async fn remove_history_item(
+        &self,
+        client: &YouTubeClient,
+        token: &str,
+    ) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
+    /// One row token to `youtubei/v1/feedback`, as the account and paced like the other account
+    /// writes (a 429 waits as asked; see `InnerTube::post_account`). Going again is harmless: the
+    /// token says what it does, so a second send leaves things as the first did. Taken only when
+    /// the answer's per-token result says so; anything else is `Error::ActionRejected`.
+    async fn row_feedback(&self, client: &YouTubeClient, token: &str) -> Result<(), Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct FeedbackBody {
+            context: Context,
+            feedback_tokens: Vec<String>,
+        }
+        let body = FeedbackBody {
+            context: self.context_for(client),
+            feedback_tokens: vec![token.to_owned()],
+        };
+        let value = self.post_account("feedback", client, &body, true).await?;
+        let processed = value
+            .pointer("/feedbackResponses/0/isProcessed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if processed {
+            Ok(())
+        } else {
+            Err(Error::ActionRejected)
+        }
+    }
+
     /// Save an album/playlist to the library, or remove it. Same `like` endpoint as a track, with
     /// a playlist target: for an album pass its `OLAK5uy_…` audio playlist id. Live-verified.
     pub async fn like_playlist(
@@ -3588,5 +3631,97 @@ mod playlist_writes {
         for w in at.windows(2) {
             assert!(w[1] - w[0] >= ADD_BATCH_PACE, "{:?}", w[1] - w[0]);
         }
+    }
+}
+
+/// The feedback writes a person presses on a row: a vote on a collaborative playlist, a play taken
+/// out of the history. Each sends the one token the row came with, as the account, paced.
+#[cfg(test)]
+mod row_feedback {
+    use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
+    use crate::test_server::{MockServer, Seen};
+    use crate::transport::{Error, InnerTube, Session};
+
+    fn it_against(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture-sapisid; PREF=x".to_owned()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn web() -> YouTubeClient {
+        Clients::bundled().get(METADATA_CLIENT).unwrap().clone()
+    }
+
+    const TAKEN: &str = r#"{"feedbackResponses":[{"isProcessed":true}]}"#;
+    const REFUSED: &str = r#"{"feedbackResponses":[{"isProcessed":false}]}"#;
+
+    fn tokens_sent(req: &Seen) -> serde_json::Value {
+        let body: serde_json::Value = serde_json::from_str(&req.body).unwrap();
+        body["feedbackTokens"].clone()
+    }
+
+    #[tokio::test]
+    async fn a_vote_sends_its_one_token_to_feedback_as_the_account() {
+        let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+        let it = it_against(&server);
+        it.vote(&web(), "FIXTURE-UPVOTE").await.unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+        assert_eq!(tokens_sent(&sent[0]), serde_json::json!(["FIXTURE-UPVOTE"]));
+        assert!(sent[0].header("cookie").is_some(), "sent as the account");
+    }
+
+    #[tokio::test]
+    async fn a_play_taken_out_of_the_history_sends_its_token_to_feedback() {
+        let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+        let it = it_against(&server);
+        it.remove_history_item(&web(), "FIXTURE-REMOVE-FROM-HISTORY")
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+        assert_eq!(
+            tokens_sent(&sent[0]),
+            serde_json::json!(["FIXTURE-REMOVE-FROM-HISTORY"])
+        );
+    }
+
+    // YouTube answers 200 either way; only the per-token result says it was taken. A refusal is
+    // said as one, never read as done (a brand channel's history is refused like this).
+    #[tokio::test]
+    async fn a_token_youtube_turns_down_is_a_refusal_not_a_success() {
+        let server = MockServer::start(|_| (200, REFUSED.to_owned()));
+        let it = it_against(&server);
+        let voted = it.vote(&web(), "T").await;
+        assert!(matches!(voted, Err(Error::ActionRejected)), "{voted:?}");
+        let removed = it.remove_history_item(&web(), "T").await;
+        assert!(matches!(removed, Err(Error::ActionRejected)), "{removed:?}");
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = it_against(&server);
+        let silent = it.vote(&web(), "T").await;
+        assert!(matches!(silent, Err(Error::ActionRejected)), "{silent:?}");
+    }
+
+    // Paced like the other account writes: asked to slow down, it waits and goes again.
+    #[tokio::test]
+    async fn asked_to_slow_down_a_vote_waits_and_goes_again() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = calls.clone();
+        let server = MockServer::start_with_headers(move |_| {
+            if n.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                (429, vec![("retry-after".into(), "0".into())], "{}".into())
+            } else {
+                (200, Vec::new(), TAKEN.into())
+            }
+        });
+        let it = it_against(&server);
+        it.vote(&web(), "T").await.unwrap();
+        assert_eq!(server.requests().len(), 2);
     }
 }

@@ -1,6 +1,7 @@
 // Typed wrappers over the Rust commands in app/src-tauri/src/lib.rs.
 import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core'
 import type { YtmChoices as YtmAccountChoices } from './ytmChoiceWords'
+import type { Vote } from './ytmVotes'
 
 export interface ScanReport {
   files_seen: number
@@ -1430,6 +1431,34 @@ export interface YtmTrack extends OnlineTrack {
   set_video_id?: string | null
   /** The account uploaded it: only it can play the song. */
   upload?: boolean
+  /** Who put it in the playlist, on a collaborative one. */
+  added_by?: YtmContributor | null
+  /** Its votes, on a collaborative playlist that has them. */
+  votes?: YtmVotes | null
+}
+/** The person who added a song to a collaborative playlist, as its row shows them. */
+export interface YtmContributor {
+  name: string | null
+  picture: string | null
+  channel_id: string | null
+}
+/** A song's votes in a collaborative playlist, and the token each button sends (lib/ytmVotes.ts). */
+export interface YtmVotes {
+  /** How you voted when the list came. */
+  mine: Vote
+  /** The net count when the list came. */
+  votes: number
+  /** YouTube Music's words for the count with no vote of yours, with yours up, with yours down. */
+  count: string | null
+  count_up: string | null
+  count_down: string | null
+  up: YtmVoteButton
+  down: YtmVoteButton
+}
+/** One vote button: its vote, and what it sends pressed again to take the vote back. */
+export interface YtmVoteButton {
+  token: string
+  undo_token: string | null
 }
 export interface YtmPlaylist {
   playlist_id: string
@@ -1467,7 +1496,11 @@ export interface YtmFollow {
 }
 export interface YtmHistoryDay {
   title: string
-  tracks: OnlineTrack[]
+  tracks: YtmHistoryPlay[]
+}
+/** One play in the history, and the token that takes it out (absent: YouTube Music sent none). */
+export interface YtmHistoryPlay extends OnlineTrack {
+  remove_token?: string | null
 }
 export interface YtmIdentity {
   id: string
@@ -1491,6 +1524,10 @@ export const ytmSave = (playlistId: string, saved: boolean) => invoke<void>('ytm
 export const ytmArtistFollowed = (artistId: string) => invoke<YtmFollow | null>('ytm_artist_followed', { artistId })
 export const ytmSubscribe = (channelId: string, subscribed: boolean) => invoke<void>('ytm_subscribe', { channelId, subscribed })
 export const ytmHistory = () => invoke<YtmHistoryDay[]>('ytm_history')
+/** Take one play out of the account's history, by its token. */
+export const ytmHistoryRemove = (token: string) => invoke<void>('ytm_history_remove', { token })
+/** Vote on a song of a collaborative playlist, or take the vote back: the token its button sends. */
+export const ytmVote = (token: string) => invoke<void>('ytm_vote', { token })
 export const ytmUpload = (path: string) => invoke<void>('ytm_upload', { path })
 export const ytmIdentities = () => invoke<YtmIdentity[]>('ytm_identities')
 export const ytmUseIdentity = (id: string | null) => invoke<void>('ytm_use_identity', { id })

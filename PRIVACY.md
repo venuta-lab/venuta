@@ -54,8 +54,9 @@ What Venuta tells YouTube Music (off until you turn them on):
 - **New YouTube likes come in**: songs you like elsewhere join Liked songs in Venuta when it
   starts. Nothing is sent.
 
-Changes you make to your YouTube Music playlists in Venuta (renaming, adding, removing, uploading
-a file you picked) are sent only when you make them. Nothing is uploaded or deleted on its own.
+Changes you make to your YouTube Music playlists in Venuta (renaming, adding, removing, voting on
+a song in a collaborative playlist, uploading a file you picked) and plays you take out of your
+YouTube Music history are sent only when you make them. Nothing is uploaded or deleted on its own.
 
 ## Questions
 
