@@ -23,7 +23,6 @@ import {
   placeForKey,
   placeOfMusicTop,
   screenKey,
-  swipeFrom,
   type Place,
 } from './lib/places'
 import {
@@ -956,21 +955,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [go, toggleTheme])
 
-  // Two-finger horizontal swipe on a trackpad moves between the four places.
-  const swipe = useRef({ acc: 0, lock: 0 })
-  const onWheel = (e: React.WheelEvent) => {
-    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.5) return
-    const s = swipe.current
-    const now = performance.now()
-    if (now < s.lock) return
-    s.acc += e.deltaX
-    if (Math.abs(s.acc) > 160) {
-      const next = swipeFrom(active, s.acc > 0 ? 1 : -1)
-      s.acc = 0
-      s.lock = now + 650
-      if (next) go(next)
-    }
-  }
+  // A sideways wheel (a mouse's tilt wheel, two fingers on a touchpad) never changes the place:
+  // it scrolls the row under the pointer (components/ScrollRow.tsx), and nothing where there is none.
 
   const section = (p: Place): Section => ({
     id: p,
@@ -1159,7 +1145,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion={motionSetting(prefs)}>
-      <div className="relative flex h-full flex-col" onWheel={onWheel}>
+      <div className="relative flex h-full flex-col">
         <NowBackdrop covers={backdrop} />
         <ThemeFx />
         <TitleBar onSearch={() => focusSearch(true)} onActivity={() => go('activity')} />
