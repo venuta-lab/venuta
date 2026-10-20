@@ -1,0 +1,68 @@
+{
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "secondaryContents": {
+        "sectionListRenderer": {
+          "contents": [
+            {
+              "musicPlaylistShelfRenderer": {
+                "playlistId": "PLSANITIZEDALBUMCOLUMN",
+                "contents": [
+                  {
+                    "musicResponsiveListItemRenderer": {
+                      "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/maand=w60-h60-l90-rj" }] } } },
+                      "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "Maand",
+                          "navigationEndpoint": { "watchEndpoint": { "videoId": "maandVid001", "playlistId": "PLSANITIZEDALBUMCOLUMN",
+                            "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } }
+                        }] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "Bayaan",
+                          "navigationEndpoint": { "browseEndpoint": { "browseId": "UCSANITIZEDBAYAAN",
+                            "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } }
+                        }] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "Suno",
+                          "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_SANITIZEDSUNO" } }
+                        }] } } }
+                      ],
+                      "fixedColumns": [
+                        { "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [{ "text": "3:45" }] } } }
+                      ],
+                      "playlistItemData": { "playlistSetVideoId": "SANITIZEDSET1", "videoId": "maandVid001" }
+                    }
+                  },
+                  {
+                    "musicResponsiveListItemRenderer": {
+                      "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "Kasoor",
+                          "navigationEndpoint": { "watchEndpoint": { "videoId": "kasoorVid01", "playlistId": "PLSANITIZEDALBUMCOLUMN" } }
+                        }] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "Prateek Kuhad",
+                          "navigationEndpoint": { "browseEndpoint": { "browseId": "UCSANITIZEDKUHAD",
+                            "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } }
+                        }] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{
+                          "text": "The Way That Lovers Do",
+                          "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_SANITIZEDLOVERS",
+                            "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ALBUM" } } } }
+                        }] } } }
+                      ],
+                      "fixedColumns": [
+                        { "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [{ "text": "2:51" }] } } }
+                      ],
+                      "playlistItemData": { "playlistSetVideoId": "SANITIZEDSET2", "videoId": "kasoorVid01" }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
