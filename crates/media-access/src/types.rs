@@ -85,6 +85,51 @@ pub struct RemoteTrack {
     /// Where it sat among the unfiltered search's songs and videos (0 = first), when it did.
     #[serde(default)]
     pub shelf_rank: Option<u16>,
+    /// What the signed-in account can do with this song from its own menu where the catalog
+    /// listed it: save it to the library, pin it, tell it "Not interested". Only rows read as
+    /// the account carry it; each press sends one of its tokens and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu: Option<TrackMenu>,
+}
+
+/// A song's own account menu, as the catalog listed it with the song ([`RemoteTrack::menu`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackMenu {
+    /// In the account's library (Library, Songs) or not, and the token for each way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<MenuToggle>,
+    /// Pinned to Listen again or not, and the token for each way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<MenuToggle>,
+    /// "Tell me less of this" presses ("Not interested"), in the catalog's own words.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
+}
+
+impl TrackMenu {
+    /// Nothing to offer (a row read signed out).
+    pub fn is_empty(&self) -> bool {
+        self.library.is_none() && self.pin.is_none() && self.feedback.is_empty()
+    }
+}
+
+/// A two-way menu press: how it stands now, and what each way sends. A way the row didn't carry
+/// can't be pressed until the song is listed again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuToggle {
+    pub on: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_token: Option<String>,
+}
+
+/// A one-way menu press ("Not interested"): the catalog's icon name and words, and its token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuFeedback {
+    pub icon: String,
+    pub label: String,
+    pub token: String,
 }
 
 impl RemoteTrack {
@@ -435,6 +480,18 @@ pub enum RemoteSuggestion {
 pub struct SearchSuggestions {
     pub queries: Vec<String>,
     pub items: Vec<RemoteSuggestion>,
+    /// The ones of `queries` that are the account's own past searches (signed-in search only),
+    /// with the token that takes each out of its search history when YouTube sent one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub past: Vec<PastSearch>,
+}
+
+/// One of the account's past searches, as a suggestion carried it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PastSearch {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_token: Option<String>,
 }
 
 /// A browse tile: a mood ("Chill", "Workout") or a genre, and the color the catalog gives it.

@@ -31,8 +31,8 @@ pub use access::{
 };
 pub use account::{
     AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack, Contributor, FollowState,
-    Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, Placements, PlaylistEdit, SavedState,
-    TrackVotes, Vote, VoteButton,
+    Heard, HistoryDay, HistoryPlay, LibraryShelf, Listen, MenuPress, Placements, PlaylistEdit,
+    SavedState, TrackVotes, Vote, VoteButton,
 };
 pub use art_url::sized_art;
 pub use fake::FakeMediaAccess;
@@ -45,10 +45,10 @@ pub use region::{CatalogRegion, catalog_region};
 pub use stream_resolve::{StreamToolStatus, ensure_stream_tool, stream_tool_status};
 pub use timing::{ms_since, note_timing, set_timing_log};
 pub use types::{
-    Availability, CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection,
-    MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RadioChip,
-    RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink,
-    RemoteArtistPage, RemoteChip, RemoteCollection, RemoteHome, RemoteHomeShelf, RemoteMore,
-    RemotePlaylist, RemoteRadio, RemoteRating, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion,
-    RemoteTrack, SearchSuggestions,
+    Availability, CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MenuFeedback,
+    MenuToggle, MoodSection, MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, PastSearch,
+    Playable, PlayableId, RadioChip, RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage,
+    RemoteArtist, RemoteArtistLink, RemoteArtistPage, RemoteChip, RemoteCollection, RemoteHome,
+    RemoteHomeShelf, RemoteMore, RemotePlaylist, RemoteRadio, RemoteRating, RemoteRelatedShelf,
+    RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions, TrackMenu,
 };
