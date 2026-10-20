@@ -360,6 +360,9 @@ struct Engine<T: Item + Serialize> {
     flush_before_start: bool,
     /// Frames of fade-in still to come after such a seek.
     fade_in_left: usize,
+    /// A stream that ran out faded out, waiting in silence to have enough again (see
+    /// `suspend_or_resume`).
+    suspended: bool,
     /// Music fading out to silence, across periods (before a seek, a pause, another song), and
     /// whether a command is waiting for it to be done (`fade_out_now`).
     fade_out: Option<FadeOut>,
@@ -446,6 +449,7 @@ impl<T: Item + Serialize> Engine<T> {
             fade_in_left: 0,
             fade_out: None,
             fading_out: false,
+            suspended: false,
             notes: Vec::new(),
             rate_said: 0,
             ran_dry: 0,
@@ -455,6 +459,7 @@ impl<T: Item + Serialize> Engine<T> {
     }
 
     fn run(mut self, rx: Receiver<Cmd<T>>) {
+        crate::sync::Resampler::warm();
         // The sound comes first: Windows schedules this thread as pro audio (MMCSS), so nothing
         // else on the computer (a room's network, the window drawing) makes it late.
         #[cfg(windows)]
@@ -686,6 +691,8 @@ impl<T: Item + Serialize> Engine<T> {
         self.segs.clear();
         self.seek_waiting = None;
         self.resampler.reset();
+        self.suspended = false;
+        self.fade_out = None;
         // A seek or fade-in meant for the song before is not this one's.
         self.seek_after_fade = None;
         self.fade_in_left = 0;
@@ -1062,8 +1069,12 @@ impl<T: Item + Serialize> Engine<T> {
         } else {
             0
         };
-        // One room's rate (or gliding back from it): the period's frames made at that rate.
-        if lead == 0 && (self.sync.is_some_and(|p| p.same_room) || !self.resampler.idle()) {
+        self.suspend_or_resume(want, &fmt);
+        // One room's rate (or gliding back from it): the period's frames made at that rate
+        // (none while held silent).
+        let held = self.fade_out.is_some_and(|f| f.over());
+        if lead == 0 && !held && (self.sync.is_some_and(|p| p.same_room) || !self.resampler.idle())
+        {
             self.rate_front(want);
         }
         let src_ch = usize::from(fmt.channels.max(1));
@@ -1300,6 +1311,45 @@ impl<T: Item + Serialize> Engine<T> {
             self.fade_in_left = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
         }
         Ok(())
+    }
+
+    /// A stream that can't keep up: rather than play what has come a few frames at a time (gaps
+    /// with hard edges, heard as crackle), the music fades out over what is left, waits in
+    /// silence until a second of it is ready, and fades back in from where it stopped. In a
+    /// room it then plays a little late, and catches up gently as the room's rules say.
+    fn suspend_or_resume(&mut self, want: usize, fmt: &SourceFormat) {
+        let Some(front) = self.segs.front() else {
+            return;
+        };
+        let rate = f64::from(fmt.rate.max(1));
+        if self.suspended {
+            self.starved_at = Some(Instant::now());
+            let refilled = front.ended || front.frames() as f64 >= rate * 0.9;
+            if refilled {
+                self.suspended = false;
+                self.fade_out = None;
+                // Back from silence: nothing before it for the resampler to carry on from.
+                self.resampler.reset();
+                self.fade_in_mid_song();
+            }
+            return;
+        }
+        // Enough left to fade out over in full, the resampler's look-ahead included.
+        let reserve = (crate::sync::FADE_OUT.as_secs_f64() * rate) as usize + 64;
+        let running_out = !front.ended
+            && front.source.is_waiting()
+            && front.frames() < want + reserve
+            && self.seek_waiting.is_none();
+        if running_out && self.fade_out.is_none() && self.sounding {
+            let len = (crate::sync::FADE_OUT.as_secs_f64() * rate) as usize;
+            self.fade_out = Some(FadeOut {
+                done: 0,
+                len: len.min(front.frames()).max(1),
+                silent: 0,
+            });
+            self.suspended = true;
+            self.starved_at = Some(Instant::now());
+        }
     }
 
     /// Music is coming out: fade it out to silence now, and wait until the device holds only
@@ -1744,7 +1794,10 @@ impl<T: Item + Serialize> Engine<T> {
                 front.played = (front.played + used as u64).saturating_sub(want as u64);
             }
             // Not decoded far enough to work out (a stream that stalled): as it is, from here.
-            None => self.resampler.reset(),
+            None => {
+                let n = (want * ch).min(input.len());
+                self.resampler.as_is_for_now(&input[..n], ch);
+            }
         }
         self.resampled = out;
         let ppm = self.resampler.ppm().round() as i32;
@@ -1933,6 +1986,7 @@ impl<T: Item + Serialize> Engine<T> {
         // stream, not playing, though the device runs on in silence.
         let stalled = !opening
             && (self.seek_waiting.is_some()
+                || self.suspended
                 || self
                     .segs
                     .front()
@@ -2281,5 +2335,81 @@ mod tests {
         assert!(said.contains("The streamed song"), "{said}");
         assert!(said.contains(crate::decode::STREAM_LOST), "{said}");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts() {
+        use crate::decode::mock_host::{Serve, host};
+        // A 440 Hz sine (16-bit stereo, 44.1 kHz), served at about three quarters of the pace it
+        // plays at: it runs out again and again.
+        let mut song = wav_bytes(6);
+        for (i, s) in song[44..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let t = (i / 2) as f64 / 44_100.0;
+            *s = ((8_000.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16).to_le_bytes();
+        }
+        let song = Arc::new(song);
+        let len = song.len() as u64;
+        let host = host(song, |_, _| Serve::Paced {
+            first: 96 * 1024,
+            piece: 8 * 1024,
+            every_ms: 60,
+        });
+        let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
+        let (tx, rx) = channel::<Status<Song>>();
+        let player = Player::spawn(OutputChoice::PacedMemory(captured.clone()), move |s| {
+            let _ = tx.send(s);
+        });
+        player.send(Cmd::Set {
+            items: vec![Song::Streamed {
+                url: host.url.clone(),
+                len,
+                stall_ms: 30_000,
+            }],
+            index: 0,
+            start_ms: 0,
+            play: true,
+            from: String::new(),
+        });
+        let (mut waited, t0) = (false, Instant::now());
+        while t0.elapsed() < Duration::from_secs(5) {
+            if let Ok(s) = rx.recv_timeout(Duration::from_millis(200)) {
+                waited |= s.playing && s.position_ms > 500 && s.buffering;
+            }
+        }
+        drop(player);
+        let c = std::mem::take(&mut *captured.lock().unwrap());
+        // Left channel, 16-bit values.
+        let x: Vec<i32> = c
+            .bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .step_by(2)
+            .map(|b| i32::from_le_bytes(*b) >> 16)
+            .collect();
+        let first = x.iter().position(|&v| v != 0).expect("it played");
+        let last = x.iter().rposition(|&v| v != 0).unwrap();
+        // The sine's own largest step from one frame to the next, and gaps inside the music.
+        let step = 8_000.0 * 2.0 * std::f64::consts::PI * 440.0 / 44_100.0;
+        let (mut gaps, mut hard) = (0, 0);
+        let mut i = first;
+        while i <= last {
+            if x[i] == 0 && x.get(i + 1) == Some(&0) {
+                let start = i;
+                while i <= last && x[i] == 0 {
+                    i += 1;
+                }
+                gaps += 1;
+                let edge = f64::from(x[start - 1].abs().max(x[i].abs()));
+                if edge > step * 0.5 {
+                    hard += 1;
+                }
+                continue;
+            }
+            i += 1;
+        }
+        assert!(gaps > 0, "it did run out (or the test proves nothing)");
+        assert!(waited, "and said it was buffering meanwhile");
+        assert_eq!(hard, 0, "every wait faded out and back in ({gaps} waits)");
     }
 }

@@ -261,6 +261,21 @@ impl Resampler {
         *self = Self::default();
     }
 
+    /// The song couldn't be decoded far enough for the filter this time (a stream behind): the
+    /// music comes out as it is, back on a whole frame, the frames before it kept for the
+    /// filter's left side (not zeros, which would be a transient when it carries on) and the
+    /// rate kept.
+    pub fn as_is_for_now(&mut self, input: &[i32], ch: usize) {
+        self.phase = 0.0;
+        self.home = None;
+        self.played_as_is(input, ch);
+    }
+
+    /// Work the filter out now (at the player's start), not on the sound's thread mid-song.
+    pub fn warm() {
+        let _ = kernel();
+    }
+
     /// The music at `input` (interleaved, `ch` channels) came out as it is: its last frames are
     /// kept, so a correction starting next has the filter's left side.
     pub fn played_as_is(&mut self, input: &[i32], ch: usize) {
