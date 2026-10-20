@@ -1227,6 +1227,23 @@ impl InnerTube {
         self.row_feedback(client, token).await
     }
 
+    /// A press on a song's own menu: "Save to library" / "Remove from library", "Pin to Listen
+    /// again" / "Unpin", "Not interested". Each is the token the row came with for that one
+    /// way ([`crate::RowMenu`]), sent as the account (ytmusicapi `edit_song_library_status`).
+    pub async fn menu_feedback(&self, client: &YouTubeClient, token: &str) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
+    /// Take one past search out of the account's search history, by the token its suggestion came
+    /// with (ytmusicapi `remove_search_suggestions`).
+    pub async fn remove_search_suggestion(
+        &self,
+        client: &YouTubeClient,
+        token: &str,
+    ) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
     /// Take one play out of the account's history, by the token its history row came with.
     /// ytmusicapi notes this doesn't work on a brand account: YouTube turns it down there.
     pub async fn remove_history_item(
@@ -1845,7 +1862,9 @@ impl InnerTube {
         .await
     }
 
-    /// Delete one of the account's uploads (a song or an album) by its entity id.
+    /// Delete one of the account's uploads (a song or an album) by its entity id: a song's from its
+    /// row's Delete item, an album's its browse id less the privately-owned prefix, as ytmusicapi
+    /// `delete_upload_entity` sends it. Paced like the other account writes; going again is harmless.
     pub async fn delete_upload(
         &self,
         client: &YouTubeClient,
@@ -1857,11 +1876,15 @@ impl InnerTube {
             context: Context,
             entity_id: String,
         }
+        let entity_id = entity_id.trim();
+        let entity_id = entity_id
+            .strip_prefix("FEmusic_library_privately_owned_release_detail")
+            .unwrap_or(entity_id);
         let body = DeleteBody {
             context: self.context_for(client),
             entity_id: entity_id.to_owned(),
         };
-        self.post("music/delete_privately_owned_entity", client, &body, true)
+        self.post_account("music/delete_privately_owned_entity", client, &body, true)
             .await?;
         Ok(())
     }
@@ -3242,6 +3265,39 @@ mod upload {
         );
     }
 
+    // Deleting an upload sends its entity id, as the account, to the one place that deletes it.
+    // An album's id is its browse id less the privately-owned prefix, as ytmusicapi sends it.
+    #[tokio::test]
+    async fn deleting_an_upload_sends_its_entity_id_as_the_account() {
+        for (given, sent_id) in [
+            ("t_po_FIXTUREENTITY", "t_po_FIXTUREENTITY"),
+            (
+                "FEmusic_library_privately_owned_release_detailb_po_FIXTUREALBUM",
+                "b_po_FIXTUREALBUM",
+            ),
+        ] {
+            let server = MockServer::start(|_| (200, "{}".to_owned()));
+            let session = Session {
+                cookie: Some("SAPISID=fixture; PREF=x".into()),
+                ..Default::default()
+            };
+            let mut it = InnerTube::new(session, None).unwrap();
+            it.set_base_url(&server.base_url);
+            let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+            it.delete_upload(&client, given).await.unwrap();
+            let seen = server.requests();
+            assert_eq!(seen.len(), 1);
+            assert!(
+                seen[0].path.contains("music/delete_privately_owned_entity"),
+                "{}",
+                seen[0].path
+            );
+            let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
+            assert_eq!(body["entityId"], sent_id);
+            assert!(seen[0].header("cookie").is_some(), "as the account");
+        }
+    }
+
     #[tokio::test]
     async fn signed_out_nothing_goes_up() {
         let it = InnerTube::new(Session::default(), None).unwrap();
@@ -3689,6 +3745,48 @@ mod row_feedback {
         assert_eq!(
             tokens_sent(&sent[0]),
             serde_json::json!(["FIXTURE-REMOVE-FROM-HISTORY"])
+        );
+    }
+
+    // Save to library, Pin to Listen again, Not interested: each a token off the song's own menu,
+    // sent as it is. The real answer for a taken one is feedbackResponses[0].isProcessed.
+    #[tokio::test]
+    async fn a_song_menu_press_sends_its_token_to_feedback_as_the_account() {
+        for token in [
+            "FIXTURE-LIBRARY-ADD",
+            "FIXTURE-PIN",
+            "FIXTURE-NOT-INTERESTED",
+        ] {
+            let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+            let it = it_against(&server);
+            it.menu_feedback(&web(), token).await.unwrap();
+            let sent = server.requests();
+            assert_eq!(sent.len(), 1);
+            assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+            assert_eq!(tokens_sent(&sent[0]), serde_json::json!([token]));
+            assert!(sent[0].header("cookie").is_some(), "sent as the account");
+        }
+        let server = MockServer::start(|_| (200, REFUSED.to_owned()));
+        let it = it_against(&server);
+        let refused = it.menu_feedback(&web(), "T").await;
+        assert!(matches!(refused, Err(Error::ActionRejected)), "{refused:?}");
+    }
+
+    // A past search goes from the search history by its own token (ytmusicapi
+    // remove_search_suggestions), the same feedback call.
+    #[tokio::test]
+    async fn a_past_search_is_taken_out_by_its_token() {
+        let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+        let it = it_against(&server);
+        it.remove_search_suggestion(&web(), "FIXTURE-PAST-SEARCH")
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+        assert_eq!(
+            tokens_sent(&sent[0]),
+            serde_json::json!(["FIXTURE-PAST-SEARCH"])
         );
     }
 

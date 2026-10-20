@@ -1,0 +1,46 @@
+{
+  "_note": "Shape of a real signed-in FEmusic_liked_videos row (WEB_REMIX browse, Library > Songs) as seen 2026-10-19: its menu's two feedback toggles are toggleMenuServiceItemRenderer items with defaultText 'Save to library' / toggledText 'Remove from library' (defaultIcon BOOKMARK_BORDER) and 'Pin to Listen again' / 'Unpin from Listen again' (defaultIcon KEEP), each with defaultServiceEndpoint and toggledServiceEndpoint feedbackEndpoint.feedbackToken and an isToggled flag. Every song in this list is in the library, so its library toggle arrives isToggled true. The other menu items are the ones every song menu carries (album-heartbeat.json). Tokens and ids replaced. Sending a token to /youtubei/v1/feedback as {feedbackTokens:[token]} performs it (ytmusicapi edit_song_library_status); the answer is feedbackResponses[0].isProcessed.",
+  "musicResponsiveListItemRenderer": {
+    "flexColumns": [
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Kesariya", "navigationEndpoint": { "watchEndpoint": { "videoId": "BddP6PYo2gs", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } } } ] }, "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH" } },
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Pritam", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCFIXTUREPRITAM", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } } } ] }, "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH" } },
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Brahmastra", "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_FIXTUREALBUM", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ALBUM" } } } } } ] }, "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_LOW" } }
+    ],
+    "fixedColumns": [ { "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [ { "text": "4:28" } ] } } } ],
+    "playlistItemData": { "videoId": "BddP6PYo2gs" },
+    "overlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": { "playNavigationEndpoint": { "watchEndpoint": { "videoId": "BddP6PYo2gs", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } } } } } },
+    "menu": {
+      "menuRenderer": {
+        "items": [
+          { "menuNavigationItemRenderer": { "text": { "runs": [ { "text": "Start mix" } ] }, "icon": { "iconType": "MIX" }, "navigationEndpoint": { "watchEndpoint": { "videoId": "BddP6PYo2gs", "playlistId": "RDAMVMBddP6PYo2gs", "params": "wAEB" } } } },
+          { "menuServiceItemRenderer": { "text": { "runs": [ { "text": "Play next" } ] }, "icon": { "iconType": "QUEUE_PLAY_NEXT" }, "serviceEndpoint": { "queueAddEndpoint": { "queueTarget": { "videoId": "BddP6PYo2gs" }, "queueInsertPosition": "INSERT_AFTER_CURRENT_VIDEO" } } } },
+          { "menuServiceItemRenderer": { "text": { "runs": [ { "text": "Add to queue" } ] }, "icon": { "iconType": "ADD_TO_REMOTE_QUEUE" }, "serviceEndpoint": { "queueAddEndpoint": { "queueTarget": { "videoId": "BddP6PYo2gs" }, "queueInsertPosition": "INSERT_AT_END" } } } },
+          { "toggleMenuServiceItemRenderer": {
+            "defaultText": { "runs": [ { "text": "Save to library" } ] },
+            "defaultIcon": { "iconType": "BOOKMARK_BORDER" },
+            "defaultServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-LIBRARY-ADD" } },
+            "toggledText": { "runs": [ { "text": "Remove from library" } ] },
+            "toggledIcon": { "iconType": "BOOKMARK" },
+            "toggledServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-LIBRARY-REMOVE" } },
+            "isToggled": true,
+            "trackingParams": "FIXTURE"
+          } },
+          { "toggleMenuServiceItemRenderer": {
+            "defaultText": { "runs": [ { "text": "Pin to Listen again" } ] },
+            "defaultIcon": { "iconType": "KEEP" },
+            "defaultServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-PIN" } },
+            "toggledText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+            "toggledIcon": { "iconType": "KEEP_OFF" },
+            "toggledServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-UNPIN" } },
+            "isToggled": false,
+            "trackingParams": "FIXTURE"
+          } },
+          { "menuNavigationItemRenderer": { "text": { "runs": [ { "text": "Save to playlist" } ] }, "icon": { "iconType": "ADD_TO_PLAYLIST" }, "navigationEndpoint": { "addToPlaylistEndpoint": { "videoId": "BddP6PYo2gs" } } } },
+          { "menuNavigationItemRenderer": { "text": { "runs": [ { "text": "Go to album" } ] }, "icon": { "iconType": "ALBUM" }, "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_FIXTUREALBUM" } } } },
+          { "menuNavigationItemRenderer": { "text": { "runs": [ { "text": "Go to artist" } ] }, "icon": { "iconType": "ARTIST" }, "navigationEndpoint": { "browseEndpoint": { "browseId": "UCFIXTUREPRITAM" } } } },
+          { "menuNavigationItemRenderer": { "text": { "runs": [ { "text": "Share" } ] }, "icon": { "iconType": "SHARE" }, "navigationEndpoint": { "shareEntityEndpoint": { "serializedShareEntity": "FIXTURE" } } } }
+        ]
+      }
+    }
+  }
+}

@@ -33,8 +33,9 @@ pub use models::comments::{
 pub use models::context::Locale;
 pub use models::lyrics::{PlainLyrics, TimedLyricLine};
 pub use models::metadata::{
-    AccountIdentity, AccountInfo, ArtistRun, NextResult, PlaylistVote, QueueChip, Rating,
-    SearchResult, SongItem, VoteButton, VoteChoice, WatchEndpoint, RADIO_PARAMS,
+    row_menu, AccountIdentity, AccountInfo, ArtistRun, LibraryToggle, MenuFeedback, NextResult,
+    PinToggle, PlaylistVote, QueueChip, Rating, RowMenu, SearchResult, SongItem, VoteButton,
+    VoteChoice, WatchEndpoint, RADIO_PARAMS,
 };
 pub use models::player::{
     find_format, find_video_format, AudioQuality, Format, PlaybackTracking, PlayerResponse,
