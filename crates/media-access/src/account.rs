@@ -233,6 +233,8 @@ pub struct FollowState {
 #[derive(Clone)]
 pub struct Listen {
     pub video_id: String,
+    /// Where its play counts.
+    pub counts: PlayCounts,
     #[cfg(feature = "live-provider")]
     pub(crate) tracking: ytmusic::ListenTracking,
 }
@@ -241,8 +243,21 @@ impl std::fmt::Debug for Listen {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Listen")
             .field("video_id", &self.video_id)
+            .field("counts", &self.counts)
             .finish_non_exhaustive()
     }
+}
+
+/// Where a listen's play counts, as the playback log says it. The reasons are words safe to
+/// log: never an id, a token or an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlayCounts {
+    /// On YouTube Music's History page, as its own web player tells it. `no_token`: told
+    /// without YouTube's security check (PO token), and why there was none.
+    YouTubeMusic { no_token: Option<String> },
+    /// In the YouTube watch history: told through the YouTube web client, because YouTube
+    /// Music's own player gave nowhere to tell it (why).
+    YouTube { why: String },
 }
 
 /// How much of a listen was heard since its last report: each stretch from where it started to

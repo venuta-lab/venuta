@@ -1906,10 +1906,68 @@ impl InnerTube {
         client: &YouTubeClient,
         video_id: &str,
     ) -> Result<ListenTracking, Error> {
+        let music = ListenRoute::Music { no_token: None };
+        self.listen_tracking_with(client, video_id, None, None, music)
+            .await
+    }
+
+    /// One listen, asked for the way YouTube Music's web page asks: its own player (`music`,
+    /// WEB_REMIX) with the current player's signature timestamp and the PO token made for this
+    /// video, as the account and its channel. With no token YouTube Music's player is still
+    /// asked first. When it gives no address to tell the play to, the plain web client (`web`)
+    /// is asked instead: the play then counts on YouTube (its watch history) rather than on
+    /// YouTube Music's History page. The listen says which, and why ([`ListenTracking::route`]).
+    ///
+    /// `sts`: without a current one every web client answers UNPLAYABLE ("Video unavailable"),
+    /// token or not (measured signed out 2026-10-19).
+    pub async fn listen_tracking_either_way(
+        &self,
+        music: &YouTubeClient,
+        web: &YouTubeClient,
+        video_id: &str,
+        token: Result<String, crate::potoken::PotError>,
+        sts: Option<i32>,
+    ) -> Result<ListenTracking, Error> {
+        let (token, no_token) = match token {
+            Ok(t) => (Some(t), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        let route = ListenRoute::Music {
+            no_token: no_token.clone(),
+        };
+        let listen = self
+            .listen_tracking_with(music, video_id, sts, token.as_deref(), route)
+            .await?;
+        if listen.has_play() {
+            return Ok(listen);
+        }
+        let why = match no_token {
+            Some(e) => format!("no token: {e}"),
+            None => format!(
+                "YouTube Music answered {} with the token",
+                listen.status.as_deref().unwrap_or("without a play address")
+            ),
+        };
+        self.listen_tracking_with(web, video_id, sts, None, ListenRoute::Web { why })
+            .await
+    }
+
+    async fn listen_tracking_with(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+        sts: Option<i32>,
+        po_token: Option<&str>,
+        route: ListenRoute,
+    ) -> Result<ListenTracking, Error> {
         if !self.is_logged_in() {
             return Err(Error::Other("signed out: no listen to tell".into()));
         }
-        let player = self.player(client, video_id, None, None, None).await?;
+        let player = self.player(client, video_id, None, sts, po_token).await?;
+        let status = player.playability_status;
+        let status = (!status.is_ok())
+            .then(|| enum_like(&status.status).map(str::to_owned))
+            .flatten();
         let tracking = player.playback_tracking;
         let url = |pick: fn(
             &crate::models::player::PlaybackTracking,
@@ -1924,6 +1982,8 @@ impl InnerTube {
             playback_url: url(|t| t.videostats_playback_url.as_ref()),
             watchtime_url: url(|t| t.videostats_watchtime_url.as_ref()),
             cpn: crate::transport::generate_cpn(),
+            route,
+            status,
         })
     }
 
@@ -1963,12 +2023,36 @@ pub struct ListenTracking {
     playback_url: Option<String>,
     watchtime_url: Option<String>,
     cpn: String,
+    route: ListenRoute,
+    /// The player's status when it wasn't OK (`UNPLAYABLE`), enum-shaped only.
+    status: Option<String>,
+}
+
+/// Which player a listen was asked of, and so where its play counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenRoute {
+    /// YouTube Music's own (WEB_REMIX): the play is on its History page. `no_token`: it
+    /// answered without a PO token, and why there was none (words safe to log).
+    Music { no_token: Option<String> },
+    /// Plain YouTube on the web, and why YouTube Music's wasn't used (words safe to log): the
+    /// play is in the YouTube watch history.
+    Web { why: String },
 }
 
 impl ListenTracking {
     /// The answer gave a listening-time address.
     pub fn has_watchtime(&self) -> bool {
         self.watchtime_url.is_some()
+    }
+
+    /// The answer gave an address to tell the play to.
+    pub fn has_play(&self) -> bool {
+        self.playback_url.is_some()
+    }
+
+    /// Which player answered: the client every report of this listen goes as.
+    pub fn route(&self) -> &ListenRoute {
+        &self.route
     }
 }
 
@@ -1977,6 +2061,8 @@ impl std::fmt::Debug for ListenTracking {
         f.debug_struct("ListenTracking")
             .field("playback", &self.playback_url.is_some())
             .field("watchtime", &self.watchtime_url.is_some())
+            .field("route", &self.route)
+            .field("status", &self.status)
             .finish_non_exhaustive()
     }
 }
@@ -3479,6 +3565,188 @@ mod report_play {
         let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
         assert!(it.listen_tracking(&client, "vid").await.is_err());
         assert!(server.requests().is_empty());
+    }
+
+    /// YouTube Music's player answers with its tracking only when `music_ok`; the web client's
+    /// always does (a docid of its own, to tell them apart).
+    fn either_server(music_ok: bool) -> MockServer {
+        MockServer::start(move |req| {
+            if !req.path.contains("/youtubei/v1/player") {
+                return (204, String::new());
+            }
+            let host = req.header("host").unwrap_or_default().to_owned();
+            let body: serde_json::Value = serde_json::from_str(&req.body).unwrap();
+            let docid = match body["context"]["client"]["clientName"].as_str() {
+                Some("WEB_REMIX") if !music_ok => {
+                    return (
+                        200,
+                        json!({ "playabilityStatus": { "status": "UNPLAYABLE", "reason": "Video unavailable" } })
+                            .to_string(),
+                    )
+                }
+                Some("WEB_REMIX") => "music",
+                _ => "web",
+            };
+            (200, json!({ "playabilityStatus": { "status": "OK" }, "playbackTracking": {
+                "videostatsPlaybackUrl": { "baseUrl": format!("http://{host}/api/stats/playback?docid={docid}") },
+                "videostatsWatchtimeUrl": { "baseUrl": format!("http://{host}/api/stats/watchtime?docid={docid}") }
+            } }).to_string())
+        })
+    }
+
+    fn as_brand_channel(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            data_sync_id: Some("fixture-dsid".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn music_and_web() -> (crate::YouTubeClient, crate::YouTubeClient) {
+        let clients = Clients::bundled();
+        (
+            clients.get(METADATA_CLIENT).unwrap().clone(),
+            clients
+                .get(crate::clients::WEB_PLAYS_CLIENT)
+                .unwrap()
+                .clone(),
+        )
+    }
+
+    fn sent(seen: &crate::test_server::Seen) -> serde_json::Value {
+        serde_json::from_str(&seen.body).unwrap()
+    }
+
+    fn sts_of(body: &serde_json::Value) -> Option<i64> {
+        body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"].as_i64()
+    }
+
+    // With a token: YouTube Music's own player answer, asked as the web player asks it (the
+    // current signature timestamp, the token in `serviceIntegrityDimensions`, as the account and
+    // its channel), and the play told as YouTube Music.
+    #[tokio::test]
+    async fn with_a_token_the_listen_is_youtube_musics() {
+        let server = either_server(true);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Ok("TOKEN".into()), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Music { no_token: None }
+        );
+        assert!(listen.has_play() && listen.has_watchtime());
+        let seen = server.requests();
+        assert_eq!(seen.len(), 1, "one player answer");
+        let body = sent(&seen[0]);
+        assert_eq!(body["serviceIntegrityDimensions"]["poToken"], "TOKEN");
+        assert_eq!(sts_of(&body), Some(20740));
+        assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+        assert_eq!(body["context"]["user"]["onBehalfOfUser"], "fixture-dsid");
+        assert!(seen[0].header("cookie").is_some());
+
+        it.report_tracked_play(&music, &listen).await.unwrap();
+        let ping = &server.requests()[1];
+        assert!(ping.path.starts_with("/api/stats/playback?docid=music"));
+        assert_eq!(param(&ping.path, "c"), Some("WEB_REMIX"));
+        assert_eq!(
+            param(&ping.path, "cver"),
+            Some(music.client_version.as_str())
+        );
+        assert!(
+            !format!("{listen:?}").contains("TOKEN"),
+            "no token in a log line"
+        );
+    }
+
+    // No token could be made: YouTube Music's own player is still asked (with the signature
+    // timestamp it answers signed out without one), and the listen says why there was none.
+    #[tokio::test]
+    async fn without_a_token_youtube_music_is_still_asked_first() {
+        let server = either_server(true);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let why = crate::potoken::PotError("BotGuard didn't run".into());
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Err(why), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Music {
+                no_token: Some("BotGuard didn't run".into())
+            }
+        );
+        let seen = server.requests();
+        assert_eq!(seen.len(), 1);
+        let body = sent(&seen[0]);
+        assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+        assert!(body.get("serviceIntegrityDimensions").is_none());
+        assert_eq!(sts_of(&body), Some(20740));
+    }
+
+    // No token and YouTube Music won't answer without one: the plain web client instead, as the
+    // account, and why.
+    #[tokio::test]
+    async fn without_a_token_and_unplayable_the_web_client_is_asked() {
+        let server = either_server(false);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let why = crate::potoken::PotError("BotGuard didn't run".into());
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Err(why), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Web {
+                why: "no token: BotGuard didn't run".into()
+            }
+        );
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2);
+        let body = sent(&seen[1]);
+        assert_eq!(body["context"]["client"]["clientName"], "WEB");
+        assert!(body.get("serviceIntegrityDimensions").is_none());
+        assert_eq!(sts_of(&body), Some(20740));
+        assert_eq!(body["context"]["user"]["onBehalfOfUser"], "fixture-dsid");
+
+        it.report_tracked_play(&web, &listen).await.unwrap();
+        let ping = &server.requests()[2];
+        assert!(ping.path.starts_with("/api/stats/playback?docid=web"));
+        assert_eq!(param(&ping.path, "c"), Some("WEB"));
+        assert_eq!(param(&ping.path, "cver"), Some(web.client_version.as_str()));
+        assert_eq!(ping.header("x-youtube-client-name"), Some("1"));
+    }
+
+    // A token YouTube Music still answers UNPLAYABLE to: the web client, and what it answered.
+    // No signature timestamp to be had: none is sent.
+    #[tokio::test]
+    async fn a_refused_token_falls_back_to_the_web_client() {
+        let server = either_server(false);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Ok("TOKEN".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Web {
+                why: "YouTube Music answered UNPLAYABLE with the token".into()
+            }
+        );
+        assert!(listen.has_play());
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(sent(&seen[1])["context"]["client"]["clientName"], "WEB");
+        assert!(seen.iter().all(|r| sts_of(&sent(r)).is_none()));
     }
 }
 

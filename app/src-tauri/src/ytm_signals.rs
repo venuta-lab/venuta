@@ -8,6 +8,12 @@
 //!   song ends, is skipped or replaced (`listening::Tracker` decides when). The play and its
 //!   listening time are one listen there: one player answer, one playback nonce.
 //!
+//! A play goes to YouTube Music's own player, asked as its web page asks (with YouTube's
+//! security check, a PO token made in a hidden window: `ytm_botguard`), so it lands on its
+//! History page. When that player gives nowhere to tell it, the YouTube web client is asked
+//! instead (the play then counts in the YouTube watch history), and the playback log says so and
+//! why.
+//!
 //! Never your files (the tracker tells only online songs), never in Local only, never signed out
 //! or when it can't be told which account is in use, and only while the switch is on for that
 //! account. One thread sends it all, a request at a time with a pause between, at most
@@ -15,7 +21,7 @@
 
 use crate::listening::{Listened, Reporter, Told};
 use engine::settings::YtmChoices;
-use media_access::{AccountAccess, CancellationToken, Heard, Listen, MediaAccess};
+use media_access::{AccountAccess, CancellationToken, Heard, Listen, MediaAccess, PlayCounts};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -215,12 +221,32 @@ impl<L> Signals<L> {
 /// The account in use, as what is told goes to it.
 struct Account(Arc<dyn AccountAccess>);
 
-/// What telling the account came to, in the playback log (no addresses, no song ids).
-fn said(what: &str, told: &Result<(), String>) {
-    media_access::note_timing(&match told {
-        Ok(()) => format!("told YouTube Music {what}"),
-        Err(e) => format!("couldn't tell YouTube Music {what}: {e}"),
-    });
+/// What telling the account came to, as the playback log says it: where it went (YouTube
+/// Music's own player, or the YouTube web client when that gave nowhere to tell it), and why
+/// when it wasn't YouTube Music's with its token. `counts`: None when no listen was had at all.
+/// No addresses, no song ids.
+fn told_line(what: &str, counts: Option<&PlayCounts>, told: &Result<(), String>) -> String {
+    let (to, how) = match counts {
+        None | Some(PlayCounts::YouTubeMusic { no_token: None }) => {
+            ("YouTube Music", String::new())
+        }
+        Some(PlayCounts::YouTubeMusic {
+            no_token: Some(why),
+        }) => ("YouTube Music", format!(" (no token: {why})")),
+        Some(PlayCounts::YouTube { why }) => (
+            "YouTube",
+            format!(" through the YouTube web client ({why})"),
+        ),
+    };
+    match told {
+        Ok(()) => format!("told {to} {what}{how}"),
+        Err(e) => format!("couldn't tell {to} {what}{how}: {e}"),
+    }
+}
+
+/// [`told_line`], in the playback log.
+fn said(what: &str, counts: Option<&PlayCounts>, told: &Result<(), String>) {
+    media_access::note_timing(&told_line(what, counts, told));
 }
 
 impl Tell for Account {
@@ -232,12 +258,22 @@ impl Tell for Account {
             .map_err(|e| e.message)
     }
 
+    /// The play on its own: its listen asked for and told at once, so the log can say where it
+    /// went.
     fn play(&self, video_id: &str) -> Result<(), String> {
+        let listen = match self.start_listen(video_id) {
+            Ok(listen) => listen,
+            Err(e) => {
+                let told = Err(e);
+                said("a play", None, &told);
+                return told;
+            }
+        };
         let told = self
             .0
-            .report_play(video_id, &CancellationToken::default())
+            .report_listen_play(&listen, &CancellationToken::default())
             .map_err(|e| e.message);
-        said("a play", &told);
+        said("a play", Some(&listen.counts), &told);
         told
     }
 
@@ -246,7 +282,7 @@ impl Tell for Account {
             .0
             .report_listen_play(listen, &CancellationToken::default())
             .map_err(|e| e.message);
-        said("a play", &told);
+        said("a play", Some(&listen.counts), &told);
         told
     }
 
@@ -567,6 +603,42 @@ mod tests {
             .filter(|x| x.starts_with("heard"))
             .count();
         assert_eq!(reports, FAILURES as usize);
+    }
+
+    // The playback log says where a play went, and why when it wasn't YouTube Music's own
+    // player with its token: no ids, no addresses.
+    #[test]
+    fn the_log_says_where_a_play_went() {
+        use media_access::PlayCounts;
+        let music = PlayCounts::YouTubeMusic { no_token: None };
+        let tokenless = PlayCounts::YouTubeMusic {
+            no_token: Some("BotGuard didn't run".into()),
+        };
+        let web = PlayCounts::YouTube {
+            why: "no token: BotGuard didn't run".into(),
+        };
+        let refused: Result<(), String> = Err("refused".into());
+        assert_eq!(
+            told_line("a play", Some(&music), &Ok(())),
+            "told YouTube Music a play"
+        );
+        assert_eq!(
+            told_line("a play", Some(&tokenless), &Ok(())),
+            "told YouTube Music a play (no token: BotGuard didn't run)"
+        );
+        assert_eq!(
+            told_line("a play", Some(&web), &Ok(())),
+            "told YouTube a play through the YouTube web client (no token: BotGuard didn't run)"
+        );
+        assert_eq!(
+            told_line("a play", None, &refused),
+            "couldn't tell YouTube Music a play: refused"
+        );
+        assert_eq!(
+            told_line("a play", Some(&web), &refused),
+            "couldn't tell YouTube a play through the YouTube web client \
+             (no token: BotGuard didn't run): refused"
+        );
     }
 
     // Never more than the hour's share, however much is played.

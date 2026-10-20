@@ -114,3 +114,11 @@ test('the quick buttons know when there is nothing left to do', () => {
   assert.equal(allAre(SAFE, true), false)
   assert.equal(allAre(SAFE, false), false)
 })
+
+test('count plays says where a play lands, and where when the security check cannot be passed', () => {
+  const row = GROUPS.flatMap((g) => g.rows).find((r) => r.name === 'Count plays')!
+  assert.match(row.line, /YouTube Music history/)
+  assert.match(row.line, /security check/)
+  assert.match(row.line, /YouTube watch history/)
+  assert.ok(!row.line.includes(String.fromCharCode(0x2014)), 'no em dash')
+})

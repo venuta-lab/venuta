@@ -1565,7 +1565,30 @@ fn hidden_of(said: Option<u32>, listed: usize) -> usize {
     said.map_or(0, |n| (n as usize).saturating_sub(listed))
 }
 
+/// Where a listen's play counts, from the player that answered for it.
+fn play_counts(route: &ytmusic::ListenRoute) -> crate::account::PlayCounts {
+    match route {
+        ytmusic::ListenRoute::Music { no_token } => crate::account::PlayCounts::YouTubeMusic {
+            no_token: no_token.clone(),
+        },
+        ytmusic::ListenRoute::Web { why } => {
+            crate::account::PlayCounts::YouTube { why: why.clone() }
+        }
+    }
+}
+
 impl YtmBackend {
+    /// The client every report of a listen goes as: the one whose player answered for it.
+    fn listen_client(
+        &self,
+        listen: &crate::account::Listen,
+    ) -> Result<&ytmusic::YouTubeClient, AccessError> {
+        self.client(match listen.tracking.route() {
+            ytmusic::ListenRoute::Music { .. } => PAGES_CLIENT,
+            ytmusic::ListenRoute::Web { .. } => ytmusic::WEB_PLAYS_CLIENT,
+        })
+    }
+
     /// One account request, signed in, cancellable, its failure in words.
     fn account_call<T: Send>(
         &self,
@@ -1954,23 +1977,31 @@ impl crate::account::AccountAccess for YtmBackend {
     }
 
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
-        self.account_call(cancel, "the play", self.it.report_play(client, video_id))
+        let listen = self.start_listen(video_id, cancel)?;
+        self.report_listen_play(&listen, cancel)
     }
 
+    /// As YouTube Music's web player asks: the current signature timestamp and a PO token made
+    /// for the song (`ytmusic::potoken`), then its own player, else the web client's (see
+    /// `InnerTube::listen_tracking_either_way`).
     fn start_listen(
         &self,
         video_id: &str,
         cancel: &CancellationToken,
     ) -> Result<crate::account::Listen, AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
-        let tracking = self.account_call(
-            cancel,
-            "the listen",
-            self.it.listen_tracking(client, video_id),
-        )?;
+        let music = self.client(PAGES_CLIENT)?;
+        let web = self.client(ytmusic::WEB_PLAYS_CLIENT)?;
+        let tracking = self.account_call(cancel, "the listen", async {
+            let tokens = ytmusic::potoken::po_tokens();
+            let token = tokens.mint(video_id).await;
+            let sts = tokens.signature_timestamp().await;
+            self.it
+                .listen_tracking_either_way(music, web, video_id, token, sts)
+                .await
+        })?;
         Ok(crate::account::Listen {
             video_id: video_id.to_owned(),
+            counts: play_counts(tracking.route()),
             tracking,
         })
     }
@@ -1980,7 +2011,7 @@ impl crate::account::AccountAccess for YtmBackend {
         listen: &crate::account::Listen,
         cancel: &CancellationToken,
     ) -> Result<(), AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
+        let client = self.listen_client(listen)?;
         self.account_call(
             cancel,
             "the play",
@@ -1994,7 +2025,7 @@ impl crate::account::AccountAccess for YtmBackend {
         heard: &crate::account::Heard,
         cancel: &CancellationToken,
     ) -> Result<(), AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
+        let client = self.listen_client(listen)?;
         let watched = ytmusic::Watched {
             segments: heard.segments.clone(),
             at_ms: heard.at_ms,
@@ -3196,6 +3227,33 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 mod tests {
     use super::{album_page_of, hidden_of, playlist_browse_id, playlist_radio, read_whole};
     use crate::types::RadioEndpoint;
+
+    // Where a play counts follows the player that answered for its listen, its reason kept.
+    #[test]
+    fn a_listens_play_counts_where_its_player_answered() {
+        use crate::account::PlayCounts;
+        use ytmusic::ListenRoute;
+        assert_eq!(
+            super::play_counts(&ListenRoute::Music { no_token: None }),
+            PlayCounts::YouTubeMusic { no_token: None }
+        );
+        assert_eq!(
+            super::play_counts(&ListenRoute::Music {
+                no_token: Some("x".into())
+            }),
+            PlayCounts::YouTubeMusic {
+                no_token: Some("x".into())
+            }
+        );
+        assert_eq!(
+            super::play_counts(&ListenRoute::Web {
+                why: "no token: x".into()
+            }),
+            PlayCounts::YouTube {
+                why: "no token: x".into()
+            }
+        );
+    }
 
     fn saved(name: &str) -> serde_json::Value {
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

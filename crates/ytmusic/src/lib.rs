@@ -1,14 +1,16 @@
 //! Pure-Rust YouTube Music (InnerTube) transport, client identities, models and endpoints.
 //!
 //! The boundary rule (context/11): this crate knows nothing about Tauri, webviews, mpv, or the
-//! OS. It is unit-testable against JSON fixtures with no network. Cipher/PoToken/WEB_REMIX
-//! streaming are Phase 2 and deliberately absent here.
+//! OS. It is unit-testable against JSON fixtures with no network. Cipher and WEB_REMIX streaming
+//! are Phase 2 and deliberately absent here. PO tokens are made in `potoken`; the BotGuard
+//! JavaScript they need runs behind a trait the app implements where it has a browser engine.
 
 pub mod blocklist;
 pub mod clients;
 pub mod comments_session;
 pub mod endpoints;
 pub mod models;
+pub mod potoken;
 #[cfg(test)]
 mod test_server;
 pub mod transport;
@@ -16,10 +18,10 @@ pub mod transport;
 pub use blocklist::BlockList;
 pub use clients::{
     Clients, YouTubeClient, LYRICS_TIMED_CLIENT, MAIN_CLIENT, METADATA_CLIENT,
-    STREAM_FALLBACK_ORDER, UPLOAD_FALLBACK_ORDER,
+    STREAM_FALLBACK_ORDER, UPLOAD_FALLBACK_ORDER, WEB_PLAYS_CLIENT,
 };
 pub use comments_session::{ActionError, CommentsSession, Provenance};
-pub use endpoints::{invite_playlist, invite_token, ListenTracking};
+pub use endpoints::{invite_playlist, invite_token, ListenRoute, ListenTracking};
 pub use models::browse::{
     AlbumPage, ArtistCarousel, ArtistPage, BrowseItem, HistoryGroup, HomePage, Mood, MoodSection,
     PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, QuerySuggestion,

@@ -118,6 +118,13 @@ pub const STREAM_FALLBACK_ORDER: [&str; 2] = ["VISIONOS", "TVHTML5_SIMPLY"];
 /// WEB_CREATOR at the tail here is a second attempt, not the only one.)
 pub const UPLOAD_FALLBACK_ORDER: [&str; 2] = ["TVHTML5", "WEB_CREATOR"];
 
+/// The client a play is told through when no PO token can be made for YouTube Music's own
+/// (`potoken`): plain YouTube on the web, which still answers the signed-in `/player` with its
+/// tracking. A play told through it counts and teaches the recommendations, but it lands in the
+/// YouTube watch history rather than on YouTube Music's History page. Verified signed in
+/// 2026-10-19 at this version: OK with `playbackTracking`.
+pub const WEB_PLAYS_CLIENT: &str = "WEB";
+
 /// The metadata client for search/next (renderer shape only comes back as WEB_REMIX).
 pub const METADATA_CLIENT: &str = "WEB_REMIX";
 
@@ -144,6 +151,19 @@ mod tests {
         }
         assert!(clients.get(METADATA_CLIENT).is_some());
         assert!(clients.get(LYRICS_TIMED_CLIENT).is_some());
+    }
+
+    /// The plain web client plays are told through when no token can be made: signed in (it is
+    /// the account's play), the numeric id 1, and never a stream client.
+    #[test]
+    fn the_web_plays_client_is_the_accounts() {
+        let c = Clients::bundled();
+        let web = c.get(WEB_PLAYS_CLIENT).expect("WEB");
+        assert_eq!(web.client_name, "WEB");
+        assert_eq!(web.client_id, "1");
+        assert!(web.login_supported);
+        assert!(web.client_version.starts_with("2."));
+        assert!(!STREAM_FALLBACK_ORDER.contains(&WEB_PLAYS_CLIENT));
     }
 
     #[test]
