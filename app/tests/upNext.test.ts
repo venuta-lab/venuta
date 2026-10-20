@@ -1,7 +1,7 @@
 // node --test tests/   (Node runs the TypeScript as is)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canPlayNext, chipsShown, placeOf, queueName, queueNote, rowLabel, saveName } from '../src/lib/upNext.ts'
+import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, saveName } from '../src/lib/upNext.ts'
 import type { RadioView } from '../src/lib/radio.ts'
 
 const view = (more: Partial<RadioView> = {}): RadioView => ({
@@ -68,4 +68,45 @@ test('saving the queue as a playlist suggests the radio’s name', () => {
   assert.equal(saveName(view({ title: null }), 'Kitni Baatein radio'), 'Kitni Baatein radio')
   assert.equal(saveName(null, 'Online: Heartbeat Diaries'), 'Heartbeat Diaries')
   assert.equal(saveName(null, ''), '')
+})
+
+test('an online song in the queue goes to its online album, when YouTube named one', () => {
+  const online = { path: '', title: 'Maand', artists: ['Bayaan'], album: 'Maand', album_id: 'MPREmaand', artwork_url: 'https://lh3.googleusercontent.com/x', online: { kind: 'online' as const, provider: 'remote_catalog', track_id: 'aaaaaaaaaaa' } }
+  assert.deepEqual(onlineAlbumOf(online), {
+    provider: 'remote_catalog',
+    album_id: 'MPREmaand',
+    title: 'Maand',
+    artists: ['Bayaan'],
+    track_count: null,
+    release_date: null,
+    artwork_url: 'https://lh3.googleusercontent.com/x',
+  })
+  // No album named: nothing to go to. A file of yours goes to its folder instead.
+  assert.equal(onlineAlbumOf({ ...online, album_id: undefined }), null)
+  assert.equal(onlineAlbumOf({ ...online, album_id: '  ' }), null)
+  assert.equal(onlineAlbumOf({ ...online, path: 'Bayaan/Maand.flac' }), null)
+  // A song a room's host plays from their file has no album here.
+  assert.equal(onlineAlbumOf({ ...online, online: { kind: 'online', provider: 'venuta_room', track_id: 'x' } }), null)
+  // The album's name, else the song's, for the page while it loads.
+  assert.equal(onlineAlbumOf({ ...online, album: '' })?.title, 'Maand')
+})
+
+test('Related shows each shelf as what it holds, in YouTube’s order', () => {
+  const track = { provider: 'remote_catalog', track_id: 'a', title: 'A', artists: [], album: null, album_id: null, duration_ms: null, artwork_url: null, isrc: null }
+  const artist = { kind: 'artist' as const, artist: { provider: 'remote_catalog', artist_id: 'UC1', name: 'One', artwork_url: null }, subtitle: null }
+  const parts = relatedParts([
+    { title: 'You might also like', tracks: [track], items: [], about: null },
+    { title: 'Similar artists', tracks: [], items: [artist], about: null },
+    { title: 'About the artist', tracks: [], items: [], about: '  Words.  ' },
+    { title: 'Empty', tracks: [], items: [], about: '  ' },
+  ])
+  assert.deepEqual(
+    parts.map((p) => [p.kind, p.title]),
+    [
+      ['songs', 'You might also like'],
+      ['cards', 'Similar artists'],
+      ['about', 'About the artist'],
+    ],
+  )
+  assert.equal(parts[2].kind === 'about' && parts[2].about, 'Words.')
 })

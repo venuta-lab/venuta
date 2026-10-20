@@ -2,7 +2,7 @@
 // An online song in words: its quality, a length not known yet, its cover's colour.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { hueOf, onlineQuality, songLength } from '../src/lib/onlineSong.ts'
+import { hueOf, knownLength, onlineQuality, songLength } from '../src/lib/onlineSong.ts'
 
 const signal = (codec: string, bitrate_kbps: number) => ({
   device: 'Speakers',
@@ -35,6 +35,13 @@ describe('a length not known yet', () => {
     assert.equal(songLength(undefined), '–')
     assert.equal(songLength(null), '–')
     assert.equal(songLength(214_000), '3:34')
+  })
+
+  it('says nothing where a list never learns it (Related)', () => {
+    assert.equal(knownLength(0), '')
+    assert.equal(knownLength(undefined), '')
+    assert.equal(knownLength(null), '')
+    assert.equal(knownLength(214_000), '3:34')
   })
 })
 

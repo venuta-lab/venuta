@@ -7,6 +7,8 @@
   draws it.
 */
 
+import type { OnlineAlbum, OnlineRelatedShelf, OnlineSuggestion, OnlineTrack } from './engine.ts'
+import type { QueueItem } from './player.ts'
 import type { RadioView } from './radio.ts'
 
 /** Where a row is: played already, playing now, or to come. */
@@ -46,4 +48,42 @@ export function rowLabel(r: { title: string; artists: string[]; length: string; 
 /** The name suggested for the queue saved as a playlist: the radio's, else what it plays from. */
 export function saveName(view: RadioView | null, fromLabel: string): string {
   return view?.title?.trim() || fromLabel.replace(/^Online: /, '').trim()
+}
+
+/** What a queued row needs for Go to album online. */
+type QueuedSong = Pick<QueueItem, 'path' | 'title' | 'artists' | 'album' | 'album_id' | 'artwork_url' | 'online'>
+
+/** The online album a queued online song is from, for Go to album: the one YouTube named with
+ *  the song. Null for a file of yours (it goes to its folder), a song a room's host plays from
+ *  their file, and an online song YouTube named no album for. */
+export function onlineAlbumOf(q: QueuedSong): OnlineAlbum | null {
+  const id = q.album_id?.trim()
+  if (q.path || q.online?.kind !== 'online' || q.online.provider === 'venuta_room' || !id) return null
+  return {
+    provider: q.online.provider,
+    album_id: id,
+    title: q.album || q.title,
+    artists: q.artists,
+    track_count: null,
+    release_date: null,
+    artwork_url: q.artwork_url ?? null,
+  }
+}
+
+/** One shelf of Related as the tab draws it: a list of songs, a row of cards (artists, albums,
+ *  playlists), or the words about the artist. */
+export type RelatedPart =
+  | { kind: 'songs'; title: string; tracks: OnlineTrack[] }
+  | { kind: 'cards'; title: string; items: OnlineSuggestion[] }
+  | { kind: 'about'; title: string; about: string }
+
+/** Related's shelves in YouTube's order, each as what it holds; one with nothing is left out. */
+export function relatedParts(shelves: OnlineRelatedShelf[]): RelatedPart[] {
+  return shelves.flatMap((s): RelatedPart[] => {
+    const title = s.title.trim()
+    if (s.tracks.length) return [{ kind: 'songs', title, tracks: s.tracks }]
+    if (s.items.length) return [{ kind: 'cards', title, items: s.items }]
+    const about = s.about?.trim()
+    return about ? [{ kind: 'about', title, about }] : []
+  })
 }

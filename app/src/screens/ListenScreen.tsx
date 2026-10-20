@@ -26,6 +26,7 @@ import { OnlineArtistPage } from './listen/OnlineArtistPage'
 import { OnlineCollectionPage } from './listen/OnlineCollectionPage'
 import { MoodPage } from './listen/MoodPage'
 import { OnlineShelfPage } from './listen/OnlineShelfPage'
+import { MixesPage } from './listen/MixesPage'
 import { SearchHome } from './listen/SearchHome'
 import { YourMusic } from './listen/YourMusic'
 import { ListeningView } from './listen/ListeningView'
@@ -101,6 +102,7 @@ type Page =
   | { kind: 'online-collection'; collection: OnlineCollection }
   | { kind: 'mood'; tile: MoodTile }
   | { kind: 'online-shelf'; title: string; owner: string; more: OnlineMore }
+  | { kind: 'mixes'; title: string }
 /** A page of Music that can be asked for from outside (see `showMusicPage`). */
 export type MusicPage = Page
 /** A page opened over the tabs, with where the screen was scrolled when it opened. */
@@ -252,7 +254,9 @@ function Listen(props: Props) {
                   ? last.kind === 'mood' && last.tile.params === page.tile.params
                   : page.kind === 'online-shelf'
                     ? last.kind === 'online-shelf' && last.more.browse_id === page.more.browse_id && last.more.params === page.more.params
-                    : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
+                    : page.kind === 'mixes'
+                      ? last.kind === 'mixes'
+                      : last.kind === 'artist' && last.name.toLowerCase() === page.name.toLowerCase())
       return same ? s : [...s, { page, scroll }]
     })
   }, [])
@@ -301,6 +305,7 @@ function Listen(props: Props) {
       openOnlineCollection: (collection) => push({ kind: 'online-collection', collection }),
       openMood: (tile) => push({ kind: 'mood', tile }),
       openOnlineShelf: (title, owner, more) => push({ kind: 'online-shelf', title, owner, more }),
+      openMixes: (title) => push({ kind: 'mixes', title }),
       editDetails: (dir) => edit.current(dir),
     }),
     [root, push],
@@ -537,6 +542,7 @@ function Listen(props: Props) {
     if (top?.page.kind === 'mood') return <MoodPage key={top.page.tile.params} tile={top.page.tile} lib={lib} onBack={back} />
     if (top?.page.kind === 'online-shelf')
       return <OnlineShelfPage key={`${top.page.more.browse_id}:${top.page.more.params ?? ''}`} title={top.page.title} owner={top.page.owner} more={top.page.more} onBack={back} />
+    if (top?.page.kind === 'mixes') return <MixesPage title={top.page.title} onBack={back} />
     if (!lib.tracks.length && tab !== 'search')
       return (
         <p className="py-20 text-center text-[14px] text-ink/55">

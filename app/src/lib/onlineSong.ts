@@ -15,6 +15,12 @@ export function songLength(ms: number | null | undefined): string {
   return ms && ms > 0 ? clock(ms) : '–'
 }
 
+/** A length where a list never learns it (YouTube sends Related songs without one): the clock
+ *  when known, else nothing at all. */
+export function knownLength(ms: number | null | undefined): string {
+  return ms && ms > 0 ? clock(ms) : ''
+}
+
 /** An online song's quality in words, "AAC 129 kbps", from what the stream says; '' until it
  *  has opened (no signal yet). The codec is left out when the stream's kind isn't known. */
 export function onlineQuality(s: { source: { codec: string }; file: { bitrate_kbps: number } } | null): string {

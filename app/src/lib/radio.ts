@@ -7,8 +7,10 @@ import {
   onlineRadioAt,
   onlineRadioMore,
   onlineRelated,
+  onlineRelatedPage,
   onlineSearch,
   type OnlineRadio,
+  type OnlineRelatedShelf,
   type OnlineTrack,
   type RadioEndpoint,
 } from './engine'
@@ -330,6 +332,17 @@ export async function relatedSongs(item: QueueItem): Promise<OnlineTrack[]> {
   if (!id) return []
   const ask = relatedAsk(sessionOf(!!roomRoute()), id)
   return onlineRelated(ask.trackId, ask.relatedId)
+}
+
+/** The whole Related tab for a song in the queue, shelf by shelf as YouTube Music shows it: its
+ *  songs, then the artists, albums and playlists it relates. Found the way `relatedSongs` finds
+ *  the page; nothing is asked in Local only or outside the app. */
+export async function relatedPage(item: QueueItem): Promise<OnlineRelatedShelf[]> {
+  if (isLocalOnly() || !inApp()) return []
+  const id = onlineIdOf(item) ?? (await catalogIdOf(rowInfo(item)))
+  if (!id) return []
+  const ask = relatedAsk(sessionOf(!!roomRoute()), id)
+  return onlineRelatedPage(ask.trackId, ask.relatedId)
 }
 
 /** A catalog list id as the radio's own (`VL` is a page id's prefix, not the list's). */

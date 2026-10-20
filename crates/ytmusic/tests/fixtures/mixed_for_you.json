@@ -1,0 +1,60 @@
+{
+  "header": { "musicHeaderRenderer": { "title": { "runs": [{ "text": "Mixed for you" }] } } },
+  "contents": {
+    "singleColumnBrowseResultsRenderer": {
+      "tabs": [{ "tabRenderer": { "content": { "sectionListRenderer": { "contents": [
+        { "gridRenderer": {
+          "header": { "gridHeaderRenderer": { "title": { "runs": [{ "text": "Your mixes" }] } } },
+          "items": [
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "My Supermix" }] },
+              "subtitle": { "runs": [{ "text": "Artist One, Artist Two and more" }] },
+              "thumbnailRenderer": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/supermix=w226-h226" }] } } },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLRDTMAK5uy_super",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" } } } },
+              "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": {
+                "playNavigationEndpoint": { "watchPlaylistEndpoint": { "playlistId": "RDTMAK5uy_super", "params": "wAEB8gECKAE%3D" } } } } } }
+            } },
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "My Mix 1" }] },
+              "subtitle": { "runs": [{ "text": "Artist Three, Artist Four and more" }] },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLRDTMAK5uy_mix1",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" } } } },
+              "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": {
+                "playNavigationEndpoint": { "watchEndpoint": { "videoId": "seedvideo01", "playlistId": "RDTMAK5uy_mix1", "params": "wAEB" } } } } } }
+            } },
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "Discover Mix" }] },
+              "subtitle": { "runs": [{ "text": "New music, picked for you" }] },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLRDTMAK5uy_discover",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" } } } },
+              "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": {
+                "playNavigationEndpoint": { "watchPlaylistEndpoint": { "playlistId": "RDTMAK5uy_discover", "params": "wAEB" } } } } } }
+            } },
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "Replay Mix" }] },
+              "subtitle": { "runs": [{ "text": "What you play most" }] },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLRDTMAK5uy_replay",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" } } } },
+              "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": {
+                "playNavigationEndpoint": { "watchPlaylistEndpoint": { "playlistId": "RDTMAK5uy_replay", "params": "wAEB" } } } } } }
+            } }
+          ]
+        } },
+        { "musicCarouselShelfRenderer": {
+          "header": { "musicCarouselShelfBasicHeaderRenderer": { "title": { "runs": [{ "text": "Mood mixes" }] } } },
+          "contents": [
+            { "musicTwoRowItemRenderer": {
+              "title": { "runs": [{ "text": "Chill Supermix" }] },
+              "subtitle": { "runs": [{ "text": "Artist Five and more" }] },
+              "navigationEndpoint": { "browseEndpoint": { "browseId": "VLRDTMAK5uy_chill",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" } } } },
+              "thumbnailOverlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": {
+                "playNavigationEndpoint": { "watchPlaylistEndpoint": { "playlistId": "RDTMAK5uy_chill", "params": "wAEB" } } } } } }
+            } }
+          ]
+        } }
+      ] } } } }]
+    }
+  }
+}

@@ -49,6 +49,9 @@ export interface QueueItem {
   online?: PlayableId
   /** Cover art address for remote rows. */
   artwork_url?: string
+  /** Remote rows: the online album it is from (`MPRE…`), when the catalog named one (the
+   *  queue's Go to album). */
+  album_id?: string
   /** Filled in by the backend at play time. */
   availability?: Availability
 }
@@ -233,6 +236,8 @@ export interface RemoteTrack {
   title: string
   artists?: string[]
   album?: string | null
+  /** The online album's id, when the catalog named one. */
+  album_id?: string | null
   duration_ms?: number | null
   artwork_url?: string | null
 }
@@ -269,6 +274,7 @@ export const toRemoteItem = (t: RemoteTrack): QueueItem => ({
   rg: { track_db: null, album_db: null, track_peak: null, album_peak: null },
   online: { kind: 'online', provider: t.provider, track_id: t.track_id },
   artwork_url: onlineCoverUrl(t),
+  ...(t.album_id?.trim() ? { album_id: t.album_id.trim() } : {}),
   availability: 'online',
 })
 

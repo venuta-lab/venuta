@@ -13,7 +13,8 @@ use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MediaHeader, MoodSection, MoodTile, Page,
     PageRequest, RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist,
     RemoteArtistLink, RemoteArtistPage, RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist,
-    RemoteRadio, RemoteRating, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRadio, RemoteRating, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion, RemoteTrack,
+    SearchSuggestions,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -160,6 +161,19 @@ trait LiveBackend: Send + Sync {
         browse_id: &str,
         cancel: &CancellationToken,
     ) -> Result<Vec<ytmusic::SongItem>, AccessError>;
+
+    /// Every shelf of a Related page (`MPTRt…`), in its order.
+    fn related_page(
+        &self,
+        browse_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::RelatedShelf>, AccessError>;
+
+    /// Mixed for you's own page: the account's mixes, in rows.
+    fn mixed_for_you(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::Section>, AccessError>;
 
     fn set_blocked(&self, blocked: &[(Option<String>, String)]);
 
@@ -728,6 +742,33 @@ impl LiveBackend for YtmBackend {
             self.it.related_songs(client, browse_id).await.map_err(|_| {
                 AccessError::new(AccessErrorKind::Transport, "catalog related songs failed")
             })
+        }))
+    }
+
+    fn related_page(
+        &self,
+        browse_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::RelatedShelf>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.run(cancellable(cancel.clone(), async {
+            self.it.related_page(client, browse_id).await.map_err(|_| {
+                AccessError::new(AccessErrorKind::Transport, "catalog related page failed")
+            })
+        }))
+    }
+
+    fn mixed_for_you(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ytmusic::Section>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.run(cancellable(cancel.clone(), async {
+            self.ensure_visitor().await;
+            self.it
+                .mixed_for_you(client)
+                .await
+                .map_err(|_| AccessError::new(AccessErrorKind::Transport, "catalog mixes failed"))
         }))
     }
 
@@ -1958,6 +1999,29 @@ impl LiveCatalogAccess {
         Ok((endpoint.clone(), answer))
     }
 
+    /// A song's Related page: `related_id` when known, else the one the song's own answer names
+    /// (one request). None when there is none.
+    fn related_page_id(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let id = track_id.trim();
+        Ok(match related_id.map(str::trim).filter(|r| !r.is_empty()) {
+            Some(page) => Some(page.to_owned()),
+            // The song's own answer names its Related page.
+            None if !id.is_empty() => {
+                let plain = ytmusic::WatchEndpoint {
+                    video_id: Some(id.to_owned()),
+                    ..Default::default()
+                };
+                self.backend.watch(&plain, None, cancel)?.related_browse_id
+            }
+            None => None,
+        })
+    }
+
     /// A radio page as Venuta keeps it (see `catalog_cards::radio_page_of`). `seed`: the song
     /// playing, left out when the answer opens with it.
     fn radio_page(
@@ -2553,20 +2617,7 @@ impl MediaAccess for LiveCatalogAccess {
         related_id: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteTrack>, AccessError> {
-        let id = track_id.trim();
-        let page = match related_id.map(str::trim).filter(|r| !r.is_empty()) {
-            Some(page) => Some(page.to_owned()),
-            // The song's own answer names its Related page.
-            None if !id.is_empty() => {
-                let plain = ytmusic::WatchEndpoint {
-                    video_id: Some(id.to_owned()),
-                    ..Default::default()
-                };
-                self.backend.watch(&plain, None, cancel)?.related_browse_id
-            }
-            None => None,
-        };
-        let Some(page) = page else {
+        let Some(page) = self.related_page_id(track_id, related_id, cancel)? else {
             return Ok(Vec::new());
         };
         Ok(self
@@ -2579,6 +2630,29 @@ impl MediaAccess for LiveCatalogAccess {
                 t
             })
             .collect())
+    }
+
+    fn related_page(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteRelatedShelf>, AccessError> {
+        let Some(page) = self.related_page_id(track_id, related_id, cancel)? else {
+            return Ok(Vec::new());
+        };
+        let mut shelves =
+            crate::catalog_cards::related_of(&self.backend.related_page(&page, cancel)?);
+        for t in shelves.iter_mut().flat_map(|s| s.tracks.iter_mut()) {
+            t.artwork_url = clean_artwork_url(t.artwork_url.take());
+        }
+        Ok(shelves)
+    }
+
+    fn mixed_for_you(&self, cancel: &CancellationToken) -> Result<Vec<RemoteShelf>, AccessError> {
+        Ok(crate::catalog_cards::mixes_of(
+            &self.backend.mixed_for_you(cancel)?,
+        ))
     }
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {

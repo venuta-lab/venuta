@@ -972,6 +972,16 @@ export interface OnlineShelf {
   more: OnlineMore | null
 }
 
+/** One shelf of a song's Related page, in the catalog's order: songs to play, albums, artists
+ *  and playlists to open, or words about the artist. */
+export interface OnlineRelatedShelf {
+  title: string
+  tracks: OnlineTrack[]
+  items: OnlineSuggestion[]
+  /** "About the artist". */
+  about: string | null
+}
+
 /** The catalog page behind a row's "See all". */
 export interface OnlineMore {
   browse_id: string
@@ -1285,6 +1295,10 @@ export const onlineRadioAt = (endpoint: RadioEndpoint, playing: string | null = 
 export const onlineRadioMore = (endpoint: RadioEndpoint, continuation: string) => invoke<OnlineRadio>('online_radio_more', { endpoint, continuation })
 /** The catalog's Related songs for a song (`relatedId`: its Related page, when known). */
 export const onlineRelated = (trackId: string, relatedId: string | null = null) => invoke<OnlineTrack[]>('online_related', { trackId, relatedId })
+/** The whole of a song's Related page, shelf by shelf (what the Related tab shows). */
+export const onlineRelatedPage = (trackId: string, relatedId: string | null = null) => invoke<OnlineRelatedShelf[]>('online_related_page', { trackId, relatedId })
+/** The account's mixes, from Mixed for you's own page, in its rows. */
+export const onlineMixedForYou = () => invoke<OnlineShelf[]>('online_mixed_for_you')
 /** An online album's whole page. */
 export const onlineAlbumPage = (albumId: string) => invoke<OnlineAlbumPage>('online_album_page', { albumId })
 /** Everything in a row of an online page (its "See all"). */

@@ -3291,6 +3291,8 @@ pub fn run() {
             online::online_radio_at,
             online::online_radio_more,
             online::online_related,
+            online::online_related_page,
+            online::online_mixed_for_you,
             online::online_home,
             online::open_link,
             listening::listening_plays,

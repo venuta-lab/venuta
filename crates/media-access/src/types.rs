@@ -353,6 +353,21 @@ pub struct RemoteShelf {
     pub more: Option<RemoteMore>,
 }
 
+/// One shelf of a song's Related page, in the catalog's order: songs to play ("You might also
+/// like"), albums, artists and playlists to open ("Similar artists", "Recommended playlists"),
+/// or words about the artist. Ids and what to show only, never a stream address.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRelatedShelf {
+    pub title: String,
+    #[serde(default)]
+    pub tracks: Vec<RemoteTrack>,
+    #[serde(default)]
+    pub items: Vec<RemoteSuggestion>,
+    /// "About the artist": the words, as the catalog has them.
+    #[serde(default)]
+    pub about: Option<String>,
+}
+
 /// The catalog page behind a row's "See all".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteMore {
