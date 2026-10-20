@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import type { CatalogTrack } from '../../lib/engine'
 import { useCovers, type Cover } from '../../lib/covers'
 import { playAll, toItem, toggle, type From } from '../../lib/player'
@@ -7,10 +7,11 @@ import { dragSource } from '../../lib/drag'
 import { albumWork, menuFor, songFacts, songWork } from '../../lib/actions'
 import { closeMenu, menuFromEvent, useMenuOpen, type MenuGroups } from '../../lib/menu'
 import { useJob } from '../../lib/jobs'
-import { IconChevron, IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
+import { IconMore, IconPause, IconPlay, IconShuffle } from '../../components/Icons'
+import { CARD_FADE, ScrollRow } from '../../components/ScrollRow'
 import { CoverImage, NoCover } from '../MusicScreen'
 import { WindowedGrid } from '../../components/WindowedGrid'
-import { albumFrom, coverId, smooth, spring, useCardWidth, useNav, useNearView, useNowPlaying, type Album } from './model'
+import { albumFrom, coverId, spring, useCardWidth, useNav, useNearView, useNowPlaying, type Album } from './model'
 
 export function QualityBadge({ text }: { text: string }) {
   if (!text) return null
@@ -187,11 +188,9 @@ export function Shelf(props: {
   const { cover, state } = useCardState()
   const width = useCardWidth()
   const step = width + GAP
-  const row = useRef<HTMLDivElement>(null)
   // Home holds a dozen shelves; each fills in just before it scrolls into view.
   const box = useRef<HTMLElement>(null)
   const near = useNearView(box)
-  const [ends, setEnds] = useState({ start: true, end: false })
   const shown = [
     ...props.albums.map((a) => ({ key: a.dir, at: props.at?.(a.dir) ?? 0, album: a as Album | undefined, node: null as React.ReactNode })),
     ...(props.more ?? []).map((m) => ({ ...m, album: undefined })),
@@ -207,40 +206,6 @@ export function Shelf(props: {
     setUpto((n) => (want > n ? Math.min(shown.length, want) : n))
   }
   const drawn = shown.slice(0, upto)
-
-  const measure = () => {
-    const el = row.current
-    if (!el) return
-    const start = el.scrollLeft < 4
-    const end = el.scrollLeft + el.clientWidth >= el.scrollWidth - 4
-    setEnds((e) => (e.start === start && e.end === end ? e : { start, end }))
-  }
-  useLayoutEffect(() => {
-    const el = row.current
-    if (!el) return
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [near])
-
-  const by = (dir: 1 | -1) => {
-    const el = row.current
-    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.85, behavior: smooth() })
-  }
-
-  const arrow = (dir: 1 | -1) => (
-    <button
-      aria-label={dir < 0 ? 'Scroll left' : 'Scroll right'}
-      tabIndex={-1}
-      onClick={() => by(dir)}
-      style={{ top: Math.round(width * 0.38) }}
-      className={`popover absolute z-10 grid h-10 w-10 place-items-center rounded-full text-ink/80 opacity-0 transition-opacity duration-200 hover:text-ink group-hover/shelf:opacity-100 focus-visible:opacity-100 ${
-        dir < 0 ? '-left-4' : '-right-4'
-      }`}
-    >
-      <IconChevron className={dir < 0 ? 'rotate-180' : ''} />
-    </button>
-  )
 
   if (!shown.length) return null
   return (
@@ -258,15 +223,11 @@ export function Shelf(props: {
         // A card's height (cover, title, line) holds the place until the row is drawn.
         <div style={{ height: width + 50 }} />
       ) : (
-      <div className="group/shelf relative">
-        {!ends.start && arrow(-1)}
-        <div
-          ref={row}
-          onScroll={(e) => {
-            reach(e.currentTarget)
-            measure()
-          }}
-          className="no-scrollbar -mx-3 -my-3 flex snap-x gap-5 overflow-x-auto px-3 py-3"
+        <ScrollRow
+          onScroll={reach}
+          arrows={{ top: Math.round(width * 0.38) }}
+          fade={CARD_FADE}
+          className="-mx-3 -my-3 snap-x gap-5 px-3 py-3"
           style={{ scrollPaddingInline: 12 }}
         >
           {drawn.map(({ key, album: a, node }) => (
@@ -278,9 +239,7 @@ export function Shelf(props: {
           {shown.length > drawn.length && (
             <div aria-hidden className="shrink-0" style={{ width: (shown.length - drawn.length) * step - GAP }} />
           )}
-        </div>
-        {!ends.end && arrow(1)}
-      </div>
+        </ScrollRow>
       )}
     </section>
   )

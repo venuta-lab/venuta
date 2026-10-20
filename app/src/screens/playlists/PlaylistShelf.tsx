@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { playlistShelf, type PlaylistSummary } from '../../lib/engine'
 import { PlaylistCard } from './PlaylistsHome'
 import { useCardWidth } from '../listen/model'
+import { CARD_FADE, ScrollRow } from '../../components/ScrollRow'
 
 /**
  * "Your playlists" on the Music home: the ones you changed last first, smart ones after. Hidden
@@ -39,13 +40,13 @@ export function PlaylistShelf(props: { root: string; onOpen: (name: string) => v
           See all
         </button>
       </div>
-      <div className="no-scrollbar -mx-3 -my-3 flex snap-x gap-5 overflow-x-auto px-3 py-3" style={{ scrollPaddingInline: 12 }}>
+      <ScrollRow arrows={{ top: Math.round(width * 0.38) }} fade={CARD_FADE} className="-mx-3 -my-3 snap-x gap-5 px-3 py-3" style={{ scrollPaddingInline: 12 }}>
         {shown.map((p) => (
           <div key={p.name} className="shrink-0 snap-start" style={{ width }}>
             <PlaylistCard root={root} p={p} onOpen={() => props.onOpen(p.name)} />
           </div>
         ))}
-      </div>
+      </ScrollRow>
     </section>
   )
 }

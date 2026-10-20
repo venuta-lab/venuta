@@ -48,7 +48,7 @@ export function SelectBar(props: {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 16, scale: 0.98 }}
           transition={spring}
-          className="popover fixed inset-x-0 bottom-[116px] z-40 mx-auto flex w-fit max-w-[calc(100vw-32px)] items-center gap-1 overflow-x-auto rounded-full py-1.5 pl-5 pr-1.5 no-scrollbar"
+          className="popover fixed inset-x-0 bottom-[116px] z-40 hrow mx-auto flex w-fit max-w-[calc(100vw-32px)] items-center gap-1 rounded-full py-1.5 pl-5 pr-1.5"
         >
           <span className="mr-2 shrink-0 text-[13px] font-medium tabular-nums" aria-live="polite">
             {picked ? `${picked} picked` : 'Pick songs to act on them'}

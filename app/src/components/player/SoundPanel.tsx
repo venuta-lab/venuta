@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { setSleep, setSound, setStopAfter, usePlayer, SOUND_OFF, type Sound } from '../../lib/player'
 import { Segmented as Choice, Switch } from '../ui'
+import { ScrollRow } from '../ScrollRow'
 
 const BAND_LABELS = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k']
 
@@ -116,7 +117,7 @@ export function SoundPanel() {
       </p>
 
       <Card title="Equalizer" right={<Switch label="Equalizer" on={draft.eq} onChange={(eq) => change({ ...draft, eq })} />}>
-        <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(90deg,#000_calc(100%-36px),transparent)]">
+        <ScrollRow fade={36} className="-mx-1 gap-1 px-1 pb-1">
           {PRESETS.map(([name, bands]) => (
             <button
               key={name}
@@ -126,7 +127,7 @@ export function SoundPanel() {
               {name}
             </button>
           ))}
-        </div>
+        </ScrollRow>
         <div className="mt-3 flex justify-between gap-1">
           {draft.bands.map((v, i) => (
             <Db key={i} vertical label={BAND_LABELS[i]} value={v} disabled={!draft.eq} onChange={(x) => band(i, x)} />

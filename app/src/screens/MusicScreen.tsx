@@ -7,6 +7,7 @@ import { useCovers } from '../lib/covers'
 import { IconSearch } from '../components/Icons'
 import { Bar } from '../components/Activity'
 import { Chip, Page } from '../components/ui'
+import { CHIP_FADE, ScrollRow } from '../components/ScrollRow'
 import { counted, fraction, timeLeft, useJob, useNow } from '../lib/jobs'
 import { keyFor, matcher } from '../lib/textsearch'
 import { WindowedList, type Line } from '../components/WindowedList'
@@ -128,7 +129,7 @@ export function MusicScreen({
       under={
         albums.length > 0 && (
           <>
-          <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1">
+          <ScrollRow fade={CHIP_FADE} className="-mx-1 gap-1 px-1">
             <Chip group="meta-filter" on={filter === 'all'} label="All" count={albums.length} onClick={() => setFilter('all')} />
             <Chip group="meta-filter" on={filter === NEEDS} label="Needs details" count={needing} onClick={() => setFilter(NEEDS)} />
             {counts.map((g) => (
@@ -141,7 +142,7 @@ export function MusicScreen({
                 onClick={() => setFilter(g.label)}
               />
             ))}
-          </div>
+          </ScrollRow>
           {shown.length > 0 && (
             <div className={`${ROW} mt-2 border-b border-edge pb-1.5 text-[12px] text-ink/55`}>
               <span />
