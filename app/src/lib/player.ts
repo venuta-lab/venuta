@@ -19,6 +19,7 @@ import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 import { canSeekNow } from './streamWait'
 import { songMenus, type TrackMenu } from './ytmSongMenu'
+import { learnLength } from './upNext'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -159,6 +160,10 @@ const idle: PlayerState = {
 let state: PlayerState = idle
 /** When the last report came (performance.now()), to tell the position between reports. */
 let reportedAt = 0
+/** Lengths of songs queued without one, as they said when opened (by `queueKey`). */
+const opened = new Map<string, number>()
+/** The length a queued song said when it was opened, for a row it was listed without one. */
+export const openedLength = (q: QueueItem) => opened.get(queueKey(q))
 const listeners = new Set<() => void>()
 const tell = () => listeners.forEach((l) => l())
 
@@ -174,6 +179,8 @@ const set = (s: PlayerState) => {
   const was = state
   state = s
   reportedAt = performance.now()
+  const playing = s.queue[s.index]
+  if (playing && !playing.duration_ms) learnLength(opened, queueKey(playing), s.duration_ms)
   if (!isAwake() && s.queue === was.queue && settled(s) === settled(was)) {
     held = true
     return
