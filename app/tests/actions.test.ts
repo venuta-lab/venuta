@@ -139,3 +139,8 @@ test('a song in the queue plays, plays next, starts its radio, goes to a playlis
   for (const id of ['play', 'next', 'remove'] as const) assert.ok(!now.includes(id), id)
   assert.ok(now.includes('radio'))
 })
+
+test('an online song in the queue goes to its album when YouTube named one', () => {
+  assert.ok(ids(actionsFor('queued', { online: true, onlineAlbum: true })).includes('album'))
+  assert.ok(!ids(actionsFor('queued', { online: true })).includes('album'))
+})

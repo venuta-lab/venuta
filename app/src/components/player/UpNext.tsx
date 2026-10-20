@@ -9,10 +9,11 @@ import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../
 import { PlayingFrom } from './PlayingFrom'
 import { goToEach, menuFor } from '../../lib/actions'
 import { useCovers } from '../../lib/covers'
-import type { OnlineTrack } from '../../lib/engine'
+import type { OnlineSuggestion, OnlineTrack } from '../../lib/engine'
 import { useLocalOnly } from '../../lib/localOnly'
 import { menuFromEvent } from '../../lib/menu'
 import { onlineProblem } from '../../lib/online'
+import { knownLength } from '../../lib/onlineSong'
 import {
   availabilityOf,
   current,
@@ -34,8 +35,11 @@ import {
   type From,
   type QueueItem,
 } from '../../lib/player'
-import { chooseChip, playWithRadio, relatedSongs, startRadio, useRadioSession } from '../../lib/radio'
-import { canPlayNext, chipsShown, placeOf, queueName, queueNote, rowLabel, saveName } from '../../lib/upNext'
+import { chooseChip, playWithRadio, relatedPage, startRadio, useRadioSession } from '../../lib/radio'
+import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, saveName, type RelatedPart } from '../../lib/upNext'
+import { openMusicPage } from '../../lib/musicPage'
+import { CardWidth, NavContext, type Nav } from '../../screens/listen/model'
+import { useOnlineCards } from '../../screens/listen/useOnlineCards'
 
 /*
   Up next, as YouTube Music's player shows it: where the queue plays from, its tuning chips, and
@@ -200,13 +204,19 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
     const isCurrent = r.at === s.index
     const online = isOnline(q)
     const names = q.artists.length ? q.artists : q.album_artist ? [q.album_artist] : []
-    return menuFor('queued', { current: isCurrent, online, noArtist: !names.length }, {
+    // An online song goes to its online album, when YouTube named one with it.
+    const onlineAlbum = online ? onlineAlbumOf(q) : null
+    return menuFor('queued', { current: isCurrent, online, noArtist: !names.length, onlineAlbum: !!onlineAlbum }, {
       play: isCurrent ? undefined : () => void jumpTo(r.at),
       next: canPlayNext(r.at, s.index) ? () => void enqueueItems(root, [q], true) : undefined,
       radio: () => void startRadio(root, q),
       playlist: () => askAddSongs([songItemOf(q)], q.title),
       artist: goToEach(names, (n) => go({ kind: 'artist', ref: n, label: n })),
-      album: online || !q.dir ? undefined : () => go({ kind: 'album', ref: q.dir, label: q.album }),
+      album: onlineAlbum
+        ? () => openMusicPage({ kind: 'online-album', album: onlineAlbum })
+        : online || !q.dir
+          ? undefined
+          : () => go({ kind: 'album', ref: q.dir, label: q.album }),
       remove: isCurrent ? undefined : () => void removeAt(r.at),
     })
   }
@@ -283,25 +293,71 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
   )
 }
 
-/** Related songs already asked for, by the song they are for (asked once a window). */
-const relatedKept = new Map<string, OnlineTrack[]>()
+/** Related pages already asked for, by the song they are for (asked once a window). */
+const relatedKept = new Map<string, RelatedPart[]>()
 
-/** YouTube Music's Related songs for the song playing: each plays with its radio, or goes next
- *  or at the end of the queue. Nothing is asked in Local only. */
+/** How wide a Related card is: a row of them fits the drawer. */
+const CARD_W = 132
+
+/** Pages of Music opened from here: Music shows them, and the drawer or Now Playing closes. */
+function useOutsideNav(root: string): Nav {
+  return useMemo(
+    () => ({
+      root,
+      openAlbum: (dir) => openFrom({ kind: 'album', ref: dir, label: '' }),
+      openArtist: (name) => openFrom({ kind: 'artist', ref: name, label: name }),
+      openArtistNamed: (name) => openFrom({ kind: 'artist', ref: name, label: name }),
+      openOnlineAlbum: (album) => openMusicPage({ kind: 'online-album', album }),
+      openOnlineArtist: (artist) => openMusicPage({ kind: 'online-artist', artist }),
+      openOnlineCollection: (collection) => openMusicPage({ kind: 'online-collection', collection }),
+      openMood: (tile) => openMusicPage({ kind: 'mood', tile }),
+      openOnlineShelf: (title, owner, more) => openMusicPage({ kind: 'online-shelf', title, owner, more }),
+      openMixes: (title) => openMusicPage({ kind: 'mixes', title }),
+      editDetails: () => {},
+    }),
+    [root],
+  )
+}
+
+const shelfHead = 'px-2 pb-1.5 text-[12px] text-ink/50'
+
+/** A row of Related cards (artists, albums, playlists), the same cards as everywhere online:
+ *  an album or playlist plays as its own play button plays it, an artist opens their page. */
+function RelatedCards({ title, items, label }: { title: string; items: OnlineSuggestion[]; label: string }) {
+  const cards = useOnlineCards(items, label, CARD_W)
+  return (
+    <section aria-label={title}>
+      {title && <h3 className={shelfHead}>{title}</h3>}
+      <div className="no-scrollbar flex gap-3 overflow-x-auto px-2 pb-1">
+        {cards.map((c) => (
+          <div key={c.key} className="shrink-0" style={{ width: CARD_W }}>
+            {c.node}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** YouTube Music's Related tab for the song playing, shelf by shelf as YouTube shows it: its
+ *  songs (each plays with its radio, or goes next or at the end of the queue), then rows of the
+ *  artists, albums and playlists it relates, and what YouTube says about the artist. Nothing is
+ *  asked in Local only. */
 export function RelatedList() {
   const song = usePlayerValue(current)
   const root = usePlayerValue((s) => s.root ?? '')
   const localOnly = useLocalOnly()
+  const nav = useOutsideNav(root)
   const key = song ? queueKey(song) : ''
   const [, tick] = useState(0)
   const [problem, setProblem] = useState<{ key: string; words: string } | null>(null)
-  const songs = relatedKept.get(key)
+  const parts = relatedKept.get(key)
   useEffect(() => {
     if (!song || localOnly || relatedKept.has(key)) return
     let live = true
-    relatedSongs(song)
+    relatedPage(song)
       .then((found) => {
-        relatedKept.set(key, found)
+        relatedKept.set(key, relatedParts(found))
         if (live) tick((n) => n + 1)
       })
       .catch((e) => live && setProblem({ key, words: onlineProblem(e) }))
@@ -313,14 +369,41 @@ export function RelatedList() {
   }, [key, localOnly])
 
   const say = (words: string) => <p className="px-2 py-10 text-center text-[13px] text-ink/55">{words}</p>
-  if (!song) return say('Play a song, and the songs YouTube Music relates to it show here.')
+  if (!song) return say('Play a song, and the music YouTube Music relates to it shows here.')
   if (localOnly) return say("Local only is on, so there's nothing from YouTube Music here.")
-  if (problem?.key === key && !songs) return say(problem.words)
-  if (!songs) return say('Finding related songs…')
-  if (!songs.length) return say('YouTube Music has no related songs for this one.')
+  if (problem?.key === key && !parts) return say(problem.words)
+  if (!parts) return say('Finding related music…')
+  if (!parts.length) return say('YouTube Music has nothing related to this one.')
   return (
-    <ul aria-label={`Related to ${song.title}`} className="grid gap-0.5">
-      {songs.map((t, i) => {
+    <NavContext value={nav}>
+      <CardWidth value={CARD_W}>
+        <div aria-label={`Related to ${song.title}`} className="grid gap-5">
+          {parts.map((p, i) =>
+            p.kind === 'songs' ? (
+              <section key={`${p.title}:${i}`} aria-label={p.title}>
+                {p.title && <h3 className={shelfHead}>{p.title}</h3>}
+                <RelatedSongs tracks={p.tracks} root={root} label={p.title || `Related to ${song.title}`} />
+              </section>
+            ) : p.kind === 'cards' ? (
+              <RelatedCards key={`${p.title}:${i}`} title={p.title} items={p.items} label={song.title} />
+            ) : (
+              <section key={`${p.title}:${i}`} aria-label={p.title}>
+                {p.title && <h3 className={shelfHead}>{p.title}</h3>}
+                <p className="line-clamp-6 px-2 text-[12.5px] leading-relaxed text-ink/70">{p.about}</p>
+              </section>
+            ),
+          )}
+        </div>
+      </CardWidth>
+    </NavContext>
+  )
+}
+
+/** Related's songs as a list. A length YouTube didn't send shows as nothing. */
+function RelatedSongs({ tracks, root, label }: { tracks: OnlineTrack[]; root: string; label: string }) {
+  return (
+    <ul aria-label={label} className="grid gap-0.5">
+      {tracks.map((t, i) => {
         const item = toRemoteItem(t)
         const menu = menuFor(
           'song',
@@ -344,7 +427,7 @@ export function RelatedList() {
                 <span className="block truncate text-[11.5px] text-ink/55">{t.artists.join(', ')}</span>
               </span>
               <AvailabilityBadge quiet availability="online" />
-              <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(t.duration_ms ?? 0)}</span>
+              <span className="text-[11.5px] tabular-nums text-ink/45">{knownLength(t.duration_ms)}</span>
             </button>
             <button
               aria-label={`More for ${t.title}: Play next, Add to queue`}

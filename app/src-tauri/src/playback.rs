@@ -76,6 +76,10 @@ pub struct QueueItem {
     /// Cover art address for remote items (local items use their on-disk cover).
     #[serde(default)]
     pub artwork_url: Option<String>,
+    /// The online album a remote item is from (`MPRE…`), when the catalog named one: what the
+    /// queue's Go to album opens. Local items have their folder instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_id: Option<String>,
     /// UI-facing availability, filled in at play time (`Local` | `Online`).
     #[serde(default)]
     pub availability: Option<Availability>,
@@ -1503,7 +1507,32 @@ pub async fn all_lyrics(root: String) -> Result<Vec<SongWords>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_lrc, words_of};
+    use super::{QueueItem, parse_lrc, words_of};
+
+    // An online song's album rides with it through the queue (the window sends it, the queue
+    // sends it back), so the queue's Go to album can open it. Older queues without one still read.
+    #[test]
+    fn a_queued_online_song_keeps_its_album() {
+        let item: QueueItem = serde_json::from_value(serde_json::json!({
+            "title": "A",
+            "album": "Album A",
+            "album_id": "MPREalbumA",
+            "online": { "kind": "online", "provider": "remote_catalog", "track_id": "aaaaaaaaaaa" },
+        }))
+        .unwrap();
+        assert_eq!(item.album_id.as_deref(), Some("MPREalbumA"));
+        let back = serde_json::to_value(&item).unwrap();
+        assert_eq!(back["album_id"], "MPREalbumA");
+
+        let old: QueueItem = serde_json::from_value(serde_json::json!({ "title": "B" })).unwrap();
+        assert_eq!(old.album_id, None);
+        assert!(
+            serde_json::to_value(&old)
+                .unwrap()
+                .get("album_id")
+                .is_none()
+        );
+    }
 
     #[test]
     fn words_to_search_have_no_times_and_no_repeats() {

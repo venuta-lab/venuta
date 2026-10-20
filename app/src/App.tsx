@@ -50,6 +50,7 @@ import {
 } from './lib/engine'
 import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
+import { OPEN_MUSIC_PAGE } from './lib/musicPage'
 import { dismissNotice, notify, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { catalogNow, ensureCatalog, trackAt } from './lib/catalog'
@@ -400,6 +401,12 @@ export default function App() {
     }),
     [go],
   )
+  // The queue and Now Playing open Music pages the same way (an online song's album, a Related card).
+  useEffect(() => {
+    const on = (e: Event) => paletteMusic.open((e as CustomEvent<MusicPage>).detail)
+    window.addEventListener(OPEN_MUSIC_PAGE, on)
+    return () => window.removeEventListener(OPEN_MUSIC_PAGE, on)
+  }, [paletteMusic])
 
   // A new version: looked for quietly once a day, offered with a notice; installed only when asked.
   useEffect(() => {

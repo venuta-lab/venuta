@@ -63,6 +63,8 @@ export interface Facts {
   online?: boolean
   /** The song playing now, in the queue. */
   current?: boolean
+  /** An online song whose album the catalog named (it can go to that album's online page). */
+  onlineAlbum?: boolean
 }
 
 /** The words for each action, unless the thing says it better ("Go to A.R. Rahman"). */
@@ -147,7 +149,7 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
           when(!f.current, 'play', 'next'),
           ['radio'],
           ['playlist'],
-          [...when(!f.noArtist, 'artist'), ...when(!f.online, 'album')],
+          [...when(!f.noArtist, 'artist'), ...when(!f.online || !!f.onlineAlbum, 'album')],
           when(!f.current, 'remove'),
         ]
     }
