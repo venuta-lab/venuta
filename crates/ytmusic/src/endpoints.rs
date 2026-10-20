@@ -6,8 +6,8 @@ use crate::blocklist;
 use crate::clients::YouTubeClient;
 use crate::models::browse::{
     self, AlbumPage, ArtistPage, BrowseItem, HistoryGroup, HomePage, MoodSection,
-    PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, SearchResults,
-    SearchSuggestions,
+    PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, RelatedShelf,
+    SearchResults, SearchSuggestions, Section,
 };
 use crate::models::comment_write::WriteCommand;
 use crate::models::comments::{self, CommentReplies, CommentsPage};
@@ -305,6 +305,45 @@ impl InnerTube {
         self.drop_video_songs(&mut songs);
         self.drop_blocked_songs(&mut songs, None);
         Ok(songs)
+    }
+
+    /// The whole of a Related page, shelf by shelf in YouTube's order: its songs, its playlists,
+    /// artists and albums, and the words about the artist (what the Related tab shows). The same
+    /// recommendation as [`Self::related_songs`], filtered the same way.
+    pub async fn related_page(
+        &self,
+        client: &YouTubeClient,
+        browse_id: &str,
+    ) -> Result<Vec<RelatedShelf>, Error> {
+        let value = self
+            .browse_as(client, Some(browse_id), None, self.personal())
+            .await?;
+        let mut shelves = browse::parse_related(&value);
+        for s in &mut shelves {
+            self.drop_video_songs(&mut s.songs);
+            self.drop_blocked_songs(&mut s.songs, None);
+            self.drop_video_cards(&mut s.cards);
+            self.drop_blocked_cards(&mut s.cards);
+        }
+        // A shelf the filter emptied would read as a bare heading.
+        shelves.retain(|s| !s.songs.is_empty() || !s.cards.is_empty() || s.description.is_some());
+        Ok(shelves)
+    }
+
+    /// Mixed for you's own page (`FEmusic_mixed_for_you`, the "More" of Home's shelf): the
+    /// account's mixes, each with its own play button. Asked for the way Home is, as the account
+    /// only with "Recommendations for me".
+    pub async fn mixed_for_you(&self, client: &YouTubeClient) -> Result<Vec<Section>, Error> {
+        let value = self
+            .browse_as(client, Some("FEmusic_mixed_for_you"), None, self.personal())
+            .await?;
+        let mut sections = browse::parse_mixed_for_you(&value);
+        for s in &mut sections {
+            self.drop_video_cards(&mut s.items);
+            self.drop_blocked_cards(&mut s.items);
+        }
+        sections.retain(|s| !s.items.is_empty());
+        Ok(sections)
     }
 
     // --- comments. Reads go through `next`: a comments token sent to `browse` is answered with
@@ -3459,6 +3498,34 @@ mod choices {
         it.search_json(&web(), "road", None, true).await.unwrap();
         it.search_suggestions(&web(), "roa").await.unwrap();
         assert!(server.requests().iter().all(|r| !as_account(r)));
+    }
+
+    // Mixed for you's own page and a song's Related page are YouTube's picks, like Home: as the
+    // account only with "Recommendations for me".
+    #[tokio::test]
+    async fn mixes_and_related_follow_recommendations_for_me() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = signed_in(&server);
+        assert!(it.mixed_for_you(&web()).await.unwrap().is_empty());
+        assert!(it
+            .related_page(&web(), "MPTRt_seed")
+            .await
+            .unwrap()
+            .is_empty());
+        let sent = server.requests();
+        assert_eq!(sent.len(), 2);
+        assert!(sent.iter().all(as_account), "personal by default");
+        assert!(sent[0]
+            .body
+            .contains("\"browseId\":\"FEmusic_mixed_for_you\""));
+        assert!(sent[1].body.contains("\"browseId\":\"MPTRt_seed\""));
+
+        it.set_personal(false);
+        it.mixed_for_you(&web()).await.unwrap();
+        it.related_page(&web(), "MPTRt_seed").await.unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 4);
+        assert!(sent[2..].iter().all(|r| !as_account(r)));
     }
 }
 

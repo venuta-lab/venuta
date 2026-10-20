@@ -6,7 +6,7 @@ use crate::playback::Playback;
 use media_access::{
     AccessError, AccessErrorKind, CancellationToken, MoodSection, PageRequest, RadioEndpoint,
     RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteCollection, RemoteMore, RemotePlaylist,
-    RemoteRadio, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRadio, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -556,6 +556,48 @@ pub async fn online_related(
             .map_err(words)?;
         without_disliked(&mut tracks);
         Ok(tracks)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The whole of a song's Related page, as the Related tab shows it: shelf by shelf in the
+/// catalog's order (`related_id`: its Related page, when known). Songs you disliked are left
+/// out, and a shelf of songs that leaves empty with them.
+#[tauri::command]
+pub async fn online_related_page(
+    track_id: String,
+    related_id: Option<String>,
+    pb: State<'_, Playback>,
+) -> Result<Vec<RemoteRelatedShelf>, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut shelves = access
+            .related_page(
+                &track_id,
+                related_id.as_deref(),
+                &CancellationToken::default(),
+            )
+            .map_err(words)?;
+        for s in &mut shelves {
+            without_disliked(&mut s.tracks);
+        }
+        shelves.retain(|s| !s.tracks.is_empty() || !s.items.is_empty() || s.about.is_some());
+        Ok(shelves)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The signed-in account's mixes, from Mixed for you's own page: rows of mixes as the catalog
+/// sends them, each playing as its own play button plays it.
+#[tauri::command]
+pub async fn online_mixed_for_you(pb: State<'_, Playback>) -> Result<Vec<RemoteShelf>, String> {
+    let access = pb.catalog();
+    tauri::async_runtime::spawn_blocking(move || {
+        access
+            .mixed_for_you(&CancellationToken::default())
+            .map_err(words)
     })
     .await
     .map_err(|e| e.to_string())?

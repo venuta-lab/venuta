@@ -48,6 +48,6 @@ pub use types::{
     MoodTile, ONLINE_PLAYLIST_TAG, Page, PageRequest, Playable, PlayableId, RadioChip,
     RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistLink,
     RemoteArtistPage, RemoteChip, RemoteCollection, RemoteHome, RemoteHomeShelf, RemoteMore,
-    RemotePlaylist, RemoteRadio, RemoteRating, RemoteShelf, RemoteSuggestion, RemoteTrack,
-    SearchSuggestions,
+    RemotePlaylist, RemoteRadio, RemoteRating, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions,
 };

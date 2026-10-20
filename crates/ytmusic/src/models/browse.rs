@@ -412,6 +412,129 @@ pub fn parse_home(root: &Value) -> HomePage {
     }
 }
 
+/// One shelf of a song's Related page (the `next` answer's `MUSIC_PAGE_TYPE_TRACK_RELATED`
+/// browse), in the page's order: songs to play ("You might also like"), cards to open
+/// ("Recommended playlists", "Similar artists", more by the artist), or words ("About the
+/// artist"). A shelf holds one of the three.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelatedShelf {
+    pub title: String,
+    pub songs: Vec<SongItem>,
+    pub cards: Vec<BrowseItem>,
+    pub description: Option<String>,
+}
+
+/// Every shelf of a Related page, in YouTube's order. [`super::metadata::parse_related_songs`]
+/// is its songs alone, which is what a radio that ran out goes on with.
+pub fn parse_related(root: &Value) -> Vec<RelatedShelf> {
+    let mut out = Vec::new();
+    related_shelves(root, &mut out);
+    out
+}
+
+/// The page's shelves as they come: arrays keep their order, so a walk that takes each shelf
+/// where it meets it reads them in the page's order, whatever the containers around them.
+fn related_shelves(node: &Value, out: &mut Vec<RelatedShelf>) {
+    match node {
+        Value::Object(map) => {
+            if let Some(shelf) = map.get("musicCarouselShelfRenderer") {
+                let title = find_all(shelf, "musicCarouselShelfBasicHeaderRenderer")
+                    .into_iter()
+                    .find_map(|h| runs_text(h.get("title")))
+                    .unwrap_or_default();
+                let rows = shelf.get("contents").and_then(Value::as_array);
+                let songs: Vec<SongItem> = rows
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.get("musicResponsiveListItemRenderer"))
+                    .filter_map(parse_list_item)
+                    .collect();
+                let cards: Vec<BrowseItem> = rows
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.get("musicTwoRowItemRenderer"))
+                    .filter_map(parse_two_row_item)
+                    .collect();
+                if !songs.is_empty() || !cards.is_empty() {
+                    out.push(RelatedShelf {
+                        title,
+                        songs,
+                        cards,
+                        description: None,
+                    });
+                }
+                return;
+            }
+            if let Some(shelf) = map.get("musicDescriptionShelfRenderer") {
+                let description = runs_text(shelf.get("description"))
+                    .map(|d| d.trim().to_owned())
+                    .filter(|d| !d.is_empty());
+                if let Some(description) = description {
+                    out.push(RelatedShelf {
+                        title: runs_text(shelf.get("header")).unwrap_or_default(),
+                        songs: Vec::new(),
+                        cards: Vec::new(),
+                        description: Some(description),
+                    });
+                }
+                return;
+            }
+            map.values().for_each(|v| related_shelves(v, out));
+        }
+        Value::Array(arr) => arr.iter().for_each(|v| related_shelves(v, out)),
+        _ => {}
+    }
+}
+
+/// Mixed for you's own page (`FEmusic_mixed_for_you`, the "More" of Home's shelf): every mix
+/// the account has, a titled section per grid or row, in YouTube's order. Each card keeps its
+/// own play button, so a mix plays as YouTube plays it.
+pub fn parse_mixed_for_you(root: &Value) -> Vec<Section> {
+    let mut out = Vec::new();
+    mix_sections(root, &mut out);
+    out
+}
+
+fn mix_sections(node: &Value, out: &mut Vec<Section>) {
+    match node {
+        Value::Object(map) => {
+            let found = if let Some(grid) = map.get("gridRenderer") {
+                let title = grid
+                    .get("header")
+                    .map(|h| find_all(h, "gridHeaderRenderer"))
+                    .and_then(|h| h.into_iter().find_map(|h| runs_text(h.get("title"))));
+                Some((title, grid.get("items")))
+            } else {
+                map.get("musicCarouselShelfRenderer").map(|shelf| {
+                    let title = find_all(shelf, "musicCarouselShelfBasicHeaderRenderer")
+                        .into_iter()
+                        .find_map(|h| runs_text(h.get("title")));
+                    (title, shelf.get("contents"))
+                })
+            };
+            if let Some((title, items)) = found {
+                let items: Vec<BrowseItem> = items
+                    .and_then(Value::as_array)
+                    .map(|c| c.iter().filter_map(parse_carousel_item).collect())
+                    .unwrap_or_default();
+                if !items.is_empty() {
+                    out.push(Section {
+                        title: title.unwrap_or_default(),
+                        kind: None,
+                        items,
+                        more_browse_id: None,
+                        more_params: None,
+                    });
+                }
+                return;
+            }
+            map.values().for_each(|v| mix_sections(v, out));
+        }
+        Value::Array(arr) => arr.iter().for_each(|v| mix_sections(v, out)),
+        _ => {}
+    }
+}
+
 /// One tile of Moods & Genres (`musicNavigationButtonRenderer`): a label, the `params` that browse
 /// `FEmusic_moods_and_genres_category` into that mood's playlists, and YouTube's own colour for it.
 #[derive(Debug, Clone, Serialize)]
@@ -3071,5 +3194,138 @@ mod tests {
         assert_eq!(s[0].items[1].color, "#606060");
         assert_eq!(s[1].items.len(), 1);
         assert_eq!(s[1].items[0].title, "Jazz");
+    }
+
+    fn fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).expect("fixture")).expect("json")
+    }
+
+    // A song's Related page, every shelf in the page's order: its songs as rows, its playlists,
+    // artists and albums as cards, and the words about the artist. Built from the songs fixture
+    // and the shelves YouTube's Related tab carries (`musicCarouselShelfRenderer` of
+    // `musicTwoRowItemRenderer`, `musicDescriptionShelfRenderer`).
+    #[test]
+    fn a_related_page_reads_every_shelf_in_order() {
+        let shelves = parse_related(&fixture("next/related_page.json"));
+        let titles: Vec<&str> = shelves.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "You might also like",
+                "Recommended playlists",
+                "Similar artists",
+                "About the artist",
+                "More from Artist One"
+            ]
+        );
+
+        // The songs, the same rows `parse_related_songs` reads.
+        let songs: Vec<&str> = shelves[0]
+            .songs
+            .iter()
+            .map(|s| s.video_id.as_str())
+            .collect();
+        assert_eq!(songs, ["relatedVid01", "relatedVid02"]);
+        assert_eq!(shelves[0].songs[0].album_id.as_deref(), Some("MPRErel0001"));
+        assert!(shelves[0].cards.is_empty());
+
+        // A playlist keeps its own play button (a radio list's endpoint, params and all).
+        let pl = &shelves[1].cards[0];
+        assert_eq!(
+            (pl.kind, pl.id.as_str()),
+            ("playlist", "VLRDCLAK5uy_fixturehits")
+        );
+        assert_eq!(
+            pl.play,
+            Some(WatchEndpoint {
+                playlist_id: Some("RDCLAK5uy_fixturehits".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert!(shelves[1].songs.is_empty());
+
+        let artists: Vec<(&str, &str)> = shelves[2]
+            .cards
+            .iter()
+            .map(|c| (c.kind, c.id.as_str()))
+            .collect();
+        assert_eq!(artists, [("artist", "UCrel0003"), ("artist", "UCrel0004")]);
+
+        assert_eq!(
+            shelves[3].description.as_deref(),
+            Some("Artist One is a fixture who sings in tests.")
+        );
+        assert!(shelves[3].songs.is_empty() && shelves[3].cards.is_empty());
+
+        assert_eq!(
+            (shelves[4].cards[0].kind, shelves[4].cards[0].id.as_str()),
+            ("album", "MPRErel0001")
+        );
+    }
+
+    // A shelf with nothing in it reads as nothing, not a bare heading.
+    #[test]
+    fn an_empty_related_shelf_is_left_out() {
+        let root = json!({ "contents": { "sectionListRenderer": { "contents": [
+            { "musicCarouselShelfRenderer": {
+                "header": { "musicCarouselShelfBasicHeaderRenderer": { "title": { "runs": [{ "text": "Empty" }] } } },
+                "contents": []
+            } },
+            { "musicDescriptionShelfRenderer": { "header": { "runs": [{ "text": "About the artist" }] } } }
+        ] } } });
+        assert!(parse_related(&root).is_empty());
+    }
+
+    // Mixed for you's own page (`FEmusic_mixed_for_you`, its "More"): every mix the account has,
+    // in YouTube's order, each with its own play button. Grid and carousel shapes alike. The
+    // fixture is built from the mix cards Home carries, not captured from that page.
+    #[test]
+    fn the_mixed_for_you_page_lists_every_mix_with_its_play_button() {
+        let sections = parse_mixed_for_you(&fixture("mixed_for_you.json"));
+        let got: Vec<(&str, Vec<&str>)> = sections
+            .iter()
+            .map(|s| {
+                (
+                    s.title.as_str(),
+                    s.items.iter().map(|i| i.title.as_str()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "Your mixes",
+                    vec!["My Supermix", "My Mix 1", "Discover Mix", "Replay Mix"]
+                ),
+                ("Mood mixes", vec!["Chill Supermix"]),
+            ]
+        );
+        assert!(sections
+            .iter()
+            .flat_map(|s| &s.items)
+            .all(|i| i.kind == "playlist" && i.play.is_some()));
+        assert_eq!(
+            sections[0].items[1].play,
+            Some(WatchEndpoint {
+                video_id: Some("seedvideo01".into()),
+                playlist_id: Some("RDTMAK5uy_mix1".into()),
+                params: Some("wAEB".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            sections[0].items[0]
+                .play
+                .as_ref()
+                .unwrap()
+                .params
+                .as_deref(),
+            Some("wAEB8gECKAE%3D")
+        );
     }
 }

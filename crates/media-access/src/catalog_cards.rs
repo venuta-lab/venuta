@@ -19,7 +19,7 @@ fn audience(line: &str) -> Option<u64> {
 }
 use crate::types::{
     RadioChip, RadioEndpoint, RemoteAlbum, RemoteArtist, RemoteCollection, RemoteMore, RemoteRadio,
-    RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRelatedShelf, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use ytmusic::{ArtistRun, BrowseItem, SongItem};
 
@@ -195,6 +195,46 @@ pub(crate) fn shelf_of(c: &ytmusic::ArtistCarousel) -> Option<RemoteShelf> {
                 params: c.more_params.clone().filter(|p| !p.trim().is_empty()),
             }),
     })
+}
+
+/// A song's Related page as the Related tab shows it: every shelf in the catalog's order, songs
+/// as tracks, cards as what they open, the words about the artist as words. A shelf with nothing
+/// Venuta can show is left out.
+pub(crate) fn related_of(shelves: &[ytmusic::RelatedShelf]) -> Vec<RemoteRelatedShelf> {
+    shelves
+        .iter()
+        .filter_map(|s| {
+            let shelf = RemoteRelatedShelf {
+                title: s.title.trim().to_owned(),
+                tracks: s.songs.iter().filter_map(track_of_row).collect(),
+                items: s.cards.iter().filter_map(suggestion_of).collect(),
+                about: s
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty())
+                    .map(str::to_owned),
+            };
+            (!shelf.tracks.is_empty() || !shelf.items.is_empty() || shelf.about.is_some())
+                .then_some(shelf)
+        })
+        .collect()
+}
+
+/// Mixed for you's page as rows of mixes, each mix keeping what its play button plays. A row
+/// with no heading keeps its mixes (the page may send one grid without a title).
+pub(crate) fn mixes_of(sections: &[ytmusic::Section]) -> Vec<RemoteShelf> {
+    sections
+        .iter()
+        .filter_map(|s| {
+            let items: Vec<RemoteSuggestion> = s.items.iter().filter_map(suggestion_of).collect();
+            (!items.is_empty()).then(|| RemoteShelf {
+                title: s.title.trim().to_owned(),
+                items,
+                more: None,
+            })
+        })
+        .collect()
 }
 
 /// What an artist's page says beyond their songs: who they are, their banner and radio, and
@@ -799,6 +839,110 @@ mod tests {
         assert_eq!(
             artist_extras(&serde_json::json!({}), "UC1", None),
             ArtistExtras::default()
+        );
+    }
+
+    // A song YouTube queued names its album: the album's id comes through with it, so the queue
+    // can go to that album as it can for a file of yours.
+    #[test]
+    fn a_queued_song_keeps_its_album() {
+        let mut r = row("a", "A");
+        r.album = Some("Album A".into());
+        r.album_id = Some("MPREalbumA".into());
+        let next = ytmusic::NextResult {
+            items: vec![r],
+            ..Default::default()
+        };
+        let tracks = radio_of(&next, None);
+        assert_eq!(tracks[0].album.as_deref(), Some("Album A"));
+        assert_eq!(tracks[0].album_id.as_deref(), Some("MPREalbumA"));
+    }
+
+    // A Related page as the Related tab shows it: each shelf in YouTube's order, its songs as
+    // tracks, its cards as the things they open, the words about the artist as words.
+    #[test]
+    fn a_related_page_keeps_every_shelf_in_order() {
+        let shelves = [
+            ytmusic::RelatedShelf {
+                title: "You might also like".into(),
+                songs: vec![row("a", "A"), row(" ", "No id")],
+                cards: Vec::new(),
+                description: None,
+            },
+            ytmusic::RelatedShelf {
+                title: "Similar artists".into(),
+                songs: Vec::new(),
+                cards: vec![
+                    card("artist", "UC3", "Artist Three", "1.2M monthly audience"),
+                    card("radio", "X", "Not a kind Venuta shows", ""),
+                ],
+                description: None,
+            },
+            ytmusic::RelatedShelf {
+                title: "About the artist".into(),
+                songs: Vec::new(),
+                cards: Vec::new(),
+                description: Some("Words.".into()),
+            },
+            // Nothing Venuta can show in it: left out, not a bare heading.
+            ytmusic::RelatedShelf {
+                title: "Unknown".into(),
+                songs: vec![row("", "")],
+                cards: vec![card("radio", "Y", "Y", "")],
+                description: None,
+            },
+        ];
+        let out = related_of(&shelves);
+        let titles: Vec<&str> = out.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["You might also like", "Similar artists", "About the artist"]
+        );
+        let ids: Vec<&str> = out[0].tracks.iter().map(|t| t.track_id.as_str()).collect();
+        assert_eq!(ids, ["a"]);
+        assert!(matches!(
+            &out[1].items[..],
+            [RemoteSuggestion::Artist { artist, .. }] if artist.artist_id == "UC3"
+        ));
+        assert_eq!(out[2].about.as_deref(), Some("Words."));
+        assert!(out[2].tracks.is_empty() && out[2].items.is_empty());
+    }
+
+    // Mixed for you's page: its rows of mixes, each mix keeping what its play button plays.
+    #[test]
+    fn the_mixes_page_is_its_rows_of_mixes() {
+        let mut mix = card("playlist", "VLRDTMAK5uy_super", "My Supermix", "Mix");
+        mix.play = Some(ytmusic::WatchEndpoint {
+            playlist_id: Some("RDTMAK5uy_super".into()),
+            params: Some("wAEB8gECKAE%3D".into()),
+            ..Default::default()
+        });
+        let sections = [
+            ytmusic::Section {
+                title: "Your mixes".into(),
+                kind: None,
+                items: vec![mix],
+                more_browse_id: None,
+                more_params: None,
+            },
+            ytmusic::Section {
+                title: "Nothing to show".into(),
+                kind: None,
+                items: vec![card("radio", "Y", "Y", "")],
+                more_browse_id: None,
+                more_params: None,
+            },
+        ];
+        let shelves = mixes_of(&sections);
+        assert_eq!(shelves.len(), 1);
+        assert_eq!(shelves[0].title, "Your mixes");
+        assert_eq!(shelves[0].more, None);
+        let [RemoteSuggestion::Playlist { collection }] = &shelves[0].items[..] else {
+            panic!("a mix")
+        };
+        assert_eq!(
+            collection.play.as_ref().and_then(|p| p.params.as_deref()),
+            Some("wAEB8gECKAE%3D")
         );
     }
 }

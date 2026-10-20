@@ -23,7 +23,7 @@ pub use endpoints::{invite_playlist, invite_token, ListenTracking};
 pub use models::browse::{
     AlbumPage, ArtistCarousel, ArtistPage, BrowseItem, HistoryGroup, HomePage, Mood, MoodSection,
     PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, QuerySuggestion,
-    SearchResults, SearchSuggestions, Section, SortMenu,
+    RelatedShelf, SearchResults, SearchSuggestions, Section, SortMenu,
 };
 pub use models::comment_write::{CommentWrite, WriteCommand};
 pub use models::comments::{

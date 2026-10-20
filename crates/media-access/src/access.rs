@@ -2,7 +2,7 @@ use crate::types::{
     CancellationToken, CatalogLyrics, EphemeralAudio, MoodSection, Page, PageRequest,
     RadioEndpoint, RemoteAccount, RemoteAlbum, RemoteAlbumPage, RemoteArtist, RemoteArtistPage,
     RemoteCollection, RemoteHome, RemoteMore, RemotePlaylist, RemoteRadio, RemoteRating,
-    RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    RemoteRelatedShelf, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -217,6 +217,26 @@ pub trait MediaAccess: Send + Sync {
     ) -> Result<Vec<RemoteTrack>, AccessError> {
         let _ = (track_id, related_id, cancel);
         Err(unsupported("related songs"))
+    }
+
+    /// The whole of a song's Related page (`related_id` when known, else the one its own answer
+    /// names), shelf by shelf in the catalog's order: songs, then the albums, artists and
+    /// playlists it relates, and the words about the artist.
+    fn related_page(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteRelatedShelf>, AccessError> {
+        let _ = (track_id, related_id, cancel);
+        Err(unsupported("related pages"))
+    }
+
+    /// The signed-in account's mixes (Mixed for you's own page), in rows as the catalog sends
+    /// them, each mix keeping what its play button plays.
+    fn mixed_for_you(&self, cancel: &CancellationToken) -> Result<Vec<RemoteShelf>, AccessError> {
+        let _ = cancel;
+        Err(unsupported("mixes"))
     }
 
     /// Sign in to the catalog with a browser's cookies for it (None: signed out). Searches,
@@ -650,6 +670,19 @@ impl MediaAccess for CachedAccess {
         cancel: &CancellationToken,
     ) -> Result<Vec<RemoteTrack>, AccessError> {
         self.inner.related_songs(track_id, related_id, cancel)
+    }
+
+    fn related_page(
+        &self,
+        track_id: &str,
+        related_id: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RemoteRelatedShelf>, AccessError> {
+        self.inner.related_page(track_id, related_id, cancel)
+    }
+
+    fn mixed_for_you(&self, cancel: &CancellationToken) -> Result<Vec<RemoteShelf>, AccessError> {
+        self.inner.mixed_for_you(cancel)
     }
 
     fn set_blocked_artists(&self, blocked: &[(Option<String>, String)]) {
