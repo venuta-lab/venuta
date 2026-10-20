@@ -12,6 +12,7 @@ import { OnlineShelfRow } from './OnlineCards'
 import { OnlineSongCard } from './OnlineCards'
 import { ArtistCard } from './views'
 import { useLocalOnly } from '../../lib/localOnly'
+import { useYtmStatus } from '../../lib/ytmLibrary'
 
 /*
   Home's parts from your listening and the online catalog: the catalog's mood chips and its
@@ -123,9 +124,15 @@ export function QuickPicks({ shelf }: { shelf: OnlineShelf }) {
   )
 }
 
-/** The catalog's other rows, more coming in as the last one nears the screen. */
-export function OnlineShelves({ shelves, more, label }: { shelves: OnlineShelf[]; more: (() => void) | null; label: string }) {
+/** The catalog's other rows, more coming in as the last one nears the screen. Mixed for you's
+ *  See all opens every mix of the account's (MixesPage.tsx); signed out it has none to show. */
+export function OnlineShelves({ shelves, more, label }: { shelves: (OnlineShelf & { kind?: string | null })[]; more: (() => void) | null; label: string }) {
   const nav = useNav()
+  const { signed_in } = useYtmStatus()
+  const seeAll = (s: OnlineShelf & { kind?: string | null }) => {
+    if (s.kind === 'mixed_for_you') return signed_in ? () => nav.openMixes(s.title) : undefined
+    return s.more ? () => s.more && nav.openOnlineShelf(s.title, '', s.more) : undefined
+  }
   const end = useRef<HTMLDivElement>(null)
   // Each time the end of the rows comes near the screen, the next rows are asked for.
   const ask = useRef(more)
@@ -142,7 +149,7 @@ export function OnlineShelves({ shelves, more, label }: { shelves: OnlineShelf[]
   return (
     <>
       {shelves.map((s, i) => (
-        <OnlineShelfRow key={`${s.title}:${i}`} shelf={s} label={label} onSeeAll={s.more ? () => s.more && nav.openOnlineShelf(s.title, '', s.more) : undefined} />
+        <OnlineShelfRow key={`${s.title}:${i}`} shelf={s} label={label} onSeeAll={seeAll(s)} />
       ))}
       <div ref={end} aria-hidden className="h-px" />
     </>

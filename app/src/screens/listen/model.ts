@@ -258,6 +258,8 @@ export interface Nav {
   openMood: (tile: MoodTile) => void
   /** Everything in a row of an online page (its "See all"); `owner` is whose page it was. */
   openOnlineShelf: (title: string, owner: string, more: OnlineMore) => void
+  /** Every mix of the account's, from Home's Mixed for you (`title`: the shelf's own name). */
+  openMixes: (title: string) => void
   editDetails: (dir: string) => void
 }
 export const NavContext = createContext<Nav>({
@@ -270,6 +272,7 @@ export const NavContext = createContext<Nav>({
   openOnlineCollection: () => {},
   openMood: () => {},
   openOnlineShelf: () => {},
+  openMixes: () => {},
   editDetails: () => {},
 })
 export const useNav = () => useContext(NavContext)
