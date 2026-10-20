@@ -29,7 +29,7 @@ import { readZoom, setZoom, ZOOM_EVENT } from '../lib/zoom'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
-import { onSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
+import { onSettingsSection, peekSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
 import { ActivityPage } from './ActivityScreen'
 import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
 import { PlaybackSettings } from './settings/PlaybackSettings'
@@ -66,18 +66,19 @@ export function SettingsScreen(props: {
 }) {
   const [page, setPage] = useState<Page>(() => {
     // Opened to a section from elsewhere (the update notice opens About).
-    const p = takeSettingsSection() ?? props.page ?? 'look'
+    // Looked at, not used up: the page transition can render Settings twice before it shows.
+    const p = peekSettingsSection() ?? props.page ?? 'look'
     return p
   })
-  // Asked for while Settings is open (Ctrl+H, a change's "See all"): that page, at once.
-  useEffect(
-    () =>
-      onSettingsSection(() => {
-        const p = takeSettingsSection()
-        if (p) setPage(p)
-      }),
-    [],
-  )
+  // Asked for while Settings is open (Ctrl+H, a change's "See all"): that page, at once. And
+  // once it shows, the page it was opened on is used up.
+  useEffect(() => {
+    takeSettingsSection()
+    return onSettingsSection(() => {
+      const p = takeSettingsSection()
+      if (p) setPage(p)
+    })
+  }, [])
   return (
     <Frame title="Settings" line="Set up once: how it looks, what plays, where your music lives.">
       <div className="flex items-start gap-6">

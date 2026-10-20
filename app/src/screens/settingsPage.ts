@@ -21,6 +21,11 @@ export function onSettingsSection(l: () => void): () => void {
   }
 }
 
+/** The section asked for, without using it up (a screen may render more than once before it shows). */
+export function peekSettingsSection(): SettingsPage | null {
+  return asked
+}
+
 /** The section asked for, once. */
 export function takeSettingsSection(): SettingsPage | null {
   const p = asked
