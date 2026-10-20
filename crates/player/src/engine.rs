@@ -584,9 +584,14 @@ impl<T: Item + Serialize> Engine<T> {
             }
             Cmd::Insert { items, next } => {
                 let was_empty = self.queue.items().is_empty();
+                let next_before = self.queue.peek_next();
                 self.queue.insert(items, next);
                 self.queue_changed = true;
-                self.drop_prefetch();
+                // The song decoded ahead is kept when it is still the next one (songs added
+                // after it): a stream readied ahead isn't opened again.
+                if next || self.queue.peek_next() != next_before {
+                    self.drop_prefetch();
+                }
                 if was_empty {
                     self.load_current(0);
                     self.set_playing(true);

@@ -7,7 +7,7 @@ use crate::playback::{Playback, QueueItem, RoomTick};
 use engine::library::Library;
 use media_access::MediaAccess;
 use player::sync::SyncPlan;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -141,9 +141,11 @@ struct State {
     queue: Vec<Song>,
     same_room: bool,
     timeline: Option<Timeline>,
-    /// The song in the player now (its room entry), and the next one readied after it.
+    /// The song in the player now (its room entry), where it is in the player's own queue, and
+    /// the songs readied after it there, in order (each follows the last at its end).
     now: Option<Loaded>,
-    next: Option<Loaded>,
+    at: usize,
+    ahead: VecDeque<Loaded>,
     /// Waiting to say ready: (rev, index, for the next song).
     pending: Option<(u64, usize, bool)>,
     stepped_out: bool,
@@ -275,7 +277,6 @@ impl Follower {
             self.seat.note("follow: no such song in the queue");
             return;
         };
-        st.next = None;
         st.next_due = None;
         // The song in the player already (a resume, a seek, the same song again): ready where the
         // room asks without opening it again; a stream from the host would start over from its
@@ -303,6 +304,9 @@ impl Follower {
         match self.copy_of(&song, st) {
             Some(c) => {
                 self.seat.load(&self.root, c.item, position_ms, c.own);
+                // The player has this song alone now.
+                st.at = 0;
+                st.ahead.clear();
                 st.anchor = None;
                 st.waiting_start = true;
                 self.seat.sync(Some(SyncPlan {
@@ -324,6 +328,7 @@ impl Follower {
                 self.seat.sync(None);
                 self.seat.pause();
                 st.now = None;
+                st.ahead.clear();
                 st.pending = None;
                 self.report.hearing(rev, index, Hearing::Cannot);
             }
@@ -335,10 +340,22 @@ impl Follower {
         let Some(song) = st.queue.get(index).cloned() else {
             return;
         };
+        // Readied already (the room prepares it again after a seek or a resume): only ready again.
+        if st
+            .ahead
+            .iter()
+            .any(|a| a.index == index && a.key == song.key)
+        {
+            st.pending = Some((rev, index, true));
+            if let Some(how) = st.heard.get(&song.key).copied() {
+                self.report_hearing_later(st, rev, index, how);
+            }
+            return;
+        }
         match self.copy_of(&song, st) {
             Some(c) => {
                 self.seat.queue_next(&self.root, c.item, c.own);
-                st.next = Some(Loaded {
+                st.ahead.push_back(Loaded {
                     index,
                     key: song.key.clone(),
                 });
@@ -346,7 +363,6 @@ impl Follower {
                 self.report_hearing_later(st, rev, index, c.hearing);
             }
             None => {
-                st.next = None;
                 self.report.hearing(rev, index, Hearing::Cannot);
             }
         }
@@ -391,7 +407,8 @@ impl Follower {
             same_room: false,
             timeline: None,
             now: None,
-            next: None,
+            at: 0,
+            ahead: VecDeque::new(),
             pending: None,
             stepped_out: false,
             last_sync_report: Instant::now(),
@@ -455,12 +472,16 @@ impl Follower {
                     if st.stepped_out {
                         continue;
                     }
+                    // The song after the last one readied (or the one playing), from its start,
+                    // while the room plays: readied to follow it at its end, not loaded now
+                    // (which would cut off what plays).
+                    let last = st.ahead.back().or(st.now.as_ref());
                     let ahead = st.timeline.is_some_and(|t| t.playing)
                         && position_ms == 0
-                        && st.now.as_ref().is_some_and(|n| {
+                        && (last.is_some_and(|n| {
                             n.index + 1 == index
                                 && st.queue.get(n.index).is_some_and(|s| s.key == n.key)
-                        });
+                        }) || st.ahead.iter().any(|a| a.index == index));
                     if ahead {
                         me.load_next(&mut st, rev, index);
                     } else {
@@ -471,7 +492,7 @@ impl Follower {
                     st.queue = view.queue;
                     // Songs taken out or moved before the one playing shift it: it is the same
                     // song (by its key), not one to open again.
-                    for loaded in [&mut st.now, &mut st.next].into_iter().flatten() {
+                    for loaded in st.now.iter_mut().chain(st.ahead.iter_mut()) {
                         if st.queue.get(loaded.index).map(|q| &q.key) != Some(&loaded.key)
                             && let Some(i) = st.queue.iter().position(|q| q.key == loaded.key)
                         {
@@ -517,8 +538,8 @@ impl Follower {
             .as_ref()
             .is_some_and(|n| n.index == t.index && Some(&n.key) == key.as_ref());
         let loaded_next = st
-            .next
-            .as_ref()
+            .ahead
+            .front()
             .is_some_and(|n| n.index == t.index && Some(&n.key) == key.as_ref());
         if loaded_now {
             if let Some(plan) = self.plan(&t, st.same_room) {
@@ -570,17 +591,28 @@ impl Follower {
                     }
                 }
             }
-            // The player moved on to the readied next song: it follows the room from there.
-            if tick.index == Some(1)
-                && let Some(next) = st.next.take()
+            // The player moved on to the readied next song (where it is in the player's own
+            // queue says so): it follows the room from there.
+            let mut moved = false;
+            while tick.index.is_some_and(|i| i > st.at)
+                && let Some(next) = st.ahead.pop_front()
             {
                 st.now = Some(next);
+                st.at += 1;
+                moved = true;
+            }
+            if moved {
                 st.next_due = None;
                 if let Some(t) = st.timeline
                     && st.now.as_ref().is_some_and(|n| n.index == t.index)
                     && let Some(plan) = self.plan(&t, st.same_room)
                 {
                     self.follow_plan(st, plan);
+                } else if let Some(t) = st.timeline
+                    && st.ahead.front().is_some_and(|n| n.index == t.index)
+                {
+                    // Already behind the room by a song: on to the one it plays.
+                    st.next_due = self.to_local.as_ref()(t.at_us);
                 }
             }
             // The host's player knows the song's real length.
@@ -611,7 +643,7 @@ impl Follower {
         // This copy is longer than the room's: the room has moved on, so does this player.
         if let Some(due) = st.next_due
             && Instant::now() > due + Duration::from_millis(400)
-            && st.next.is_some()
+            && !st.ahead.is_empty()
         {
             st.next_due = None;
             self.seat.next();

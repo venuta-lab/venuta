@@ -991,7 +991,7 @@ impl Playback {
         })
     }
 
-    /// Listening together: add the next song after the one playing (ready ahead, to follow it
+    /// Listening together: add a song after the last one readied (ready ahead, to follow it
     /// without a gap).
     pub fn room_queue_next(
         &self,
@@ -1005,7 +1005,7 @@ impl Playback {
                 it.media = MediaRef::new(access.clone());
             }
         }
-        self.send(Cmd::Insert { items, next: true })
+        self.send(Cmd::Insert { items, next: false })
     }
 
     /// Listening together: quiet (this person can't play the room's song, or stepped out).
