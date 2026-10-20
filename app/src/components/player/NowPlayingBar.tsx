@@ -61,6 +61,7 @@ import {
   IconVolume,
 } from '../Icons'
 import { SLEEP_MINUTES, sleepBadge, sleepChoice } from '../../lib/sleep'
+import { canSeekNow, waitingWords } from '../../lib/streamWait'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
@@ -345,7 +346,10 @@ function Volume(props: { volume: number }) {
   return (
     <div
       className="group/vol relative flex items-center gap-2"
-      onWheel={(e) => void setVolume(props.volume + (e.deltaY < 0 ? 0.05 : -0.05))}
+      // Up and down only: a sideways wheel (tilt, touchpad) leaves the volume as it is.
+      onWheel={(e) => {
+        if (e.deltaY) void setVolume(props.volume + (e.deltaY < 0 ? 0.05 : -0.05))
+      }}
       title="Volume (Ctrl ↑ / ↓). At 100% nothing changes the sound."
     >
       <button
@@ -828,7 +832,7 @@ export function NowPlayingBar(props: {
                 {s.buffering ? (
                   <span className="inline-flex items-center gap-1.5 text-ink/55">
                     <span className="spin h-2.5 w-2.5 rounded-full border-2 border-ink/20 border-t-ink/55" aria-hidden />
-                    Opening…
+                    {waitingWords(s)}
                   </span>
                 ) : song.artists.length ? (
                   song.artists.map((a, i) => (
@@ -858,8 +862,8 @@ export function NowPlayingBar(props: {
               <motion.button
                 whileTap={{ scale: 0.92 }}
                 onClick={() => void toggle()}
-                aria-label={s.buffering ? 'Opening…' : s.playing ? 'Pause (Space)' : 'Play (Space)'}
-                title={s.buffering ? 'Opening the stream…' : s.playing ? 'Pause (Space)' : 'Play (Space)'}
+                aria-label={waitingWords(s) ?? (s.playing ? 'Pause (Space)' : 'Play (Space)')}
+                title={s.buffering ? (s.stalled ? 'Waiting for more of the stream…' : 'Opening the stream…') : s.playing ? 'Pause (Space)' : 'Play (Space)'}
                 className="np-play accent-fill grid h-10 w-10 place-items-center rounded-full text-on-accent"
               >
                 <AnimatePresence mode="wait" initial={false}>
@@ -892,7 +896,7 @@ export function NowPlayingBar(props: {
                 {s.repeat === 'one' ? <IconRepeatOne /> : <IconRepeat />}
               </Round>
             </div>
-            <SeekBar position={s.position_ms} duration={duration} wave={wave} disabled={s.buffering} className="w-full max-w-[560px]" />
+            <SeekBar position={s.position_ms} duration={duration} wave={wave} disabled={!canSeekNow(s)} className="w-full max-w-[560px]" />
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">

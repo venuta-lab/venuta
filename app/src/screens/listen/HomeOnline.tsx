@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconPlay } from '../../components/Icons'
+import { CARD_FADE, CHIP_FADE, ScrollRow } from '../../components/ScrollRow'
 import { RemoteArt } from '../../components/RemoteArt'
 import { inApp, type OnlineShelf, type OnlineTrack } from '../../lib/engine'
 import { playWithRadio } from '../../lib/radio'
@@ -68,7 +69,7 @@ export function HomeChips({ chips, chip, onChip }: { chips: HomeChip[]; chip: st
   const pill = (on: boolean) =>
     `shrink-0 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${on ? 'accent-fill text-on-accent' : 'bg-ink/[0.07] text-ink/75 shadow-[inset_0_0_0_1px_var(--edge)] hover:bg-ink/[0.12] hover:text-ink'}`
   return (
-    <div role="toolbar" aria-label="Moods" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 py-1">
+    <ScrollRow role="toolbar" aria-label="Moods" fade={CHIP_FADE} className="-mx-1 gap-2 px-1 py-1">
       {chip && (
         <button onClick={() => onChip(null)} className={pill(false)}>
           All
@@ -79,7 +80,7 @@ export function HomeChips({ chips, chip, onChip }: { chips: HomeChip[]; chip: st
           {c.title}
         </button>
       ))}
-    </div>
+    </ScrollRow>
   )
 }
 
@@ -208,7 +209,7 @@ export function FamiliarArtists({ lib, plays }: { lib: Library; plays: Play[] })
   return (
     <section className="mt-10">
       <h2 className="title mb-3.5 text-[19px]">Familiar artists</h2>
-      <div className="no-scrollbar -mx-3 -my-3 flex gap-5 overflow-x-auto px-3 py-3">
+      <ScrollRow arrows={{ top: Math.round(width * 0.9 * 0.38) }} fade={CARD_FADE} className="-mx-3 -my-3 snap-x gap-5 px-3 py-3 [&>*]:snap-start" style={{ scrollPaddingInline: 12 }}>
         {top.map((a) => {
           const mine = artistFor(lib, a.name)
           return (
@@ -227,7 +228,7 @@ export function FamiliarArtists({ lib, plays }: { lib: Library; plays: Play[] })
             </div>
           )
         })}
-      </div>
+      </ScrollRow>
     </section>
   )
 }

@@ -169,6 +169,8 @@ export function applyPrefs() {
   el.dataset.backdrop = p.backdrop ? 'on' : 'off'
   // "Match Windows" follows Windows' animation setting, so CSS only has to ask this attribute.
   el.dataset.motion = reducedMotion(p) ? 'reduced' : 'full'
+  // What was chosen itself: rows glide sideways unless less motion was chosen here (lib/hscroll.ts).
+  el.dataset.motionChoice = p.motion
   const accent = info.accent
   if (accent !== 'yours') {
     // The other themes bring their own accent (Bounty's follows the album, in its blocks;

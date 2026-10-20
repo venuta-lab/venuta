@@ -9,6 +9,7 @@ import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
 import { LyricsDock, SongActions } from './NowPlayingActions'
 import { availabilityOf, current, isOnline, play, remoteArtUrl, seek, usePlayer, usePlayerValue } from '../../lib/player'
+import { waitingWords } from '../../lib/streamWait'
 import { IconClose } from '../Icons'
 import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
@@ -67,7 +68,10 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: ()
   return (
     <div
       ref={box}
-      onWheel={() => (userScrolled.current = Date.now())}
+      // Up and down only: a sideways wheel doesn't move the lyrics, so they keep following.
+      onWheel={(e) => {
+        if (e.deltaY) userScrolled.current = Date.now()
+      }}
       className="no-scrollbar relative h-full overflow-y-auto py-[30vh]"
       style={{ maskImage: 'linear-gradient(transparent, black 18%, black 82%, transparent)' }}
     >
@@ -228,7 +232,7 @@ export function NowPlaying(props: {
                 {s.buffering && (
                   <p className="mt-1 inline-flex items-center gap-1.5 text-[12.5px] text-ink/55">
                     <span className="spin h-2.5 w-2.5 rounded-full border-2 border-ink/20 border-t-ink/55" aria-hidden />
-                    Opening…
+                    {waitingWords(s)}
                   </p>
                 )}
                 <SongActions

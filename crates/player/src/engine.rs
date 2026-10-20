@@ -139,8 +139,11 @@ pub struct Status<T: Serialize> {
     pub queue: Option<Vec<T>>,
     pub index: Option<usize>,
     pub playing: bool,
-    /// True while the current song is still opening (e.g. a remote body downloading).
+    /// True while the current song waits for its stream: still opening (a remote body
+    /// downloading), or partway through with all that has arrived played (see `stalled`).
     pub buffering: bool,
+    /// Buffering partway through the song, not opening: it plays on when the bytes come.
+    pub stalled: bool,
     pub position_ms: u64,
     pub duration_ms: u64,
     pub shuffle: bool,
@@ -182,6 +185,7 @@ struct Said {
     index: Option<usize>,
     playing: bool,
     buffering: bool,
+    stalled: bool,
     position_ms: u64,
     duration_ms: u64,
     shuffle: bool,
@@ -202,6 +206,7 @@ impl Said {
             index: s.index,
             playing: s.playing,
             buffering: s.buffering,
+            stalled: s.stalled,
             position_ms: s.position_ms,
             duration_ms: s.duration_ms,
             shuffle: s.shuffle,
@@ -878,7 +883,11 @@ impl<T: Item + Serialize> Engine<T> {
                 }
                 Ok(crate::decode::DecodeState::End) => front.ended = true,
                 Err(e) => {
-                    self.error = e;
+                    // Said with the song's name: the queue goes on to the next one.
+                    self.error = match self.queue.current() {
+                        Some(item) => format!("{}: {e}", item.label()),
+                        None => e,
+                    };
                     front.ended = true;
                 }
             }
@@ -1688,12 +1697,23 @@ impl<T: Item + Serialize> Engine<T> {
             .unwrap_or(0);
         // Opening… is only said while it is meant to play: a paused online song (one put back
         // after a restart) waits quietly until play is pressed.
-        let buffering = self.playing && self.segs.front().is_some_and(|s| !s.source.is_ready());
+        let opening = self.segs.front().is_some_and(|s| !s.source.is_ready());
+        // Partway through, everything that arrived played (or a seek past it): waiting for the
+        // stream, not playing, though the device runs on in silence.
+        let stalled = !opening
+            && (self.seek_waiting.is_some()
+                || self
+                    .segs
+                    .front()
+                    .is_some_and(|s| !s.ended && s.frames() == 0 && s.source.is_waiting()));
+        let buffering = self.playing && (opening || stalled);
+        let stalled = self.playing && stalled;
         let status = Status {
             queue: self.queue_changed.then(|| self.queue.items().to_vec()),
             index: self.queue.index,
             playing: self.playing,
             buffering,
+            stalled,
             position_ms: self.position_ms(),
             duration_ms,
             shuffle: self.queue.shuffled(),
@@ -1867,6 +1887,167 @@ mod tests {
             1,
             "song 3 opened once, now"
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A queue of an online song (from a host on this computer) and local files.
+    #[derive(Clone, Serialize)]
+    enum Song {
+        Streamed {
+            url: String,
+            len: u64,
+            #[serde(skip)]
+            stall_ms: u64,
+        },
+        File(PathBuf),
+    }
+
+    impl Item for Song {
+        fn path(&self) -> Option<&Path> {
+            match self {
+                Song::File(p) => Some(p),
+                Song::Streamed { .. } => None,
+            }
+        }
+        fn open(&self) -> Result<Source, String> {
+            match self {
+                Song::File(p) => Source::open(p),
+                Song::Streamed { url, len, stall_ms } => Source::open_remote_watched(
+                    media_access::EphemeralAudio {
+                        track_id: "s".into(),
+                        provider: "test".into(),
+                        url: url.clone(),
+                        mime_type: Some("audio/wav".into()),
+                        content_length: Some(*len),
+                        duration_ms: Some(*len * 1000 / (44_100 * 4)),
+                        headers: Vec::new(),
+                        via: "test",
+                        loudness_db: None,
+                    },
+                    None,
+                    crate::decode::mock_host::quick_watch(*stall_ms),
+                    crate::decode::mock_host::log().0,
+                ),
+            }
+        }
+        fn label(&self) -> String {
+            match self {
+                Song::File(p) => p.display().to_string(),
+                Song::Streamed { .. } => "The streamed song".into(),
+            }
+        }
+        fn reopen_when_stopped(&self) -> bool {
+            false
+        }
+    }
+
+    /// A 16-bit stereo 44.1 kHz WAV of `secs` seconds, as bytes (a quiet ramp, never silent).
+    fn wav_bytes(secs: usize) -> Vec<u8> {
+        let frames = secs * 44_100;
+        let dir = std::env::temp_dir().join(format!("venuta-wav-{}-{secs}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("song.wav");
+        wav(&path, frames);
+        let mut v = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(dir).ok();
+        for (i, s) in v[44..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            *s = ((((i / 2) % 400) as i16 - 200) * 8).to_le_bytes();
+        }
+        v
+    }
+
+    /// Plays `items` at a device's pace, and hands back each status as it comes.
+    fn play(items: Vec<Song>) -> (Player<Song>, std::sync::mpsc::Receiver<Status<Song>>) {
+        let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
+        let (tx, rx) = channel::<Status<Song>>();
+        let player = Player::spawn(OutputChoice::PacedMemory(captured), move |s| {
+            let _ = tx.send(s);
+        });
+        player.send(Cmd::Set {
+            items,
+            index: 0,
+            start_ms: 0,
+            play: true,
+            from: String::new(),
+        });
+        (player, rx)
+    }
+
+    #[test]
+    fn a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come() {
+        use crate::decode::mock_host::{Serve, host};
+        let song = Arc::new(wav_bytes(3));
+        // About 0.6 s arrives, then the host stalls; asked again, it sends the rest.
+        let host = host(song.clone(), |n, _| {
+            if n == 0 {
+                Serve::ThenStall(100 * 1024)
+            } else {
+                Serve::Full
+            }
+        });
+        let (_player, rx) = play(vec![Song::Streamed {
+            url: host.url.clone(),
+            len: song.len() as u64,
+            stall_ms: 1_500,
+        }]);
+        let started = Instant::now();
+        let (mut waited_at, mut moved_on) = (None, false);
+        while started.elapsed() < Duration::from_secs(15) {
+            let Ok(s) = rx.recv_timeout(Duration::from_secs(5)) else {
+                break;
+            };
+            assert!(s.error.is_empty(), "no error: {}", s.error);
+            if s.playing && s.position_ms > 0 && s.buffering {
+                assert!(s.stalled, "waiting partway, not opening");
+                waited_at.get_or_insert(s.position_ms);
+            }
+            if let Some(at) = waited_at
+                && !s.buffering
+                && s.position_ms > at + 500
+            {
+                moved_on = true;
+                break;
+            }
+        }
+        let at = waited_at.expect("the player said it was waiting for the stream");
+        assert!(at < 1_000, "it waited where the bytes ran out, at {at} ms");
+        assert!(moved_on, "and played on once they came");
+    }
+
+    #[test]
+    fn a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on() {
+        use crate::decode::mock_host::{Serve, host};
+        let song = Arc::new(wav_bytes(3));
+        let host = host(song.clone(), |n, _| {
+            Serve::ThenStall(if n == 0 { 100 * 1024 } else { 0 })
+        });
+        let (dir, files) = songs(1);
+        let (_player, rx) = play(vec![
+            Song::Streamed {
+                url: host.url.clone(),
+                len: song.len() as u64,
+                stall_ms: 600,
+            },
+            Song::File(files[0].path.clone()),
+        ]);
+        let started = Instant::now();
+        let (mut said, mut moved_on) = (None, false);
+        while started.elapsed() < Duration::from_secs(15) {
+            let Ok(s) = rx.recv_timeout(Duration::from_secs(5)) else {
+                break;
+            };
+            if !s.error.is_empty() {
+                said.get_or_insert(s.error.clone());
+            }
+            if said.is_some() && s.index == Some(1) && s.playing && s.position_ms > 0 {
+                moved_on = true;
+                break;
+            }
+        }
+        let said = said.expect("the player said the stream was lost");
+        assert!(moved_on, "and went on to the next song");
+        assert!(said.contains("The streamed song"), "{said}");
+        assert!(said.contains(crate::decode::STREAM_LOST), "{said}");
         std::fs::remove_dir_all(dir).ok();
     }
 }

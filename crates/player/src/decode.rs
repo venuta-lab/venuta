@@ -86,6 +86,8 @@ pub struct Source {
     download_body: Option<Arc<GrowBody>>,
     /// True once at least one decoded packet produced samples (UI may leave Opening…).
     primed: bool,
+    /// The last decode found nothing more downloaded yet (the stream is behind playback).
+    starved: bool,
     /// An online song's loudness as the catalog says it (see `EphemeralAudio::loudness_db`).
     pub loudness_db: Option<f64>,
 }
@@ -132,6 +134,10 @@ struct GrowBody {
     cancelled: Arc<AtomicBool>,
     /// Known Content-Length when the host gave one; 0 if unknown.
     total: AtomicU64,
+    /// How far the decoder has read: what is downloaded past it is what playback has in hand.
+    read_at: AtomicU64,
+    /// Why the download stopped short, when it did: said once what arrived has played.
+    failed: Mutex<Option<String>>,
 }
 
 impl GrowBody {
@@ -142,6 +148,8 @@ impl GrowBody {
             finished: AtomicBool::new(false),
             cancelled,
             total: AtomicU64::new(0),
+            read_at: AtomicU64::new(0),
+            failed: Mutex::new(None),
         })
     }
 
@@ -179,6 +187,23 @@ impl GrowBody {
             self.total.store(total, Ordering::Release);
         }
     }
+
+    /// The download stopped short for good: what has arrived still plays, then `why` is said.
+    fn fail(&self, why: &str) {
+        if let Ok(mut f) = self.failed.lock() {
+            f.get_or_insert_with(|| why.to_owned());
+        }
+        self.finish();
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failed.lock().ok().and_then(|f| f.clone())
+    }
+
+    /// Bytes downloaded past where the decoder has read.
+    fn ahead(&self) -> u64 {
+        (self.len() as u64).saturating_sub(self.read_at.load(Ordering::Acquire))
+    }
 }
 
 /// Reads from [`GrowBody`] without blocking the player thread.
@@ -209,6 +234,7 @@ impl Read for GrowReader {
             let n = ((len - self.pos) as usize).min(buf.len());
             buf[..n].copy_from_slice(&g[start..start + n]);
             self.pos += n as u64;
+            self.body.read_at.store(self.pos, Ordering::Release);
             return Ok(n);
         }
         if self.body.finished.load(Ordering::Acquire) {
@@ -265,6 +291,7 @@ impl Seek for GrowReader {
             target = len;
         }
         self.pos = target;
+        self.body.read_at.store(self.pos, Ordering::Release);
         Ok(self.pos)
     }
 }
@@ -348,13 +375,23 @@ impl Source {
 
     /// Open resolved direct audio without performing network I/O on the caller's thread.
     pub fn open_remote(audio: EphemeralAudio) -> Result<Self, String> {
+        Self::open_remote_watched(audio, None, WATCH, playback_log())
+    }
+
+    /// `open_remote`, with how the download is watched and where it says what happened.
+    pub(crate) fn open_remote_watched(
+        audio: EphemeralAudio,
+        refresh: Option<Refresh>,
+        watch: Watch,
+        note: Note,
+    ) -> Result<Self, String> {
         let duration_hint_ms = audio.duration_ms;
         let (sender, receiver) = sync_channel(8);
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
         std::thread::Builder::new()
             .name("venuta-stream-decoder".into())
-            .spawn(move || decode_remote(audio, sender, worker_cancelled, None))
+            .spawn(move || decode_remote(audio, sender, worker_cancelled, refresh, watch, note))
             .map_err(|_| "Could not start the remote stream decoder.")?;
         Ok(Self::remote_placeholder(
             receiver,
@@ -398,7 +435,14 @@ impl Source {
                         .resolve_audio(&track_id, &media_access::CancellationToken::default())
                         .ok()
                 });
-                decode_remote(audio, sender, worker_cancelled, Some(refresh));
+                decode_remote(
+                    audio,
+                    sender,
+                    worker_cancelled,
+                    Some(refresh),
+                    WATCH,
+                    playback_log(),
+                );
             })
             .map_err(|_| "Could not start the remote stream resolver.")?;
         Ok(Self::remote_placeholder(
@@ -439,6 +483,7 @@ impl Source {
             }),
             download_body: None,
             primed: false,
+            starved: false,
             loudness_db: None,
         }
     }
@@ -549,6 +594,7 @@ impl Source {
             download_body: None,
             // Local files are ready immediately; progressive sets this after first samples.
             primed: true,
+            starved: false,
             loudness_db: None,
         })
     }
@@ -574,17 +620,33 @@ impl Source {
     /// Decode the next stretch into `out` (cleared first), or report that a remote chunk is
     /// not ready yet. This never waits for network I/O.
     pub fn next(&mut self, out: &mut Vec<i32>) -> Result<DecodeState, String> {
-        if self.remote.is_some() {
-            return self.next_remote(out);
-        }
-        match self.next_local(out)? {
-            LocalDecode::Samples => {
-                self.primed = true;
-                Ok(DecodeState::Samples)
+        let state = if self.remote.is_some() {
+            self.next_remote(out)
+        } else {
+            match self.next_local(out) {
+                Ok(LocalDecode::Samples) => {
+                    self.primed = true;
+                    Ok(DecodeState::Samples)
+                }
+                Ok(LocalDecode::End) => Ok(DecodeState::End),
+                Ok(LocalDecode::Pending) => Ok(DecodeState::Pending),
+                Err(e) => Err(e),
             }
-            LocalDecode::End => Ok(DecodeState::End),
-            LocalDecode::Pending => Ok(DecodeState::Pending),
+        };
+        self.starved = matches!(state, Ok(DecodeState::Pending));
+        // A stream that stopped short: once what arrived has played, say why (not the end of
+        // the song, and not "damaged" for bytes that never came).
+        if !matches!(state, Ok(DecodeState::Samples | DecodeState::Pending))
+            && let Some(why) = self.download_body.as_ref().and_then(|b| b.failure())
+        {
+            return Err(why);
         }
+        state
+    }
+
+    /// An opened stream waiting for more of its bytes: all that has arrived is decoded.
+    pub fn is_waiting(&self) -> bool {
+        self.starved
     }
 
     fn next_remote(&mut self, out: &mut Vec<i32>) -> Result<DecodeState, String> {
@@ -717,7 +779,7 @@ impl Source {
             Err(e) => {
                 // Incomplete body / starved probe: keep downloading and retry. Finished body = real error.
                 if pending.body.finished.load(Ordering::Acquire) {
-                    return Err(e);
+                    return Err(pending.body.failure().unwrap_or(e));
                 }
                 let retry = pending.body.len().saturating_add(128 * 1024);
                 if let Some(remote) = self.remote.as_mut() {
@@ -842,27 +904,38 @@ impl Drop for Source {
 }
 
 /// Asks for a fresh stream address for the same song, after the old one stopped working partway.
-type Refresh = Box<dyn FnMut() -> Option<EphemeralAudio> + Send>;
+pub(crate) type Refresh = Box<dyn FnMut() -> Option<EphemeralAudio> + Send>;
+
+/// Where a download says what happened to it (the playback log). Never an address.
+pub(crate) type Note = Arc<dyn Fn(&str) + Send + Sync>;
+
+fn playback_log() -> Note {
+    Arc::new(media_access::note_timing)
+}
 
 fn decode_remote(
     audio: EphemeralAudio,
     sender: SyncSender<RemoteEvent>,
     cancelled: Arc<AtomicBool>,
     refresh: Option<Refresh>,
+    watch: Watch,
+    note: Note,
 ) {
     let body = GrowBody::new(cancelled.clone());
-    let result = (|| {
+    let result: Result<(), String> = (|| {
         if cancelled.load(Ordering::Acquire) {
             body.cancel();
             return Ok(());
         }
-        fill_grow_body(audio, &body, &sender, refresh)?;
+        fill_grow_body(audio, &body, &sender, refresh, &watch, &*note)?;
         Ok(())
     })();
     if let Err(error) = result
         && !cancelled.load(Ordering::Acquire)
     {
-        body.cancel();
+        // What did arrive still plays; then the song says why it stopped (an opened song no
+        // longer listens for the event, so the body carries it too).
+        body.fail(&error);
         let _ = sender.send(RemoteEvent::Error(error));
     }
 }
@@ -872,6 +945,174 @@ fn decode_remote(
 const RANGE_BYTES: u64 = 2 * 1_048_576;
 /// Fresh addresses asked for in one song before giving up on it.
 const MAX_REFRESHES: u32 = 2;
+/// What a song says when its stream stopped partway and could not be picked up again.
+pub(crate) const STREAM_LOST: &str = "The stream stopped partway and couldn't be picked up again.";
+
+/// How a ranged download notices a request that has stopped, or slowed to a trickle, and gives
+/// it up for a new one from the last byte that arrived (instead of waiting out a timeout).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Watch {
+    /// Nothing at all (no answer, no bytes) for this long: given up.
+    pub stall: Duration,
+    /// Speed is judged over spans this long.
+    pub window: Duration,
+    /// Slower than this share of the song's own rate over a span, while less than `low_water`
+    /// of it is downloaded ahead of playback: a trickle that will run dry, given up. Anything at
+    /// the song's rate or faster is never given up, however slow.
+    pub trickle_share: f64,
+    pub low_water: Duration,
+    /// A request that brought this much before it failed was working: the next try starts
+    /// again with a quick retry on the same address.
+    pub progress_bytes: u64,
+    /// The pause before a quick retry on the same address.
+    pub retry_pause: Duration,
+}
+
+const WATCH: Watch = Watch {
+    stall: Duration::from_secs(6),
+    window: Duration::from_secs(8),
+    trickle_share: 0.5,
+    low_water: Duration::from_secs(10),
+    progress_bytes: 256 * 1024,
+    retry_pause: Duration::from_millis(250),
+};
+
+/// The longest a range request may take to answer, or to bring its whole range, before ureq
+/// itself gives it up: only a backstop, so a request the watch gave up on ends some time. The
+/// watch notices a stall long before; a slow but steady range that reaches it carries on from
+/// its last byte. (The agent's own 30 s for the whole call would cut a steady range short.)
+const RANGE_ANSWER_LIMIT: Duration = Duration::from_secs(30);
+const RANGE_BODY_LIMIT: Duration = Duration::from_secs(300);
+/// How often the download looks at a request in flight (and at being cancelled).
+const WATCH_TICK: Duration = Duration::from_millis(100);
+
+/// What a range request's reader hands back, in order.
+enum Fetched {
+    /// The host answered: its status, content type, and the whole length its range says.
+    Answer {
+        status: u16,
+        mime: Option<String>,
+        total: Option<u64>,
+    },
+    Bytes(Vec<u8>),
+    /// The whole range is in.
+    Done,
+    /// No answer, or the connection broke while reading: why, in words without the address.
+    Failed(String),
+}
+
+/// One range request, read on a thread of its own so the download can watch it, and give it up
+/// without waiting for it. Stops as soon as nobody listens.
+fn fetch_range(agent: ureq::Agent, audio: &EphemeralAudio, range: String) -> Receiver<Fetched> {
+    let (tx, rx) = sync_channel(16);
+    let url = audio.url.clone();
+    let headers = audio.headers.clone();
+    let spawned = std::thread::Builder::new()
+        .name("venuta-stream-range".into())
+        .spawn(move || {
+            let mut request = agent
+                .get(&url)
+                .config()
+                .timeout_global(None)
+                .timeout_recv_response(Some(RANGE_ANSWER_LIMIT))
+                .timeout_recv_body(Some(RANGE_BODY_LIMIT))
+                .build();
+            for header in &headers {
+                request = request.header(&header.name, &header.value);
+            }
+            let response = match request.header("Range", range).call() {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Fetched::Failed(failed_why(&e)));
+                    return;
+                }
+            };
+            let status = response.status().as_u16();
+            let header = |name: &str| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)
+            };
+            let mime = header("content-type")
+                .map(|value| value.split(';').next().unwrap_or(&value).trim().to_owned());
+            let total = header("content-range")
+                .and_then(|value| value.rsplit_once('/').map(|(_, t)| t.to_owned()))
+                .and_then(|total| total.parse::<u64>().ok());
+            if tx
+                .send(Fetched::Answer {
+                    status,
+                    mime,
+                    total,
+                })
+                .is_err()
+                || !(200..300).contains(&status)
+            {
+                return;
+            }
+            let mut reader = response.into_body().into_reader();
+            let mut buf = vec![0_u8; 64 * 1024];
+            loop {
+                let sent = match reader.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = tx.send(Fetched::Done);
+                        return;
+                    }
+                    Ok(n) => tx.send(Fetched::Bytes(buf[..n].to_vec())),
+                    Err(e) => {
+                        let _ = tx.send(Fetched::Failed(format!("{:?}", e.kind())));
+                        return;
+                    }
+                };
+                if sent.is_err() {
+                    return;
+                }
+            }
+        });
+    // Without a reader thread the receiver has no sender, and the request counts as broken.
+    drop(spawned);
+    rx
+}
+
+/// Why a request failed, in a word or two: never ureq's own text, which can carry the address.
+fn failed_why(e: &ureq::Error) -> String {
+    match e {
+        ureq::Error::Timeout(t) => format!("timed out ({t:?})"),
+        ureq::Error::Io(io) => format!("{:?}", io.kind()),
+        ureq::Error::ConnectionFailed => "could not connect".into(),
+        ureq::Error::HostNotFound => "host not found".into(),
+        _ => "request failed".into(),
+    }
+}
+
+/// How one range request ended.
+enum Ended {
+    /// Its whole range came.
+    Done,
+    /// The host says the song ends before this range (asked past the end).
+    PastEnd,
+    Refused(u16),
+    /// No answer came (could not connect, or the request failed before any reply).
+    NoAnswer(String),
+    /// The connection broke partway through the range.
+    Broke(String),
+    /// Nothing for `Watch::stall`.
+    Stalled,
+    /// Bytes per second, far under the song's rate while playback is close to running dry.
+    Trickle(f64),
+}
+
+fn kb(bytes: f64) -> String {
+    format!("{:.1} KB", bytes / 1024.0)
+}
+
+fn kb_per_s(bytes: u64, took: Duration) -> String {
+    format!(
+        "{:.1} KB/s",
+        bytes as f64 / 1024.0 / took.as_secs_f64().max(0.001)
+    )
+}
 
 /// Download into `body`, signalling [`RemoteEvent::OpenReady`] once enough bytes (or the whole
 /// short body) are present so decode can start while the rest arrives.
@@ -882,11 +1123,17 @@ const MAX_REFRESHES: u32 = 2;
 ///
 /// When the host stops serving partway (the address expired, or was only good for its
 /// opening), a fresh address is asked for and the download carries on from the same byte.
+/// A request that stalls, or trickles so slowly that playback will run dry, is given up within
+/// seconds (see [`Watch`]) and asked again from its last byte, through the same steps: once
+/// more on the same address, then on a fresh one. Each step goes to `note`, with the bytes and
+/// speeds that led to it. When none is left, the download fails with words saying so.
 fn fill_grow_body(
     mut audio: EphemeralAudio,
     body: &Arc<GrowBody>,
     sender: &SyncSender<RemoteEvent>,
     mut refresh: Option<Refresh>,
+    watch: &Watch,
+    note: &dyn Fn(&str),
 ) -> Result<(), String> {
     let agent = media_access::media_agent();
     let started = std::time::Instant::now();
@@ -905,7 +1152,7 @@ fn fill_grow_body(
             return;
         }
         opened = true;
-        media_access::note_timing(&format!(
+        note(&format!(
             "online song ready to open after {} ms ({} KB in)",
             media_access::ms_since(started),
             body.len() / 1024
@@ -999,24 +1246,59 @@ fn fill_grow_body(
     }
     let mut refreshes = 0u32;
     let mut retried_here = false;
+    // The song's own rate, bytes a second, when its length and duration are both known: a
+    // request slower than it is falling behind playback.
+    let song_rate = |total: Option<u64>| {
+        total
+            .zip(duration_hint_ms.filter(|d| *d > 0))
+            .map(|(t, d)| t as f64 * 1000.0 / d as f64)
+    };
+    // After a failure, what was tried: the next request says how it went.
+    let mut trying: Option<String> = None;
 
-    // A request or a read failed partway. Try once more on the same address, then on a fresh
-    // one; `Err` when neither is left.
-    let mut recover = |audio: &mut EphemeralAudio, retried_here: &mut bool| -> bool {
+    // A request failed or was given up partway. Try once more on the same address, then on a
+    // fresh one; `false` when neither is left.
+    let mut recover = |audio: &mut EphemeralAudio,
+                       retried_here: &mut bool,
+                       at: u64,
+                       total: Option<u64>|
+     -> bool {
+        let gave_up = |refreshes: u32| {
+            note(&format!(
+                "online stream gave up at byte {at} of {} after {refreshes} fresh addresses",
+                total.map_or_else(|| "?".to_owned(), |t| t.to_string()),
+            ));
+            false
+        };
         if !*retried_here {
             *retried_here = true;
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(watch.retry_pause);
+            note(&format!(
+                "online stream asking again on the same address from byte {at}"
+            ));
             return true;
         }
         if refreshes >= MAX_REFRESHES {
-            return false;
+            return gave_up(refreshes);
         }
-        let Some(fresh) = refresh.as_mut().and_then(|ask| ask()) else {
-            return false;
+        let Some(ask) = refresh.as_mut() else {
+            return gave_up(refreshes);
+        };
+        let asked = std::time::Instant::now();
+        let Some(fresh) = ask() else {
+            note(&format!(
+                "online song asked for a fresh address partway ({} of {MAX_REFRESHES}) at byte {at}: none came back after {} ms",
+                refreshes + 1,
+                media_access::ms_since(asked)
+            ));
+            return gave_up(refreshes);
         };
         refreshes += 1;
         *retried_here = false;
-        media_access::note_timing("online song asked for a fresh address partway");
+        note(&format!(
+            "online song asked for a fresh address partway ({refreshes} of {MAX_REFRESHES}) at byte {at}: one came in {} ms",
+            media_access::ms_since(asked)
+        ));
         *audio = fresh;
         true
     };
@@ -1030,93 +1312,153 @@ fn fill_grow_body(
             Some(total) => (start + RANGE_BYTES - 1).min(total - 1),
             None => start + RANGE_BYTES - 1,
         };
-        let mut request = agent.get(&audio.url);
-        for header in &audio.headers {
-            request = request.header(&header.name, &header.value);
-        }
-        request = request.header("Range", format!("bytes={start}-{end}"));
-        let response = match request.call() {
-            Ok(r) => r,
-            Err(_) if body.len() > 0 && recover(&mut audio, &mut retried_here) => continue,
-            Err(_) => return Err("Could not retrieve the remote stream.".to_owned()),
-        };
-        let status = response.status().as_u16();
-        if status == 416 && body.len() > 0 {
-            break;
-        }
-        if !(200..300).contains(&status) {
-            if body.len() > 0 {
-                // Refused partway: a fresh address carries on from here.
-                if recover(&mut audio, &mut retried_here) {
-                    continue;
-                }
-                break;
-            }
-            return Err(format!("The remote stream returned HTTP {status}."));
-        }
-        if mime_type.is_none() {
-            mime_type = response
-                .headers()
-                .get("content-type")
-                .and_then(|value| value.to_str().ok())
-                .map(|value| value.split(';').next().unwrap_or(value).trim().to_owned());
-        }
-        let total_from_header = response
-            .headers()
-            .get("content-range")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.rsplit_once('/').map(|(_, total)| total))
-            .and_then(|total| total.parse::<u64>().ok());
-        if let Some(t) = total_from_header {
-            known_total = Some(t);
-            body.set_total(t);
-        }
-        let mut reader = response.into_body().into_reader();
+        let from = start;
+        let replies = fetch_range(agent.clone(), &audio, format!("bytes={start}-{end}"));
+        let began = std::time::Instant::now();
+        // When the request last showed life (its answer, or bytes).
+        let mut heard = began;
+        let mut answered = false;
         let mut got = 0u64;
-        let mut broke = false;
-        loop {
+        let mut total_from_header = None;
+        // The span speed is judged over: since when, and what had come by then.
+        let (mut span_at, mut span_got) = (began, 0u64);
+        let ended = loop {
             if sync_cancel() {
                 return Err("Remote stream cancelled.".into());
             }
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    body.append(&buf[..n]);
-                    got += n as u64;
-                    start += n as u64;
+            match replies.recv_timeout(WATCH_TICK) {
+                Ok(Fetched::Answer {
+                    status,
+                    mime,
+                    total,
+                }) => {
+                    answered = true;
+                    heard = std::time::Instant::now();
+                    if status == 416 && body.len() > 0 {
+                        break Ended::PastEnd;
+                    }
+                    if !(200..300).contains(&status) {
+                        break Ended::Refused(status);
+                    }
+                    if mime_type.is_none() {
+                        mime_type = mime;
+                    }
+                    if let Some(t) = total {
+                        total_from_header = Some(t);
+                        known_total = Some(t);
+                        body.set_total(t);
+                    }
+                }
+                Ok(Fetched::Bytes(bytes)) => {
+                    heard = std::time::Instant::now();
+                    body.append(&bytes);
+                    got += bytes.len() as u64;
+                    start += bytes.len() as u64;
                     signal_open(&mime_type, known_total);
                     if body.len() > 128 * 1024 * 1024 {
                         return Err("Remote stream is larger than Venuta will buffer.".into());
                     }
+                    if got >= watch.progress_bytes
+                        && let Some(what) = trying.take()
+                    {
+                        note(&format!(
+                            "online stream picked up again (after: {what}): {} from byte {from} in {} ms ({})",
+                            kb(got as f64),
+                            media_access::ms_since(began),
+                            kb_per_s(got, began.elapsed())
+                        ));
+                    }
                 }
-                Err(_) => {
-                    broke = true;
+                Ok(Fetched::Done) => break Ended::Done,
+                Ok(Fetched::Failed(why)) if answered => break Ended::Broke(why),
+                Ok(Fetched::Failed(why)) => break Ended::NoAnswer(why),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    break Ended::Broke("the reader stopped".into());
+                }
+            }
+            let now = std::time::Instant::now();
+            if now.duration_since(heard) >= watch.stall {
+                break Ended::Stalled;
+            }
+            if now.duration_since(span_at) >= watch.window {
+                let speed = (got - span_got) as f64 / now.duration_since(span_at).as_secs_f64();
+                if let Some(rate) = song_rate(known_total)
+                    && speed < rate * watch.trickle_share
+                    && (body.ahead() as f64) < rate * watch.low_water.as_secs_f64()
+                {
+                    break Ended::Trickle(speed);
+                }
+                (span_at, span_got) = (now, got);
+            }
+        };
+        // Dropping `replies` lets a reader still waiting on the network go, whenever it wakes.
+        drop(replies);
+        let took = began.elapsed();
+        let what = match ended {
+            Ended::Done => {
+                if let Some(what) = trying.take() {
+                    note(&format!(
+                        "online stream picked up again (after: {what}): {} from byte {from} in {} ms ({})",
+                        kb(got as f64),
+                        took.as_millis(),
+                        kb_per_s(got, took)
+                    ));
+                }
+                retried_here = false;
+                if got == 0 {
                     break;
                 }
-            }
-        }
-        if broke {
-            // The connection dropped mid-range: carry on from the last byte that arrived.
-            if recover(&mut audio, &mut retried_here) {
+                if let Some(total) = known_total
+                    && start >= total
+                {
+                    break;
+                }
+                if known_total.is_none() && total_from_header.is_none() && got < RANGE_BYTES {
+                    break;
+                }
                 continue;
             }
-            if body.len() == 0 {
-                return Err("Could not read the remote stream.".into());
+            Ended::PastEnd => break,
+            // Refused, or no answer at all, before anything came: the address is no good.
+            Ended::Refused(status) if body.len() == 0 => {
+                return Err(format!("The remote stream returned HTTP {status}."));
             }
-            break;
+            Ended::NoAnswer(_) if body.len() == 0 => {
+                return Err("Could not retrieve the remote stream.".to_owned());
+            }
+            Ended::Refused(status) => format!("refused with HTTP {status}"),
+            Ended::NoAnswer(why) => format!("no answer ({why})"),
+            Ended::Broke(why) => format!("connection broke ({why})"),
+            Ended::Stalled => format!("stalled, nothing for {:.1} s", watch.stall.as_secs_f64()),
+            Ended::Trickle(speed) => format!(
+                "trickling at {}/s, the song needs {}/s, {:.1} s ahead of playback",
+                kb(speed),
+                kb(song_rate(known_total).unwrap_or(0.0)),
+                song_rate(known_total)
+                    .map(|rate| body.ahead() as f64 / rate)
+                    .unwrap_or(0.0)
+            ),
+        };
+        note(&format!(
+            "online stream {what} at byte {start} of {}: this request brought {} from byte {from} in {} ms ({})",
+            known_total.map_or_else(|| "?".to_owned(), |t| t.to_string()),
+            kb(got as f64),
+            took.as_millis(),
+            kb_per_s(got, took)
+        ));
+        if got >= watch.progress_bytes {
+            // It was working until then: start the steps over, with a quick retry.
+            retried_here = false;
         }
-        retried_here = false;
-        if got == 0 {
-            break;
+        if recover(&mut audio, &mut retried_here, start, known_total) {
+            trying = Some(what);
+            continue;
         }
-        if let Some(total) = known_total
-            && start >= total
-        {
-            break;
+        if body.len() == 0 {
+            return Err("Could not read the remote stream.".into());
         }
-        if known_total.is_none() && total_from_header.is_none() && got < RANGE_BYTES {
-            break;
-        }
+        return Err(STREAM_LOST.into());
     }
 
     if body.len() == 0 {
@@ -1148,4 +1490,525 @@ fn media_extension(mime_type: Option<&str>, url: &str) -> Option<String> {
             .filter(|extension| !extension.is_empty())
             .map(str::to_ascii_lowercase)
     })
+}
+
+/// A media host on this computer, for checks of the download: never the network.
+#[cfg(test)]
+pub(crate) mod mock_host {
+    use super::{Note, Watch};
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    /// What the host does with one ranged request.
+    #[derive(Clone, Copy)]
+    pub enum Serve {
+        /// The whole range, at once.
+        Full,
+        /// The first `n` bytes of the range, then nothing (the connection stays open).
+        ThenStall(usize),
+        /// The first `n` bytes of the range, then the connection closes.
+        ThenDrop(usize),
+        /// Refused with this status.
+        Refuse(u16),
+        /// The first `first` bytes at once, then the rest in pieces of `piece` bytes, one
+        /// every `every_ms`.
+        Paced {
+            first: usize,
+            piece: usize,
+            every_ms: u64,
+        },
+    }
+
+    pub struct Host {
+        pub url: String,
+        /// Where each ranged request started.
+        asked: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl Host {
+        pub fn asked(&self) -> Vec<u64> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    /// Serves `content` in ranges, each request as `plan(n, start)` says (`n` counts the ranged
+    /// requests so far). A request without a range is refused, as the media host refuses a bare
+    /// GET, so the download takes the ranged path.
+    pub fn host(
+        content: Arc<Vec<u8>>,
+        plan: impl Fn(usize, u64) -> Serve + Send + Sync + 'static,
+    ) -> Host {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let plan = Arc::new(plan);
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let (content, plan, seen) = (content.clone(), plan.clone(), seen.clone());
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut range = None;
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                        let l = line.trim().to_ascii_lowercase();
+                        if l.is_empty() {
+                            break;
+                        }
+                        if let Some(r) = l.strip_prefix("range: bytes=")
+                            && let Some((a, b)) = r.split_once('-')
+                        {
+                            range = a.parse::<u64>().ok().zip(b.parse::<u64>().ok());
+                        }
+                        line.clear();
+                    }
+                    let mut s = stream;
+                    let Some((start, end)) = range else {
+                        let _ = s.write_all(
+                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        return;
+                    };
+                    let n = {
+                        let mut seen = seen.lock().unwrap();
+                        seen.push(start);
+                        seen.len() - 1
+                    };
+                    let total = content.len() as u64;
+                    let end = end.min(total - 1);
+                    let part = &content[start as usize..=end as usize];
+                    let serve = plan(n, start);
+                    if let Serve::Refuse(code) = serve {
+                        let _ = s.write_all(
+                            format!(
+                                "HTTP/1.1 {code} No\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            )
+                            .as_bytes(),
+                        );
+                        return;
+                    }
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Type: audio/webm\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        part.len()
+                    );
+                    if s.write_all(head.as_bytes()).is_err() {
+                        return;
+                    }
+                    match serve {
+                        Serve::Full | Serve::Refuse(_) => {
+                            let _ = s.write_all(part);
+                        }
+                        Serve::ThenStall(k) => {
+                            let _ = s.write_all(&part[..k.min(part.len())]);
+                            let _ = s.flush();
+                            std::thread::sleep(Duration::from_secs(120));
+                        }
+                        Serve::ThenDrop(k) => {
+                            let _ = s.write_all(&part[..k.min(part.len())]);
+                            let _ = s.flush();
+                            let _ = s.shutdown(std::net::Shutdown::Both);
+                        }
+                        Serve::Paced {
+                            first,
+                            piece,
+                            every_ms,
+                        } => {
+                            let (burst, rest) = part.split_at(first.min(part.len()));
+                            if s.write_all(burst).is_err() {
+                                return;
+                            }
+                            for chunk in rest.chunks(piece) {
+                                if s.write_all(chunk).is_err() {
+                                    return;
+                                }
+                                let _ = s.flush();
+                                std::thread::sleep(Duration::from_millis(every_ms));
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        Host {
+            url: format!("http://{addr}/song.webm"),
+            asked,
+        }
+    }
+
+    /// The watch on a much shorter clock, so a check takes moments.
+    pub fn quick_watch(stall_ms: u64) -> Watch {
+        Watch {
+            stall: Duration::from_millis(stall_ms),
+            window: Duration::from_millis(600),
+            trickle_share: 0.5,
+            low_water: Duration::from_secs(2),
+            progress_bytes: 64 * 1024,
+            retry_pause: Duration::from_millis(10),
+        }
+    }
+
+    /// A playback log to read back.
+    pub fn log() -> (Note, Arc<Mutex<Vec<String>>>) {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let keep = lines.clone();
+        (
+            Arc::new(move |line: &str| keep.lock().unwrap().push(line.to_owned())),
+            lines,
+        )
+    }
+
+    /// No line of the log names where the stream is.
+    pub fn assert_private(lines: &[String]) {
+        for line in lines {
+            assert!(
+                !line.contains("127.0.0.1")
+                    && !line.contains("http")
+                    && !line.contains("song.webm"),
+                "the log names the address: {line}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mock_host::{Serve, assert_private, host, log, quick_watch};
+    use super::*;
+    use std::time::Instant;
+
+    /// Bytes that differ from place to place, so a piece fetched from the wrong byte shows.
+    fn content(len: usize) -> Arc<Vec<u8>> {
+        Arc::new((0..len).map(|i| (i % 251) as u8).collect())
+    }
+
+    fn audio(url: &str, len: usize, duration_ms: u64) -> EphemeralAudio {
+        EphemeralAudio {
+            track_id: "t".into(),
+            provider: "test".into(),
+            url: url.into(),
+            mime_type: Some("audio/webm".into()),
+            content_length: Some(len as u64),
+            duration_ms: Some(duration_ms),
+            headers: Vec::new(),
+            via: "test",
+            loudness_db: None,
+        }
+    }
+
+    fn body() -> Arc<GrowBody> {
+        GrowBody::new(Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Plays as the bytes come: the decoder always at the edge of what has arrived, so nothing
+    /// is ever ahead of it (what decides whether a slow stream will run dry).
+    fn listen_at_the_edge(body: &Arc<GrowBody>) {
+        let body = Arc::clone(body);
+        std::thread::spawn(move || {
+            while !body.finished.load(Ordering::Acquire) {
+                body.read_at.store(body.len() as u64, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+    }
+
+    fn has(lines: &[String], words: &str) -> bool {
+        lines.iter().any(|l| l.contains(words))
+    }
+
+    #[test]
+    fn a_stalled_range_is_asked_again_from_the_last_byte_within_seconds() {
+        let song = content(600 * 1024);
+        let host = host(song.clone(), |n, _| {
+            if n == 0 {
+                Serve::ThenStall(128 * 1024)
+            } else {
+                Serve::Full
+            }
+        });
+        let body = body();
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        let started = Instant::now();
+        fill_grow_body(
+            audio(&host.url, song.len(), 36_000),
+            &body,
+            &tx,
+            None,
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "noticed the stall quickly, took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            host.asked(),
+            vec![0, 128 * 1024],
+            "asked again from the last byte"
+        );
+        assert!(
+            *body.data.lock().unwrap() == *song,
+            "the song arrived whole"
+        );
+        let lines = lines.lock().unwrap();
+        assert!(
+            has(
+                &lines,
+                "online stream stalled, nothing for 0.4 s at byte 131072 of 614400"
+            ),
+            "{lines:?}"
+        );
+        assert!(has(
+            &lines,
+            "asking again on the same address from byte 131072"
+        ));
+        assert!(has(&lines, "picked up again (after: stalled"), "{lines:?}");
+        assert_private(&lines);
+    }
+
+    #[test]
+    fn the_production_watch_gives_a_stall_up_in_seconds_not_the_agent_timeout() {
+        assert!(WATCH.stall <= Duration::from_secs(8));
+        assert!(WATCH.stall < RANGE_ANSWER_LIMIT && WATCH.window < RANGE_BODY_LIMIT);
+    }
+
+    #[test]
+    fn a_dropped_connection_carries_on_from_the_last_byte() {
+        let song = content(500 * 1024);
+        let host = host(song.clone(), |n, _| {
+            if n == 0 {
+                Serve::ThenDrop(100 * 1024)
+            } else {
+                Serve::Full
+            }
+        });
+        let body = body();
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        fill_grow_body(
+            audio(&host.url, song.len(), 30_000),
+            &body,
+            &tx,
+            None,
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        assert_eq!(host.asked(), vec![0, 100 * 1024]);
+        assert!(*body.data.lock().unwrap() == *song);
+        let lines = lines.lock().unwrap();
+        assert!(has(&lines, "connection broke"), "{lines:?}");
+        assert_private(&lines);
+    }
+
+    #[test]
+    fn a_refusal_partway_is_taken_up_on_a_fresh_address() {
+        let song = content(500 * 1024);
+        // The first address breaks partway, then refuses; the fresh one serves.
+        let old = host(song.clone(), |n, _| {
+            if n == 0 {
+                Serve::ThenDrop(200 * 1024)
+            } else {
+                Serve::Refuse(403)
+            }
+        });
+        let fresh = Arc::new(host(song.clone(), |_, _| Serve::Full));
+        let fresh_url = fresh.url.clone();
+        let len = song.len();
+        let refresh: Refresh = Box::new(move || Some(audio(&fresh_url, len, 30_000)));
+        let body = body();
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        fill_grow_body(
+            audio(&old.url, song.len(), 30_000),
+            &body,
+            &tx,
+            Some(refresh),
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        assert_eq!(old.asked(), vec![0, 200 * 1024], "a quick retry first");
+        assert_eq!(
+            fresh.asked(),
+            vec![200 * 1024],
+            "then a fresh address, same byte"
+        );
+        assert!(*body.data.lock().unwrap() == *song);
+        let lines = lines.lock().unwrap();
+        assert!(
+            has(&lines, "refused with HTTP 403 at byte 204800"),
+            "{lines:?}"
+        );
+        assert!(has(
+            &lines,
+            "fresh address partway (1 of 2) at byte 204800: one came"
+        ));
+        assert_private(&lines);
+    }
+
+    #[test]
+    fn a_stream_that_never_comes_back_says_so_instead_of_ending_quietly() {
+        let song = content(500 * 1024);
+        let host = Arc::new(host(song.clone(), |n, _| {
+            Serve::ThenStall(if n == 0 { 100 * 1024 } else { 0 })
+        }));
+        let url = host.url.clone();
+        let len = song.len();
+        let asked_fresh = Arc::new(AtomicU64::new(0));
+        let counted = asked_fresh.clone();
+        let refresh: Refresh = Box::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Some(audio(&url, len, 30_000))
+        });
+        let body = body();
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        let started = Instant::now();
+        let result = fill_grow_body(
+            audio(&host.url, song.len(), 30_000),
+            &body,
+            &tx,
+            Some(refresh),
+            &quick_watch(300),
+            &*note,
+        );
+        assert_eq!(result, Err(STREAM_LOST.to_owned()));
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(asked_fresh.load(Ordering::SeqCst), u64::from(MAX_REFRESHES));
+        // Retry, fresh, retry, fresh, retry: every one from the byte the first stopped at.
+        assert_eq!(
+            host.asked(),
+            vec![0, 102_400, 102_400, 102_400, 102_400, 102_400]
+        );
+        let lines = lines.lock().unwrap();
+        assert!(has(
+            &lines,
+            "gave up at byte 102400 of 512000 after 2 fresh addresses"
+        ));
+        assert_private(&lines);
+    }
+
+    #[test]
+    fn a_failed_download_plays_what_arrived_then_says_why() {
+        let body = body();
+        body.append(&[1, 2, 3]);
+        body.fail(STREAM_LOST);
+        let mut reader = GrowReader {
+            body: Arc::clone(&body),
+            pos: 0,
+        };
+        let mut buf = [0_u8; 8];
+        assert_eq!(
+            reader.read(&mut buf).unwrap(),
+            3,
+            "what arrived is still read"
+        );
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
+        assert_eq!(body.failure().as_deref(), Some(STREAM_LOST));
+    }
+
+    #[test]
+    fn a_slow_but_steady_stream_is_never_given_up() {
+        // The song needs 100 KB/s; the host sends 150 KB/s in pieces, and playback eats every
+        // byte as it comes, so nothing is ever ahead.
+        let song = content(300 * 1024);
+        let host = host(song.clone(), |_, _| Serve::Paced {
+            first: 0,
+            piece: 15 * 1024,
+            every_ms: 100,
+        });
+        let body = body();
+        listen_at_the_edge(&body);
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        fill_grow_body(
+            audio(&host.url, song.len(), 3_000),
+            &body,
+            &tx,
+            None,
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        assert_eq!(host.asked(), vec![0], "one request, never given up");
+        assert!(*body.data.lock().unwrap() == *song);
+        let lines = lines.lock().unwrap();
+        assert!(
+            !has(&lines, "trickling") && !has(&lines, "stalled"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_trickle_that_will_run_dry_is_given_up_and_asked_again() {
+        // 20 KB/s for a song that needs 100 KB/s, with nothing ahead of playback.
+        let song = content(300 * 1024);
+        let host = host(song.clone(), |n, _| {
+            if n == 0 {
+                Serve::Paced {
+                    first: 0,
+                    piece: 2 * 1024,
+                    every_ms: 100,
+                }
+            } else {
+                Serve::Full
+            }
+        });
+        let body = body();
+        listen_at_the_edge(&body);
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        fill_grow_body(
+            audio(&host.url, song.len(), 3_000),
+            &body,
+            &tx,
+            None,
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        let asked = host.asked();
+        assert_eq!(asked.len(), 2, "{asked:?}");
+        assert!(asked[1] > 0, "carried on from where the trickle got to");
+        assert!(*body.data.lock().unwrap() == *song);
+        let lines = lines.lock().unwrap();
+        assert!(has(&lines, "trickling at"), "{lines:?}");
+        assert!(has(&lines, "the song needs 100.0 KB/s"), "{lines:?}");
+        assert_private(&lines);
+    }
+
+    #[test]
+    fn a_slow_stream_well_ahead_of_playback_is_left_alone() {
+        // As slow as a trickle (2.5 KB/s for a song needing 10 KB/s), but six seconds came at
+        // once and playback is behind them: it can't run dry yet.
+        let song = content(70 * 1024);
+        let host = host(song.clone(), |_, _| Serve::Paced {
+            first: 60 * 1024,
+            piece: 256,
+            every_ms: 100,
+        });
+        let body = body();
+        let (tx, _rx) = sync_channel(8);
+        let (note, lines) = log();
+        fill_grow_body(
+            audio(&host.url, song.len(), 7_000),
+            &body,
+            &tx,
+            None,
+            &quick_watch(400),
+            &*note,
+        )
+        .unwrap();
+        assert_eq!(host.asked(), vec![0]);
+        assert!(*body.data.lock().unwrap() == *song);
+        assert!(!has(&lines.lock().unwrap(), "trickling"));
+    }
 }

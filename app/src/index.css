@@ -119,6 +119,45 @@ body {
 }
 
 /*
+  A row that scrolls sideways (components/ScrollRow.tsx): sideways only, so up and down on the
+  wheel always reaches the page; it keeps its own scrolling (nothing around it moves sideways
+  when it reaches an end); no scrollbar. With `--hrow-fade` set, its edges fade out where it has
+  more to show, and come back as it reaches that end.
+*/
+@property --hrow-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --hrow-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+.hrow {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.hrow::-webkit-scrollbar {
+  display: none;
+}
+.hrow[data-fade] {
+  mask-image: linear-gradient(90deg, transparent, #000 var(--hrow-start), #000 calc(100% - var(--hrow-end)), transparent);
+  transition: --hrow-start 0.2s ease-out, --hrow-end 0.2s ease-out;
+}
+.hrow[data-fade][data-more-start] {
+  --hrow-start: var(--hrow-fade);
+}
+.hrow[data-fade][data-more-end] {
+  --hrow-end: var(--hrow-fade);
+}
+:root[data-motion-choice="reduced"] .hrow[data-fade] {
+  transition: none;
+}
+
+/*
   Buttons: one shape (a pill), three weights, three sizes.
     .btn-primary  the one main action of a place (accent)
     .btn          a normal action (a quiet tint)

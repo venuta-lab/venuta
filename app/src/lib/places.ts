@@ -63,7 +63,8 @@ export function screenKey(p: Place): string {
   return isMusicPlace(p) ? 'music' : p
 }
 
-/** The next place along the rail for a sideways swipe, or none at its ends. */
+/** The next place along the rail, either way, or none at its ends. Not on any wheel: a sideways
+ *  wheel or touchpad scrolls the row under it instead (lib/hscroll.ts), and changes no place. */
 export function swipeFrom(p: Place, dir: 1 | -1): Place | undefined {
   const i = NUMBERED.indexOf(p)
   return i < 0 ? undefined : NUMBERED[i + dir]

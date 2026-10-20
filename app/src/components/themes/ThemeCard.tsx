@@ -72,18 +72,21 @@ export function ThemeCard(props: {
   onContextMenu?: (e: MouseEvent) => void
   /** Beside the name, when it isn't the one in use ("Add", say). */
   tag?: string
+  /** On hover: what the theme is. */
+  hint?: string
 }) {
   return (
     <button
       role="radio"
       aria-checked={props.on}
+      title={props.hint}
       onClick={props.onPick}
       onContextMenu={props.onContextMenu}
-      className="group min-w-0 text-left transition-transform duration-200 hover:-translate-y-0.5"
+      className="group min-w-0 text-left transition-transform duration-200 hover:-translate-y-0.5 focus-visible:outline-none!"
     >
       {/* The ring is the app's own accent, outside the preview (which has the theme's). */}
       <div
-        className={`keep-round rounded-xl transition-shadow ${
+        className={`keep-round rounded-xl transition-shadow group-focus-visible:outline-2 group-focus-visible:outline-offset-[3px] group-focus-visible:outline-accent group-focus-visible:outline-solid ${
           props.on ? 'shadow-[0_0_0_2px_var(--color-accent)]' : 'shadow-[0_0_0_1px_var(--edge)] group-hover:shadow-[0_0_0_1px_var(--edge-strong)]'
         }`}
       >
