@@ -221,6 +221,8 @@ pub struct Playback {
     room_owner: std::sync::atomic::AtomicU64,
     /// Where you are in your own queue, kept current (a room sets it aside, and gives it back).
     here: Arc<Mutex<Here>>,
+    /// How the player was last told to follow a room (`Some(None)`: on its own), for the log.
+    room_mode: Mutex<Option<Option<bool>>>,
 }
 
 /// Your place in the queue: the songs, the one playing and where, and how it plays.
@@ -364,6 +366,7 @@ impl Default for Playback {
             room_buttons: Arc::default(),
             room_owner: std::sync::atomic::AtomicU64::new(0),
             here: Arc::default(),
+            room_mode: Mutex::default(),
         }
     }
 }
@@ -419,6 +422,8 @@ impl Playback {
             let mut logged_error = String::new();
             // Since when the song has waited for its stream partway, to log when it plays on.
             let mut stalled_since: Option<std::time::Instant> = None;
+            // The device ran dry this many times so far (said in the log as it grows).
+            let mut dry_said: u64 = 0;
             let mut queue: Vec<QueueItem> = Vec::new();
             *slot = Some(Player::spawn(
                 OutputChoice::Device { id, exclusive },
@@ -531,26 +536,36 @@ impl Playback {
                     last = (key, s.playing, tick);
                     // A song that stops for its stream partway: when, and when it plays on, so a
                     // freeze in the log can be told from one the download explains.
+                    // What the player did for a room, and the device running dry: in the log,
+                    // written on the listening thread (never this one, which feeds the sound).
+                    for n in &s.sync_notes {
+                        let _ = keep.send(Keep::Note(describe_sync(n)));
+                    }
+                    if s.ran_dry > dry_said {
+                        let _ = keep.send(Keep::Note(format!(
+                            "the output ran dry {} more time(s), {} in all (a gap: this thread was late)",
+                            s.ran_dry - dry_said,
+                            s.ran_dry
+                        )));
+                        dry_said = s.ran_dry;
+                    }
                     match (s.stalled, stalled_since) {
                         (true, None) => {
                             stalled_since = Some(std::time::Instant::now());
-                            note_play(
-                                &format!("waiting for the stream pos_ms={}", s.position_ms),
-                                "the player",
-                            );
+                            let _ = keep.send(Keep::Note(format!(
+                                "waiting for the stream pos_ms={}",
+                                s.position_ms
+                            )));
                         }
                         (false, Some(since)) => {
                             stalled_since = None;
-                            note_play(
-                                &format!(
-                                    "done waiting for the stream pos_ms={} after {} ms playing={} error={}",
-                                    s.position_ms,
-                                    since.elapsed().as_millis(),
-                                    s.playing,
-                                    !s.error.is_empty()
-                                ),
-                                "the player",
-                            );
+                            let _ = keep.send(Keep::Note(format!(
+                                "done waiting for the stream pos_ms={} after {} ms playing={} error={}",
+                                s.position_ms,
+                                since.elapsed().as_millis(),
+                                s.playing,
+                                !s.error.is_empty()
+                            )));
                         }
                         _ => {}
                     }
@@ -1020,6 +1035,21 @@ impl Playback {
 
     /// Listening together: the room's plan for the player (`None`: on its own again).
     pub fn room_sync(&self, plan: Option<player::sync::SyncPlan>) -> Result<(), String> {
+        // In the log when the player starts or stops following a room, or changes how.
+        let mode = plan.map(|p| p.same_room);
+        if let Ok(mut was) = self.room_mode.lock()
+            && *was != Some(mode)
+        {
+            *was = Some(mode);
+            note_play(
+                match mode {
+                    Some(true) => "player: follows the room (one room: kept within a few ms)",
+                    Some(false) => "player: follows the room (apart)",
+                    None => "player: on its own again (no room plan, no correction)",
+                },
+                "listening together",
+            );
+        }
         self.send(Cmd::Sync(plan))
     }
 
@@ -1119,8 +1149,41 @@ impl Playback {
     }
 }
 
-/// What the listening thread writes: a moment heard (plays are counted from these), or where
-/// you were and how it plays.
+/// A line for the playback log about what the player did to stay with a room.
+fn describe_sync(n: &player::sync::SyncNote) -> String {
+    use player::sync::SyncNote;
+    match n {
+        SyncNote::Started { position_ms } => {
+            format!("sync: the room's song started at {position_ms} ms, on its frame")
+        }
+        SyncNote::Seek {
+            from_ms,
+            to_ms,
+            faded,
+        } => format!(
+            "sync: lined up from {from_ms} ms to {to_ms} ms ({})",
+            if *faded {
+                "faded out and in"
+            } else {
+                "from silence"
+            }
+        ),
+        SyncNote::Fine { frames } if *frames >= 0 => {
+            format!("sync: closed up {frames} frames just after a seek")
+        }
+        SyncNote::Fine { frames } => {
+            format!(
+                "sync: {} frames of silence first, just after a seek",
+                -frames
+            )
+        }
+        SyncNote::Rate { ppm: 0 } => "sync: back to the song's own rate (bit-perfect)".into(),
+        SyncNote::Rate { ppm } => format!("sync: rate {ppm:+} ppm (one room, keeping in step)"),
+    }
+}
+
+/// What the listening thread writes: a moment heard (plays are counted from these), where
+/// you were and how it plays, or a line for the playback log.
 enum Keep {
     Heard {
         folder: String,
@@ -1131,6 +1194,7 @@ enum Keep {
         duration_ms: u64,
         from: String,
     },
+    Note(String),
     Place {
         folder: String,
         queue: Option<Vec<QueueItem>>,
@@ -1147,6 +1211,7 @@ enum Keep {
 impl Keep {
     fn write(self, tracker: &mut crate::listening::Tracker) {
         match self {
+            Keep::Note(what) => note_play(&what, "the player"),
             Keep::Heard {
                 folder,
                 song,
@@ -1590,6 +1655,39 @@ mod tests {
                 (5500, "Mid".into()),
                 (10_000, "Again".into()),
                 (60_500, "Again".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn every_room_correction_reads_as_a_line_in_the_log() {
+        use player::sync::SyncNote;
+        let lines: Vec<String> = [
+            SyncNote::Started {
+                position_ms: 12_000,
+            },
+            SyncNote::Seek {
+                from_ms: 1_000,
+                to_ms: 1_900,
+                faded: true,
+            },
+            SyncNote::Fine { frames: 37 },
+            SyncNote::Fine { frames: -12 },
+            SyncNote::Rate { ppm: 300 },
+            SyncNote::Rate { ppm: 0 },
+        ]
+        .iter()
+        .map(super::describe_sync)
+        .collect();
+        assert_eq!(
+            lines,
+            [
+                "sync: the room's song started at 12000 ms, on its frame",
+                "sync: lined up from 1000 ms to 1900 ms (faded out and in)",
+                "sync: closed up 37 frames just after a seek",
+                "sync: 12 frames of silence first, just after a seek",
+                "sync: rate +300 ppm (one room, keeping in step)",
+                "sync: back to the song's own rate (bit-perfect)",
             ]
         );
     }

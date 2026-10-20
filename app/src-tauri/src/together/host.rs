@@ -269,6 +269,7 @@ impl Host {
         });
         let id = match knock {
             Knock::Refused(why) => {
+                super::trace(&format!("room: someone was refused ({why})"));
                 let _ = out.send(refuse(&why));
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 conn.close(2u32.into(), b"refused");
@@ -285,6 +286,7 @@ impl Host {
                 id
             }
             Knock::In(id) => {
+                super::trace(&format!("room: {id} is in"));
                 self.conns
                     .lock()
                     .unwrap()
@@ -396,11 +398,13 @@ impl Host {
         // A goodbye: out at once. Gone without one (dropped): away now, out after a minute
         // unless back.
         if was_conn && said_bye {
+            super::trace(&format!("room: {id} left"));
             let now = self.clock.now_us();
             let c = self.room.lock().unwrap().left(id, now);
             self.apply(c);
             return;
         }
+        super::trace(&format!("room: {id}'s connection dropped"));
         let c = if was_conn {
             self.room.lock().unwrap().away(id)
         } else {
@@ -455,6 +459,7 @@ impl Host {
 
     /// The host says no, or removes someone (and maybe blocks them).
     pub fn turn_away(&self, id: u32, block: bool, why: &str) {
+        super::trace(&format!("room: the host took {id} out (blocked: {block})"));
         let c = self.room.lock().unwrap().remove(id, block);
         let gone = self
             .waiting
@@ -476,6 +481,7 @@ impl Host {
 
     /// End the room for everyone.
     pub async fn end(&self) {
+        super::trace("room: the host ended it");
         let line = proto::line(&ToGuest::Ended {
             why: format!("{} ended the room.", self.invite.host),
         });

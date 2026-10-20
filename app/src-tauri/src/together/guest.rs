@@ -348,12 +348,14 @@ impl Guest {
             return;
         }
         self.set_stage(Stage::Reconnecting);
+        super::trace("room: the connection to the host dropped; trying again");
         for _ in 0..20 {
             tokio::time::sleep(Duration::from_secs(3)).await;
             if *self.stage.lock().unwrap() == Stage::Ended {
                 return;
             }
             if self.connect().await.is_ok() {
+                super::trace("room: back in touch with the host");
                 return;
             }
         }
@@ -377,6 +379,10 @@ impl Guest {
             }
             *stage = Stage::Ended;
         }
+        super::trace(&format!(
+            "room: over for this guest ({})",
+            why.as_deref().unwrap_or("left")
+        ));
         if let Some(why) = why {
             *self.why.lock().unwrap() = Some(why);
         }
