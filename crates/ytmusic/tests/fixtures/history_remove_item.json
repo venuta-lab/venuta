@@ -1,0 +1,9 @@
+{
+  "_note": "Shape captured read-only from a real signed-in FEmusic_history browse on 2026-10-19 (WEB_REMIX). Each date shelf is a musicShelfRenderer whose title is e.g. 'October 2026'; each row's menu holds this item. Token replaced. Sending the token to /youtubei/v1/feedback as {feedbackTokens:[token]} removes that play (ytmusicapi remove_history_items; known not to work for brand accounts).",
+  "musicShelfTitle": { "runs": [ { "text": "October 2026" } ] },
+  "menuServiceItemRenderer": {
+    "text": { "runs": [ { "text": "Remove from history" } ] },
+    "icon": { "iconType": "REMOVE_FROM_HISTORY" },
+    "serviceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-REMOVE-FROM-HISTORY" } }
+  }
+}

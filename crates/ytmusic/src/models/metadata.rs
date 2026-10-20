@@ -50,6 +50,17 @@ pub struct SongItem {
     pub added_by: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub added_by_avatars: Vec<String>,
+    /// The channel (`UC…`) a tap on that stack opens: the person who added it. One per stack,
+    /// so a stack of several people names none of theirs apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by_channel: Option<String>,
+    /// The row's votes, on a collaborative playlist that has them ([`PlaylistVote`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vote: Option<PlaylistVote>,
+    /// "Remove from history" off a history row's own menu: the token that takes this one play
+    /// out. Only `FEmusic_history` rows carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_from_history: Option<String>,
     /// The signed-in user's rating of this track, from the row's `likeStatus`. `None` when the
     /// response didn't carry one, which the UI treats the same as [`Rating::Indifferent`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +129,47 @@ pub struct LibraryToggle {
     pub add_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_token: Option<String>,
+}
+
+/// A row's votes on a collaborative playlist, off its `engagementBar`'s `votingViewModel`.
+///
+/// Like the library toggle, each way is an opaque `feedbackEndpoint` token minted with the row:
+/// a button sends `token` while it is up, and its toggled state's `undo_token` once pressed, which
+/// takes the vote back. The counts are YouTube's own words for each way your vote can stand
+/// (`compactVotes`, `…Upvoted`, `…Downvoted`), so pressing needs no arithmetic of ours.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlaylistVote {
+    /// How the signed-in account voted, as the row came.
+    pub mine: VoteChoice,
+    /// The net count YouTube gave with the row.
+    pub votes: i64,
+    /// The count to show with no vote of yours, with yours up, with yours down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_up: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_down: Option<String>,
+    pub up: VoteButton,
+    pub down: VoteButton,
+}
+
+/// One vote button's two taps: the vote, and taking it back.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoteButton {
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo_token: Option<String>,
+}
+
+/// Which way the signed-in account voted on a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VoteChoice {
+    Up,
+    Down,
+    /// No vote (`VOTE_STATUS_UNSPECIFIED`).
+    Neutral,
 }
 
 /// How the signed-in user rated a track. One type for both directions: it's what a row's
@@ -811,8 +863,11 @@ pub(crate) fn parse_list_item(node: &Value) -> Option<SongItem> {
         play_count: play_count(node),
         thumbnail: last_thumbnail(node),
         set_video_id,
+        added_by_channel: contributor_channel(node),
         added_by,
         added_by_avatars,
+        vote: playlist_vote(node),
+        remove_from_history: history_removal(node),
         rating: like_status(node),
         queued_by: None,
         queued: false,
@@ -1024,6 +1079,91 @@ fn contributors(node: &Value) -> (Option<String>, Vec<String>) {
     (label, urls)
 }
 
+/// The channel the contributor stack opens (`MUSIC_PAGE_TYPE_USER_CHANNEL`): who added the row.
+fn contributor_channel(node: &Value) -> Option<String> {
+    let stack = node.get("contributorsAvatars")?;
+    find_all(stack, "browseEndpoint")
+        .into_iter()
+        .find_map(|b| b.get("browseId")?.as_str())
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+}
+
+/// The row's votes, when it is on a collaborative playlist with voting. Both buttons must carry
+/// the token they send, or there is nothing to press: no votes then, rather than half of them.
+/// Which way you voted is each button's `isToggled`, else the state YouTube names.
+fn playlist_vote(node: &Value) -> Option<PlaylistVote> {
+    let voting = find_all(node.get("engagementBar")?, "votingViewModel")
+        .into_iter()
+        .next()?;
+    let tap = |state: Option<&Value>| {
+        find_all(state?, "feedbackEndpoint")
+            .into_iter()
+            .find_map(|f| f.get("feedbackToken")?.as_str())
+            .map(str::to_owned)
+    };
+    let button = |key: &str| {
+        let toggle = voting.get(key)?.get("toggleButtonViewModel")?;
+        let pressed = toggle
+            .get("isToggled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let button = VoteButton {
+            token: tap(toggle.get("defaultButtonViewModel"))?,
+            undo_token: tap(toggle.get("toggledButtonViewModel")),
+        };
+        Some((button, pressed))
+    };
+    let (up, up_pressed) = button("upvoteButton")?;
+    let (down, down_pressed) = button("downvoteButton")?;
+    let state = voting.get("initialState");
+    let text = |key: &str| {
+        state
+            .and_then(|s| s.get(key))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let status = state.and_then(|s| s.get("status")).and_then(Value::as_str);
+    let mine = if up_pressed || status == Some("VOTE_STATUS_UPVOTED") {
+        VoteChoice::Up
+    } else if down_pressed || status == Some("VOTE_STATUS_DOWNVOTED") {
+        VoteChoice::Down
+    } else {
+        VoteChoice::Neutral
+    };
+    let votes = state.and_then(|s| s.get("votes")).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    });
+    Some(PlaylistVote {
+        mine,
+        votes: votes.unwrap_or(0),
+        count: text("compactVotes"),
+        count_up: text("compactVotesUpvoted"),
+        count_down: text("compactVotesDownvoted"),
+        up,
+        down,
+    })
+}
+
+/// "Remove from history" off the row's menu, by its icon: the words are localised.
+fn history_removal(node: &Value) -> Option<String> {
+    find_all(node.get("menu")?, "menuServiceItemRenderer")
+        .into_iter()
+        .find(|item| {
+            item.get("icon")
+                .and_then(|i| find_first_str(i, "iconType"))
+                .as_deref()
+                == Some("REMOVE_FROM_HISTORY")
+        })
+        .and_then(|item| {
+            find_first_str(
+                item.get("serviceEndpoint")?.get("feedbackEndpoint")?,
+                "feedbackToken",
+            )
+        })
+}
+
 /// Does this row's menu carry "Remove from playlist"? The menu item is a `playlistEditEndpoint`
 /// whose action is `ACTION_REMOVE_VIDEO`; YouTube only sends it where the account may remove that
 /// item, so it is the per-row edit permission (owner, or collaborator on their own additions).
@@ -1140,6 +1280,9 @@ fn parse_panel_video(node: &Value) -> Option<SongItem> {
         set_video_id: None,
         added_by: None,
         added_by_avatars: Vec::new(),
+        added_by_channel: None,
+        vote: None,
+        remove_from_history: None,
         rating: like_status(node),
         queued_by: None,
         queued: false,
@@ -2485,6 +2628,109 @@ mod tests {
             }))
             .unwrap()
             .added_by,
+            None
+        );
+    }
+
+    /// The collaborative row as a real account got it (tokens and ids replaced).
+    fn collab_row() -> Value {
+        let root: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/collab_playlist_row.json"
+        ))
+        .unwrap();
+        root["musicResponsiveListItemRenderer"].clone()
+    }
+
+    /// Who added the song: the name and picture off the stack, and the channel a tap on it opens.
+    #[test]
+    fn a_collaborative_row_names_who_added_it_and_their_channel() {
+        let item = parse_list_item(&collab_row()).unwrap();
+        assert_eq!(item.added_by.as_deref(), Some("Akash Kore"));
+        assert_eq!(
+            item.added_by_avatars,
+            ["https://yt3.ggpht.com/fixture-adder=s48-c-k-c0x00ffffff-no-rj"]
+        );
+        assert_eq!(
+            item.added_by_channel.as_deref(),
+            Some("UCbBecQPKuJnY1eKo8dVfI0g")
+        );
+        // An ordinary row names no one, and no channel either.
+        let mut plain = collab_row();
+        plain.as_object_mut().unwrap().remove("contributorsAvatars");
+        let item = parse_list_item(&plain).unwrap();
+        assert_eq!((item.added_by, item.added_by_channel), (None, None));
+    }
+
+    /// The row's votes: the count as YouTube writes it for each way, and the token each button
+    /// sends now and when pressed again (its toggled state undoes it).
+    #[test]
+    fn a_collaborative_row_carries_its_votes_and_both_tokens_of_each_button() {
+        let vote = parse_list_item(&collab_row()).unwrap().vote.unwrap();
+        assert_eq!(
+            vote,
+            PlaylistVote {
+                mine: VoteChoice::Neutral,
+                votes: 0,
+                count: Some("0".into()),
+                count_up: Some("1".into()),
+                count_down: Some("-1".into()),
+                up: VoteButton {
+                    token: "FIXTURE-UPVOTE".into(),
+                    undo_token: Some("FIXTURE-UNDO-UPVOTE".into()),
+                },
+                down: VoteButton {
+                    token: "FIXTURE-DOWNVOTE".into(),
+                    undo_token: Some("FIXTURE-UNDO-DOWNVOTE".into()),
+                },
+            }
+        );
+        let voting = |row: &mut Value| -> Value {
+            row["engagementBar"]["engagementBarViewModel"]["actions"][0]["votingViewModel"].take()
+        };
+        let with = |f: &dyn Fn(&mut Value)| {
+            let mut row = collab_row();
+            let mut v = voting(&mut row);
+            f(&mut v);
+            row["engagementBar"]["engagementBarViewModel"]["actions"][0]["votingViewModel"] = v;
+            parse_list_item(&row).unwrap().vote
+        };
+        // A pressed button reads as your vote, whichever way; so does the state YouTube names.
+        let up = with(&|v| v["upvoteButton"]["toggleButtonViewModel"]["isToggled"] = json!(true));
+        assert_eq!(up.unwrap().mine, VoteChoice::Up);
+        let down =
+            with(&|v| v["downvoteButton"]["toggleButtonViewModel"]["isToggled"] = json!(true));
+        assert_eq!(down.unwrap().mine, VoteChoice::Down);
+        let said = with(&|v| v["initialState"]["status"] = json!("VOTE_STATUS_DOWNVOTED"));
+        assert_eq!(said.unwrap().mine, VoteChoice::Down);
+        // A button with no token to send can't vote: no votes rather than half a pair.
+        assert_eq!(with(&|v| v["downvoteButton"] = json!({})), None);
+        // A row with no voting (an ordinary playlist) has none to show.
+        let mut plain = collab_row();
+        plain.as_object_mut().unwrap().remove("engagementBar");
+        assert_eq!(parse_list_item(&plain).unwrap().vote, None);
+    }
+
+    /// A history row's own menu holds "Remove from history": its token, found by the icon (the
+    /// words are localised). Rows anywhere else have none.
+    #[test]
+    fn a_history_row_carries_its_remove_from_history_token() {
+        let item: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/history_remove_item.json"
+        ))
+        .unwrap();
+        let mut row = collab_row();
+        row["menu"] = json!({ "menuRenderer": { "items": [
+            { "menuServiceItemRenderer": item["menuServiceItemRenderer"].clone() }
+        ] } });
+        assert_eq!(
+            parse_list_item(&row)
+                .unwrap()
+                .remove_from_history
+                .as_deref(),
+            Some("FIXTURE-REMOVE-FROM-HISTORY")
+        );
+        assert_eq!(
+            parse_list_item(&collab_row()).unwrap().remove_from_history,
             None
         );
     }

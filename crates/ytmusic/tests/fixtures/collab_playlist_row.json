@@ -1,0 +1,48 @@
+{
+  "_note": "Shape captured read-only from a real signed-in YouTube Music collaborative playlist (someone else's, WEB_REMIX browse VL<id>) on 2026-10-19. Tokens and ids replaced. Row = one musicResponsiveListItemRenderer; header facepile below it.",
+  "musicResponsiveListItemRenderer": {
+    "flexColumns": [
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Don't Stop Believin'", "navigationEndpoint": { "watchEndpoint": { "videoId": "PIFUWHvSixw", "playlistId": "PLFIXTURECOLLAB", "playerParams": "iAQB8AUBsAgFmAkA", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } } } ] }, "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH" } },
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Journey", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCPKnuPciHDB8qw-wyBVQo9A", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } } } ] }, "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH" } }
+    ],
+    "playlistItemData": { "playlistSetVideoId": "56B44F6D10557CC6", "videoId": "PIFUWHvSixw" },
+    "contributorsAvatars": {
+      "avatarStackViewModel": {
+        "avatars": [
+          { "avatarViewModel": { "image": { "sources": [ { "url": "https://yt3.ggpht.com/fixture-adder=s48-c-k-c0x00ffffff-no-rj" } ], "processor": { "borderImageProcessor": { "circular": true } } }, "accessibilityText": "Akash Kore", "avatarImageSize": "AVATAR_SIZE_XS" } }
+        ],
+        "rendererContext": { "commandContext": { "onTap": { "innertubeCommand": { "browseEndpoint": { "browseId": "UCbBecQPKuJnY1eKo8dVfI0g", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL" } } } } } } }
+      }
+    },
+    "engagementBar": {
+      "engagementBarViewModel": {
+        "actions": [
+          {
+            "votingViewModel": {
+              "upvoteButton": { "toggleButtonViewModel": {
+                "defaultButtonViewModel": { "buttonViewModel": { "iconName": "OUTLINE_ARROW_SOLID_UP", "onTap": { "innertubeCommand": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-UPVOTE" } } }, "accessibilityText": "Upvote" } },
+                "toggledButtonViewModel": { "buttonViewModel": { "iconName": "ARROW_SOLID_UP", "onTap": { "innertubeCommand": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-UNDO-UPVOTE" } } }, "accessibilityText": "Upvote pressed" } },
+                "isToggled": false, "identifier": "" } },
+              "downvoteButton": { "toggleButtonViewModel": {
+                "defaultButtonViewModel": { "buttonViewModel": { "iconName": "OUTLINE_ARROW_SOLID_DOWN", "onTap": { "innertubeCommand": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-DOWNVOTE" } } }, "accessibilityText": "Downvote" } },
+                "toggledButtonViewModel": { "buttonViewModel": { "iconName": "ARROW_SOLID_DOWN", "onTap": { "innertubeCommand": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-UNDO-DOWNVOTE" } } }, "accessibilityText": "Downvote pressed" } },
+                "isToggled": false, "identifier": "" } },
+              "initialState": { "votes": 0, "status": "VOTE_STATUS_UNSPECIFIED", "compactVotes": "0", "compactVotesUpvoted": "1", "compactVotesDownvoted": "-1" },
+              "itemId": "56B44F6D10557CC6"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "headerFacepile": {
+    "avatarStackViewModel": {
+      "avatars": [
+        { "avatarViewModel": { "image": { "sources": [ { "url": "https://yt3.ggpht.com/fixture-owner=s48-c-k-c0x00000000-no-rj" } ] }, "avatarImageSize": "AVATAR_SIZE_XS" } },
+        { "avatarViewModel": { "image": { "sources": [ { "url": "https://yt3.ggpht.com/yti/fixture-member=s176-c-k-c0x00ffffff-no-rj" } ] }, "avatarImageSize": "AVATAR_SIZE_XS" } }
+      ],
+      "decoratedText": { "content": " ", "attachmentRuns": [ { "startIndex": 0, "length": 1, "element": { "type": { "imageType": { "image": { "sources": [ { "clientResource": { "imageName": "MORE_HORIZ" } } ] } } } } } ] },
+      "rendererContext": { "commandContext": { "onTap": { "innertubeCommand": { "showEngagementPanelEndpoint": { "identifier": { "tag": "PAplaylist_collaborate" } } } } } }
+    }
+  }
+}
