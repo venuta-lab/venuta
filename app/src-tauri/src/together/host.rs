@@ -110,7 +110,7 @@ impl Host {
         let clock = host.clock;
         let catalog = app.state::<Playback>().catalog();
         let tx = follow::start(Follower {
-            app: app.clone(),
+            seat: Arc::new(follow::AppSeat(app.clone())),
             root: root.clone(),
             lib,
             catalog,

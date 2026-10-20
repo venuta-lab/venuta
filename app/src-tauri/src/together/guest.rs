@@ -115,7 +115,7 @@ impl Guest {
             .ok()
             .map(|(_, l)| l);
         let tx = follow::start(Follower {
-            app: app.clone(),
+            seat: Arc::new(follow::AppSeat(app.clone())),
             root: g.root.clone(),
             lib,
             catalog: app.state::<Playback>().catalog(),
