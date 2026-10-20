@@ -54,9 +54,16 @@ What Venuta tells YouTube Music (off until you turn them on):
 - **New YouTube likes come in**: songs you like elsewhere join Liked songs in Venuta when it
   starts. Nothing is sent.
 
-Changes you make to your YouTube Music playlists in Venuta (renaming, adding, removing, voting on
-a song in a collaborative playlist, uploading a file you picked) and plays you take out of your
-YouTube Music history are sent only when you make them. Nothing is uploaded or deleted on its own.
+Changes you make to your YouTube Music account in Venuta (renaming, adding, removing, voting on
+a song in a collaborative playlist, uploading a file you picked, saving a song to your library or
+pinning it, Not interested, deleting an upload, a cover, the artists you choose) and plays or
+searches you take out of your YouTube Music history are sent only when you make them. Nothing is
+uploaded or deleted on its own.
+
+When you open the menu of an online song that was found without your account (a search with
+Signed-in search off), Venuta asks YouTube Music, as your account, for that one song's menu so
+you can save or pin it. Only the song's id is sent, never the words you searched for, and it is
+asked only when you open that menu.
 
 ## Questions
 

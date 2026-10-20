@@ -1862,6 +1862,34 @@ impl InnerTube {
         .await
     }
 
+    /// One song's own menu as the account sees it, for a song listed without one (a search sent
+    /// signed out): the signed-in `next` for that one video id, whose first row is the song with
+    /// its menu (Save to library, Pin to Listen again…). Only the song's id goes; nothing it was
+    /// found by. None when YouTube gave no menu for it.
+    pub async fn song_menu(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+    ) -> Result<Option<metadata::RowMenu>, Error> {
+        let endpoint = WatchEndpoint {
+            video_id: Some(video_id.to_owned()),
+            ..Default::default()
+        };
+        let mut body = watch_body(&endpoint, None);
+        body.insert(
+            "context".into(),
+            serde_json::to_value(self.context_for(client))?,
+        );
+        let value = self.post("next", client, &body, true).await?;
+        let next = metadata::parse_next(&value);
+        Ok(next
+            .items
+            .iter()
+            .find(|s| s.video_id == video_id || s.counterpart.as_deref() == Some(video_id))
+            .map(SongItem::menu)
+            .filter(|m| !m.is_empty()))
+    }
+
     /// The podcast channels the account follows (`FEmusic_library_non_music_audio_channels_list`,
     /// ytmusicapi `get_library_channels`): list rows, one per channel. Needs login.
     pub async fn library_channels(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
@@ -3783,6 +3811,43 @@ mod account_more {
             serde_json::json!(["FIXTURE-SELECT-ARIJIT"])
         );
         assert!(sent[1].header("cookie").is_some(), "told as the account");
+    }
+
+    // A song listed with no menu has it read on its own: the signed-in next for that one id,
+    // and the menu of the row that is that song.
+    #[tokio::test]
+    async fn one_songs_menu_is_read_signed_in_by_its_id_alone() {
+        let answer = serde_json::json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": { "watchNextTabbedResultsRenderer": { "tabs": [ { "tabRenderer": { "content": { "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+            { "playlistPanelVideoRenderer": {
+                "videoId": "BddP6PYo2gs",
+                "title": { "runs": [ { "text": "Kesariya" } ] },
+                "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": {
+                    "defaultText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+                    "defaultIcon": { "iconType": "KEEP_OFF" },
+                    "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "UNPIN" } },
+                    "toggledText": { "runs": [ { "text": "Pin to Listen again" } ] },
+                    "toggledIcon": { "iconType": "KEEP" },
+                    "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "PIN" } }
+                } } ] } }
+            } },
+            { "playlistPanelVideoRenderer": { "videoId": "other", "title": { "runs": [ { "text": "Next up" } ] } } }
+        ] } } } } } } ] } } } } });
+        let reply = answer.to_string();
+        let server = MockServer::start(move |_| (200, reply.clone()));
+        let it = it_against(&server);
+        let menu = it.song_menu(&web(), "BddP6PYo2gs").await.unwrap().unwrap();
+        let pin = menu.pin.unwrap();
+        assert!(pin.pinned);
+        assert_eq!(pin.unpin_token.as_deref(), Some("UNPIN"));
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/next?"), "{}", sent[0].path);
+        let b = body(&sent[0]);
+        assert_eq!(b["videoId"], "BddP6PYo2gs");
+        assert!(b.get("query").is_none(), "no search words go with it");
+        assert!(sent[0].header("cookie").is_some(), "as the account");
+        // A song with no menu in the answer has none.
+        assert!(it.song_menu(&web(), "nothing").await.unwrap().is_none());
     }
 
     // Podcast channels and upload artists are their own library lists.

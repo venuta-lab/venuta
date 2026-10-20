@@ -187,6 +187,20 @@ pub async fn ytm_menu_press(
     with_account(&pb, move |a, c| a.menu_press(&token, press, c)).await
 }
 
+/// One online song's own menu as the account sees it, read when its menu is opened and it was
+/// listed with none (a search sent signed out). Only the song's id goes, never the words.
+#[tauri::command]
+pub async fn ytm_song_menu(
+    pb: State<'_, Playback>,
+    track_id: String,
+) -> Result<Option<media_access::TrackMenu>, String> {
+    let id = track_id.trim().to_owned();
+    if id.is_empty() {
+        return Ok(None);
+    }
+    with_account(&pb, move |a, c| a.song_menu(&id, c)).await
+}
+
 /// The artists YouTube Music's taste builder offers ("Choose artists you like").
 #[tauri::command]
 pub async fn ytm_taste_profile(pb: State<'_, Playback>) -> Result<Vec<TasteArtist>, String> {

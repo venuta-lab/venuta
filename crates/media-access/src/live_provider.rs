@@ -1926,6 +1926,20 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, press.what(), self.it.menu_feedback(client, token))
     }
 
+    fn song_menu(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::TrackMenu>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let menu = self.account_call(
+            cancel,
+            "the song's menu",
+            self.it.song_menu(client, video_id),
+        )?;
+        Ok(menu.as_ref().and_then(crate::catalog_cards::menu_of))
+    }
+
     fn remove_past_search(
         &self,
         token: &str,

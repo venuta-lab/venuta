@@ -393,6 +393,20 @@ pub trait AccountAccess: Send + Sync {
         ))
     }
 
+    /// One song's own menu as the account sees it, for a song listed without one (a search sent
+    /// signed out): only the song's id is sent. None when YouTube Music gave none.
+    fn song_menu(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::TrackMenu>, AccessError> {
+        let _ = (video_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "song menu",
+        ))
+    }
+
     /// Take a past search out of the account's search history, by its
     /// [`crate::PastSearch::remove_token`].
     fn remove_past_search(
