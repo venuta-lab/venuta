@@ -1366,7 +1366,7 @@ fn feedback_toggle(node: &Value, turns_on: &[&str], turns_off: &[&str]) -> Optio
 /// plain `menuServiceItemRenderer` whose endpoint is a `feedbackEndpoint`. NOT_INTERESTED and
 /// DISMISS are "Not interested"; REMOVE / REMOVE_CIRCLE are YouTube's "Don't recommend …".
 /// Needs a live check: no live song menu has carried one in front of Venuta yet.
-fn menu_feedback(node: &Value) -> Vec<MenuFeedback> {
+pub(crate) fn menu_feedback(node: &Value) -> Vec<MenuFeedback> {
     const LESS: [&str; 4] = ["NOT_INTERESTED", "DISMISS", "REMOVE", "REMOVE_CIRCLE"];
     let Some(menu) = node.get("menu") else {
         return Vec::new();
