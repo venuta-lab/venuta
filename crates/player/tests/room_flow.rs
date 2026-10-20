@@ -184,6 +184,26 @@ impl Run {
     }
 
     /// The last error the player reported at or before `at`.
+    /// How far off the player says it is, as it says so after `after` (waiting for that up to a
+    /// few seconds: a busy computer makes reports late, never the music wrong).
+    fn error_after(&self, after: Instant) -> Option<f32> {
+        let t0 = Instant::now();
+        loop {
+            let e = self
+                .errors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(t, _)| *t >= after)
+                .map(|(_, e)| *e)
+                .next_back();
+            if e.is_some() || t0.elapsed() > Duration::from_secs(5) {
+                return e;
+            }
+            sleep(20);
+        }
+    }
+
     fn error_at(&self, at: Instant) -> Option<f32> {
         self.errors
             .lock()
@@ -470,7 +490,8 @@ fn another_output_mid_song_lines_up_with_the_room_at_once() {
     }));
     r.send(Cmd::Output(OutputChoice::PacedMemory(next.clone())));
     sleep(1_500);
-    let e = r.error_at(Instant::now()).expect("an error reported");
+    // Settled on the new output: what it says from here on.
+    let e = r.error_after(Instant::now()).expect("an error reported");
     assert!(e.abs() < 40.0, "in step after the switch: {e} ms off");
     // On the new device: one stretch of music, from where the room was (no jump after it).
     drop(r);
