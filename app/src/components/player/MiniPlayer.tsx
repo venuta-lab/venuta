@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadCovers, setPlayingAccent, useCovers } from '../../lib/covers'
 import { inApp } from '../../lib/engine'
 import { clock, songLength, connectPlayer, current, isOnline, jumpTo, miniPlayer, next, previous, seek, setRepeat, setShuffle, setVolume, toggle, usePlayer, type PlayerState } from '../../lib/player'
+import { canSeekNow } from '../../lib/streamWait'
 import { LikeButton } from '../LikeButton'
 import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
@@ -215,7 +216,7 @@ export function MiniPlayer() {
   const duration = s.duration_ms || song?.duration_ms || 0
   const progress = duration ? Math.min(1, s.position_ms / duration) : 0
   // While an online song is still opening there is nothing to seek in yet.
-  const seekable = s.buffering ? 0 : duration
+  const seekable = canSeekNow(s) ? duration : 0
 
   return (
     <div
@@ -317,7 +318,7 @@ export function MiniPlayer() {
                 <ThemedTrack bar={info.seekBar} pct={progress * 100} />
               </div>
             ) : (
-              <Seek value={progress} duration={duration} position={s.position_ms} canSeek={!s.buffering} />
+              <Seek value={progress} duration={duration} position={s.position_ms} canSeek={canSeekNow(s)} />
             )}
             <div className="mt-1 flex items-center justify-between">
               {s.root ? <LikeButton root={s.root} item={song} size={16} /> : <span className="w-8" />}
