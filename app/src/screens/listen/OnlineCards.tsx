@@ -7,7 +7,8 @@ import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
 import { listIdOf, playRadioAt } from '../../lib/radio'
 import { radioOfCard } from '../../lib/mixes'
-import { menuFor, onlineSongWork } from '../../lib/actions'
+import { deleteYtmUpload, menuFor, onlineSongFacts, onlineSongWork } from '../../lib/actions'
+import { isUploadAlbum } from '../../lib/ytmAsk'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
 import { useCardWidth, useNav } from './model'
@@ -48,11 +49,14 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
   // plays (a mix's endpoint, params and all); a playlist plays its songs.
   const mix = radioOfCard(c)
   const play = () => (mix ? void playRadioAt(root, mix, c.title) : void withCollection(c, (items) => void playAllItems(root, items, from)))
+  // One of your uploaded albums: it can be deleted on YouTube Music (asked first).
+  const upload = isUploadAlbum(c.collection_id)
   const menu = () =>
     menuFor(
       'album',
-      { online: true },
+      { online: true, upload },
       {
+        deleteUpload: upload ? () => void deleteYtmUpload(c.collection_id.replace(/^VL/, ''), c.title, 'album') : undefined,
         open: () => openOnlineCollection(c),
         shortcut: shortcutWork({ kind: 'online-collection', collection: c }, `“${c.title}”`),
         play,
@@ -126,7 +130,7 @@ export function OnlineSongCard({ track: t, now, onPlay, width: asked }: { track:
   const width = asked ?? shelfWidth
   const nav = useNav()
   const wide = isVideo(t)
-  const menu = () => menuFor('song', { online: true, noArtist: !t.artists.length }, onlineSongWork(nav, t, onPlay))
+  const menu = () => menuFor('song', onlineSongFacts(t), onlineSongWork(nav, t, onPlay))
   return (
     <button
       onClick={() => (now ? void toggle() : onPlay())}

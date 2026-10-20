@@ -987,6 +987,7 @@ fn album_tracks_of(page: &ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack
             } else {
                 named
             };
+            let menu = crate::catalog_cards::menu_of(&s.menu());
             RemoteTrack {
                 provider: PROVIDER.into(),
                 track_id: s.video_id.trim().to_owned(),
@@ -1000,6 +1001,7 @@ fn album_tracks_of(page: &ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack
                     .play_count
                     .as_deref()
                     .and_then(crate::catalog_cards::plays),
+                menu,
                 ..Default::default()
             }
         })
@@ -1445,6 +1447,11 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
             AccessErrorKind::Transport,
             "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
+        // A custom cover on an account YouTube won't give one: its own reason, as it is.
+        ytmusic::Error::CoverRefused => AccessError::new(
+            AccessErrorKind::InvalidInput,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover.",
+        ),
         // It answered, and said no (a row's feedback token it would not take).
         ytmusic::Error::ActionRejected => AccessError::new(
             AccessErrorKind::InvalidInput,
@@ -1472,6 +1479,7 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
         upload: row.is_upload,
         added_by: contributor_of(row),
         votes: row.vote.as_ref().map(votes_of),
+        delete_id: row.delete_upload.clone(),
     })
 }
 
@@ -1880,6 +1888,71 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, "the vote", self.it.vote(client, token))
     }
 
+    fn menu_press(
+        &self,
+        token: &str,
+        press: crate::account::MenuPress,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(cancel, press.what(), self.it.menu_feedback(client, token))
+    }
+
+    fn remove_past_search(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "taking it out of your search history",
+            self.it.remove_search_suggestion(client, token),
+        )
+    }
+
+    fn set_playlist_cover(
+        &self,
+        playlist_id: &str,
+        image: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_set_cover(client, id, image),
+        )
+    }
+
+    fn clear_playlist_cover(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_clear_cover(client, id),
+        )
+    }
+
+    fn delete_upload(
+        &self,
+        entity_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "deleting the upload",
+            self.it.delete_upload(client, entity_id),
+        )
+    }
+
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
         let client = self.client(PAGES_CLIENT)?;
         self.account_call(cancel, "the play", self.it.report_play(client, video_id))
@@ -2195,6 +2268,8 @@ impl MediaAccess for LiveCatalogAccess {
                     .map(|(hits, top)| (hits.as_slice(), top.as_ref())),
                 PROVIDER,
             );
+            // Each song's own account menu (Save to library, Pin…), from the rows as they came.
+            crate::catalog_cards::with_menus(&mut tracks, &result.raw);
             for t in &mut tracks {
                 t.artwork_url = clean_artwork_url(t.artwork_url.take());
             }
@@ -2415,7 +2490,9 @@ impl MediaAccess for LiveCatalogAccess {
                 "that artist isn't in the online catalog",
             ));
         }
-        let top_songs: Vec<RemoteTrack> = catalog_json::tracks_from_hits(&page.top_songs, PROVIDER)
+        let mut top_songs = catalog_json::tracks_from_hits(&page.top_songs, PROVIDER);
+        crate::catalog_cards::with_menus(&mut top_songs, &raw);
+        let top_songs: Vec<RemoteTrack> = top_songs
             .into_iter()
             .map(|mut t| {
                 t.artwork_url = clean_artwork_url(t.artwork_url.take());
@@ -2430,7 +2507,7 @@ impl MediaAccess for LiveCatalogAccess {
         let extras = crate::catalog_cards::artist_extras(&raw, id, songs_raw.as_ref());
         let songs = songs_raw
             .as_ref()
-            .map(|raw| catalog_json::tracks_from_hits(&catalog_json::read_hits(raw), PROVIDER))
+            .map(tracks_with_menus)
             .unwrap_or_default()
             .into_iter()
             .filter(|t| !top_songs.iter().any(|top| top.track_id == t.track_id))
@@ -2496,7 +2573,7 @@ impl MediaAccess for LiveCatalogAccess {
                 .backend
                 .browse(&playlist_browse_id(playlist_id)?, cancel)?,
         };
-        let tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let tracks = tracks_with_menus(&raw);
         let next = catalog_json::read_playlist_continuation(&raw);
         page_batch(tracks, next, cursor, CursorKind::PlaylistTracks, page.limit)
     }
@@ -2511,16 +2588,13 @@ impl MediaAccess for LiveCatalogAccess {
             .browse(&playlist_browse_id(playlist_id)?, cancel)?;
         let title = catalog_json::read_playlist_title(&raw);
         let radio = playlist_radio(&raw);
-        let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let mut tracks = tracks_with_menus(&raw);
         let mut next = catalog_json::read_playlist_continuation(&raw);
         // At most 60 more pages (6,000 songs, more than YouTube keeps in one playlist).
         for _ in 0..60 {
             let Some(token) = next.take() else { break };
             let raw = self.backend.browse_continuation(&token, cancel)?;
-            tracks.extend(catalog_json::tracks_from_hits(
-                &catalog_json::read_hits(&raw),
-                PROVIDER,
-            ));
+            tracks.extend(tracks_with_menus(&raw));
             next = catalog_json::read_playlist_continuation(&raw).filter(|t| *t != token);
         }
         Ok(RemotePlaylist {
@@ -2958,6 +3032,13 @@ fn clean_artwork_url(raw: Option<String>) -> Option<String> {
         .then(|| crate::art_url::sized_art(&url, 544))
 }
 
+/// A page's song rows read raw, each with its own account menu.
+fn tracks_with_menus(raw: &serde_json::Value) -> Vec<RemoteTrack> {
+    let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(raw), PROVIDER);
+    crate::catalog_cards::with_menus(&mut tracks, raw);
+    tracks
+}
+
 fn normalize_tracks(
     tracks: Vec<MusicTrackItem>,
     fallback_album_id: Option<&str>,
@@ -3348,6 +3429,43 @@ mod tests {
             items: rows(&[" "]),
         };
         assert!(super::history_day_of(&empty).is_none());
+    }
+
+    // An upload in the account's list carries the id that deletes it; another song carries none.
+    #[test]
+    fn an_uploaded_song_carries_the_id_that_deletes_it() {
+        let mut up = rows(&["u"]).remove(0);
+        up.is_upload = true;
+        up.delete_upload = Some("t_po_FIXTURE".into());
+        let t = super::account_track_of(&up).unwrap();
+        assert!(t.upload);
+        assert_eq!(t.delete_id.as_deref(), Some("t_po_FIXTURE"));
+        let plain = super::account_track_of(&rows(&["a"])[0]).unwrap();
+        assert_eq!(plain.delete_id, None);
+    }
+
+    // A cover YouTube won't take is said as YouTube's own reason, not as a failure to answer.
+    #[test]
+    fn a_refused_cover_says_why() {
+        let said = super::account_error(ytmusic::Error::CoverRefused, "the cover").message;
+        assert_eq!(
+            said,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover."
+        );
+    }
+
+    // A song menu's press YouTube turns down is said in its own words.
+    #[test]
+    fn a_refused_menu_press_says_what_it_was() {
+        use crate::account::MenuPress;
+        let said =
+            |p: MenuPress| super::account_error(ytmusic::Error::ActionRejected, p.what()).message;
+        assert_eq!(
+            said(MenuPress::Library),
+            "YouTube Music didn't take the library change."
+        );
+        assert_eq!(said(MenuPress::Pin), "YouTube Music didn't take the pin.");
+        assert_eq!(said(MenuPress::Feedback), "YouTube Music didn't take that.");
     }
 
     // A vote or a play YouTube turns down is said plainly; on a channel chosen, why it may be.

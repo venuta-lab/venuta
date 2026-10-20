@@ -764,6 +764,7 @@ mod tests {
                 upload: false,
                 added_by: None,
                 votes: None,
+                delete_id: None,
             })
             .collect()
     }

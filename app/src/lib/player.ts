@@ -18,6 +18,7 @@ import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 import { canSeekNow } from './streamWait'
+import { songMenus, type TrackMenu } from './ytmSongMenu'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -244,6 +245,9 @@ export interface RemoteTrack {
   album_id?: string | null
   duration_ms?: number | null
   artwork_url?: string | null
+  /** Its own YouTube Music menu, where it was listed signed in: kept by the song (lib/ytmSongMenu.ts)
+   *  so its queue row offers the same presses. Never part of the queue row itself. */
+  menu?: TrackMenu | null
 }
 
 /** Cover for an online id: catalog picture, else YouTube hqdefault when the id is a video id. */
@@ -261,8 +265,14 @@ export function onlineCoverUrl(t: { track_id: string; artwork_url?: string | nul
 }
 
 /** Build a queue row for an online track. Leaves `path`/`dir` empty so the backend treats it
- *  as remote and resolves its stream at play time. */
-export const toRemoteItem = (t: RemoteTrack): QueueItem => ({
+ *  as remote and resolves its stream at play time. Its YouTube Music menu, when it came with
+ *  one, is kept by the song for the queue's own menu. */
+export const toRemoteItem = (t: RemoteTrack): QueueItem => {
+  if (t.menu) songMenus.remember(`online:${t.provider}:${t.track_id}`, t.menu)
+  return remoteItemOf(t)
+}
+
+const remoteItemOf = (t: RemoteTrack): QueueItem => ({
   path: '',
   dir: '',
   title: t.title,

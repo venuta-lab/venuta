@@ -10,7 +10,8 @@ import { OFFLINE } from '../../lib/online'
 import { songLength, enqueueItems, playItems, toRemoteItem } from '../../lib/player'
 import { playWithRadio } from '../../lib/radio'
 import { useNav } from './model'
-import { menuFor, onlineSongWork } from '../../lib/actions'
+import { menuFor, onlineSongFacts, onlineSongWork, type Work } from '../../lib/actions'
+import type { Facts } from '../../lib/actionModel'
 import { menuFromEvent } from '../../lib/menu'
 import { dragSource } from '../../lib/drag'
 import { onlineSongs, splitOnlineSongs, withOnlineAlbum, type OnlineSearch } from './onlineSearch'
@@ -324,13 +325,16 @@ export function OnlineTrackHeader() {
   )
 }
 
-/** One online song: click plays it; Add to playlist keeps its id. `now`: it is the song playing. */
+/** One online song: click plays it; Add to playlist keeps its id. `now`: it is the song playing.
+ *  `facts` and `work`: what only the list it is in knows (an upload of yours can be deleted). */
 export function OnlineTrackRow(props: {
   track: OnlineTrack
   now?: boolean
   onPlay: () => void
   onQueue: (next: boolean) => void
   onAdd: () => void
+  facts?: Facts
+  work?: Work
 }) {
   const t = props.track
   const nav = useNav()
@@ -338,8 +342,8 @@ export function OnlineTrackRow(props: {
   const menu = () =>
     menuFor(
       'song',
-      { online: true, noArtist: !t.artists.length },
-      { ...onlineSongWork(nav, t, props.onPlay), next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd },
+      { ...onlineSongFacts(t), ...props.facts },
+      { ...onlineSongWork(nav, t, props.onPlay), next: () => props.onQueue(true), queue: () => props.onQueue(false), playlist: props.onAdd, ...props.work },
     )
   return (
     <div

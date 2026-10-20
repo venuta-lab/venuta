@@ -1,0 +1,30 @@
+{
+  "_note": "Shape of a signed-in FEmusic_library_privately_owned_tracks row (Library > Uploads > Songs) as ytmusicapi reads it (parsers/uploads.py parse_uploaded_items): the menu's last item is a menuNavigationItemRenderer whose navigationEndpoint.confirmDialogEndpoint confirm button command is musicDeletePrivatelyOwnedEntityCommand.entityId, the id delete_upload_entity sends to music/delete_privately_owned_entity. Not captured from a live answer: the delete item's place and words need a live check. Ids replaced.",
+  "musicResponsiveListItemRenderer": {
+    "flexColumns": [
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Home Recording", "navigationEndpoint": { "watchEndpoint": { "videoId": "FIXTUREUPLD", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK" } } } } } ] } } },
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Me" } ] } } },
+      { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "Demos" } ] } } }
+    ],
+    "fixedColumns": [ { "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [ { "text": "3:12" } ] } } } ],
+    "playlistItemData": { "videoId": "FIXTUREUPLD" },
+    "overlay": { "musicItemThumbnailOverlayRenderer": { "content": { "musicPlayButtonRenderer": { "playNavigationEndpoint": { "watchEndpoint": { "videoId": "FIXTUREUPLD", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK" } } } } } } } },
+    "menu": {
+      "menuRenderer": {
+        "items": [
+          { "menuServiceItemRenderer": { "text": { "runs": [ { "text": "Play next" } ] }, "icon": { "iconType": "QUEUE_PLAY_NEXT" }, "serviceEndpoint": { "queueAddEndpoint": { "queueTarget": { "videoId": "FIXTUREUPLD" } } } } },
+          { "menuNavigationItemRenderer": {
+            "text": { "runs": [ { "text": "Delete song" } ] },
+            "icon": { "iconType": "DELETE" },
+            "navigationEndpoint": { "confirmDialogEndpoint": { "content": { "confirmDialogRenderer": {
+              "title": { "runs": [ { "text": "Delete song?" } ] },
+              "dialogMessages": [ { "runs": [ { "text": "This song will be removed from YouTube Music." } ] } ],
+              "confirmButton": { "buttonRenderer": { "text": { "runs": [ { "text": "Delete" } ] }, "command": { "musicDeletePrivatelyOwnedEntityCommand": { "entityId": "t_po_FIXTUREENTITY" } } } },
+              "cancelButton": { "buttonRenderer": { "text": { "runs": [ { "text": "Cancel" } ] } } }
+            } } } }
+          } }
+        ]
+      }
+    }
+  }
+}

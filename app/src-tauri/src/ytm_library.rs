@@ -7,7 +7,7 @@
 use crate::playback::Playback;
 use media_access::{
     AccessError, AccountAccess, AccountIdentityInfo, AccountPlaylist, AccountTrack,
-    CancellationToken, FollowState, HistoryDay, LibraryShelf, Placements, PlaylistEdit,
+    CancellationToken, FollowState, HistoryDay, LibraryShelf, MenuPress, Placements, PlaylistEdit,
     RemoteSuggestion, SavedState,
 };
 use std::sync::Arc;
@@ -176,6 +176,88 @@ pub async fn ytm_vote(pb: State<'_, Playback>, token: String) -> Result<(), Stri
     with_account(&pb, move |a, c| a.vote(&token, c)).await
 }
 
+/// One press on an online song's own menu: Save to library or Remove from library, Pin to Listen
+/// again or Unpin, Not interested. The token is the one its menu holds for that way.
+#[tauri::command]
+pub async fn ytm_menu_press(
+    pb: State<'_, Playback>,
+    token: String,
+    press: MenuPress,
+) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.menu_press(&token, press, c)).await
+}
+
+/// Take one past search out of the account's search history (asked first, in the search box).
+#[tauri::command]
+pub async fn ytm_remove_past_search(pb: State<'_, Playback>, token: String) -> Result<(), String> {
+    with_account(&pb, move |a, c| a.remove_past_search(&token, c)).await
+}
+
+/// Delete one of the account's uploads, a song or an album (asked first, where it is pressed).
+#[tauri::command]
+pub async fn ytm_delete_upload(pb: State<'_, Playback>, entity_id: String) -> Result<(), String> {
+    let id = entity_id.trim().to_owned();
+    if id.is_empty() {
+        return Err("YouTube Music gave no way to delete that upload.".into());
+    }
+    with_account(&pb, move |a, c| a.delete_upload(&id, c)).await
+}
+
+/// The most a cover picture may weigh here: YouTube Music's own limit isn't published, and a
+/// photo bigger than this is far past what a playlist cover shows.
+const COVER_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Whether a picked file can be a playlist cover: a JPEG or PNG, not empty, not huge.
+fn cover_file_ok(name: &str, len: u64) -> Result<(), String> {
+    let lower = name.to_ascii_lowercase();
+    if ![".jpg", ".jpeg", ".png"].iter().any(|e| lower.ends_with(e)) {
+        return Err("A playlist cover can be a JPEG or a PNG picture.".into());
+    }
+    if len == 0 {
+        return Err(format!("{name} is empty."));
+    }
+    if len > COVER_MAX_BYTES {
+        return Err(format!("{name} is over 10 MB. Pick a smaller picture."));
+    }
+    Ok(())
+}
+
+/// Give a playlist the account owns this picture as its cover. Only the person picks which.
+#[tauri::command]
+pub async fn ytm_playlist_cover(
+    pb: State<'_, Playback>,
+    playlist_id: String,
+    path: String,
+) -> Result<(), String> {
+    let a = account(&pb)?;
+    crate::blocking(move || {
+        let p = std::path::PathBuf::from(&path);
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("That file has no name.")?
+            .to_owned();
+        let len = std::fs::metadata(&p)
+            .map_err(|e| format!("Couldn't read {name}: {e}"))?
+            .len();
+        cover_file_ok(&name, len)?;
+        let bytes = std::fs::read(&p).map_err(|e| format!("Couldn't read {name}: {e}"))?;
+        a.set_playlist_cover(&playlist_id, bytes, &CancellationToken::default())
+            .map_err(|e| e.message)
+    })
+    .await
+}
+
+/// Take a playlist's own cover away (asked first, in the page); the one YouTube Music makes
+/// from its songs again, when it said.
+#[tauri::command]
+pub async fn ytm_playlist_cover_clear(
+    pb: State<'_, Playback>,
+    playlist_id: String,
+) -> Result<Option<String>, String> {
+    with_account(&pb, move |a, c| a.clear_playlist_cover(&playlist_id, c)).await
+}
+
 /// Send one of your files to the account's uploads. Only the person picks which.
 #[tauri::command]
 pub async fn ytm_upload(pb: State<'_, Playback>, path: String) -> Result<(), String> {
@@ -285,4 +367,31 @@ pub fn forget_identity(pb: &Playback) {
 pub fn chosen_identity() -> Option<String> {
     use engine::accounts::{SystemVault, Vault};
     SystemVault.get(IDENTITY_KEY).ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cover_file_ok;
+
+    // A cover is a picture YouTube Music takes: a JPEG or a PNG, with something in it, and not a
+    // whole camera roll's worth of bytes. Said in words, before anything is sent.
+    #[test]
+    fn a_cover_is_a_jpeg_or_png_of_a_sensible_size() {
+        assert!(cover_file_ok("Road trip.JPG", 120_000).is_ok());
+        assert!(cover_file_ok("cover.jpeg", 1).is_ok());
+        assert!(cover_file_ok("cover.png", 10 * 1024 * 1024).is_ok());
+        assert_eq!(
+            cover_file_ok("cover.webp", 10).unwrap_err(),
+            "A playlist cover can be a JPEG or a PNG picture."
+        );
+        assert_eq!(
+            cover_file_ok("cover.png", 0).unwrap_err(),
+            "cover.png is empty."
+        );
+        assert!(
+            cover_file_ok("big.png", 10 * 1024 * 1024 + 1)
+                .unwrap_err()
+                .contains("over 10 MB")
+        );
+    }
 }

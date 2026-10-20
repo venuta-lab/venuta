@@ -1,4 +1,5 @@
 import { askAddSongs } from '../../components/AddToPlaylist'
+import { deleteYtmUpload } from '../../lib/actions'
 import { ytmSignIn, type OnlineSuggestion, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { current, enqueueItems, onlineEntryFrom, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
@@ -9,7 +10,8 @@ import { useOnlineCards } from './useOnlineCards'
 
 /*
   Your YouTube Music library inside Library, beside your own music: the account's albums, artists,
-  podcasts and uploads as cards, its songs as rows, each part read the first time it shows. When
+  podcasts and uploads as cards, its songs as rows, each part read the first time it shows. An
+  upload can be deleted from its menu (asked first). When
   YouTube stops taking the sign-in, one line says so and offers to sign in again; your own music
   is never touched by it.
 */
@@ -88,6 +90,8 @@ export function YtmSongs({ part, label, empty }: { part: 'songs' | 'upload_songs
                 onPlay={() => (keyOf(t) === nowKey ? void toggle() : void playItems(root, items, i, from))}
                 onQueue={(next) => void enqueueItems(root, [toRemoteItem(t)], next)}
                 onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
+                facts={{ upload: !!t.delete_id }}
+                work={{ deleteUpload: t.delete_id ? () => void deleteYtmUpload(t.delete_id ?? '', t.title, 'song') : undefined }}
               />
             ))}
           </div>

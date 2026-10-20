@@ -18,10 +18,55 @@ fn audience(line: &str) -> Option<u64> {
     parse_audience(line.rsplit('•').next().unwrap_or(line))
 }
 use crate::types::{
-    RadioChip, RadioEndpoint, RemoteAlbum, RemoteArtist, RemoteCollection, RemoteMore, RemoteRadio,
-    RemoteRelatedShelf, RemoteShelf, RemoteSuggestion, RemoteTrack, SearchSuggestions,
+    MenuFeedback, MenuToggle, PastSearch, RadioChip, RadioEndpoint, RemoteAlbum, RemoteArtist,
+    RemoteCollection, RemoteMore, RemoteRadio, RemoteRelatedShelf, RemoteShelf, RemoteSuggestion,
+    RemoteTrack, SearchSuggestions, TrackMenu,
 };
-use ytmusic::{ArtistRun, BrowseItem, SongItem};
+use ytmusic::{ArtistRun, BrowseItem, RowMenu, SongItem};
+
+/// A row's own account menu as a track's: what each press sends. None when it offers nothing (a
+/// row read signed out, or one Venuta built).
+pub(crate) fn menu_of(m: &RowMenu) -> Option<TrackMenu> {
+    let menu = TrackMenu {
+        library: m.library.as_ref().map(|l| MenuToggle {
+            on: l.in_library,
+            on_token: l.add_token.clone(),
+            off_token: l.remove_token.clone(),
+        }),
+        pin: m.pin.as_ref().map(|p| MenuToggle {
+            on: p.pinned,
+            on_token: p.pin_token.clone(),
+            off_token: p.unpin_token.clone(),
+        }),
+        feedback: m
+            .feedback
+            .iter()
+            .map(|f| MenuFeedback {
+                icon: f.icon.clone(),
+                label: f.label.clone(),
+                token: f.token.clone(),
+            })
+            .collect(),
+    };
+    (!menu.is_empty()).then_some(menu)
+}
+
+/// Tracks read by another parser (a search or a playlist page read raw) given their rows' own
+/// menus from the raw answer, by video id. A track that has one already keeps it.
+pub(crate) fn with_menus(tracks: &mut [RemoteTrack], raw: &serde_json::Value) {
+    if tracks.iter().all(|t| t.menu.is_some()) {
+        return;
+    }
+    let mut menus = std::collections::HashMap::new();
+    for row in ytmusic::models::browse::song_rows(raw) {
+        if let Some(m) = menu_of(&row.menu()) {
+            menus.entry(row.video_id.trim().to_owned()).or_insert(m);
+        }
+    }
+    for t in tracks.iter_mut().filter(|t| t.menu.is_none()) {
+        t.menu = menus.get(t.track_id.as_str()).cloned();
+    }
+}
 
 pub(crate) const PROVIDER: &str = "remote_catalog";
 
@@ -79,6 +124,7 @@ pub(crate) fn track_of_card(item: &BrowseItem) -> Option<RemoteTrack> {
         }),
         plays: item.play_count.as_deref().and_then(plays),
         video_type: item.is_video.then(|| "OMV".to_owned()),
+        menu: menu_of(&item.menu),
         ..Default::default()
     })
 }
@@ -101,6 +147,7 @@ pub(crate) fn track_of_row(s: &SongItem) -> Option<RemoteTrack> {
         }),
         plays: s.play_count.as_deref().and_then(plays),
         video_type: s.is_video.then(|| "OMV".to_owned()),
+        menu: menu_of(&s.menu()),
         ..Default::default()
     })
 }
@@ -427,6 +474,15 @@ pub(crate) fn suggestions_of(s: &ytmusic::SearchSuggestions) -> SearchSuggestion
             .filter(|q| !q.trim().is_empty())
             .collect(),
         items: s.items.iter().filter_map(suggestion_of).collect(),
+        past: s
+            .queries
+            .iter()
+            .filter(|q| q.history && !q.text.trim().is_empty())
+            .map(|q| PastSearch {
+                text: q.text.clone(),
+                remove_token: q.remove_token.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -449,6 +505,7 @@ mod tests {
             is_upload: false,
             explicit: false,
             play: None,
+            menu: Default::default(),
         }
     }
 
@@ -687,6 +744,116 @@ mod tests {
             last.items
                 .iter()
                 .all(|i| matches!(i, RemoteSuggestion::Album { .. }))
+        );
+    }
+
+    fn row_menu_fixture() -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ytmusic/tests/fixtures/library_song_row_menu.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn saved_menu() -> TrackMenu {
+        TrackMenu {
+            library: Some(MenuToggle {
+                on: true,
+                on_token: Some("FIXTURE-LIBRARY-ADD".into()),
+                off_token: Some("FIXTURE-LIBRARY-REMOVE".into()),
+            }),
+            pin: Some(MenuToggle {
+                on: false,
+                on_token: Some("FIXTURE-PIN".into()),
+                off_token: Some("FIXTURE-UNPIN".into()),
+            }),
+            feedback: Vec::new(),
+        }
+    }
+
+    // A song row read as the account brings its own menu to the track: in the library, its pin,
+    // and the tokens each press sends. A row with nothing on it brings nothing.
+    #[test]
+    fn a_song_row_brings_its_account_menu_to_the_track() {
+        let raw = row_menu_fixture();
+        let song = ytmusic::models::browse::song_rows(&raw);
+        let t = track_of_row(&song[0]).unwrap();
+        assert_eq!(t.menu, Some(saved_menu()));
+
+        let mut feedback = row("x", "X");
+        feedback.feedback = vec![ytmusic::MenuFeedback {
+            icon: "NOT_INTERESTED".into(),
+            label: "Not interested".into(),
+            token: "NI".into(),
+        }];
+        let menu = track_of_row(&feedback).unwrap().menu.unwrap();
+        assert_eq!(
+            menu.feedback,
+            vec![MenuFeedback {
+                icon: "NOT_INTERESTED".into(),
+                label: "Not interested".into(),
+                token: "NI".into(),
+            }]
+        );
+        assert_eq!(track_of_row(&row("y", "Y")).unwrap().menu, None);
+    }
+
+    // A song card on Home carries the same menu its row had.
+    #[test]
+    fn a_song_card_brings_its_account_menu_to_the_track() {
+        let raw = row_menu_fixture();
+        let song = &ytmusic::models::browse::song_rows(&raw)[0];
+        let mut c = card("song", "BddP6PYo2gs", "Kesariya", "Pritam");
+        c.menu = song.menu();
+        assert_eq!(track_of_card(&c).unwrap().menu, Some(saved_menu()));
+        assert_eq!(
+            track_of_card(&card("song", "a", "A", "B")).unwrap().menu,
+            None
+        );
+    }
+
+    // Tracks read by another parser (a search or a playlist page read raw) get their rows' menus
+    // by video id; a track the raw page doesn't list, or one that has a menu, is left as it is.
+    #[test]
+    fn tracks_read_raw_get_their_rows_menus() {
+        let raw = serde_json::json!({ "contents": [row_menu_fixture()] });
+        let plain = |id: &str| RemoteTrack {
+            provider: "youtube_music".into(),
+            track_id: id.into(),
+            title: id.into(),
+            ..Default::default()
+        };
+        let mut tracks = vec![plain("BddP6PYo2gs"), plain("other")];
+        with_menus(&mut tracks, &raw);
+        assert_eq!(tracks[0].menu, Some(saved_menu()));
+        assert_eq!(tracks[1].menu, None);
+    }
+
+    // Past searches come with the suggestions as the completions they are, and on their own
+    // with the token that takes each out; a completion is never one.
+    #[test]
+    fn past_searches_come_with_their_remove_tokens() {
+        let s = ytmusic::SearchSuggestions {
+            queries: vec![
+                ytmusic::QuerySuggestion {
+                    text: "arijit singh".into(),
+                    history: true,
+                    remove_token: Some("PAST".into()),
+                },
+                ytmusic::QuerySuggestion {
+                    text: "arijit singh songs".into(),
+                    history: false,
+                    remove_token: None,
+                },
+            ],
+            items: Vec::new(),
+        };
+        let out = suggestions_of(&s);
+        assert_eq!(out.queries, ["arijit singh", "arijit singh songs"]);
+        assert_eq!(
+            out.past,
+            vec![PastSearch {
+                text: "arijit singh".into(),
+                remove_token: Some("PAST".into()),
+            }]
         );
     }
 

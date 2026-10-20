@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { askAddSongs } from '../../components/AddToPlaylist'
+import { confirmAsk } from '../../components/Confirm'
 import { IconClose } from '../../components/Icons'
+import { askRemoveFromHistory } from '../../lib/ytmAsk'
 import { ytmHistory, ytmHistoryRemove, type YtmHistoryDay, type YtmHistoryPlay } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
@@ -17,8 +19,8 @@ import { YtmSignInAgain } from './YtmLibrary'
   played on the phone and the web, and what Venuta told it when Count plays is on (Settings,
   Online); your own files never reach it, their history stays in Venuta.
 
-  A play can be taken out with its ×: it leaves the list at once, and comes back with a word if
-  YouTube Music doesn't take it out.
+  A play can be taken out with its × (asked first: it can't be put back from here): it leaves the
+  list at once, and comes back with a word if YouTube Music doesn't take it out.
 */
 
 export function YtmHistory() {
@@ -43,6 +45,7 @@ export function YtmHistory() {
   }, [])
   const remove = async (key: string, t: YtmHistoryPlay) => {
     if (!t.remove_token) return
+    if (!(await confirmAsk(askRemoveFromHistory(t.title)))) return
     setGone((g) => new Set(g).add(key))
     try {
       await ytmHistoryRemove(t.remove_token)

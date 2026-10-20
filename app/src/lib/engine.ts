@@ -2,6 +2,7 @@
 import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core'
 import type { YtmChoices as YtmAccountChoices } from './ytmChoiceWords'
 import type { Vote } from './ytmVotes'
+import type { Press, TrackMenu } from './ytmSongMenu'
 
 export interface ScanReport {
   files_seen: number
@@ -887,6 +888,9 @@ export interface OnlineTrack {
   is_top?: boolean
   /** Its place among the unfiltered search's songs and videos (0 = first). */
   shelf_rank?: number | null
+  /** What its own YouTube Music menu offers the account, where it was listed signed in
+   *  (lib/ytmSongMenu.ts): save to that library, pin, not interested. */
+  menu?: TrackMenu | null
 }
 
 export interface OnlineAlbum {
@@ -1251,6 +1255,9 @@ export type OnlineSuggestion =
 export interface OnlineSuggestions {
   queries: string[]
   items: OnlineSuggestion[]
+  /** The ones of `queries` that are your own past searches (Signed-in search), with the token
+   *  that takes each out of your YouTube Music search history. */
+  past?: { text: string; remove_token?: string | null }[]
 }
 
 /** A mood or genre to browse, with the catalog's color for it. */
@@ -1435,6 +1442,8 @@ export interface YtmTrack extends OnlineTrack {
   added_by?: YtmContributor | null
   /** Its votes, on a collaborative playlist that has them. */
   votes?: YtmVotes | null
+  /** One of your uploads: the id that deletes it on YouTube Music. */
+  delete_id?: string | null
 }
 /** The person who added a song to a collaborative playlist, as its row shows them. */
 export interface YtmContributor {
@@ -1528,6 +1537,16 @@ export const ytmHistory = () => invoke<YtmHistoryDay[]>('ytm_history')
 export const ytmHistoryRemove = (token: string) => invoke<void>('ytm_history_remove', { token })
 /** Vote on a song of a collaborative playlist, or take the vote back: the token its button sends. */
 export const ytmVote = (token: string) => invoke<void>('ytm_vote', { token })
+/** One press on an online song's own menu: the token its menu holds for that way. */
+export const ytmMenuPress = (token: string, press: Press) => invoke<void>('ytm_menu_press', { token, press })
+/** Take one past search out of your YouTube Music search history, by its token. */
+export const ytmRemovePastSearch = (token: string) => invoke<void>('ytm_remove_past_search', { token })
+/** Delete one of your uploads on YouTube Music: a song by its `delete_id`, an album by its page id. */
+export const ytmDeleteUpload = (entityId: string) => invoke<void>('ytm_delete_upload', { entityId })
+/** Give a playlist of yours this picture (a JPEG or PNG file) as its cover on YouTube Music. */
+export const ytmPlaylistCover = (playlistId: string, path: string) => invoke<void>('ytm_playlist_cover', { playlistId, path })
+/** Take a playlist's own cover away; the one YouTube Music makes from its songs, when it said. */
+export const ytmPlaylistCoverClear = (playlistId: string) => invoke<string | null>('ytm_playlist_cover_clear', { playlistId })
 export const ytmUpload = (path: string) => invoke<void>('ytm_upload', { path })
 export const ytmIdentities = () => invoke<YtmIdentity[]>('ytm_identities')
 export const ytmUseIdentity = (id: string | null) => invoke<void>('ytm_use_identity', { id })

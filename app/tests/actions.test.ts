@@ -144,3 +144,28 @@ test('an online song in the queue goes to its album when YouTube named one', () 
   assert.ok(ids(actionsFor('queued', { online: true, onlineAlbum: true })).includes('album'))
   assert.ok(!ids(actionsFor('queued', { online: true })).includes('album'))
 })
+
+test('an online song carries its YouTube Music menu: save to that library, pin, not interested', () => {
+  const online = actionsFor('song', { online: true })
+  // Beside Add to playlist, as YouTube Music's own menu has them.
+  assert.deepEqual(online[2], ['playlist', 'ytmLibrary', 'ytmPin'])
+  assert.ok(ids(online).includes('notInterested'))
+  const local = ids(actionsFor('song', {}))
+  for (const id of ['ytmLibrary', 'ytmPin', 'notInterested'] as const) assert.ok(!local.includes(id), `a file of yours: ${id}`)
+  const queued = ids(actionsFor('queued', { online: true }))
+  for (const id of ['ytmLibrary', 'ytmPin', 'notInterested'] as const) assert.ok(queued.includes(id), `in the queue: ${id}`)
+  assert.ok(!ids(actionsFor('queued', {})).includes('ytmLibrary'))
+})
+
+test('an upload can be deleted, last and on its own; nothing else can', () => {
+  const up = actionsFor('song', { online: true, upload: true })
+  assert.deepEqual(up.at(-1), ['deleteUpload'])
+  assert.deepEqual(actionsFor('album', { online: true, upload: true }).at(-1), ['deleteUpload'])
+  for (const kind of ['song', 'album', 'queued'] as const) assert.ok(!ids(actionsFor(kind, { online: true })).includes('deleteUpload'), kind)
+})
+
+test('a podcast episode can be saved for later, beside Add to playlist', () => {
+  assert.ok(actionsFor('song', { online: true, episode: true })[2].includes('saveEpisode'))
+  assert.ok(!ids(actionsFor('song', { online: true })).includes('saveEpisode'))
+  assert.ok(ids(actionsFor('queued', { online: true, episode: true })).includes('saveEpisode'))
+})
