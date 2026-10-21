@@ -10,6 +10,8 @@ mod follow;
 mod guest;
 mod host;
 mod net;
+#[cfg(test)]
+mod net_check;
 mod net_guest;
 mod net_host;
 #[cfg(test)]
