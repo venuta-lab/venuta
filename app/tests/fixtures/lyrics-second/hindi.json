@@ -1,0 +1,510 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "आज फिर से चाँद निकला है",
+      "words": [
+        {
+          "start_ms": 1000,
+          "end_ms": 1600,
+          "text": "आज"
+        },
+        {
+          "start_ms": 1600,
+          "end_ms": 2200,
+          "text": "फिर"
+        },
+        {
+          "start_ms": 2200,
+          "end_ms": 2800,
+          "text": "से"
+        },
+        {
+          "start_ms": 2800,
+          "end_ms": 3400,
+          "text": "चाँद"
+        },
+        {
+          "start_ms": 3400,
+          "end_ms": 4000,
+          "text": "निकला"
+        },
+        {
+          "start_ms": 4000,
+          "end_ms": 4600,
+          "text": "है"
+        }
+      ],
+      "script": "Deva",
+      "roman": {
+        "text": "Aaj phir se chaand nikla hai",
+        "words": [
+          {
+            "start_ms": 1000,
+            "end_ms": 1600,
+            "text": "Aaj"
+          },
+          {
+            "start_ms": 1600,
+            "end_ms": 2200,
+            "text": "phir"
+          },
+          {
+            "start_ms": 2200,
+            "end_ms": 2800,
+            "text": "se"
+          },
+          {
+            "start_ms": 2800,
+            "end_ms": 3400,
+            "text": "chaand"
+          },
+          {
+            "start_ms": 3400,
+            "end_ms": 4000,
+            "text": "nikla"
+          },
+          {
+            "start_ms": 4000,
+            "end_ms": 4600,
+            "text": "hai"
+          }
+        ],
+        "lang": "hi-Latn",
+        "source": {
+          "Paired": "lyricsplus"
+        }
+      },
+      "translation": {
+        "text": "Tonight the moon has come out again",
+        "words": [],
+        "lang": "en",
+        "source": {
+          "Translated": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "तेरी बातों में खो गया दिल",
+      "words": [
+        {
+          "start_ms": 5000,
+          "end_ms": 5600,
+          "text": "तेरी"
+        },
+        {
+          "start_ms": 5600,
+          "end_ms": 6200,
+          "text": "बातों"
+        },
+        {
+          "start_ms": 6200,
+          "end_ms": 6800,
+          "text": "में"
+        },
+        {
+          "start_ms": 6800,
+          "end_ms": 7400,
+          "text": "खो"
+        },
+        {
+          "start_ms": 7400,
+          "end_ms": 8000,
+          "text": "गया"
+        },
+        {
+          "start_ms": 8000,
+          "end_ms": 8600,
+          "text": "दिल"
+        }
+      ],
+      "script": "Deva",
+      "roman": {
+        "text": "Teri baaton mein kho gaya dil",
+        "words": [
+          {
+            "start_ms": 5000,
+            "end_ms": 5600,
+            "text": "Teri"
+          },
+          {
+            "start_ms": 5600,
+            "end_ms": 6200,
+            "text": "baaton"
+          },
+          {
+            "start_ms": 6200,
+            "end_ms": 6800,
+            "text": "mein"
+          },
+          {
+            "start_ms": 6800,
+            "end_ms": 7400,
+            "text": "kho"
+          },
+          {
+            "start_ms": 7400,
+            "end_ms": 8000,
+            "text": "gaya"
+          },
+          {
+            "start_ms": 8000,
+            "end_ms": 8600,
+            "text": "dil"
+          }
+        ],
+        "lang": "hi-Latn",
+        "source": {
+          "Paired": "lyricsplus"
+        }
+      },
+      "translation": {
+        "text": "My heart got lost in your words",
+        "words": [],
+        "lang": "en",
+        "source": {
+          "Translated": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "सपनों की इस नगरी में हम दोनों साथ चलेंगे जब तक साँसें चलती रहेंगी",
+      "words": [
+        {
+          "start_ms": 9000,
+          "end_ms": 9257,
+          "text": "सपनों"
+        },
+        {
+          "start_ms": 9257,
+          "end_ms": 9514,
+          "text": "की"
+        },
+        {
+          "start_ms": 9514,
+          "end_ms": 9771,
+          "text": "इस"
+        },
+        {
+          "start_ms": 9771,
+          "end_ms": 10029,
+          "text": "नगरी"
+        },
+        {
+          "start_ms": 10029,
+          "end_ms": 10286,
+          "text": "में"
+        },
+        {
+          "start_ms": 10286,
+          "end_ms": 10543,
+          "text": "हम"
+        },
+        {
+          "start_ms": 10543,
+          "end_ms": 10800,
+          "text": "दोनों"
+        },
+        {
+          "start_ms": 10800,
+          "end_ms": 11057,
+          "text": "साथ"
+        },
+        {
+          "start_ms": 11057,
+          "end_ms": 11314,
+          "text": "चलेंगे"
+        },
+        {
+          "start_ms": 11314,
+          "end_ms": 11571,
+          "text": "जब"
+        },
+        {
+          "start_ms": 11571,
+          "end_ms": 11829,
+          "text": "तक"
+        },
+        {
+          "start_ms": 11829,
+          "end_ms": 12086,
+          "text": "साँसें"
+        },
+        {
+          "start_ms": 12086,
+          "end_ms": 12343,
+          "text": "चलती"
+        },
+        {
+          "start_ms": 12343,
+          "end_ms": 12600,
+          "text": "रहेंगी"
+        }
+      ],
+      "script": "Deva",
+      "roman": {
+        "text": "Sapnon ki is nagri mein hum dono saath chalenge jab tak saansein chalti rahengi",
+        "words": [
+          {
+            "start_ms": 9000,
+            "end_ms": 9257,
+            "text": "Sapnon"
+          },
+          {
+            "start_ms": 9257,
+            "end_ms": 9514,
+            "text": "ki"
+          },
+          {
+            "start_ms": 9514,
+            "end_ms": 9771,
+            "text": "is"
+          },
+          {
+            "start_ms": 9771,
+            "end_ms": 10029,
+            "text": "nagri"
+          },
+          {
+            "start_ms": 10029,
+            "end_ms": 10286,
+            "text": "mein"
+          },
+          {
+            "start_ms": 10286,
+            "end_ms": 10543,
+            "text": "hum"
+          },
+          {
+            "start_ms": 10543,
+            "end_ms": 10800,
+            "text": "dono"
+          },
+          {
+            "start_ms": 10800,
+            "end_ms": 11057,
+            "text": "saath"
+          },
+          {
+            "start_ms": 11057,
+            "end_ms": 11314,
+            "text": "chalenge"
+          },
+          {
+            "start_ms": 11314,
+            "end_ms": 11571,
+            "text": "jab"
+          },
+          {
+            "start_ms": 11571,
+            "end_ms": 11829,
+            "text": "tak"
+          },
+          {
+            "start_ms": 11829,
+            "end_ms": 12086,
+            "text": "saansein"
+          },
+          {
+            "start_ms": 12086,
+            "end_ms": 12343,
+            "text": "chalti"
+          },
+          {
+            "start_ms": 12343,
+            "end_ms": 12600,
+            "text": "rahengi"
+          }
+        ],
+        "lang": "hi-Latn",
+        "source": {
+          "Paired": "lyricsplus"
+        }
+      },
+      "translation": {
+        "text": "In this city of dreams the two of us will walk together for as long as we keep breathing",
+        "words": [],
+        "lang": "en",
+        "source": {
+          "Translated": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "हर रात तुझे याद करता हूँ",
+      "words": [
+        {
+          "start_ms": 13000,
+          "end_ms": 13600,
+          "text": "हर"
+        },
+        {
+          "start_ms": 13600,
+          "end_ms": 14200,
+          "text": "रात"
+        },
+        {
+          "start_ms": 14200,
+          "end_ms": 14800,
+          "text": "तुझे"
+        },
+        {
+          "start_ms": 14800,
+          "end_ms": 15400,
+          "text": "याद"
+        },
+        {
+          "start_ms": 15400,
+          "end_ms": 16000,
+          "text": "करता"
+        },
+        {
+          "start_ms": 16000,
+          "end_ms": 16600,
+          "text": "हूँ"
+        }
+      ],
+      "script": "Deva",
+      "roman": {
+        "text": "Har raat tujhe yaad karta hoon",
+        "words": [
+          {
+            "start_ms": 13000,
+            "end_ms": 13600,
+            "text": "Har"
+          },
+          {
+            "start_ms": 13600,
+            "end_ms": 14200,
+            "text": "raat"
+          },
+          {
+            "start_ms": 14200,
+            "end_ms": 14800,
+            "text": "tujhe"
+          },
+          {
+            "start_ms": 14800,
+            "end_ms": 15400,
+            "text": "yaad"
+          },
+          {
+            "start_ms": 15400,
+            "end_ms": 16000,
+            "text": "karta"
+          },
+          {
+            "start_ms": 16000,
+            "end_ms": 16600,
+            "text": "hoon"
+          }
+        ],
+        "lang": "hi-Latn",
+        "source": {
+          "Paired": "lyricsplus"
+        }
+      },
+      "translation": {
+        "text": "Every night I think of you",
+        "words": [],
+        "lang": "en",
+        "source": {
+          "Translated": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 17000,
+      "end_ms": 21000,
+      "text": "चल कहीं दूर चलें हम",
+      "words": [
+        {
+          "start_ms": 17000,
+          "end_ms": 17720,
+          "text": "चल"
+        },
+        {
+          "start_ms": 17720,
+          "end_ms": 18440,
+          "text": "कहीं"
+        },
+        {
+          "start_ms": 18440,
+          "end_ms": 19160,
+          "text": "दूर"
+        },
+        {
+          "start_ms": 19160,
+          "end_ms": 19880,
+          "text": "चलें"
+        },
+        {
+          "start_ms": 19880,
+          "end_ms": 20600,
+          "text": "हम"
+        }
+      ],
+      "script": "Deva",
+      "roman": {
+        "text": "Chal kahin door chalein hum",
+        "words": [
+          {
+            "start_ms": 17000,
+            "end_ms": 17720,
+            "text": "Chal"
+          },
+          {
+            "start_ms": 17720,
+            "end_ms": 18440,
+            "text": "kahin"
+          },
+          {
+            "start_ms": 18440,
+            "end_ms": 19160,
+            "text": "door"
+          },
+          {
+            "start_ms": 19160,
+            "end_ms": 19880,
+            "text": "chalein"
+          },
+          {
+            "start_ms": 19880,
+            "end_ms": 20600,
+            "text": "hum"
+          }
+        ],
+        "lang": "hi-Latn",
+        "source": {
+          "Paired": "lyricsplus"
+        }
+      },
+      "translation": {
+        "text": "Come, let us go somewhere far away",
+        "words": [],
+        "lang": "en",
+        "source": {
+          "Translated": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 21000,
+      "end_ms": 25000,
+      "text": "",
+      "words": [],
+      "script": "Zyyy",
+      "roman": null,
+      "translation": null
+    }
+  ],
+  "lang": "hi",
+  "version": 1
+}

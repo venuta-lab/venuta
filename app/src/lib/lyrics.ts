@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { inApp, lyricsFind, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
+import type { LyricsModel } from './lyricModel'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -16,6 +17,9 @@ export interface Lyrics {
   words?: [number, number, string][][]
   /** Each line's translation, when the source has one. */
   translations?: (string | null)[]
+  /** The engine's lines with their second lines (pronunciation, translation), once it sends
+   *  them (lib/lyricModel.ts); until then they are read from the arrays above. */
+  model?: LyricsModel
   /** Found online: the source's id and name, who wrote them down, and what you chose. */
   found?: { key: string; source: string; label: string; credit: string | null; choice: LyricsChoice; instrumental: boolean }
 }
