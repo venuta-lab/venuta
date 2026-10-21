@@ -10,7 +10,6 @@
 //! - [`invite`]: the invite people share: who hosts, a secret, and when it ends.
 
 pub mod clock;
-pub mod clock_map;
 pub mod invite;
 pub mod proto;
 pub mod room;
