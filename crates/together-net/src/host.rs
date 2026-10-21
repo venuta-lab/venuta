@@ -164,18 +164,15 @@ impl HostSession {
                 why: why.to_owned(),
             })
         };
-        if protocol != together::PROTOCOL {
-            let _ = net::send_line(&mut send, &refuse("Your Venuta and the host's are different versions. Update both, then join again.")).await;
-            let _ = send.finish();
-            return;
-        }
-        if !self.invite.open_at(net::unix_now()) {
-            let _ = net::send_line(
-                &mut send,
-                &refuse("This room's invite has ended. Ask for a new one."),
-            )
-            .await;
-            let _ = send.finish();
+        let early = if protocol != together::PROTOCOL {
+            Some("Your Venuta and the host's are different versions. Update both, then join again.")
+        } else if !self.invite.open_at(net::unix_now()) {
+            Some("This room's invite has ended. Ask for a new one.")
+        } else {
+            None
+        };
+        if let Some(why) = early {
+            refuse_at_the_door(&conn, send, &refuse(why)).await;
             return;
         }
         let knock = self.room.lock().unwrap().knock(&key, &name, &proof);
@@ -555,4 +552,21 @@ impl HostSession {
         }
         let _ = send.finish();
     }
+}
+
+/// How long a refused guest has to read why before the host closes the connection.
+const REFUSAL_READ: Duration = Duration::from_secs(2);
+
+/// Refuse someone before they knock: why, the stream finished, and the connection closed only
+/// once the guest has it (it is acknowledged, then the guest lets go, or a moment passes).
+/// Letting go of the connection straight after writing loses the line.
+async fn refuse_at_the_door(conn: &Connection, mut send: iroh::endpoint::SendStream, line: &[u8]) {
+    if net::send_line(&mut send, line).await.is_ok() && send.finish().is_ok() {
+        let _ = tokio::time::timeout(REFUSAL_READ, async {
+            let _ = send.stopped().await;
+            conn.closed().await;
+        })
+        .await;
+    }
+    conn.close(2u32.into(), b"refused");
 }

@@ -5,355 +5,8 @@
 //! nothing online), with a plain peer on the other side speaking the wire protocol, or the
 //! other session itself.
 
-use iroh::endpoint::{ConnectionError, SendStream};
-use iroh::{Endpoint, SecretKey};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use together::invite::Invite;
-use together::proto::{self, Action, Role, RoomView, Song, ToGuest, ToHost};
-use together::room::Room;
-use together_net::guest::{GuestHooks, GuestSession, Stage};
-use together_net::host::{Get, HostHooks, HostSession};
-use together_net::net::{self, News, Reach};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-const SECRET: &str = "00112233445566778899aabbccddeeff";
-/// How long anything here may take before a test gives up (generous: the machine is busy).
-const WAIT: Duration = Duration::from_secs(20);
-
-fn local() -> Reach {
-    Reach {
-        local_only: true,
-        ..Reach::default()
-    }
-}
-
-fn key(n: u8) -> SecretKey {
-    SecretKey::from_bytes(&[n; 32])
-}
-
-fn online(id: &str) -> Song {
-    Song {
-        key: format!("online:{id}"),
-        title: format!("Song {id}"),
-        artists: vec!["Tester".into()],
-        album: None,
-        duration_ms: Some(180_000),
-        isrc: None,
-        mbid: None,
-        online_id: Some(id.into()),
-        host_file: false,
-        format: None,
-        artwork_url: None,
-        added_by: None,
-    }
-}
-
-fn host_song(hex: &str) -> Song {
-    Song {
-        key: format!("host:{hex}"),
-        online_id: None,
-        host_file: true,
-        format: Some("flac".into()),
-        ..online("aaaaaaaaaaa")
-    }
-}
-
-const FILE_KEY: &str = "host:0123456789abcdef0123456789abcdef";
-const OTHER_KEY: &str = "host:fedcba9876543210fedcba9876543210";
-
-/// Bytes that say where they are (so a range shows which part came).
-fn counting(n: usize) -> Vec<u8> {
-    (0..n).map(|i| (i % 251) as u8).collect()
-}
-
-/// What the app around a session was told, in order.
-#[derive(Debug, Clone, PartialEq)]
-enum Told {
-    Changed,
-    Knocked(String),
-    Trace(String),
-    News(News),
-    Note(String),
-    View(RoomView),
-}
-
-/// The app around a session, as a record of what it was told.
-#[derive(Default)]
-struct App {
-    told: Mutex<Vec<Told>>,
-    files: Mutex<HashMap<String, (PathBuf, String)>>,
-    covers: Mutex<HashMap<String, PathBuf>>,
-}
-
-impl App {
-    fn tell(&self, t: Told) {
-        self.told.lock().unwrap().push(t);
-    }
-    fn told(&self) -> Vec<Told> {
-        self.told.lock().unwrap().clone()
-    }
-    fn news(&self) -> Vec<News> {
-        self.told()
-            .into_iter()
-            .filter_map(|t| match t {
-                Told::News(n) => Some(n),
-                _ => None,
-            })
-            .collect()
-    }
-    fn traces(&self) -> Vec<String> {
-        self.told()
-            .into_iter()
-            .filter_map(|t| match t {
-                Told::Trace(s) => Some(s),
-                _ => None,
-            })
-            .collect()
-    }
-    fn notes(&self) -> Vec<String> {
-        self.told()
-            .into_iter()
-            .filter_map(|t| match t {
-                Told::Note(s) => Some(s),
-                _ => None,
-            })
-            .collect()
-    }
-    async fn until(&self, what: &str, f: impl Fn(&[Told]) -> bool) {
-        let end = Instant::now() + WAIT;
-        while !f(&self.told()) {
-            assert!(
-                Instant::now() < end,
-                "waited for {what}; told: {:#?}",
-                self.told()
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
-}
-
-impl HostHooks for App {
-    fn changed(&self) {
-        self.tell(Told::Changed);
-    }
-    fn knocked(&self, name: &str) {
-        self.tell(Told::Knocked(name.into()));
-    }
-    fn trace(&self, what: &str) {
-        self.tell(Told::Trace(what.into()));
-    }
-    fn news(&self, news: News) {
-        self.tell(Told::News(news));
-    }
-    fn file(&self, key: &str) -> Option<(PathBuf, String)> {
-        self.files.lock().unwrap().get(key).cloned()
-    }
-    fn cover(&self, key: &str) -> Option<PathBuf> {
-        self.covers.lock().unwrap().get(key).cloned()
-    }
-}
-
-impl GuestHooks for App {
-    fn changed(&self) {
-        self.tell(Told::Changed);
-    }
-    fn trace(&self, what: &str) {
-        self.tell(Told::Trace(what.into()));
-    }
-    fn note(&self, what: &str) {
-        self.tell(Told::Note(what.into()));
-    }
-    fn news(&self, news: News) {
-        self.tell(Told::News(news));
-    }
-    fn view(&self, _guest: &Arc<GuestSession>, view: &RoomView) {
-        self.tell(Told::View(view.clone()));
-    }
-    fn name(&self) -> String {
-        "Ali".into()
-    }
-}
-
-/// Wait for something to be so.
-async fn until(what: &str, f: impl Fn() -> bool) {
-    let end = Instant::now() + WAIT;
-    while !f() {
-        assert!(Instant::now() < end, "waited for {what}");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
-// --- A host, and a plain guest speaking the protocol to it -------------------------------
-
-struct TestHost {
-    s: Arc<HostSession>,
-    app: Arc<App>,
-    invite: Invite,
-}
-
-async fn host(songs: Vec<Song>) -> TestHost {
-    host_until(songs, net::unix_now() + 3_600).await
-}
-
-async fn host_until(songs: Vec<Song>, until: u64) -> TestHost {
-    let reach = local();
-    let ep = net::endpoint(&reach, true, None).await.unwrap();
-    let ticket = net::ticket(&ep, &reach).await;
-    let invite = Invite {
-        to: ticket,
-        secret: SECRET.into(),
-        until,
-        host: "Asha".into(),
-    };
-    let app = Arc::new(App::default());
-    let s = HostSession::new(
-        ep,
-        Room::new("Asha", SECRET, songs),
-        invite.clone(),
-        app.clone(),
-    );
-    s.run();
-    TestHost { s, app, invite }
-}
-
-fn hello(invite: &Invite, key: &SecretKey, name: &str) -> ToHost {
-    ToHost::Hello {
-        protocol: together::PROTOCOL,
-        name: name.into(),
-        proof: invite.proof(&key.public().to_string()),
-        app: "Venuta test".into(),
-    }
-}
-
-/// A guest that speaks the wire protocol and nothing more.
-struct Raw {
-    ep: Endpoint,
-    conn: iroh::endpoint::Connection,
-    send: SendStream,
-    lines: net::Lines,
-}
-
-impl Raw {
-    async fn dial(invite: &Invite, key: SecretKey) -> Raw {
-        let ep = net::endpoint(&local(), false, Some(key)).await.unwrap();
-        let t: iroh_tickets::endpoint::EndpointTicket = invite.to.parse().unwrap();
-        let conn = tokio::time::timeout(WAIT, ep.connect(t.endpoint_addr().clone(), net::ALPN))
-            .await
-            .unwrap()
-            .unwrap();
-        let (send, recv) = conn.open_bi().await.unwrap();
-        Raw {
-            ep,
-            conn,
-            send,
-            lines: net::Lines::new(recv),
-        }
-    }
-
-    /// Connect and knock as person `n`, by `name`.
-    async fn knock(invite: &Invite, n: u8, name: &str) -> Raw {
-        let mut r = Raw::dial(invite, key(n)).await;
-        r.say(&hello(invite, &key(n), name)).await;
-        r
-    }
-
-    async fn say(&mut self, m: &ToHost) {
-        net::send_line(&mut self.send, &proto::line(m))
-            .await
-            .unwrap();
-    }
-
-    /// The next message from the host (`None`: the host finished the stream).
-    async fn hear(&mut self) -> Option<ToGuest> {
-        tokio::time::timeout(WAIT, self.lines.next())
-            .await
-            .expect("a message in time")
-            .ok()
-            .flatten()
-            .map(|l| proto::read::<ToGuest>(&l).expect("a message the guest can read"))
-    }
-
-    /// Everything the host sends before it answers this ping (it answers in order, so this is
-    /// everything it sent before reading the ping).
-    async fn until_pong(&mut self, id: u32) -> Vec<ToGuest> {
-        self.say(&ToHost::Ping { id, t1: 0 }).await;
-        let mut got = Vec::new();
-        loop {
-            match self.hear().await {
-                Some(ToGuest::Pong { id: p, .. }) if p == id => return got,
-                Some(m) => got.push(m),
-                None => panic!("the stream ended before the pong; got {got:?}"),
-            }
-        }
-    }
-
-    /// The next message that isn't a room view (the room's tick sends those when it likes).
-    async fn hear_past_rooms(&mut self) -> Option<ToGuest> {
-        loop {
-            match self.hear().await {
-                Some(ToGuest::Room { .. }) => continue,
-                m => return m,
-            }
-        }
-    }
-
-    /// How the host closed the connection: its code and reason.
-    async fn closed(&self) -> (u64, Vec<u8>) {
-        match tokio::time::timeout(WAIT, self.conn.closed())
-            .await
-            .expect("closed in time")
-        {
-            ConnectionError::ApplicationClosed(c) => (c.error_code.into_inner(), c.reason.to_vec()),
-            other => panic!("closed otherwise: {other:?}"),
-        }
-    }
-
-    /// Ask for a file (or a cover) on a stream of its own: the header line, then the bytes.
-    async fn get(&self, get: &Get) -> (serde_json::Value, Vec<u8>) {
-        let (mut send, recv) = self.conn.open_bi().await.unwrap();
-        net::send_line(&mut send, &proto::line(get)).await.unwrap();
-        send.finish().unwrap();
-        let mut lines = net::Lines::new(recv);
-        let head = tokio::time::timeout(WAIT, lines.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        let mut bytes = Vec::new();
-        tokio::time::timeout(WAIT, lines.into_inner().read_to_end(&mut bytes))
-            .await
-            .unwrap()
-            .unwrap();
-        (serde_json::from_slice(&head).unwrap(), bytes)
-    }
-}
-
-/// A guest let in by the host: the welcome and the room after it read.
-async fn member(h: &TestHost, n: u8, name: &str) -> Raw {
-    let mut r = Raw::knock(&h.invite, n, name).await;
-    match r.hear().await {
-        Some(ToGuest::Waiting) => {}
-        other => panic!("not waiting: {other:?}"),
-    }
-    let id = {
-        let room = h.s.room.lock().unwrap();
-        room.view(true)
-            .waiting
-            .iter()
-            .find(|(_, w)| w == name)
-            .map(|(id, _)| *id)
-            .expect("at the door")
-    };
-    h.s.admit(id);
-    match r.hear_past_rooms().await {
-        Some(ToGuest::Welcome { you, .. }) => assert_eq!(you, id),
-        other => panic!("not welcomed: {other:?}"),
-    }
-    r
-}
+mod common;
+use common::*;
 
 // --- The door ------------------------------------------------------------------------------
 
@@ -447,23 +100,14 @@ async fn the_host_can_let_people_in_without_asking_and_one_joining_mid_start_get
     );
 }
 
-/// Refused at the door before a knock (another version, an ended invite). Today the host writes
-/// its refusal and lets go of the connection at once, before the line is surely out: the
-/// refusal is often lost, and the guest sees only its connection end.
-async fn refused_before_the_knock(r: &mut Raw, why: &str) -> Option<ToGuest> {
-    let heard = r.hear().await;
-    assert!(
-        heard.is_none() || heard == Some(ToGuest::Refused { why: why.into() }),
-        "{heard:?}"
-    );
-    let closed = tokio::time::timeout(WAIT, r.conn.closed())
-        .await
-        .expect("closed in time");
-    assert!(
-        !matches!(closed, ConnectionError::ApplicationClosed(ref c) if c.error_code.into_inner() != 0),
-        "let go of, not closed with a code: {closed:?}"
-    );
-    heard
+/// Refused at the door before a knock (another version, an ended invite): the guest reads why,
+/// the stream ends, and the host closes the connection as for any refusal. (Before, the host let
+/// go of the connection as soon as it had written why, and the guest often never read it: it
+/// only saw the connection end, and tried again.)
+async fn refused_before_the_knock(r: &mut Raw, why: &str) {
+    assert_eq!(r.hear().await, Some(ToGuest::Refused { why: why.into() }));
+    assert_eq!(r.hear().await, None, "and the stream ends");
+    assert_eq!(r.closed().await, (2, b"refused".to_vec()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -805,14 +449,13 @@ async fn ending_the_room_tells_everyone_then_closes() {
     assert_eq!(ali.hear_past_rooms().await, ended);
     assert_eq!(ben.hear().await, ended, "the door too");
     assert!(h.s.ep.is_closed());
-    // The host's own player is stopped. (As the endpoint closes, members' connections end and
-    // they are marked away: today those views still go out after the stop.)
+    // The host's own player is stopped. (As the endpoint closes, the connections end: people
+    // at the door are let go of and members marked away, and today those views still go out
+    // after the stop.)
     let news = h.app.news();
     let stop = news.iter().position(|n| *n == News::Stop).expect("stopped");
     assert!(
-        news[stop + 1..]
-            .iter()
-            .all(|n| matches!(n, News::Room(v) if v.members.iter().all(|m| m.host || m.away))),
+        news[stop + 1..].iter().all(|n| matches!(n, News::Room(_))),
         "{news:#?}"
     );
     assert!(
@@ -925,95 +568,6 @@ async fn an_empty_file_is_its_size_and_nothing_more() {
         .await;
     assert_eq!(head, serde_json::json!({"size": 0, "mime": "audio/flac"}));
     assert!(bytes.is_empty());
-}
-
-// --- A guest, and a plain host speaking the protocol to it ----------------------------------
-
-/// A host that speaks the wire protocol and nothing more.
-struct RawHost {
-    ep: Endpoint,
-    invite: Invite,
-}
-
-/// One connection to it: the guest's first stream.
-struct Visit {
-    conn: iroh::endpoint::Connection,
-    send: SendStream,
-    lines: net::Lines,
-}
-
-impl RawHost {
-    async fn new(until: u64) -> RawHost {
-        let reach = local();
-        let ep = net::endpoint(&reach, true, None).await.unwrap();
-        let ticket = net::ticket(&ep, &reach).await;
-        RawHost {
-            ep,
-            invite: Invite {
-                to: ticket,
-                secret: SECRET.into(),
-                until,
-                host: "Asha".into(),
-            },
-        }
-    }
-
-    async fn visit(&self) -> Visit {
-        let conn = tokio::time::timeout(WAIT, async {
-            self.ep.accept().await.unwrap().await.unwrap()
-        })
-        .await
-        .expect("a guest in time");
-        let (send, recv) = conn.accept_bi().await.unwrap();
-        Visit {
-            conn,
-            send,
-            lines: net::Lines::new(recv),
-        }
-    }
-}
-
-impl Visit {
-    async fn hear(&mut self) -> Option<ToHost> {
-        tokio::time::timeout(WAIT, self.lines.next())
-            .await
-            .expect("a message in time")
-            .ok()
-            .flatten()
-            .map(|l| proto::read::<ToHost>(&l).expect("a message the host can read"))
-    }
-    /// The next message that isn't a ping.
-    async fn hear_past_pings(&mut self) -> Option<ToHost> {
-        loop {
-            match self.hear().await {
-                Some(ToHost::Ping { .. }) => continue,
-                m => return m,
-            }
-        }
-    }
-    async fn say(&mut self, m: &ToGuest) {
-        net::send_line(&mut self.send, &proto::line(m))
-            .await
-            .unwrap();
-    }
-}
-
-fn a_room() -> RoomView {
-    Room::new("Asha", SECRET, vec![online("aaaaaaaaaaa")]).view(false)
-}
-
-async fn guest_of(invite: &Invite, keys: &std::path::Path) -> (Arc<GuestSession>, Arc<App>) {
-    let app = Arc::new(App::default());
-    let g = GuestSession::join(
-        invite.clone(),
-        &local(),
-        keys,
-        "Venuta 9.9.9".into(),
-        app.clone(),
-    )
-    .await
-    .unwrap();
-    (g, app)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1539,4 +1093,26 @@ async fn a_guest_joining_again_with_its_key_is_the_same_person_and_after_a_goodb
     let other = tempfile::tempdir().unwrap();
     let (g2, _) = guest_of(&h.invite, other.path()).await;
     until("the other in", || *g2.me.lock().unwrap() == Some(3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_guest_refused_at_the_door_is_told_why_and_does_not_try_again() {
+    // The host's invite has ended; the guest's copy still says it is open.
+    let h = host_until(vec![], 1).await;
+    let mut invite = h.invite.clone();
+    invite.until = net::unix_now() + 3_600;
+    let keys = tempfile::tempdir().unwrap();
+    let (g, app) = guest_of(&invite, keys.path()).await;
+    until("ended", || *g.stage.lock().unwrap() == Stage::Ended).await;
+    assert_eq!(
+        g.why.lock().unwrap().as_deref(),
+        Some("This room's invite has ended. Ask for a new one.")
+    );
+    assert!(
+        !app.told().contains(&Told::Trace(
+            "room: the connection to the host dropped; trying again".into()
+        )),
+        "{:#?}",
+        app.told()
+    );
 }
