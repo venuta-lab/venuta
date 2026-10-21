@@ -256,10 +256,14 @@ Changes:
 | Change | Why |
 |---|---|
 | The published value is a `ClockMap { epoch, local_ref, host_ref, rate, bound }`, a line, not an offset | Today `offset()` returns the offset at the last sample time, ignoring skew until the next sample; a line extrapolates correctly between samples |
-| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit | An honest error bound, shown in the panel and used to widen the controller's band (4.9) |
-| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s | The path changed, so the old asymmetry no longer holds |
-| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map | A machine that slept, a clock reset; old samples describe another world |
-| Ready after 8 samples or 1 s of burst, whichever is later | A ready clock has a known bound |
+| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit, + three standard errors of the fit's slope times how far it is carried, + what is still to slew | An honest error bound, shown in the panel and used to widen the controller's band (4.9). The two added terms keep it honest between the fit's samples and while slewing (gate 7.2: within the bound in 99% of samples; 100% in every simulated scenario but the sleeps) |
+| Samples are kept per path: a path change or a reconnect starts a new one, and the line is fitted through one path's samples only | Each path has its own asymmetry, so a fit across two paths turns the jump in bias into a false skew |
+| The target is the best-founded estimate: the current path's, or the last good one carried forward while its bound (growing by its slope's uncertainty each second) is still smaller | The true offset is a property of the two clocks, not of the path: a slower path or a standing queue (bufferbloat past the 64-sample window) never pulls the clock away from a line the quick samples gave, and a quicker path is taken at once |
+| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s. Only a jump to a better-founded estimate can last, so a change to a quicker path steps after 2 s and a change to a slower one keeps the old line | The old path's bias no longer holds when the new path's samples are better founded |
+| An answer whose timestamps rule out the kept line (its offset outside `t3 - t4` to `t2 - t1`) counts as a path change | The clocks moved against each other (a small clock jump): the samples before describe another relation |
+| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map, measured as how far the map is outside what the sample's own timestamps allow (so a 2 s late answer never starts one) | A machine that slept, a clock reset; old samples describe another world. The session also starts one itself on waking (a clock that counts sleep, like QPC, shows no jump). The fitted skew is kept across epochs (the same two crystals) |
+| Ready after 8 samples spread over 900 ms of burst (the burst's 20 pings take 950 ms) | A ready clock has a known bound |
+| Before the 30 s fit, the mean of the 3 quickest is carried forward at the last known skew, and the quickest are chosen by delay / 2 + age x the rate's uncertainty; a line through the shorter time is used instead when its bound is smaller | Unchanged, the flat mean lags a host 150 ppm fast by over a millisecond for the first 30 s, as the slew can't follow it; on one Wi-Fi the rate is known well within seconds |
 
 **How it reaches the player.** The session publishes the `ClockMap` into a shared snapshot (an `ArcSwap` or a seqlock). The player's sync tick reads it every 20 ms. Nobody re-plans anything when the estimate improves: the error the controller sees moves by at most 50 µs per second, which the controller takes up by rate without a sound.
 
@@ -742,7 +746,24 @@ An automatic hand-over when the host crashes (to the member present longest) is 
 
 ## 5. Interface contracts
 
-These are the contracts agents build against. They are sketches: names and shapes, not final code. Each has a fake (in the simulation harness) so both sides can be built and tested apart.
+These are the contracts agents build against. Each has a fake (in the simulation harness) so both sides can be built and tested apart. WP0 wrote them as code; the code is the reference, and the sketches below say what it settled where it differs from the first sketch.
+
+### 5.0 Where the contracts live
+
+`player` depends on `together` (both stay platform-neutral; `together` stays free of networking and audio). The conductor (in `together`) and the player's room program (WP5) both need `RoomHandle`, which takes a `ClockMapHandle` and an `Alignment`, so the shared declarations sit in the lower crate.
+
+| Contract | File |
+|---|---|
+| 5.1 Time, real and simulated | `crates/together/src/time.rs` (re-exported as `player::sim`) |
+| 5.2 Output | `crates/player/src/output_api.rs`; `SimOutput` in `crates/player/src/sim.rs`; the conformance suite in `crates/player/src/conformance.rs` |
+| 5.3 Voices and render commands | `crates/player/src/voice_api.rs` |
+| 5.4 The room's hold on the player | `crates/together/src/room_player.rs`; fakes in `crates/together/src/fakes.rs` |
+| 5.5 Clock map | `crates/together/src/clock_map.rs` (the struct and handle); `host_of` and `local_of` are an `impl ClockMap` written by WP6 in `clock.rs` |
+| 4.4 Entries, anchor, next | `crates/together/src/anchor.rs` |
+| 5.6 Transport | `crates/together/src/transport.rs`; `SimTransport` in `crates/together/src/sim_net.rs` |
+| 5.8 Alignment | `crates/together/src/align.rs` (the types); `envelope` and `align` are WP10's, in `player::analysis` |
+| 5.9 The window's view | `crates/together/src/view.rs`; fixtures in `app/tests/fixtures/together-views.json` |
+| 7.1 Detectors | `crates/audio-check` (a dev crate, no dependency on the player) |
 
 ### 5.1 Time
 
@@ -751,8 +772,19 @@ These are the contracts agents build against. They are sketches: names and shape
 pub trait MonoClock: Send + Sync {
     fn now_ns(&self) -> u64;
 }
-// Real: from Instant (QPC on Windows, CLOCK_MONOTONIC on Android). Sim: virtual time.
+// Real: RealClock reads QPC on Windows and CLOCK_MONOTONIC on Unix and Android directly, in ns
+// since boot (not from Instant, which has no absolute reading). Sim: SimClock, virtual time.
+
+/// A clock things can wait on.
+pub trait Timebase: MonoClock {
+    fn at(&self, t_ns: u64, f: Box<dyn FnOnce() + Send>);   // a timer thread, or the simulation's own thread
+    fn pass(&self, d_ns: u64);                              // sleep, or run the simulation that far
+    fn sleeper(&self) -> Sleeper;                           // one waiting thread: sleep_until(t_ns), now_ns()
+}
+// SkewedClock: another computer's clock over a shared one (offset, ppm, jumps for a sleep).
 ```
+
+`SimClock` runs in lockstep: `pass` runs callbacks and wakes sleeping threads in time order, one at a time, and waits for each woken thread to sleep again before time moves. So a simulated hour runs in seconds and the same way on a busy machine. A thread on a `SimClock` waits only through its `Sleeper` and polls channels between sleeps; a thread that blocks on anything else stops the run with a clear panic after 30 s.
 
 ### 5.2 Output
 
@@ -779,7 +811,15 @@ pub trait Render: Send {
 }
 ```
 
-The simulated output (`SimOutput`) takes: clock skew (±ppm), wake jitter (0 to 3 ms), position granularity (1 or 10 ms), missed periods, a held buffer that plays on after a stop without a reset, and a lost-device event on demand. The output conformance suite (open, render a sine for 10 s, presentation monotonic and within 1 ms of the frames rendered, silence before stop) runs on every implementation: Sim in CI, WASAPI and AAudio on hardware.
+Settled in WP0:
+
+- `Mode` is today's `output::Mode`; its `Memory` variant is the simulated output's (no separate `Sim`).
+- `OpenRequest { rate, channels, bits }` is the music's format; `OutputError` is `Busy`, `Lost`, `Unsupported`, `State`, `Other`; `OutputEvent` is `Lost`, `DefaultChanged`, `Xrun { at }`.
+- Device frames count from 0 at every `start`, and a start never plays anything held from before. `stop` returns at once with the renderer; what the output holds (the silence tail the renderer wrote before the call) still plays out, then the device stops.
+- `Presentation` is a sequence lock over atomics: `publish(PresentationPair { frame, time_ns })` by the output, `read() -> Option<PresentationPair>` by anyone, `clear()` at a start.
+- `events()` gives a new receiver on each call; the older one hears no more.
+
+The simulated output (`SimOutput`) takes: clock skew (±ppm), wake jitter (0 to 3 ms), position granularity (1 or 10 ms), missed periods, a held buffer that plays on after a stop without a reset, and a lost-device event on demand. It runs on any `Timebase`: virtual time for fast, repeatable runs, or real time. What its DAC played is kept on a tape (every frame, with the underrun silence), with when each was heard. The output conformance suite (`player::conformance::run`: open, render a sine for 10 s, `at` contiguous, presentation monotonic and within 1 ms of the frames rendered, the pace of the DAC, render never called after stop and the tail played, a restart from frame 0, close and open again) runs on every implementation: Sim in CI, WASAPI and AAudio on hardware (ignored in CI). On the simulated output it also checks the tape: the sine clean by the sine lock, silence before stop, nothing stale after a restart; the held-buffer fault makes it fail, which is its own self-test.
 
 ### 5.3 Voices and render commands
 
@@ -804,6 +844,14 @@ pub struct Marker { pub frame: u64, pub voice: VoiceId, pub content: f64, pub ra
 ```
 
 The rate target is an atomic (`AtomicU64` holding `f64` bits, ppm), written by the sync tick.
+
+Settled in WP0:
+
+- `voice_ring(voice, blocks) -> (VoiceFeed, VoiceTap)` makes every block at once. `VoiceFeed::take_empty`, `VoiceFeed::push`, `VoiceTap::pop`, `VoiceTap::give_back`; none of them waits, and neither side blocks on these queues (a blocked receiver would make the render thread's send take a lock to wake it), so the decode thread polls for empty blocks.
+- `Block` also carries `channels`; `BLOCK_FRAMES` is 1024 and `MAX_CH` is 8.
+- `StartAt` and `SwitchAt` carry the new voice's `tap`: that is how a voice reaches the renderer. `Drop` and `Chain` send the old tap or chain back as `Returned`, so nothing is freed on the render thread.
+- `render_link(commands, markers) -> (RenderLink, RenderEnds)`: the bounded queues for commands, markers and returned things.
+- `Splice::Crossfade` starts at the switch frame; `FadeOutThenIn` and `EndFade` end the old voice's fade at it.
 
 ### 5.4 The room's hold on the player
 
@@ -830,6 +878,15 @@ pub trait RoomHandle: Send {
 
 The fake `RoomHandle` records calls and answers readiness on a script, so the conductor and sessions are built before the player side exists. The fake `RoomPlayer` on the other side is a script of room calls, so the player side is built before the sessions exist.
 
+Settled in WP0:
+
+- Both traits are generic over the player's item type: `RoomPlayer<I>`, `RoomHandle<I>` (`together` never looks inside an item; the player's is `player::engine::Item`).
+- `RoomPlayStatus { ready: Option<PrepId>, next_ready: Option<EntryId>, entry: Option<EntryId>, sub_state: SubState, error_us: Option<i64>, bound_us: Option<u32>, copy: Option<CopyClass>, ppm: f64 }`.
+- `SubState` is the table of 4.3; `Suspended` carries a `Suspension`: `Buffering`, `OutputLost`, `Interrupted`, and `Sleeping` (4.10's sleep case, which the table left out).
+- `SyncMode { EveryDevice, Apart }` is the player's; `ListenMode { OneSpeaker, EveryDevice, Apart }` is the person's (the wire and the window), and `ListenMode::sync()` gives `None` for a remote.
+- `EntryId`, `PrepId`, `Anchor`, `Next`, `Transition` and `Purpose` are in `anchor.rs`, serialised as protocol 3 will carry them (`Transition` as `{"kind": "crossfade", "ms": 4000}`).
+- The fakes: `FakeRoomPlayer` / `FakeRoomHandle` record every call in order and answer `status` from a script (ready after a delay, unable, a sub-state at a time); `RoomScript` plays timed room calls (by host time) against any `RoomPlayer` on a `Timebase`.
+
 ### 5.5 Clock map
 
 ```rust
@@ -841,6 +898,8 @@ impl ClockMap {
 }
 pub type ClockMapHandle = Arc<ArcSwap<Option<ClockMap>>>;   // None until the clock is ready
 ```
+
+`rate` is host µs per local µs (the line's slope, about 1.0). `clock_map::handle()` makes an empty handle. The struct and handle are declared in `clock_map.rs`; `host_of` and `local_of` are the clock package's (WP6).
 
 ### 5.6 Transport
 
@@ -854,6 +913,15 @@ pub trait Transport: Send + Sync {
 ```
 
 `SimTransport` grows from `room_check.rs`'s `Link`: delay, jitter, asymmetry, loss, bufferbloat episodes, a path change (a step in delay and asymmetry), and cuts.
+
+Settled in WP0:
+
+- `ControlMsg` is one JSON line as `proto::line` makes it (`ControlMsg::of(&m)`, `msg.read::<T>()` checked by `proto::read`), so the transport doesn't change with the protocol.
+- Every `Message` and `Datagram` event carries `at_ns`, the receiver's monotonic time as the transport read it, so `t4` (and the host's `t2`) is exact however late the session takes the event. The host stamps `t3` as it calls `send_datagram`.
+- `ClockDatagram::{encode, decode}` is the 29-byte format of 4.1.
+- `TransportEvent` is `Message`, `Datagram`, `Joined`, `Lost`, `PathChanged { peer, path: PathInfo { direct, relay, rtt_us } }`. `events()` gives a new receiver on each call.
+- `MediaStream { total, body: Box<dyn MediaRead> }` with `read_chunk() -> BoxFuture<Result<Option<Vec<u8>>, Gone>>`; `BoxFuture` is a plain `Pin<Box<dyn Future + Send>>`, so no runtime is assumed. The host's side serves through a `MediaServer` it builds its transport with.
+- `SimNet` holds the simulated peers and their links (`Way`: delay, jitter, loss, bandwidth, bufferbloat; `set_way` is a path change; `cut`, `restore`), on any `Timebase`, each peer reading its own `MonoClock`. Control lines arrive in order (a lost packet arrives a retransmit later), datagrams independently (lost, and possibly reordered); a cut peer is declared `Lost` after the idle timeout. It records every send, for checks.
 
 ### 5.7 Protocol v3 (wire)
 
@@ -883,6 +951,8 @@ pub fn align(reference: &Envelope, mine: &Envelope) -> Alignment;
 pub struct Alignment { pub offset_us: i64, pub class: CopyClass, pub confidence: f32 }
 pub enum CopyClass { Exact, Measured, Approximate }
 ```
+
+The types are in `together::align` (the envelope goes over the `env:` stream, and `RoomHandle::prepare` takes an `Alignment`), with `Alignment::EXACT` and `Alignment::APPROXIMATE` for the two cases that need no measure. The two functions are the alignment package's, in `player::analysis`.
 
 ### 5.9 The window's view
 
@@ -1428,9 +1498,10 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Next song armed | 20 s before the boundary (at once for songs under 20 s) | 4.4 |
 | Exact gapless window | 5 ms | 4.4 |
 | Clock pings | burst 20 x 50 ms (connect, reconnect, path change), then 1 Hz | 4.2 |
-| Clock window, fit | 64 samples; fit after 8 over 30 s; slew 50 µs/s | 4.2 |
-| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change | 4.2 |
-| New clock epoch | a sample over 500 ms off | 4.2 |
+| Clock window, fit | 64 samples, per path; fit after 8 over 30 s (sooner when better founded); slew 50 µs/s | 4.2 |
+| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change; only to a better-founded estimate | 4.2 |
+| New clock epoch | a sample over 500 ms outside what its timestamps allow of the map; on waking | 4.2 |
+| Clock ready | 8 samples over 900 ms | 4.2 |
 | Sync tick | 20 ms, rooms only | 4.9 |
 | Error filter | median of 10, then 1 s average | 4.9 |
 | Same room band, gain | in at 1 ms, out at 0.3 ms; 250 ppm per ms | 4.9 |

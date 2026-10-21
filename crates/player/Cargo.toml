@@ -21,6 +21,8 @@ serde = { workspace = true }
 ureq.workspace = true
 rand = "0.9"
 md-5 = "0.10"
+# The Listen together contracts (time, clock map, the room's hold on the player).
+together = { path = "../together" }
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.19"
