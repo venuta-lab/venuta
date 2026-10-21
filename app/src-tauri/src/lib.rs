@@ -944,13 +944,14 @@ async fn undo_edit(journal: String, jobs: State<'_, Jobs>) -> CmdResult<usize> {
     .await
 }
 
-/// Save lyrics timed by tapping along as the song's .lrc (`lines`: ms and words), undoable in
-/// Activity (returns the journal, for Undo). The song's own file is never touched.
+/// Save lyrics timed by tapping along as the song's .lrc (`lines`: when each begins and its
+/// words, with the word times and translation of lyrics being re-timed), undoable in Activity
+/// (returns the journal, for Undo). The song's own file is never touched.
 #[tauri::command]
 async fn save_synced_lyrics(
     root: String,
     path: String,
-    lines: Vec<(u64, String)>,
+    lines: Vec<engine::lrc::Timed>,
     jobs: State<'_, Jobs>,
 ) -> CmdResult<String> {
     files_settled(&jobs)?;

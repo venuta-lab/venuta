@@ -1,7 +1,12 @@
 //! Timed lyrics you make yourself (tapping along in the lyrics maker): written as a `.lrc`
 //! beside the song, which every player reads, as a change you can undo in Activity. The song's
 //! own file is never touched.
+//!
+//! Re-timing lyrics that had more than line times keeps the rest: each line's word times move
+//! with it (or stay as they were when its time is the same), its translation stays beside it,
+//! and the file's header tags stay at the top.
 
+use crate::lyrics::{LyricLine, Second, SecondSource, Word, read_lrc, write_lrc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -11,22 +16,87 @@ pub fn is_timed(text: &str) -> bool {
     crate::lyrics::is_timed(text)
 }
 
-/// `[01:02.34]words`, one line each, in time order.
-pub fn format(lines: &[(u64, String)]) -> String {
-    let mut sorted: Vec<&(u64, String)> = lines.iter().collect();
-    sorted.sort_by_key(|(ms, _)| *ms);
-    let mut out = String::new();
-    for (ms, text) in sorted {
-        let cs = ms / 10;
-        out.push_str(&format!(
-            "[{:02}:{:02}.{:02}]{}\n",
-            cs / 6000,
-            (cs / 100) % 60,
-            cs % 100,
-            text.trim()
-        ));
+/// One line the lyrics maker saves: when it begins now and its words, and, when it re-times
+/// lyrics that had them, when it began before, its words' times and its translation.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum Timed {
+    /// `[ms, words]`.
+    Pair(u64, String),
+    Line {
+        ms: u64,
+        text: String,
+        /// When the line began before it was re-timed.
+        #[serde(default)]
+        from_ms: Option<u64>,
+        /// Its words' times as they were.
+        #[serde(default)]
+        words: Vec<Word>,
+        #[serde(default)]
+        translation: Option<String>,
+    },
+}
+
+impl Timed {
+    /// As a lyric line: its words moved by as much as the line moved, or as they were when its
+    /// time is the same. Words that no longer spell the line (its words were changed) go.
+    pub fn line(&self) -> LyricLine {
+        let (ms, text, from, words, translation) = match self {
+            Timed::Pair(ms, text) => (*ms, text.as_str(), None, &[][..], None),
+            Timed::Line {
+                ms,
+                text,
+                from_ms,
+                words,
+                translation,
+            } => (
+                *ms,
+                text.as_str(),
+                *from_ms,
+                &words[..],
+                translation.as_deref(),
+            ),
+        };
+        let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let spelled = squash(&words.iter().map(|w| w.text.as_str()).collect::<String>());
+        let words = if words.is_empty() || spelled != squash(text) {
+            Vec::new()
+        } else {
+            let by = ms as i64 - from.unwrap_or(ms) as i64;
+            let moved = |t: u64| (t as i64 + by).max(0) as u64;
+            words
+                .iter()
+                .map(|w| Word {
+                    start_ms: moved(w.start_ms),
+                    end_ms: moved(w.end_ms),
+                    text: w.text.clone(),
+                })
+                .collect()
+        };
+        LyricLine {
+            start_ms: ms,
+            text: text.trim().to_owned(),
+            words,
+            translation: translation
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(|t| Second {
+                    text: t.to_owned(),
+                    words: Vec::new(),
+                    lang: crate::lyrics::translation_lang(t, "file"),
+                    source: SecondSource::Lyrics("file".into()),
+                }),
+            ..Default::default()
+        }
     }
-    out
+}
+
+/// The `.lrc` text for timed lines: `[01:02.34]words` in time order, with their word times and
+/// translations, under the header tags given (`[ar:…]`; never an offset, as the times already
+/// have it).
+pub fn format(tags: &[(String, String)], lines: &[Timed]) -> String {
+    let lines: Vec<LyricLine> = lines.iter().map(Timed::line).collect();
+    write_lrc(tags, &lines)
 }
 
 /// One saved timing, so it can be undone: the `.lrc` (library-relative) and what it held before
@@ -75,7 +145,7 @@ pub fn save_in(
     journals: &Path,
     root: &Path,
     song: &str,
-    lines: &[(u64, String)],
+    lines: &[Timed],
 ) -> Result<PathBuf, String> {
     if lines.is_empty() {
         return Err("There are no timed lines to save.".into());
@@ -93,6 +163,12 @@ pub fn save_in(
             Err(e) => (None, Some(e.into_bytes())),
         },
     };
+    // The header tags the file had stay (its offset is in the times now).
+    let tags = before
+        .as_deref()
+        .map(|t| read_lrc(t).tags)
+        .unwrap_or_default();
+    let text = format(&tags, lines);
     std::fs::create_dir_all(journals).map_err(|e| e.to_string())?;
     let mut millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -110,16 +186,16 @@ pub fn save_in(
         file: file.clone(),
         before,
         before_bytes,
-        after: Some(format(lines)),
+        after: Some(text.clone()),
     };
     let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
     std::fs::write(&journal, format!("{line}\n")).map_err(|e| e.to_string())?;
-    write_atomic(&path, format(lines).as_bytes())?;
+    write_atomic(&path, text.as_bytes())?;
     Ok(journal)
 }
 
 /// [`save_in`] with Venuta's own journal folder (Activity lists it from there).
-pub fn save(root: &Path, song: &str, lines: &[(u64, String)]) -> Result<PathBuf, String> {
+pub fn save(root: &Path, song: &str, lines: &[Timed]) -> Result<PathBuf, String> {
     save_in(&crate::apply::journal_dir(), root, song, lines)
 }
 
@@ -181,15 +257,15 @@ mod tests {
     #[test]
     fn timed_lines_are_written_in_order_to_the_hundredth() {
         let lines = vec![
-            (61_390, "Second".to_owned()),
-            (5_000, " First ".to_owned()),
-            (0, String::new()),
+            Timed::Pair(61_390, "Second".to_owned()),
+            Timed::Pair(5_000, " First ".to_owned()),
+            Timed::Pair(0, String::new()),
         ];
         assert_eq!(
-            format(&lines),
+            format(&[], &lines),
             "[00:00.00]\n[00:05.00]First\n[01:01.39]Second\n"
         );
-        assert!(is_timed(&format(&lines)));
+        assert!(is_timed(&format(&[], &lines)));
         assert!(!is_timed("Just words\nwith no times"));
         assert!(!is_timed("[ar:Someone]\nwords"));
     }
@@ -199,7 +275,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (root, journals) = (dir.path().join("Music"), dir.path().join("journal"));
         std::fs::create_dir_all(root.join("A")).unwrap();
-        let lines = vec![(1_000, "One".to_owned())];
+        let lines = vec![Timed::Pair(1_000, "One".to_owned())];
         // No .lrc before: undo removes the new one.
         let j = save_in(&journals, &root, "A/01 - One.flac", &lines).unwrap();
         assert_eq!(
@@ -229,11 +305,68 @@ mod tests {
         assert_eq!(std::fs::read(root.join("A/01 - One.lrc")).unwrap(), latin);
         // Two timings: the older can't be undone first, as that would lose the newer one.
         let first = save_in(&journals, &root, "A/01 - One.flac", &lines).unwrap();
-        let newer = vec![(2_000, "One".to_owned())];
+        let newer = vec![Timed::Pair(2_000, "One".to_owned())];
         let second = save_in(&journals, &root, "A/01 - One.flac", &newer).unwrap();
         assert!(undo(&first).is_err());
         undo(&second).unwrap();
         undo(&first).unwrap();
         assert_eq!(std::fs::read(root.join("A/01 - One.lrc")).unwrap(), latin);
+    }
+
+    #[test]
+    fn re_timing_keeps_word_times_translations_and_headers_and_only_the_lrc_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, journals) = (dir.path().join("Music"), dir.path().join("journal"));
+        std::fs::create_dir_all(root.join("A")).unwrap();
+        let song = b"fLaC not really audio";
+        std::fs::write(root.join("A/01 - One.flac"), song).unwrap();
+        let before = "[ar:Someone]\n[offset:+0]\n[00:01.00]<00:01.00>Word <00:01.40>by <00:01.90>word<00:02.50>\n[00:01.00]Palabra\n[00:05.00]<00:05.00>Still <00:05.30>here\n";
+        std::fs::write(root.join("A/01 - One.lrc"), before).unwrap();
+        // The lines as the maker has them (read the shared way), the first moved half a second.
+        let read = read_lrc(before);
+        let timed: Vec<Timed> = read
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| Timed::Line {
+                ms: l.start_ms + if i == 0 { 500 } else { 0 },
+                text: l.text.clone(),
+                from_ms: Some(l.start_ms),
+                words: l.words.clone(),
+                translation: l.translation.as_ref().map(|t| t.text.clone()),
+            })
+            .collect();
+        let j = save_in(&journals, &root, "A/01 - One.flac", &timed).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("A/01 - One.lrc")).unwrap(),
+            "[ar:Someone]\n[00:01.50]<00:01.50>Word <00:01.90>by <00:02.40>word<00:03.00>\n[00:01.50]Palabra\n[00:05.00]<00:05.00>Still <00:05.30>here<00:08.30>\n"
+        );
+        assert_eq!(
+            std::fs::read(root.join("A/01 - One.flac")).unwrap(),
+            song,
+            "never the song"
+        );
+        // The journal keeps what was there, so undo puts it back exactly.
+        undo(&j).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("A/01 - One.lrc")).unwrap(),
+            before
+        );
+        // Words that no longer spell the line go; a plain pair still saves.
+        let changed = Timed::Line {
+            ms: 0,
+            text: "Other words".into(),
+            from_ms: Some(0),
+            words: read.lines[0].words.clone(),
+            translation: None,
+        };
+        assert!(changed.line().words.is_empty());
+        let pair: Timed = serde_json::from_str(r#"[1000, "One"]"#).unwrap();
+        assert_eq!(pair, Timed::Pair(1000, "One".into()));
+        let line: Timed = serde_json::from_str(
+            r#"{"ms": 1500, "text": "One", "from_ms": 1000, "words": [{"start_ms": 1000, "end_ms": 1400, "text": "One"}], "translation": null}"#,
+        )
+        .unwrap();
+        assert_eq!(line.line().words[0].start_ms, 1500);
     }
 }
