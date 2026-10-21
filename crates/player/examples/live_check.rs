@@ -6,7 +6,7 @@
 //! cargo run -p player --example live_check -- tone [--inject drop|repeat|step|gap|cut|gain] [--level-db -30] [--seconds 3] [--device ID]
 //! cargo run -p player --example live_check -- capture [--out FILE.wav] [--seconds N] [--device ID | --input ID] [--solo SOLO.wav] [--log playback.log]
 //! cargo run -p player --example live_check -- analyze FILE.wav [--solo SOLO.wav] [--log playback.log] [--report FILE.json]
-//! cargo run -p player --example live_check -- compare ROOM.wav SOLO.wav
+//! cargo run -p player --example live_check -- compare ROOM.wav SOLO.wav [--seconds 60]
 //! cargo run -p player --example live_check -- log playback.log [--from UNIX_MS] [--to UNIX_MS]
 //! ```
 //!
@@ -45,7 +45,11 @@ fn main() {
             None => usage(),
         },
         "compare" => match (args.positional.first(), args.positional.get(1)) {
-            (Some(a), Some(b)) => compare(Path::new(a), Path::new(b)),
+            (Some(a), Some(b)) => compare(
+                Path::new(a),
+                Path::new(b),
+                args.get("seconds").and_then(|s| s.parse().ok()),
+            ),
             _ => usage(),
         },
         "log" => match args.positional.first() {
@@ -443,14 +447,22 @@ fn analyze_file(path: &Path, args: &Args) -> i32 {
     }
 }
 
-fn compare(a: &Path, b: &Path) -> i32 {
-    let (wa, wb) = match (wav::read(a), wav::read(b)) {
+/// Two captures sample for sample; with `seconds`, only that long from the first one's first sound
+/// (a stretch both played straight, before any press).
+fn compare(a: &Path, b: &Path, seconds: Option<f64>) -> i32 {
+    let (mut wa, wb) = match (wav::read(a), wav::read(b)) {
         (Ok(x), Ok(y)) => (x, y),
         (Err(e), _) | (_, Err(e)) => {
             eprintln!("{e}");
             return 2;
         }
     };
+    if let Some(s) = seconds {
+        let ch = usize::from(wa.channels.max(1));
+        let first = wa.data.iter().position(|v| v.abs() > 1e-4).unwrap_or(0) / ch;
+        let end = (first + (s * f64::from(wa.rate)) as usize).min(wa.frames());
+        wa.data.truncate(end * ch);
+    }
     match align::compare(&wa, &wb) {
         Ok(c) => {
             let r = f64::from(wa.rate);

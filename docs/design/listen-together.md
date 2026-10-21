@@ -80,7 +80,8 @@ The "Basis" column says where a number comes from: **measured** (a published mea
 | Rate change heard as pitch | 1 cent = 578 ppm; threshold about 5 to 6 cents | measured (note 03) |
 | Bluetooth A2DP delay | 34 to 241 ms by codec and headset (SBC 173, aptX 166, aptX LL 34, Sony WH-1000XM5 241) | measured (RTINGS) |
 | Android timestamps include Bluetooth delay | yes, from the sink's delay report | source (AOSP), to be checked on the handheld |
-| Windows `GetPosition` includes Bluetooth delay | unknown | must be measured (WP14) |
+| Windows `GetPosition` includes Bluetooth delay | unknown | must be measured: WP14 built the tool and the steps (`docs/qa/output-delay.md`); no Bluetooth output was at hand, so the owner's run decides |
+| Windows `GetPosition` includes the delay of an output's sound effects (vendor effect modules such as Nahimic) | not on the owner's laptop speakers: their loopback, taken after the effects, has the sound about 104 ms after `GetPosition`'s time (three runs, spread under 2 ms) | measured (WP14, against the loopback); a microphone run confirms |
 | Sound card drift | 50 to 100 ppm typical (3 to 6 ms a minute) | measured (roc, Roon, note 03) |
 | Same-room buffers in products | Cast 500 ms, Snapcast 1000 ms, Sonos line-in 2000 ms default | measured (note 07 A8) |
 | Apart thresholds in open peers | Metrolist soft 50 ms, hard 750 ms; Teleparty 2.5 s; Jellyfin 500 ms | source (note 07 A6, A7) |
@@ -563,7 +564,7 @@ Today the engine's one thread calls `wait()` and `write()` on a `Device`. AAudio
 #### Latency compensation
 
 - **What the device knows** is in the presentation pair: the frame reaching the DAC at a moment. This already includes the device's buffer and the engine.
-- **What it may not know** (Bluetooth's codec and the headset's buffer, 34 to 241 ms measured; an AV receiver) is a per-output extra delay, kept by output endpoint id and picked up again on an output switch. Whether Windows' `GetPosition` already includes the Bluetooth delay is not documented (Mozilla saw unpredictable delays on switches), so it is measured, not assumed: on Windows on the owner's hardware first (WP14), and in every room by calibration (4.14). On Android the Bluetooth stack subtracts the headset's own delay report from the timestamp (AOSP source), which is checked on the handheld.
+- **What it may not know** (Bluetooth's codec and the headset's buffer, 34 to 241 ms measured; an AV receiver; an output's sound effects, about 100 ms on the owner's laptop speakers by WP14's loopback measure) is a per-output extra delay, kept by output endpoint id and picked up again on an output switch. Whether Windows' `GetPosition` already includes the Bluetooth delay is not documented (Mozilla saw unpredictable delays on switches), so it is measured, not assumed: on Windows on the owner's hardware first (WP14), and in every room by calibration (4.14). On Android the Bluetooth stack subtracts the headset's own delay report from the timestamp (AOSP source), which is checked on the handheld.
 - **Apart**, the extra delay matters little (it is under a call's own latency) and the slider (-500 to +500 ms) is enough; the panel says "Bluetooth: about 200 ms behind" when a value is set. **Every device** mode needs it measured (4.14).
 - **Heard time** of the frame at the DAC at local time t is `t + extra`. Lyrics and the spectrum follow the same heard time, so they match what you hear in a room and alone.
 
@@ -702,8 +703,8 @@ As in the rest of section 4. Each person on their own best copy, apart controlle
 | Platform and output | Where the delay comes from | Status |
 |---|---|---|
 | Android, any output | the timestamp already includes the Bluetooth headset's own delay report (AOSP source) | to check on the handheld |
-| Windows, wired and built-in | `GetPosition` with its QPC stamp covers the device buffer and the engine | measured by the first pass in simulation; checked on hardware in WP14 |
-| Windows, Bluetooth | unknown whether `GetPosition` includes it | WP14 measures it on the owner's hardware with the acoustic rig; if it does not, the extra delay must be set |
+| Windows, wired and built-in | `GetPosition` with its QPC stamp covers the device buffer and the engine, but not (on the owner's laptop) the output's sound effects | checked on hardware in WP14: steady (positions on a line within 0.03 ms), but the laptop speakers' effects add about 100 ms it does not count (`docs/qa/output-delay.md`; a microphone run confirms). An output with sound effects is treated like Bluetooth: its delay must be measured or set |
+| Windows, Bluetooth | unknown whether `GetPosition` includes it | WP14's `output_delay` measures it against a microphone, with the owner's headphones and speaker (`docs/qa/output-delay.md`); if it does not, the extra delay must be set |
 | AV receivers, HDMI, USB DACs with buffers | not reported anywhere | set by the person |
 
 **The setting now** (decision D13): an extra delay per output, keyed by the output's endpoint id, remembered, and picked up on every switch to that output. The slider runs -500 to +500 ms. Two helpers make it quick:
@@ -1176,7 +1177,7 @@ Run by hand before each release, with two copies of Venuta (two machines, or two
 
 **Pass:** 0 clicks in every capture; N0 host output bit-identical to solo (loopback compared with a solo run); N1 acoustic p95 within 2 ms, N1b within 5 ms; the throttled guest buffers alone and the host never pauses; after each ending everyone's own queue resumes paused at its place and plays clean; the playback log has no room lines after the ending.
 
-**Also measured once on the rig (WP14), before every device mode ships:** whether Windows' `GetPosition` includes the Bluetooth delay on the owner's headphones and speaker (acoustic delay against the reported one).
+**Also measured once on the rig (WP14), before every device mode ships:** whether Windows' `GetPosition` includes the Bluetooth delay on the owner's headphones and speaker (acoustic delay against the reported one), by `output_delay` and the steps in `docs/qa/output-delay.md`. The matrix itself, with the exact steps and the playback log lines, is `docs/qa/listen-together-live.md`.
 
 ### 7.8 Mode and fairness gates (simulation)
 
