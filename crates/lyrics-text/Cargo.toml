@@ -1,0 +1,28 @@
+[package]
+name = "lyrics-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+description = "Lyric lines in Roman letters, made on the device: script detection and one converter per writing system, with the original's word timing kept. Pure: no platform code, so Windows and Android share it"
+
+[features]
+default = ["japanese", "download"]
+# Kanji readings through lindera and its IPADIC dictionary (not bundled: see `japanese::dictionary`).
+japanese = ["dep:lindera", "dep:sha2", "dep:zip"]
+# Fetches the Japanese dictionary over HTTPS the first time it is needed.
+download = ["japanese", "dep:ureq"]
+
+[dependencies]
+thiserror.workspace = true
+# Mandarin pinyin with phrase-aware polyphones (MIT). Pinned: the gate tests read its output.
+pinyin_pro = "=3.29.4"
+lindera = { version = "=6.2.0", optional = true }
+sha2 = { version = "0.10", optional = true }
+zip = { version = "4.6.1", default-features = false, features = ["deflate"], optional = true }
+ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
