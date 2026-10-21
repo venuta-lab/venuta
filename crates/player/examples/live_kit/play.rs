@@ -30,8 +30,12 @@ pub struct Period {
     /// When the buffer was handed back.
     pub done: u64,
     pub frames: usize,
-    /// Frames still queued in the device at the wake, by its own clock.
+    /// Frames still queued before the speaker at the wake, by the device clock (its buffer and
+    /// the engine after it).
     pub queued: Option<usize>,
+    /// Frames the device had room for at the wake (shared mode: its buffer less what it still
+    /// holds; exclusive: always the whole buffer).
+    pub free: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +108,7 @@ pub fn play(
     let mut periods = Vec::new();
     while written < end {
         let n = dev.wait()?;
+        let free = n;
         let wake = qpc_100ns();
         let queued = dev.queued_frames();
         if n == 0 {
@@ -137,6 +142,7 @@ pub fn play(
             done,
             frames: n,
             queued,
+            free,
         });
     }
     let name = dev.name();
