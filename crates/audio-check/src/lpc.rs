@@ -1,7 +1,8 @@
 //! Detector 3: linear-prediction residual on real music (after Essentia's click detector, from
 //! Vaseghi and Rayner). Music is predictable from its last few samples; a click is not. For each
-//! 512-sample frame, a predictor of order 32 is fitted (autocorrelation over a Hann window,
-//! Levinson-Durbin), the frame is filtered through its inverse and then through the matched
+//! 512-sample frame, a predictor of order 32 is fitted on the 512 samples before it
+//! (autocorrelation over a Hann window, Levinson-Durbin; learned on the frame itself, it would
+//! whiten a fault inside it), the frame is filtered through its inverse and then through the matched
 //! filter (which gathers a disturbance the prediction smeared back into one peak), and a peak of
 //! either 30 dB over its frame's robust floor (the median) is a click.
 //!
@@ -58,12 +59,14 @@ fn residuals(x: &[f64], mut each: impl FnMut(usize, f64)) {
     let mut e = vec![0.0; FRAME + ORDER];
     let mut m = vec![0.0; FRAME];
     let mut sorted = vec![0.0; FRAME];
-    let mut f = ORDER;
+    // Each frame is predicted by what was learned on the frame before it: a predictor learned
+    // on the fault itself would whiten it (the first frame is only the start-up).
+    let mut f = FRAME;
     while f + FRAME <= x.len() {
         let frame = &x[f..f + FRAME];
         let rms = (frame.iter().map(|v| v * v).sum::<f64>() / FRAME as f64).sqrt();
         if rms >= QUIET {
-            let a = predictor(frame);
+            let a = predictor(&x[f - FRAME..f]);
             let reach = (x.len() - f).min(FRAME + ORDER);
             for (k, out) in e.iter_mut().enumerate() {
                 let n = f + k;

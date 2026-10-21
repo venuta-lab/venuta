@@ -1176,14 +1176,14 @@ Every detector proves itself first on injected faults: one dropped frame, one re
 1. **Bit-exact with declared edits** (today's counting songs, extended): every output frame equals the source frame, except inside the regions the renderer declared in its notes (fades, crossfades, resampled spans).
 2. **Sine lock** (after OboeTester's GlitchAnalyzer): 1 kHz and 15 kHz at -6 dBFS; magnitude and phase fitted over 8 periods and re-estimated every period; any residual over -60 dB outside a declared fade is a click; inside a fade the envelope must change by at most 1/240 per sample.
 3. **LPC residual on real music** (after Essentia's ClickDetector): order 12 to 32, 512-sample frames, peaks 30 dB over the robust floor; calibrated on the same tracks played solo; a room run may flag nothing that solo doesn't.
-4. **Dip and gap**: 2.5 ms RMS windows every 0.5 ms (so a 5 ms gap always holds a whole window; 5 ms windows never lie wholly inside a 5 ms gap) more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
+4. **Dip and gap**: 5 ms RMS windows, one starting at every sample (so an exact 5 ms gap fills one), more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
 
 Plus today's music-shaped detector (steps, third-difference breaks, hard-edged gaps) stays as a fast first check.
 
 As built in WP0 (`crates/audio-check`, self-tests in its `tests/self_test.rs`):
 
 - The sine lock fits cos, sin and both times t over the 8 periods around each one-period block, so a 500 ppm rate change and a slow level change are part of the line. Inside a declared span, the envelope from a two-period fit may move by at most 1/240 of the level per sample, and no sample may be off a short fit by more than -40 dB (a fade bends the line, so -60 dB would flag every 15 ms fade).
-- The LPC detector uses order 32 and Essentia's matched filter after the inverse filter: without it, a repeated frame at a flat moment of the test music reached only 31 times the floor, under the 30 dB line. The threshold is 30 dB or 6 dB over the worst peak of the solo calibration, whichever is higher.
+- The LPC detector learns each frame's predictor on the 512 samples before it (learned on a frame that holds the fault, the model whitens it), uses order 32, and adds Essentia's matched filter after the inverse filter (without it, a repeated frame at a flat moment of the test music reached only 31 times the floor, under the 30 dB line). The threshold is 30 dB or 6 dB over the worst peak of the solo calibration, whichever is higher.
 - Which detector proves itself on which fault (each caught at 12 places, the single frames also at a peak and at a zero crossing for the sine lock; the gain step is 1 dB, the step -40 dBFS):
 
 | Fault | music-shaped | bit-exact | sine lock | LPC | dip and gap |
