@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { inApp, lyricsFind, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
+import { inApp, lyricsFind, type FoundLine, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
 import { shownLines } from './lyricsModel'
@@ -137,8 +137,10 @@ export function useLyrics(root: string, path: string | undefined): Lyrics | null
       return
     }
     let live = true
-    invoke<Lyrics>('song_lyrics', { root, path })
-      .then((value) => {
+    // Your file's lines come in the engine's shape, word times and translations and all.
+    invoke<{ lines: FoundLine[]; text: string }>('song_lyrics', { root, path })
+      .then((read) => {
+        const value: Lyrics = { ...shownLines(read.lines ?? []), text: read.text ?? '' }
         kept.set(`${root}|${path}`, value)
         if (live) setLyrics({ path, value })
       })
