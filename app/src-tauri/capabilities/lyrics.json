@@ -1,10 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "lyrics",
-  "description": "The big screen and the desktop lyrics: showing, moving and sizing their own window (from its edges too), nothing else",
+  "description": "The big screen and the desktop lyrics: showing, moving and sizing their own window (from its edges too), nothing else. Each window is the kind and a number (stage-3), new at each opening",
   "windows": [
     "stage",
-    "overlay"
+    "overlay",
+    "stage-*",
+    "overlay-*"
   ],
   "permissions": [
     "core:default",
