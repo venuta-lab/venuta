@@ -448,6 +448,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio-check"
+version = "0.3.0"
+
+[[package]]
 name = "audio-codec-algorithms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5341,6 +5345,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "player"
 version = "0.3.0"
 dependencies = [
+ "audio-check",
  "md-5",
  "media-access",
  "rand 0.9.5",
