@@ -55,6 +55,11 @@ the theme has one.
 Each line of [FEATURES.md](FEATURES.md), done by hand in the test copy, ticked. New features of
 the release are added to it first.
 
+## 4b. Listen together, on two computers
+
+When the release touches listening together or the player's sound path: the live matrix in
+[listen-together-live.md](listen-together-live.md), every network row, every capture clean.
+
 ## 5. Then release
 
 `scripts/release.mjs` (it needs `git -c user.name=… -c user.email=…` on a machine without a git

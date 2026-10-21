@@ -5346,6 +5346,7 @@ name = "player"
 version = "0.3.0"
 dependencies = [
  "audio-check",
+ "blake3",
  "md-5",
  "media-access",
  "rand 0.9.5",
