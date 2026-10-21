@@ -33,6 +33,7 @@ pub mod sim_net;
 pub mod time;
 pub mod timeline;
 pub mod transport;
+pub mod view;
 
 /// The protocol version both sides speak; a Venuta speaking another is told to update.
 pub const PROTOCOL: u32 = 2;
