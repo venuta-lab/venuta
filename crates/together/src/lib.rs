@@ -28,6 +28,7 @@ pub mod invite;
 pub mod proto;
 pub mod room;
 pub mod room_player;
+pub mod sim_net;
 pub mod time;
 pub mod timeline;
 pub mod transport;
