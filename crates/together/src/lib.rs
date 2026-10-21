@@ -24,6 +24,7 @@ pub mod align;
 pub mod anchor;
 pub mod clock;
 pub mod clock_map;
+pub mod fakes;
 pub mod invite;
 pub mod proto;
 pub mod room;
