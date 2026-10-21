@@ -208,6 +208,50 @@ impl Clock {
     }
 }
 
+
+use crate::clock_map::{ClockMap, ClockMapHandle};
+
+/// How big a lasting jump is stepped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Steps {
+    SameRoom,
+    #[default]
+    Apart,
+}
+
+impl ClockMap {
+    pub fn identity() -> ClockMap {
+        todo!()
+    }
+    pub fn host_of(&self, _local_ns: u64) -> i64 {
+        todo!()
+    }
+    pub fn local_of(&self, _host_us: i64) -> u64 {
+        todo!()
+    }
+}
+
+impl Clock {
+    pub fn with_steps(_steps: Steps) -> Self {
+        Self::default()
+    }
+    pub fn path_changed(&mut self, _local_us: i64) {}
+    pub fn reconnected(&mut self, _local_us: i64) {}
+    pub fn new_epoch(&mut self) {}
+    pub fn map(&self) -> Option<ClockMap> {
+        None
+    }
+    pub fn publish(&self, to: &ClockMapHandle) {
+        to.store(std::sync::Arc::new(self.map()));
+    }
+    pub fn epoch(&self) -> u32 {
+        0
+    }
+    pub fn steps_taken(&self) -> u32 {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
