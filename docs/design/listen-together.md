@@ -256,10 +256,14 @@ Changes:
 | Change | Why |
 |---|---|
 | The published value is a `ClockMap { epoch, local_ref, host_ref, rate, bound }`, a line, not an offset | Today `offset()` returns the offset at the last sample time, ignoring skew until the next sample; a line extrapolates correctly between samples |
-| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit | An honest error bound, shown in the panel and used to widen the controller's band (4.9) |
-| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s | The path changed, so the old asymmetry no longer holds |
-| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map | A machine that slept, a clock reset; old samples describe another world |
-| Ready after 8 samples or 1 s of burst, whichever is later | A ready clock has a known bound |
+| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit, + three standard errors of the fit's slope times how far it is carried, + what is still to slew | An honest error bound, shown in the panel and used to widen the controller's band (4.9). The two added terms keep it honest between the fit's samples and while slewing (gate 7.2: within the bound in 99% of samples; 100% in every simulated scenario but the sleeps) |
+| Samples are kept per path: a path change or a reconnect starts a new one, and the line is fitted through one path's samples only | Each path has its own asymmetry, so a fit across two paths turns the jump in bias into a false skew |
+| The target is the best-founded estimate: the current path's, or the last good one carried forward while its bound (growing by its slope's uncertainty each second) is still smaller | The true offset is a property of the two clocks, not of the path: a slower path or a standing queue (bufferbloat past the 64-sample window) never pulls the clock away from a line the quick samples gave, and a quicker path is taken at once |
+| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s. Only a jump to a better-founded estimate can last, so a change to a quicker path steps after 2 s and a change to a slower one keeps the old line | The old path's bias no longer holds when the new path's samples are better founded |
+| An answer whose timestamps rule out the kept line (its offset outside `t3 - t4` to `t2 - t1`) counts as a path change | The clocks moved against each other (a small clock jump): the samples before describe another relation |
+| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map, measured as how far the map is outside what the sample's own timestamps allow (so a 2 s late answer never starts one) | A machine that slept, a clock reset; old samples describe another world. The session also starts one itself on waking (a clock that counts sleep, like QPC, shows no jump). The fitted skew is kept across epochs (the same two crystals) |
+| Ready after 8 samples spread over 900 ms of burst (the burst's 20 pings take 950 ms) | A ready clock has a known bound |
+| Before the 30 s fit, the mean of the 3 quickest is carried forward at the last known skew, and the quickest are chosen by delay / 2 + age x the rate's uncertainty; a line through the shorter time is used instead when its bound is smaller | Unchanged, the flat mean lags a host 150 ppm fast by over a millisecond for the first 30 s, as the slew can't follow it; on one Wi-Fi the rate is known well within seconds |
 
 **How it reaches the player.** The session publishes the `ClockMap` into a shared snapshot (an `ArcSwap` or a seqlock). The player's sync tick reads it every 20 ms. Nobody re-plans anything when the estimate improves: the error the controller sees moves by at most 50 µs per second, which the controller takes up by rate without a sound.
 
@@ -1494,9 +1498,10 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Next song armed | 20 s before the boundary (at once for songs under 20 s) | 4.4 |
 | Exact gapless window | 5 ms | 4.4 |
 | Clock pings | burst 20 x 50 ms (connect, reconnect, path change), then 1 Hz | 4.2 |
-| Clock window, fit | 64 samples; fit after 8 over 30 s; slew 50 µs/s | 4.2 |
-| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change | 4.2 |
-| New clock epoch | a sample over 500 ms off | 4.2 |
+| Clock window, fit | 64 samples, per path; fit after 8 over 30 s (sooner when better founded); slew 50 µs/s | 4.2 |
+| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change; only to a better-founded estimate | 4.2 |
+| New clock epoch | a sample over 500 ms outside what its timestamps allow of the map; on waking | 4.2 |
+| Clock ready | 8 samples over 900 ms | 4.2 |
 | Sync tick | 20 ms, rooms only | 4.9 |
 | Error filter | median of 10, then 1 s average | 4.9 |
 | Same room band, gain | in at 1 ms, out at 0.3 ms; 250 ppm per ms | 4.9 |
