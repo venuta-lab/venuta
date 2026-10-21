@@ -1,0 +1,35 @@
+{
+  "contents": {
+    "tastebuilderRenderer": {
+      "title": { "runs": [{ "text": "Pick 5 artists you like" }] },
+      "contents": [
+        {
+          "tastebuilderItemListRenderer": {
+            "contents": [
+              {
+                "tastebuilderItemRenderer": {
+                  "title": { "runs": [{ "text": "Bhuwin" }] },
+                  "thumbnailRenderer": {
+                    "musicArtistThumbnailRenderer": {
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://lh3.googleusercontent.com/FIXTURE=w60-h60-l90-rj", "width": 60, "height": 60 },
+                          { "url": "https://lh3.googleusercontent.com/FIXTURE=w226-h226-l90-rj", "width": 226, "height": 226 },
+                          { "url": "https://lh3.googleusercontent.com/FIXTURE=w544-h544-l90-rj", "width": 544, "height": 544 }
+                        ]
+                      },
+                      "trackingParams": "TRACKING"
+                    }
+                  },
+                  "selectionFormValue": "tastebuilder_selection=/g/FIXTURE1",
+                  "impressionFormValue": "tastebuilder_impression=/g/FIXTURE1",
+                  "trackingParams": "TRACKING"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

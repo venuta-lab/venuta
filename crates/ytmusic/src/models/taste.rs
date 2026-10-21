@@ -40,7 +40,12 @@ pub fn parse_taste_profile(root: &Value) -> Vec<TasteArtist> {
             let artist = TasteArtist {
                 selection_value: value("selectionFormValue")?,
                 impression_value: value("impressionFormValue")?,
-                thumbnail: item.get("thumbnail").and_then(last_thumbnail),
+                // Today's answers put the picture in the artist thumbnail renderer; older ones
+                // (and ytmusicapi's) beside the title.
+                thumbnail: item
+                    .pointer("/thumbnailRenderer/musicArtistThumbnailRenderer/thumbnail")
+                    .or_else(|| item.get("thumbnail"))
+                    .and_then(last_thumbnail),
                 selected: item
                     .get("isSelected")
                     .and_then(Value::as_bool)
@@ -61,6 +66,22 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/tastebuilder.json");
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    // The answer as YouTube Music sends it today: each artist's picture sits in its
+    // thumbnailRenderer's musicArtistThumbnailRenderer, and the largest one is kept.
+    #[test]
+    fn reads_the_picture_from_the_artist_thumbnail_renderer() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tastebuilder-live.json");
+        let live: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let artists = parse_taste_profile(&live);
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "Bhuwin");
+        assert_eq!(
+            artists[0].thumbnail.as_deref(),
+            Some("https://lh3.googleusercontent.com/FIXTURE=w544-h544-l90-rj")
+        );
     }
 
     // Every artist across its lists, with both form values; one with no name is no artist.
