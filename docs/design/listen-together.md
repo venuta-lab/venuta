@@ -424,16 +424,18 @@ On one network the host's stream costs nothing worth noticing, and an exact copy
 
 | Class | How it is known | Offset |
 |---|---|---|
-| Exact | the host's own bytes; or a lossless copy whose first 10 s of decoded PCM hash the same as the host's (the host sends a 16-byte hash with the envelope) | 0 |
+| Exact | the host's own bytes; or a copy whose first 10 s of decoded PCM hash the same as the host's (the host sends a 16-byte hash with the envelope), and whose later windows show no edit | 0 |
 | Measured | envelope correlation with enough confidence | measured, refined during the song |
-| Approximate | no reference envelope (the host can't play it), or low confidence, or the copy is another edit | 0, plus known codec delays |
+| Approximate | no reference envelope (the host can't play it), or low confidence, or the copy is another edit | the start's offset when the start was measured with confidence (another edit), otherwise 0 plus known codec delays |
 
 #### Measuring the offset
 
-- **Envelope** (the host, for its reference copy; each guest, for its own): mono, 10 ms hop, onset strength from the rise of log energy in four bands (below 200 Hz, 200 Hz to 2 kHz, 2 to 6 kHz, above 6 kHz), one byte per hop. Windows: the first 30 s, then 10 s every 60 s through the song. Deflated, about 4 to 8 KB for a song. Made by the decode thread as it prepares the song (local files decode 30 s in well under a second; streams as their bytes come).
-- **Correlation** (guest): normalised cross-correlation over lags of -5 s to +5 s on the first window, refined by a parabola through the peak (resolution about 2 ms).
-- **Confidence:** the peak at least 8 standard deviations over the mean, and at least 1.3 times the best peak more than 50 ms away. Otherwise "approximate".
-- **Refinement:** each later window re-measures. A change under 20 ms moves the offset gradually, which the controller takes up by rate, without a sound. A change over 20 ms between windows means another edit or another tempo: the copy becomes approximate from there, and the panel says so.
+- **Envelope** (the host, for its reference copy; each guest, for its own): mono, 10 ms hop, onset strength from the rise of log energy in four bands (below 200 Hz, 200 Hz to 2 kHz, 2 to 6 kHz, above 6 kHz; three second-order low-passes, the bands their differences), one byte per hop. The energies are taken on 5 ms sub-blocks (20 ms frames, weighted 1/2, 1, 1, 1/2, every 5 ms); the rise per band is capped at 16 dB, the bands summed, and each hop takes the rises around it through a 40 ms triangle (1, 2, 3, 4, 3, 2, 1 over 8), at 4 units per dB. The triangle is needed: the log puts an onset's whole rise in one step, so rises sampled straight at 10 ms put two copies half a hop apart in different hops (a perfect copy 25 ms late correlated at 0.76 and failed the ratio rule); the triangle sums to 1 over every other step, so each rise counts once whatever its phase. Windows: 0 to 30 s, then 10 s from every multiple of 60 s (60, 120, ...); a window the song's end cuts under 1 s is left out. The PCM hash is blake3 over the rate, the channels, the first 10 s of samples (interleaved left-justified `i32`, as decoded) and their count, cut to 16 bytes. Deflated, about 4 to 8 KB for a song. Made by the decode thread as it prepares the song (local files decode 30 s in well under a second; streams as their bytes come). Cost (measured on the desktop while other builds ran): about 5 ms per minute of audio fed (only the windows are filtered, about a quarter of a song) and 20 ms per minute analysed; align 3 to 4 ms for a 5-minute song.
+- **Correlation** (guest): normalised cross-correlation over lags of -5 s to +5 s on the first window (each lag over the copies' overlap, at least 4 s), integer dot products on the bytes, refined by a parabola through the peak (measured: within 0.6 ms on synthetic music at any sub-hop offset and rate, within 0.8 ms on MP3, AAC and Opus copies).
+- **Confidence:** the peak at least 8 robust standard deviations (1.4826 times the median absolute deviation) over the median of all lags, and at least 1.3 times the best local peak more than 50 ms away. A plain standard deviation does not work: the music's own beat puts a peak at every beat's lag, which inflates it, and a perfect copy scored 7. Robustly, copies score 15 to 18 and unrelated songs 2.6 to 4.7. The ratio rule is what turns down repetitive music (a loop's bars score within 1.15 of each other).
+- **Several windows must agree:** the first window's 10 s parts are each correlated on their own against the whole reference window; at least two must pass the confidence rules at the same offset (within 20 ms), and none may show an edit (a song too short for two parts needs only the whole). Otherwise "approximate".
+- **Refinement:** each later window re-measures against the offset known so far and must match about as well as the first window did (its peak at the offset at least the first window's peak / 1.3, and 8 robust deviations up): then it agrees, and a change under 20 ms moves the offset gradually, which the controller takes up by rate, without a sound. A confident peak over 20 ms away that is as good as the first window's means another edit or another tempo ("moved"); so does a window where both copies have music (one strong rise a second) but the offset matches under half as well as at the start ("lost": an edit longer than the search). A beat's or a bar's echo scores about half the true peak, so it neither agrees nor moves. After an edit the copy is approximate from there, and the panel says so. `align` returns one `Alignment` for the song (approximate once any window shows an edit, with the start's offset); `player::analysis::align_track` also returns each later window's verdict and where the edit showed, for WP11 to glide the offset and change the class at that place.
+- **Exact** needs both hashes and no edit later: a radio edit can share its first 10 s with the album version.
 - **Where the offset is used:** `my content time = room content time + offset`. Every prepare, every boundary and every error measurement uses it. The host never needs to know it.
 
 ### 4.6 The player: programs, voices and decode threads
@@ -953,6 +955,12 @@ pub enum CopyClass { Exact, Measured, Approximate }
 ```
 
 The types are in `together::align` (the envelope goes over the `env:` stream, and `RoomHandle::prepare` takes an `Alignment`), with `Alignment::EXACT` and `Alignment::APPROXIMATE` for the two cases that need no measure. The two functions are the alignment package's, in `player::analysis`.
+
+Settled in WP10:
+
+- `envelope` reads the iterator to its end and analyses only the windows; blocks may be any size, even ones that split a frame. Empty input, rate 0 or no channels give no windows and no hash.
+- `confidence` is the first window's peak in robust standard deviations (4.5) for a measured copy, 0 otherwise (as `Alignment::EXACT` and `APPROXIMATE` have it).
+- Beside the contract: `align_track(reference, mine) -> Track { alignment, windows: Vec<WindowCheck { start_ms, verdict }>, edit_at_ms }`, with `Verdict` `Agrees { offset_us }`, `Moved { offset_us }`, `Lost`, `Unknown`; `align` is its `alignment`.
 
 ### 5.9 The window's view
 
@@ -1524,8 +1532,8 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Host file pacing | 10 s burst, then 2 x the song's bitrate | 4.1 |
 | Stream priorities | control 100, envelopes 50, files 0, covers -10 | 4.1 |
 | Envelope | 10 ms hop, 4 bands, first 30 s then 10 s every 60 s | 4.5 |
-| Alignment confidence | peak 8 sd over the mean and 1.3 x the next peak 50 ms away | 4.5 |
-| Offset refinement | under 20 ms change: glide; over: approximate | 4.5 |
+| Alignment confidence | peak 8 robust sd (1.4826 MAD) over the median and 1.3 x the next local peak 50 ms away; two 10 s parts of the first window agreeing within 20 ms | 4.5 |
+| Offset refinement | under 20 ms change: glide; over, or matching under half as well as the start where both have music: approximate | 4.5 |
 | Voice slots | 3 | 4.6 |
 | Lossy seek pre-roll | Opus 80 ms; AAC, Vorbis, MP3 one packet | 4.6 |
 | Download chunks | 64 KiB | 4.6 |
