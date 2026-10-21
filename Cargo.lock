@@ -169,8 +169,6 @@ dependencies = [
  "engine",
  "getrandom 0.3.4",
  "image",
- "iroh",
- "iroh-tickets",
  "media-access",
  "notify",
  "phone-server",
@@ -192,6 +190,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "together",
+ "together-net",
  "tokio",
  "ureq",
  "urlencoding",
@@ -8092,6 +8091,21 @@ dependencies = [
  "blake3",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "together-net"
+version = "0.3.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.3.4",
+ "iroh",
+ "iroh-tickets",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "together",
+ "tokio",
 ]
 
 [[package]]

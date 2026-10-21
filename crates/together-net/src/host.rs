@@ -6,7 +6,7 @@
 //! What the app around it does (the window, notifications, the host's own player, where the
 //! host's files are) comes in through [`HostHooks`].
 
-use super::net::{self, Clock, Lines, News};
+use crate::net::{self, Clock, Lines, News};
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
 use std::collections::HashMap;

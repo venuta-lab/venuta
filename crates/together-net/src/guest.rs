@@ -7,8 +7,8 @@
 //! What the app around it does (the window, the player that follows the room, covers kept on
 //! disk) comes in through [`GuestHooks`].
 
-use super::net::{self, Clock, Lines, News, Reach};
-use super::net_host::Get;
+use crate::host::Get;
+use crate::net::{self, Clock, Lines, News, Reach};
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
 use std::sync::{Arc, Mutex};

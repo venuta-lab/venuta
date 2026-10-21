@@ -1,11 +1,10 @@
 //! Hosting a room: this Venuta is the room. The connections, the knock and everyone's messages
-//! are the room's networking (`net_host`); this is the app around it: the room made from what's
-//! playing, the host's files and covers, the host's own player following the room like
-//! everyone's, and the window told of every change.
+//! are the room's networking (`together_net::host`); this is the app around it: the room made
+//! from what's playing, the host's files and covers, the host's own player following the room
+//! like everyone's, and the window told of every change.
 
 use super::follow::{self, Follower, Report};
 use super::net::{self, News};
-use super::net_host::{HostHooks, HostSession};
 use super::sources::HostFiles;
 use super::{emit, random_hex};
 use crate::playback::{Playback, QueueItem};
@@ -16,6 +15,7 @@ use tauri::{AppHandle, Manager};
 use together::invite::Invite;
 use together::proto::{Action, Hearing, Role};
 use together::room::{HOST, Room};
+use together_net::host::{HostHooks, HostSession};
 
 pub struct Host {
     session: Arc<HostSession>,
@@ -76,7 +76,7 @@ impl Host {
         position_ms: u64,
         playing: bool,
     ) -> Result<Arc<Host>, String> {
-        let reach = net::Reach::from_settings();
+        let reach = net::reach_from_settings();
         let ep = net::endpoint(&reach, true, None).await?;
         super::trace("room: endpoint open");
         let name = super::my_name();

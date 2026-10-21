@@ -5,9 +5,6 @@
 //! nothing online), with a plain peer on the other side speaking the wire protocol, or the
 //! other session itself.
 
-use super::net::{self, News, Reach};
-use super::net_guest::{GuestHooks, GuestSession, Stage};
-use super::net_host::{Get, HostHooks, HostSession};
 use iroh::endpoint::{ConnectionError, SendStream};
 use iroh::{Endpoint, SecretKey};
 use std::collections::HashMap;
@@ -17,6 +14,9 @@ use std::time::{Duration, Instant};
 use together::invite::Invite;
 use together::proto::{self, Action, Role, RoomView, Song, ToGuest, ToHost};
 use together::room::Room;
+use together_net::guest::{GuestHooks, GuestSession, Stage};
+use together_net::host::{Get, HostHooks, HostSession};
+use together_net::net::{self, News, Reach};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const SECRET: &str = "00112233445566778899aabbccddeeff";

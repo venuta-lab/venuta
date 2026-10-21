@@ -1,13 +1,11 @@
 //! Joining a room: the connection to the host, the knock, the clock and the host's files are
-//! the room's networking (`net_guest`); this is the app around it: this player following the
-//! room on the host's clock, the host's covers kept on this computer, and the window told of
-//! every change.
+//! the room's networking (`together_net::guest`); this is the app around it: this player
+//! following the room on the host's clock, the host's covers kept on this computer, and the
+//! window told of every change.
 
 use super::emit;
 use super::follow::{self, Follower, Report};
 use super::net::{self, News};
-pub use super::net_guest::Stage;
-use super::net_guest::{GuestHooks, GuestSession};
 use super::sources::HostStream;
 use crate::playback::Playback;
 use std::sync::mpsc::Sender;
@@ -15,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use together::invite::Invite;
 use together::proto::{Hearing, RoomView, ToHost};
+pub use together_net::guest::Stage;
+use together_net::guest::{GuestHooks, GuestSession};
 
 pub struct Guest {
     session: Arc<GuestSession>,
@@ -117,7 +117,7 @@ impl GuestHooks for Glue {
 
 impl Guest {
     pub async fn join(app: AppHandle, root: String, invite: Invite) -> Result<Arc<Guest>, String> {
-        let reach = net::Reach::from_settings();
+        let reach = net::reach_from_settings();
         let glue = Arc::new_cyclic(|me: &std::sync::Weak<Glue>| Glue {
             app: app.clone(),
             follow: Mutex::default(),
