@@ -44,19 +44,50 @@ impl Reach {
 /// This Venuta's key in one room: the same each time you join that room, so the host knows it's
 /// you back (and a person taken out and blocked stays out); a different one in every other room,
 /// so hosts can't tell it's you elsewhere. Made from a secret kept on this computer.
-pub fn guest_key(room_secret: &str) -> iroh::SecretKey {
-    let path = engine::paths::app_data_dir().join("together.key");
+/// (The secret is kept in `dir`, the app's data folder.)
+pub fn guest_key(dir: &std::path::Path, room_secret: &str) -> iroh::SecretKey {
+    let path = dir.join("together.key");
     let mine: [u8; 32] = std::fs::read(&path)
         .ok()
         .and_then(|b| b.try_into().ok())
         .unwrap_or_else(|| {
             let mut k = [0u8; 32];
             getrandom::fill(&mut k).expect("random bytes");
-            let _ = std::fs::create_dir_all(engine::paths::app_data_dir());
+            let _ = std::fs::create_dir_all(dir);
             let _ = std::fs::write(&path, k);
             k
         });
     key_in_room(&mine, room_secret)
+}
+
+/// What the room tells the player that follows it (the host's own, or a guest's).
+#[derive(Debug, Clone, PartialEq)]
+pub enum News {
+    /// The room as it is now.
+    Room(together::proto::RoomView),
+    /// Get this queue entry ready at this position.
+    Prepare {
+        rev: u64,
+        index: usize,
+        position_ms: u64,
+    },
+    /// The room is over here: the player is on its own again.
+    Stop,
+}
+
+/// Seconds since 1970, for when an invite ends.
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `n` random bytes as hex, from the operating system's randomness.
+pub fn random_hex(n: usize) -> String {
+    let mut b = vec![0u8; n];
+    getrandom::fill(&mut b).expect("the system's randomness");
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn key_in_room(mine: &[u8; 32], room_secret: &str) -> iroh::SecretKey {

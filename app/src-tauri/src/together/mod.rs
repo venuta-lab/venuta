@@ -10,6 +10,8 @@ mod follow;
 mod guest;
 mod host;
 mod net;
+mod net_guest;
+mod net_host;
 #[cfg(test)]
 mod room_check;
 mod sources;
