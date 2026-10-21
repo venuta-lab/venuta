@@ -5348,6 +5348,7 @@ dependencies = [
  "serde_json",
  "symphonia",
  "symphonia-adapter-libopus",
+ "together",
  "ureq",
  "wasapi",
  "windows 0.61.3",
@@ -8088,10 +8089,13 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 name = "together"
 version = "0.3.0"
 dependencies = [
+ "arc-swap",
  "base64 0.22.1",
  "blake3",
+ "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
