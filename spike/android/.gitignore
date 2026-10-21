@@ -1,0 +1,7 @@
+.gradle/
+build/
+app/build/
+local.properties
+# Built by build.sh from the Rust workspace: never checked in.
+app/src/main/jniLibs/
+app/src/main/java-gen/

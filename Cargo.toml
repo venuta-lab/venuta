@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "app/src-tauri", "spike/venuta-spike-ffi", "spike/uniffi-bindgen"]
 
 [workspace.package]
 version = "0.3.0"

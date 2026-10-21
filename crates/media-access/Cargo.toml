@@ -47,3 +47,7 @@ required-features = ["live-provider"]
 [[example]]
 name = "catalog_dump"
 required-features = ["live-provider"]
+
+# Android spike (check 6): rquickjs-sys ships no Android bindings; generate them with bindgen.
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs-sys = { version = "=0.9.0", features = ["bindgen"] }
