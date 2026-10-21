@@ -369,8 +369,9 @@ fn report(
     let peak = w.data.iter().fold(0f32, |m, v| m.max(v.abs()));
     if peak == 0.0 {
         println!(
-            "  WARNING: nothing was heard. Is Venuta playing in exclusive mode? The loopback hears shared mode only."
+            "NO RESULT: nothing was heard. Is Venuta playing in exclusive mode? The loopback hears shared mode only."
         );
+        return 1;
     }
     println!(
         "  quiet stretches of 250 ms or more (pauses, stops, song boundaries): {}",
@@ -938,4 +939,67 @@ fn tone(args: &Args) -> i32 {
 fn tone(_: &Args) -> i32 {
     eprintln!("Playing and capturing are Windows only for now.");
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn log_in(lines: &[&str]) -> PathBuf {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "venuta-kit-log-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("playback.log");
+        std::fs::write(&p, lines.join("\n")).unwrap();
+        p
+    }
+
+    const ROOM: [&str; 6] = [
+        "1000 starting a room from listening together",
+        "1100 room: endpoint open from listening together",
+        "2000 room: 2 is in from listening together",
+        "3000 sync: rate +40 ppm (one room, keeping in step) from the player",
+        "9000 room: the host ended it from listening together",
+        "9050 room: the player is on its own again from listening together",
+    ];
+
+    #[test]
+    fn a_clean_ending_passes_the_log_check() {
+        let mut l = ROOM.to_vec();
+        l.push("12000 play or pause from the tray");
+        let p = log_in(&l);
+        assert_eq!(log_check(&p, &Args::from(vec!["log".into()], &[])), 0);
+    }
+
+    #[test]
+    fn a_room_line_after_the_ending_fails_it() {
+        let mut l = ROOM.to_vec();
+        l.push("12000 sync: rate +12 ppm (one room, keeping in step) from the player");
+        let p = log_in(&l);
+        assert_eq!(log_check(&p, &Args::from(vec!["log".into()], &[])), 1);
+    }
+
+    #[test]
+    fn running_dry_fails_it() {
+        let mut l = ROOM.to_vec();
+        l.insert(
+            4,
+            "5000 the output ran dry 1 more time(s), 1 in all (a gap: this thread was late) from the player",
+        );
+        let p = log_in(&l);
+        assert_eq!(log_check(&p, &Args::from(vec!["log".into()], &[])), 1);
+    }
+
+    #[test]
+    fn shaped_events_are_named_by_the_log() {
+        assert!(declares_event(
+            "sync: lined up from 1000 ms to 2000 ms (faded out and in)"
+        ));
+        assert!(declares_event("waiting for the stream pos_ms=1234"));
+        assert!(!declares_event("room: 2 is in"));
+    }
 }
