@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fromLegacy, langBase, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricModel.ts'
-import { offered, reservedRows, rowsFor, secondProgress, sourcesOf } from '../src/lib/secondLines.ts'
+import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf } from '../src/lib/secondLines.ts'
 
 const fixture = (name: string): LyricsModel => readModel(JSON.parse(readFileSync(new URL(`./fixtures/lyrics-second/${name}.json`, import.meta.url), 'utf8')))
 const hindi = fixture('hindi')
@@ -166,6 +166,11 @@ test("where a song's second lines came from, for the quiet note", () => {
     translation: { words: 'Translated on this PC', corrected: 1 },
   })
   assert.deepEqual(sourcesOf(plain, reservedRows(plain, ALL, 'en'), 'en'), { roman: null, translation: null })
+  assert.equal(noteWords('roman', { words: 'Made on this PC', corrected: 0 }), 'Pronunciation made on this PC')
+  assert.equal(noteWords('roman', { words: 'From the lyrics', corrected: 2 }), 'Pronunciation from the lyrics, 2 lines corrected by you')
+  assert.equal(noteWords('translation', { words: 'Translated on this PC', corrected: 1 }), 'Translated on this PC, 1 line corrected by you')
+  assert.equal(noteWords('translation', { words: 'From the lyrics', corrected: 0 }), 'Translation from the lyrics')
+  assert.equal(noteWords('translation', { words: 'Corrected by you', corrected: 3 }), 'Translation corrected by you')
 })
 
 test("today's lyrics (parallel arrays) become the contract, Roman letters made once per song", () => {

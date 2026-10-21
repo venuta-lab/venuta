@@ -107,5 +107,8 @@ export function noteWords(kind: SecondKind, n: SourceNote): string {
   const what = kind === 'roman' ? 'Pronunciation' : 'Translation'
   const first = n.words.charAt(0).toLowerCase() + n.words.slice(1)
   const own = n.corrected ? `, ${n.corrected} ${n.corrected === 1 ? 'line' : 'lines'} corrected by you` : ''
-  return n.words === 'Corrected by you' ? `${what} corrected by you` : `${what} ${first}${own}`
+  if (n.words === 'Corrected by you') return `${what} corrected by you`
+  // "Translated on this PC" says what it is already.
+  if (kind === 'translation' && n.words.startsWith('Translated')) return `${n.words}${own}`
+  return `${what} ${first}${own}`
 }

@@ -24,7 +24,7 @@ import { Backdrop } from '../Backdrop'
 import { IconBackdrop, IconLock, IconLyricStyle, IconPin, IconUnlock } from '../Icons'
 import { ThemeFx } from '../ThemeFx'
 import { LookPanel, LookStrip } from './LookPanel'
-import { hasIndic, useLyricColour, useNowLyrics, useWindowCover } from './useNowLyrics'
+import { useLyricColour, useNowSong, useWindowCover } from './useNowLyrics'
 
 /*
   A lyrics window's frame. Each window has one job:
@@ -45,7 +45,7 @@ const IDLE_MS = 2500
 /** The desktop lyrics' top band while locked: room for the lock. Unlocked, it fits their bar
  *  (one row, or two on a narrow window), kept even while the bar is hidden, so the words never
  *  move as the pointer comes and goes. */
-const BAND = 46
+export const BAND = 46
 
 /** What the frame tells the window inside it. */
 export interface Frame {
@@ -67,7 +67,8 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
   // A theme's light or dark mode follows Venuta's choice, so the prefs are listened to.
   const prefs = usePrefs()
   const look = useLyricLook(win)
-  const { song, root, lyrics } = useNowLyrics()
+  // The song from the window's one clock (NowLyrics.tsx): this frame is not drawn again each frame.
+  const { song, root, seconds } = useNowSong()
   const ground = groundOf(s)
   const colour = useLyricColour(look.colour, root, song?.dir, ground)
   const cover = useWindowCover()
@@ -193,7 +194,7 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
               style={{ pointerEvents: awake ? 'auto' : 'none' }}
             >
               <StripBar win={win} onTop={s.onTop} background={bg} theme={s.theme}>
-                <LookStrip win={win} ground={ground} coverColour={colour} indic={hasIndic(lyrics?.lines)} />
+                <LookStrip win={win} ground={ground} coverColour={colour} seconds={seconds} />
               </StripBar>
             </motion.div>
           )}
@@ -226,7 +227,7 @@ export function LyricsWindow(props: { win: LyricWindow; children: (f: Frame) => 
                   style={{ transformOrigin: 'top right' }}
                   className="max-h-[80vh] w-[360px] overflow-y-auto rounded-[24px] bg-[rgb(14_14_18/0.86)] p-4 text-white shadow-[0_24px_60px_-20px_rgb(0_0_0/0.9),inset_0_0_0_1px_rgb(255_255_255/0.1)]"
                 >
-                  {panel === 'style' && <LookPanel win={win} ground={ground} tone="dark" coverColour={colour} indic={hasIndic(lyrics?.lines)} />}
+                  {panel === 'style' && <LookPanel win={win} ground={ground} tone="dark" coverColour={colour} seconds={seconds} />}
                   {panel === 'background' && <BackgroundTiles win={win} value={bg} />}
                   {panel === 'theme' && <ThemeTiles win={win} value={s.theme} />}
                 </motion.div>
