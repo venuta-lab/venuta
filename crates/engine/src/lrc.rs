@@ -5,26 +5,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Whether lyrics text has times (`[mm:ss.xx]` at a line's start).
+/// Whether lyrics text has times (`[mm:ss.xx]` at a line's start), read the way Venuta reads
+/// lyrics everywhere ([`crate::lyrics::read_lrc`]).
 pub fn is_timed(text: &str) -> bool {
-    text.lines().any(|l| {
-        let l = l.trim_start();
-        let Some(rest) = l.strip_prefix('[') else {
-            return false;
-        };
-        let Some((stamp, _)) = rest.split_once(']') else {
-            return false;
-        };
-        let Some((m, s)) = stamp.split_once(':') else {
-            return false;
-        };
-        !m.is_empty()
-            && m.chars().all(|c| c.is_ascii_digit())
-            && s.replace([',', '.'], "")
-                .chars()
-                .all(|c| c.is_ascii_digit())
-            && !s.is_empty()
-    })
+    crate::lyrics::is_timed(text)
 }
 
 /// `[01:02.34]words`, one line each, in time order.

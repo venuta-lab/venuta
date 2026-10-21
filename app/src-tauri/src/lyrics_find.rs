@@ -38,20 +38,27 @@ fn catalog_lyrics(
     let found = access
         .lyrics(id, &CancellationToken::default())
         .map_err(|e| e.to_string())?;
-    Ok(found.map(|l| Found {
-        source: "youtube".into(),
-        lines: l
+    Ok(found.map(|l| {
+        let mut lines: Vec<lo::LyricLine> = l
             .lines
             .into_iter()
-            .map(|(ms, text)| lo::Line {
-                ms,
+            .map(|(start_ms, text)| lo::LyricLine {
+                start_ms,
                 text,
                 ..Default::default()
             })
-            .collect(),
-        text: l.text,
-        instrumental: false,
-        credit: l.credit,
+            .collect();
+        engine::lyrics::finish(&mut lines);
+        Found {
+            source: "youtube".into(),
+            lyrics: lo::Lyrics {
+                lines,
+                ..Default::default()
+            },
+            text: l.text,
+            credit: l.credit,
+            ..Default::default()
+        }
     }))
 }
 

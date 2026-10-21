@@ -66,31 +66,17 @@ pub struct LyricsRequest {
     pub duration_ms: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Word {
-    pub ms: u64,
-    pub end_ms: u64,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Line {
-    pub ms: u64,
-    pub text: String,
-    /// Word by word, when the source times each word.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub words: Vec<Word>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub translation: Option<String>,
-}
+pub use crate::lyrics::{LyricLine, Lyrics, Second, SecondSource, Word};
+use crate::lyrics::{carried_translation, finish, mark_source, read_lrc};
 
 /// Lyrics one source gave.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Found {
     /// The source's id ("lrclib").
     pub source: String,
-    /// Timed lines; empty when only the words are known.
-    pub lines: Vec<Line>,
+    /// Timed lines (empty when only the words are known), the song's language, the format.
+    #[serde(flatten)]
+    pub lyrics: Lyrics,
     /// The words as text, when not timed.
     #[serde(default)]
     pub text: String,
@@ -103,7 +89,7 @@ pub struct Found {
 
 impl Found {
     pub fn synced(&self) -> bool {
-        !self.lines.is_empty()
+        !self.lyrics.lines.is_empty()
     }
     fn usable(&self) -> bool {
         self.synced() || !self.text.trim().is_empty() || self.instrumental
@@ -223,114 +209,6 @@ pub fn same_song(req: &LyricsRequest, title: &str, artist: &str, duration_s: Opt
 
 // --- Reading the formats --------------------------------------------------------------------
 
-fn lrc_time(t: &str) -> Option<u64> {
-    let (m, s) = t.trim().split_once(':')?;
-    let m: f64 = m.trim().parse().ok()?;
-    let s: f64 = s.trim().replace(',', ".").parse().ok()?;
-    (m >= 0.0 && s >= 0.0).then(|| ((m * 60.0 + s) * 1000.0).round() as u64)
-}
-
-/// LRC, with several \`[mm:ss.xx]\` stamps on a line and \`<mm:ss.xx>\` word stamps (enhanced
-/// LRC). Header tags (\`[ar:…]\`) are left out; a line without a stamp is not a timed line.
-pub fn parse_lrc(text: &str) -> Vec<Line> {
-    let mut out: Vec<Line> = Vec::new();
-    for raw in text.lines() {
-        let mut rest = raw.trim();
-        let mut stamps = Vec::new();
-        while let Some(r) = rest.strip_prefix('[') {
-            let Some((tag, after)) = r.split_once(']') else {
-                break;
-            };
-            match lrc_time(tag) {
-                Some(ms) => stamps.push(ms),
-                None => {
-                    stamps.clear();
-                    break;
-                }
-            }
-            rest = after;
-        }
-        if stamps.is_empty() {
-            continue;
-        }
-        let (words, text) = words_of(rest);
-        for ms in stamps {
-            out.push(Line {
-                ms,
-                text: text.clone(),
-                words: words.clone(),
-                translation: None,
-            });
-        }
-    }
-    out.sort_by_key(|l| l.ms);
-    // A word's end is the next word's start (the last one's, the line's next start, up to 3 s).
-    for i in 0..out.len() {
-        let next = out.get(i + 1).map(|l| l.ms);
-        let line = &mut out[i];
-        let n = line.words.len();
-        for w in 0..n {
-            let end = if w + 1 < n {
-                line.words[w + 1].ms
-            } else {
-                next.unwrap_or(line.words[w].ms + 3_000)
-                    .min(line.words[w].ms + 3_000)
-            };
-            if line.words[w].end_ms == 0 {
-                line.words[w].end_ms = end.max(line.words[w].ms);
-            }
-        }
-    }
-    out
-}
-
-/// A line's words from \`<mm:ss.xx>\` stamps, and the line's text without them.
-fn words_of(line: &str) -> (Vec<Word>, String) {
-    if !line.contains('<') {
-        return (Vec::new(), line.trim().to_owned());
-    }
-    let mut words = Vec::new();
-    let mut text = String::new();
-    let mut rest = line;
-    let mut at: Option<u64> = None;
-    loop {
-        let (before, after) = match rest.split_once('<') {
-            Some(x) => x,
-            None => (rest, ""),
-        };
-        if let Some(ms) = at
-            && !before.is_empty()
-        {
-            words.push(Word {
-                ms,
-                end_ms: 0,
-                text: before.to_owned(),
-            });
-        }
-        text.push_str(before);
-        if after.is_empty() {
-            break;
-        }
-        let Some((tag, next)) = after.split_once('>') else {
-            text.push('<');
-            text.push_str(after);
-            break;
-        };
-        match lrc_time(tag) {
-            Some(ms) => at = Some(ms),
-            None => {
-                text.push('<');
-                text.push_str(tag);
-                text.push('>');
-            }
-        }
-        rest = next;
-    }
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    words.retain(|w| !w.text.trim().is_empty());
-    (words, text)
-}
-
 /// A TTML time: "12.345", "1:02.5", "00:01:02.500" or "1234ms".
 fn ttml_time(t: &str) -> Option<u64> {
     let t = t.trim();
@@ -361,7 +239,7 @@ fn unescape(s: &str) -> String {
 }
 
 /// TTML (Apple's lyrics): \`<p begin end>\` lines, \`<span begin end>\` words.
-pub fn parse_ttml(xml: &str) -> Vec<Line> {
+pub fn parse_ttml(xml: &str) -> Vec<LyricLine> {
     let mut out = Vec::new();
     let mut rest = xml;
     while let Some(i) = rest.find("<p ") {
@@ -378,6 +256,7 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
         let Some(ms) = attr(tag, "begin").and_then(ttml_time) else {
             continue;
         };
+        let end_ms = attr(tag, "end").and_then(ttml_time).unwrap_or(0);
         let mut words = Vec::new();
         let mut b = body;
         while let Some(j) = b.find("<span") {
@@ -395,7 +274,7 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
                 // A space after the span belongs to the word (the words of a line run on).
                 let spaced = s[ce + 7..].starts_with(' ');
                 words.push(Word {
-                    ms: ws,
+                    start_ms: ws,
                     end_ms: we,
                     text: format!("{}{}", unescape(inner), if spaced { " " } else { "" }),
                 });
@@ -423,27 +302,31 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
                 .to_owned()
         };
         if !text.is_empty() {
-            out.push(Line {
-                ms,
+            out.push(LyricLine {
+                start_ms: ms,
+                end_ms,
                 text,
                 words,
-                translation: None,
+                ..Default::default()
             });
         }
     }
+    finish(&mut out);
     out
 }
 
 /// LyricsPlus's own JSON: lines with their time, and syllables when it times words.
-fn parse_kpoe(v: &Value) -> Vec<Line> {
+fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
     let word_timed = v.get("type").and_then(Value::as_str) == Some("Word");
-    v.get("lyrics")
+    let mut lines: Vec<LyricLine> = v
+        .get("lyrics")
         .and_then(Value::as_array)
         .map(|lines| {
             lines
                 .iter()
                 .filter_map(|l| {
                     let ms = l.get("time").and_then(Value::as_u64)?;
+                    let duration = l.get("duration").and_then(Value::as_u64).unwrap_or(0);
                     let text = l
                         .get("text")
                         .and_then(Value::as_str)
@@ -460,7 +343,7 @@ fn parse_kpoe(v: &Value) -> Vec<Line> {
                                         let d =
                                             w.get("duration").and_then(Value::as_u64).unwrap_or(0);
                                         Some(Word {
-                                            ms,
+                                            start_ms: ms,
                                             end_ms: ms + d,
                                             text: w.get("text").and_then(Value::as_str)?.to_owned(),
                                         })
@@ -481,16 +364,19 @@ fn parse_kpoe(v: &Value) -> Vec<Line> {
                     } else {
                         text
                     };
-                    (!text.is_empty()).then_some(Line {
-                        ms,
+                    (!text.is_empty()).then_some(LyricLine {
+                        start_ms: ms,
+                        end_ms: ms + duration,
                         text,
                         words,
-                        translation: None,
+                        ..Default::default()
                     })
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    finish(&mut lines);
+    lines
 }
 
 /// Lyrics in any of the formats the sources send: TTML, LRC, or text.
@@ -499,11 +385,12 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     if body.is_empty() {
         return None;
     }
-    let lines = if body.starts_with('<') {
+    let mut lines = if body.starts_with('<') {
         parse_ttml(body)
     } else {
-        parse_lrc(body)
+        read_lrc(body).lines
     };
+    mark_source(&mut lines, source);
     let text = if lines.is_empty() && !body.starts_with('<') {
         body.to_owned()
     } else {
@@ -511,23 +398,25 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     };
     let f = Found {
         source: source.into(),
-        lines,
+        lyrics: Lyrics {
+            lines,
+            ..Default::default()
+        },
         text,
-        instrumental: false,
-        credit: None,
+        ..Default::default()
     };
     f.usable().then_some(f)
 }
 
 /// Translations from a second LRC, put on the lines that start at the same time.
-fn with_translation(mut lines: Vec<Line>, translated: &str) -> Vec<Line> {
-    let t = parse_lrc(translated);
+fn with_translation(mut lines: Vec<LyricLine>, translated: &str, provider: &str) -> Vec<LyricLine> {
+    let t = read_lrc(translated).lines;
     for l in &mut lines {
         if let Some(x) = t
             .iter()
-            .find(|x| x.ms == l.ms && !x.text.is_empty() && x.text != l.text)
+            .find(|x| x.start_ms == l.start_ms && !x.text.is_empty() && x.text != l.text)
         {
-            l.translation = Some(x.text.clone());
+            l.translation = Some(carried_translation(&x.text, provider));
         }
     }
     lines
@@ -670,7 +559,8 @@ fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Str
         }));
     }
     let synced = v.get("syncedLyrics").and_then(Value::as_str).unwrap_or("");
-    let lines = parse_lrc(synced);
+    let mut lines = read_lrc(synced).lines;
+    mark_source(&mut lines, "lrclib");
     let text = if lines.is_empty() {
         v.get("plainLyrics")
             .and_then(Value::as_str)
@@ -682,7 +572,10 @@ fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Str
     };
     let f = Found {
         source: "lrclib".into(),
-        lines,
+        lyrics: Lyrics {
+            lines,
+            ..Default::default()
+        },
         text,
         ..Default::default()
     };
@@ -714,11 +607,15 @@ fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, 
                 .and_then(Value::as_str)
                 .filter(|t| !t.trim().is_empty())
             {
-                let lines = parse_lrc(t);
+                let mut lines = read_lrc(t).lines;
+                mark_source(&mut lines, "simpmusic");
                 if !lines.is_empty() {
                     return Ok(Some(Found {
                         source: "simpmusic".into(),
-                        lines,
+                        lyrics: Lyrics {
+                            lines,
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }));
                 }
@@ -764,7 +661,10 @@ fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>,
     let lines = parse_kpoe(&v);
     Ok((!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
-        lines,
+        lyrics: Lyrics {
+            lines,
+            ..Default::default()
+        },
         ..Default::default()
     }))
 }
@@ -898,7 +798,7 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, St
         .and_then(Value::as_str)
         .filter(|t| !t.trim().is_empty())
     {
-        f.lines = with_translation(f.lines, t);
+        f.lyrics.lines = with_translation(f.lyrics.lines, t, "netease");
     }
     Ok(Some(f))
 }
@@ -1422,24 +1322,25 @@ mod tests {
     }
 
     #[test]
-    fn lrc_lines_words_and_several_stamps() {
-        let lines = parse_lrc(
-            "[ar:Someone]\n[00:01.00]One\n[00:03.50][00:10.00]Again\nnot timed\n[00:05.00]<00:05.00>Word <00:05.40>by <00:05.90>word",
-        );
+    fn every_source_reads_lrc_with_the_shared_reader() {
+        let f = found_from_text(
+            "netease",
+            "[ar:Someone]
+[00:01.00]One
+[00:01.00]Uno
+[00:05.00]<00:05.00>Word <00:05.40>by",
+        )
+        .unwrap();
+        let l = &f.lyrics.lines;
         assert_eq!(
-            lines.iter().map(|l| l.ms).collect::<Vec<_>>(),
-            [1000, 3500, 5000, 10000]
+            l.iter().map(|l| l.start_ms).collect::<Vec<_>>(),
+            [1000, 5000]
         );
-        assert_eq!(lines[2].text, "Word by word");
-        assert_eq!(lines[2].words.len(), 3);
-        assert_eq!(
-            (lines[2].words[0].ms, lines[2].words[0].end_ms),
-            (5000, 5400)
-        );
-        assert_eq!(
-            lines[2].words[2].end_ms, 8900,
-            "the last word ends by the next line, at most 3 s on"
-        );
+        assert_eq!(l[1].text, "Word by", "word stamps are timing, not text");
+        assert_eq!(l[1].words.len(), 2);
+        let t = l[0].translation.as_ref().unwrap();
+        assert_eq!(t.text, "Uno");
+        assert_eq!(t.source, SecondSource::Lyrics("netease".into()));
     }
 
     #[test]
@@ -1447,16 +1348,17 @@ mod tests {
         let xml = r#"<tt><body><div><p begin="00:01.000" end="00:03.000"><span begin="00:01.000" end="00:01.500">Hel</span><span begin="00:01.500" end="00:02.000">lo</span> <span begin="00:02.100" end="00:03.000">you</span></p><p begin="4.5" end="6">Plain &amp; line</p></div></body></tt>"#;
         let lines = parse_ttml(xml);
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].ms, 1000);
+        assert_eq!((lines[0].start_ms, lines[0].end_ms), (1000, 3000));
         assert_eq!(lines[0].text, "Hello you");
         assert_eq!(lines[0].words.len(), 3);
         assert_eq!(
             lines[1],
-            Line {
-                ms: 4500,
+            LyricLine {
+                start_ms: 4500,
+                end_ms: 6000,
                 text: "Plain & line".into(),
-                words: vec![],
-                translation: None
+                script: "Latn".into(),
+                ..Default::default()
             }
         );
     }
@@ -1505,11 +1407,13 @@ mod tests {
     fn timed(source: &str) -> Option<Option<Found>> {
         Some(Some(Found {
             source: source.into(),
-            lines: vec![Line {
-                ms: 0,
-                text: "x".into(),
+            lyrics: Lyrics {
+                lines: vec![LyricLine {
+                    text: "x".into(),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         }))
     }

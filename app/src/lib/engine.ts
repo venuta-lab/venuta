@@ -1346,17 +1346,42 @@ export const onlineLyrics = (title: string, artist: string, album: string, durat
       }))
     : Promise.resolve<OnlineLyrics>({ lines: [], text: '' })
 
-/** One line from a lyrics source, word by word when it times words. */
-export interface FoundLine {
-  ms: number
+/** A word of a lyric line with its time. */
+export interface LyricWord {
+  start_ms: number
+  end_ms: number
   text: string
-  words?: { ms: number; end_ms: number; text: string }[]
-  translation?: string | null
+}
+/** Where a second line under a lyric came from. */
+export type SecondSource = { kind: 'lyrics' | 'paired' | 'translated'; by: string } | { kind: 'made' } | { kind: 'corrected' }
+/** A line under a lyric line: its pronunciation, or its meaning. */
+export interface SecondLine {
+  text: string
+  /** Pronunciation only: timed by the original's words. */
+  words?: LyricWord[]
+  /** BCP 47: "ja-Latn", "zh-Hans", "und" when not known. */
+  lang: string
+  source: SecondSource
+}
+/** One lyric line (crates/engine/src/lyrics.rs, docs/design/lyrics-second-line.md). */
+export interface FoundLine {
+  start_ms: number
+  end_ms: number
+  text: string
+  words?: LyricWord[]
+  /** ISO 15924: "Latn", "Deva", "Jpan", "Hang", "Hani"; "Zyyy" for no letters. */
+  script: string
+  roman?: SecondLine | null
+  translation?: SecondLine | null
 }
 /** Lyrics a source gave. */
 export interface FoundLyrics {
   source: string
   lines: FoundLine[]
+  /** The song's language (BCP 47), when the source says. */
+  lang?: string | null
+  /** The answer format the engine read them with. */
+  version?: number
   text: string
   instrumental: boolean
   credit: string | null

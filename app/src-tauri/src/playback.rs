@@ -1412,38 +1412,14 @@ pub struct Lyrics {
     pub text: String,
 }
 
-/// `[01:02.34]words` (several stamps on one line allowed) → timed lines; headers like
-/// `[ar:…]` are skipped.
+/// Timed lines `[ms, line]`, read the way Venuta reads lyrics everywhere (`engine::lyrics`):
+/// word stamps are timing, not words; headers and the offset are understood.
 fn parse_lrc(text: &str) -> Vec<(u64, String)> {
-    let mut out = Vec::new();
-    for raw in text.lines() {
-        let mut rest = raw.trim();
-        let mut stamps = Vec::new();
-        while let Some(body) = rest.strip_prefix('[') {
-            let Some(end) = body.find(']') else { break };
-            let tag = &body[..end];
-            let ms = tag.split_once(':').and_then(|(m, s)| {
-                let m: u64 = m.trim().parse().ok()?;
-                let s: f64 = s.trim().replace(',', ".").parse().ok()?;
-                Some(m * 60_000 + (s * 1000.0).round() as u64)
-            });
-            match ms {
-                Some(ms) => stamps.push(ms),
-                None if stamps.is_empty() => {
-                    // A header ([ar:…], [offset:…]).
-                    rest = "";
-                    break;
-                }
-                None => break,
-            }
-            rest = &body[end + 1..];
-        }
-        for ms in stamps {
-            out.push((ms, rest.trim().to_owned()));
-        }
-    }
-    out.sort_by_key(|(ms, _)| *ms);
-    out
+    engine::lyrics::read_lrc(text)
+        .lines
+        .into_iter()
+        .map(|l| (l.start_ms, l.text))
+        .collect()
 }
 
 /// The words of a song in the open folder.
@@ -1577,6 +1553,12 @@ mod tests {
         );
         assert_eq!(w, vec!["Kesariya tera", "ishq hai piya"]);
         assert_eq!(words_of("one\n\ntwo\none"), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn your_word_timed_lrc_shows_words_not_stamps() {
+        let l = parse_lrc("[00:05.00]<00:05.00>Word <00:05.40>by <00:05.90>word");
+        assert_eq!(l, vec![(5000, "Word by word".into())]);
     }
 
     #[test]
