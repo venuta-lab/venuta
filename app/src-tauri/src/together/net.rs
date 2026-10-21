@@ -345,6 +345,105 @@ mod tests {
         host.close().await;
     }
 
+    /// A stream from a guest to a host over this network, and the endpoints to close after.
+    async fn stream_pair() -> (SendStream, RecvStream, [Connection; 2], Endpoint, Endpoint) {
+        let reach = Reach {
+            local_only: true,
+            ..Reach::default()
+        };
+        let host = endpoint(&reach, true, None).await.unwrap();
+        let ticket = ticket(&host, &reach).await;
+        let accept = tokio::spawn({
+            let host = host.clone();
+            async move {
+                let conn = host.accept().await.unwrap().await.unwrap();
+                let (_send, recv) = conn.accept_bi().await.unwrap();
+                (recv, conn)
+            }
+        });
+        let guest = endpoint(&reach, false, None).await.unwrap();
+        let t: iroh_tickets::endpoint::EndpointTicket = ticket.parse().unwrap();
+        let conn = guest
+            .connect(t.endpoint_addr().clone(), ALPN)
+            .await
+            .unwrap();
+        let (mut send, _recv) = conn.open_bi().await.unwrap();
+        // A stream is only seen by the other side once something is written on it.
+        send_line(&mut send, b"first\n").await.unwrap();
+        let (recv, host_conn) = accept.await.unwrap();
+        (send, recv, [conn, host_conn], guest, host)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lines_come_whole_and_in_order_however_they_were_written() {
+        let (mut send, recv, _conns, guest, host) = stream_pair().await;
+        let mut lines = Lines::new(recv);
+        assert_eq!(lines.next().await.unwrap().unwrap(), b"first");
+        // Several in one write, one split over writes, an empty one, and a last one with no end.
+        send_line(&mut send, b"a\nbb\n").await.unwrap();
+        send_line(&mut send, b"cc").await.unwrap();
+        tokio::io::AsyncWriteExt::flush(&mut send).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        send_line(&mut send, b"c\n\nlast").await.unwrap();
+        send.finish().unwrap();
+        assert_eq!(lines.next().await.unwrap().unwrap(), b"a");
+        assert_eq!(lines.next().await.unwrap().unwrap(), b"bb");
+        assert_eq!(lines.next().await.unwrap().unwrap(), b"ccc");
+        assert_eq!(
+            lines.next().await.unwrap().unwrap(),
+            b"",
+            "an empty line is a line"
+        );
+        assert_eq!(
+            lines.next().await.unwrap().unwrap(),
+            b"last",
+            "the end of the stream ends the last line"
+        );
+        assert_eq!(lines.next().await.unwrap(), None, "then nothing more");
+        guest.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_line_as_long_as_the_protocol_allows_is_read_and_the_bytes_after_it_stay() {
+        let (mut send, recv, _conns, guest, host) = stream_pair().await;
+        let mut lines = Lines::new(recv);
+        assert_eq!(lines.next().await.unwrap().unwrap(), b"first");
+        let mut big = vec![b'y'; together::proto::MAX_MESSAGE];
+        big.push(b'\n');
+        big.extend_from_slice(b"raw bytes after");
+        send_line(&mut send, &big).await.unwrap();
+        send.finish().unwrap();
+        assert_eq!(
+            lines.next().await.unwrap().unwrap().len(),
+            together::proto::MAX_MESSAGE
+        );
+        // What follows a header line is read raw from the same stream.
+        use tokio::io::AsyncReadExt;
+        let mut rest = Vec::new();
+        lines.into_inner().read_to_end(&mut rest).await.unwrap();
+        assert_eq!(rest, b"raw bytes after");
+        guest.close().await;
+        host.close().await;
+    }
+
+    #[test]
+    fn the_sessions_clock_counts_from_its_start_and_maps_back_to_moments() {
+        let c = Clock::new();
+        let a = c.now_us();
+        assert!((0..1_000_000).contains(&a));
+        assert_eq!(c.instant(0), c.base);
+        assert_eq!(c.instant(1_500), c.base + Duration::from_micros(1_500));
+        assert_eq!(
+            c.instant(-1),
+            c.base
+                .checked_sub(Duration::from_micros(1))
+                .unwrap_or(c.base),
+            "before its start"
+        );
+        assert!(c.now_us() >= a, "monotonic");
+    }
+
     #[tokio::test]
     async fn a_line_too_long_is_refused() {
         // Lines are checked as they're read; a peer can't make Venuta hold a huge message.
