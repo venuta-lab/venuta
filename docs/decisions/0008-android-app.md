@@ -37,6 +37,19 @@ The research behind these decisions:
 | 17 | Repo | Keep `app/` (desktop) where it is; add `crates/app-core`, `crates/venuta-ffi`, `tools/uniffi-bindgen`, `android/` (`core` and `app` modules, built with cargo-ndk from Gradle), `design/tokens` and `shared/`. Rename to `apps/desktop` and `apps/android` only after Android ships | The release scripts point at `app/`; the desktop keeps shipping through every step. |
 | 18 | Multi-device groundwork | In the first build: songs in history keyed by the song, not the file path; a device key in the system's secret store; settings split into profile and device | Cheap now, expensive once phones hold their own history. |
 
+## What the first device and build checks changed (2026-10-21)
+
+Checks 1 to 9 ran on the build machine and the handheld (results in `docs/android-spike.md` on branch `spike/android`). Nothing failed; these details change:
+
+- **Decision 7:** the handheld runs at 240 dpi, so its screen is 480x480 dp and the app window 480x432 dp, not 360. The console layout is designed at 480x432 dp.
+- **Decision 6:** the handheld does not report itself as a low-RAM device, so that flag can't choose the effects tier. The tier comes from the Android version plus a frame budget measured on the device at first start.
+- **Decision 10:** the old JavaScript engine does build for Android (with the NDK's own libclang), and the online catalog's search reading still uses that library in 25 places. So the Android build keeps it for now. Leaving it out comes after the search reading moves into the `ytmusic` crate.
+- **Decision 3** is stronger: the handheld mixes at 48 kHz, 16-bit, with no low-latency path and offload for MP3 only, never to its speaker. So Media3's offload would give nothing there.
+- **Decision 9** is confirmed: `keyring` on Android reports a save as done and then has nothing. The device key of decision 18 goes in the same Kotlin vault.
+- **Listen together's networking** needs the Android setup call (`install_android_jni_context`). Without it iroh panics twice before falling back, and with it it is online in about a third of a second.
+- **App core:** before setup, the data and temporary folders point at places the app can't write. The paths must be set from Kotlin at start, and the "before a library" folder belongs in the app's own files, not the cache.
+- **Size:** the core is about 22 MB per processor stripped (about 10 MB compressed). The libraries are 16 KB aligned with NDK 29 and no extra flags.
+
 ## How it is built
 
 1. **Device and build checks** (one agent, the handheld on adb): cross-compile every crate, prove the 16 KB alignment, load the core from Kotlin, and measure on the handheld: frames, blur cost, cold start, memory, an hour of screen-off playback, Bluetooth timing, controller keycodes, the security check in a WebView, streams from its network, a Listen together connection, All files access on its ROM. The numbers go in a checklist; any failure reopens the decision it belongs to.
