@@ -36,6 +36,8 @@ mod together;
 mod updates;
 mod ytm_account;
 mod ytm_accounts;
+/// YouTube's security check, run in a hidden window (public for the dev probe in examples/).
+pub mod ytm_botguard;
 mod ytm_choices;
 mod ytm_library;
 mod ytm_links;
@@ -3059,6 +3061,8 @@ pub fn run() {
             }
             // A YouTube Music sign-in kept from before is used again.
             ytm_account::restore(app.handle());
+            // Where YouTube's security check runs when a play is told (its window opens only then).
+            ytm_botguard::install(app.handle());
             // Ensure the stream tool is ready before the first online play (download if needed).
             std::thread::Builder::new()
                 .name("venuta-ensure-stream-tool".into())
@@ -3229,6 +3233,14 @@ pub fn run() {
             ytm_library::ytm_history,
             ytm_library::ytm_history_remove,
             ytm_library::ytm_vote,
+            ytm_library::ytm_menu_press,
+            ytm_library::ytm_song_menu,
+            ytm_library::ytm_taste_profile,
+            ytm_library::ytm_set_taste_profile,
+            ytm_library::ytm_remove_past_search,
+            ytm_library::ytm_delete_upload,
+            ytm_library::ytm_playlist_cover,
+            ytm_library::ytm_playlist_cover_clear,
             ytm_library::ytm_upload,
             ytm_library::ytm_identities,
             ytm_library::ytm_use_identity,

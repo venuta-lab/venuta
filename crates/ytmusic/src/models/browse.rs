@@ -14,8 +14,8 @@ use super::metadata::{
     album_id, artist_runs, artists_from_runs, duration_from_runs, find_all, find_all_shallow,
     find_first_str, first_artist_id, flex_column_text, flex_runs, is_explicit, is_upload_endpoint,
     is_upload_row, is_video_endpoint, is_video_row, is_video_type, last_thumbnail,
-    list_item_video_id, parse_episode_item, parse_list_item, play_count, runs_text, runs_text_opt,
-    ArtistRun, SongItem, WatchEndpoint,
+    list_item_video_id, menu_feedback, parse_episode_item, parse_list_item, play_count, row_menu,
+    runs_text, runs_text_opt, ArtistRun, RowMenu, SongItem, WatchEndpoint,
 };
 
 /// One clickable card in a home carousel or library grid. Flat + `kind`-tagged so the UI can
@@ -68,6 +68,10 @@ pub struct BrowseItem {
     /// rather than a radio rebuilt from its id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub play: Option<WatchEndpoint>,
+    /// Song cards only: what the card's own menu lets the account do with the song (save it to
+    /// the library, pin it, "Not interested"), with the tokens each sends. Empty signed out.
+    #[serde(skip_serializing_if = "RowMenu::is_empty")]
+    pub menu: RowMenu,
 }
 
 /// A titled row of cards on the home feed.
@@ -885,6 +889,10 @@ pub struct QuerySuggestion {
     pub text: String,
     /// One of the account's own past searches (only a signed-in request gets these).
     pub history: bool,
+    /// A past search's feedback token: sent to `feedback`, it takes the search out of the
+    /// account's search history (ytmusicapi `remove_search_suggestions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remove_token: Option<String>,
 }
 
 /// Parse a `music/get_search_suggestions` response: `searchSuggestionsSectionRenderer`s holding
@@ -913,8 +921,22 @@ pub fn parse_search_suggestions(root: &Value) -> SearchSuggestions {
             // The endpoint's query is the completion to run; the runs are the same text split
             // for bolding, kept only as a fallback.
             let text = find_first_str(s, "query").or_else(|| runs_text(s.get("suggestion")));
+            let remove_token = history
+                .then(|| {
+                    s.get("serviceEndpoint")?
+                        .get("feedbackEndpoint")?
+                        .get("feedbackToken")?
+                        .as_str()
+                })
+                .flatten()
+                .filter(|t| !t.trim().is_empty())
+                .map(str::to_owned);
             if let Some(text) = text {
-                r.queries.push(QuerySuggestion { text, history });
+                r.queries.push(QuerySuggestion {
+                    text,
+                    history,
+                    remove_token,
+                });
             }
         }
     }
@@ -970,6 +992,7 @@ fn list_item_to_browse_item(node: &Value) -> Option<BrowseItem> {
             is_upload: false,
             explicit: is_explicit(node),
             play: None,
+            menu: RowMenu::default(),
         });
     }
     let vid = list_item_video_id(node)?;
@@ -991,6 +1014,7 @@ fn list_item_to_browse_item(node: &Value) -> Option<BrowseItem> {
         is_upload: is_upload_row(node),
         explicit: is_explicit(node),
         play: None,
+        menu: row_menu(node),
     })
 }
 
@@ -1034,6 +1058,7 @@ fn card_shelf_main(card: &Value) -> Option<BrowseItem> {
             is_upload: nav.is_some_and(is_upload_endpoint),
             explicit: is_explicit(card),
             play: None,
+            menu: RowMenu::default(),
         });
     }
     let bid = nav
@@ -1055,6 +1080,7 @@ fn card_shelf_main(card: &Value) -> Option<BrowseItem> {
         is_upload: false,
         explicit: is_explicit(card),
         play: None,
+        menu: RowMenu::default(),
     })
 }
 
@@ -1352,6 +1378,7 @@ pub fn appears_on(songs: &[SongItem], artist_id: &str) -> Vec<BrowseItem> {
                 explicit: false,
                 play: None,
                 id,
+                menu: RowMenu::default(),
             })
         })
         .filter(|c| seen.insert(c.id.clone()))
@@ -1423,6 +1450,7 @@ fn parse_carousel_item(node: &Value) -> Option<BrowseItem> {
             node.get("musicMultiRowListItemRenderer")
                 .and_then(parse_episode_item)
         })?;
+    let menu = song.menu();
     Some(BrowseItem {
         kind: "song",
         id: song.video_id,
@@ -1437,7 +1465,17 @@ fn parse_carousel_item(node: &Value) -> Option<BrowseItem> {
         is_upload: song.is_upload,
         explicit: song.explicit,
         play: None,
+        menu,
     })
+}
+
+/// An album's or a playlist's card menu: only its "tell me less of this" items (Home's "Not
+/// interested"). Its library toggle is a like, not a token, and is read on its page instead.
+fn card_menu(node: &Value) -> RowMenu {
+    RowMenu {
+        feedback: menu_feedback(node),
+        ..RowMenu::default()
+    }
 }
 
 /// A `musicTwoRowItemRenderer` → one card. Kind inferred from its navigation endpoint.
@@ -1476,6 +1514,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
             is_upload: is_upload_row(node),
             explicit: is_explicit(node),
             play: None,
+            menu: row_menu(node),
         });
     }
     // Playlist via watchPlaylistEndpoint (some carousels expose the raw playlistId).
@@ -1498,6 +1537,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
             is_upload: false,
             explicit: is_explicit(node),
             play: card_play(node).or_else(|| nav.and_then(WatchEndpoint::within)),
+            menu: card_menu(node),
         });
     }
     // Otherwise a browseEndpoint → playlist/album/artist by browseId prefix.
@@ -1528,6 +1568,7 @@ fn parse_two_row_item(node: &Value) -> Option<BrowseItem> {
         is_upload: false,
         explicit: is_explicit(node),
         play: (kind == "playlist").then(|| card_play(node)).flatten(),
+        menu: card_menu(node),
     })
 }
 /// A card's own play button (`thumbnailOverlay`): the endpoint YouTube plays it with.
@@ -2505,6 +2546,35 @@ mod tests {
         assert!(!is_signed_out(&ok));
     }
 
+    // A Home album or playlist card's "Not interested" rides on the card, in YouTube's words.
+    // Shape as YouTube sends feedback items elsewhere: no live Home card has shown one yet.
+    #[test]
+    fn a_home_card_carries_its_not_interested() {
+        let card = |page: &str, id: &str| {
+            json!({
+                "title": { "runs": [{ "text": "A card" }] },
+                "navigationEndpoint": { "browseEndpoint": { "browseId": id,
+                    "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": page } } } },
+                "menu": { "menuRenderer": { "items": [
+                    { "menuServiceItemRenderer": {
+                        "text": { "runs": [{ "text": "Not interested" }] },
+                        "icon": { "iconType": "NOT_INTERESTED" },
+                        "serviceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-NI" } }
+                    } }
+                ] } }
+            })
+        };
+        for (page, id) in [
+            ("MUSIC_PAGE_TYPE_ALBUM", "MPREb_x"),
+            ("MUSIC_PAGE_TYPE_PLAYLIST", "VLPLx"),
+        ] {
+            let item = parse_two_row_item(&card(page, id)).unwrap();
+            assert_eq!(item.menu.feedback.len(), 1, "{page}");
+            assert_eq!(item.menu.feedback[0].token, "FIXTURE-NI");
+            assert_eq!(item.menu.feedback[0].label, "Not interested");
+        }
+    }
+
     #[test]
     fn parses_search_suggestions() {
         // A real signed-out response for "la vien rose".
@@ -2533,6 +2603,33 @@ mod tests {
         let s = parse_search_suggestions(&signed_in);
         assert_eq!(s.queries[0].text, "la vie en rose");
         assert!(s.queries[0].history);
+        // No token on this one: nothing to send, so it can't be taken out from Venuta.
+        assert_eq!(s.queries[0].remove_token, None);
+
+        // A past search as ytmusicapi reads one (get_search_suggestions detailed_runs): its
+        // serviceEndpoint is the feedback that takes it out of the search history
+        // (remove_search_suggestions). Completions carry none.
+        let with_token = json!({ "contents": [{ "searchSuggestionsSectionRenderer": { "contents": [
+            { "historySuggestionRenderer": {
+                "suggestion": { "runs": [{ "text": "arijit", "bold": true }, { "text": " singh" }] },
+                "navigationEndpoint": { "searchEndpoint": { "query": "arijit singh" } },
+                "icon": { "iconType": "SEARCH_HISTORY" },
+                "serviceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-PAST-SEARCH" } }
+            } },
+            { "searchSuggestionRenderer": {
+                "suggestion": { "runs": [{ "text": "arijit singh songs" }] },
+                "navigationEndpoint": { "searchEndpoint": { "query": "arijit singh songs" } }
+            } }
+        ] } }] });
+        let s = parse_search_suggestions(&with_token);
+        assert_eq!(s.queries[0].text, "arijit singh");
+        assert!(s.queries[0].history);
+        assert_eq!(
+            s.queries[0].remove_token.as_deref(),
+            Some("FIXTURE-PAST-SEARCH")
+        );
+        assert!(!s.queries[1].history);
+        assert_eq!(s.queries[1].remove_token, None);
     }
 
     #[test]

@@ -6,3 +6,4 @@ mod home_shelves;
 pub mod lyrics;
 pub mod metadata;
 pub mod player;
+pub mod taste;

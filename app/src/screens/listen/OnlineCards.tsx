@@ -7,7 +7,8 @@ import { onlineProblem } from '../../lib/online'
 import { enqueueItems, onlineEntryFrom, playAllItems, toRemoteItem, toggle } from '../../lib/player'
 import { listIdOf, playRadioAt } from '../../lib/radio'
 import { radioOfCard } from '../../lib/mixes'
-import { menuFor, onlineSongWork } from '../../lib/actions'
+import { deleteYtmUpload, menuFor, onlineSongFacts, onlineSongWork } from '../../lib/actions'
+import { isUploadAlbum } from '../../lib/ytmAsk'
 import { shortcutWork } from '../../lib/shortcuts'
 import { menuFromEvent } from '../../lib/menu'
 import { useCardWidth, useNav } from './model'
@@ -15,6 +16,7 @@ import { moodArt } from '../../lib/moodArt'
 import { Shelf } from './parts'
 import { isVideo } from './onlineSearch'
 import { useOnlineCards } from './useOnlineCards'
+import { collectionCardWork } from './cardWork'
 
 /*
   Cards for the browse side of the online catalog: a playlist or podcast to open (or play from
@@ -48,11 +50,14 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
   // plays (a mix's endpoint, params and all); a playlist plays its songs.
   const mix = radioOfCard(c)
   const play = () => (mix ? void playRadioAt(root, mix, c.title) : void withCollection(c, (items) => void playAllItems(root, items, from)))
+  // One of your uploaded albums: it can be deleted on YouTube Music (asked first).
+  const upload = isUploadAlbum(c.collection_id)
   const menu = () =>
     menuFor(
       'album',
-      { online: true },
+      { online: true, upload },
       {
+        deleteUpload: upload ? () => void deleteYtmUpload(c.collection_id.replace(/^VL/, ''), c.title, 'album') : undefined,
         open: () => openOnlineCollection(c),
         shortcut: shortcutWork({ kind: 'online-collection', collection: c }, `“${c.title}”`),
         play,
@@ -62,11 +67,13 @@ export function CollectionCard({ collection: c, width: asked, wide = false }: { 
           void onlineCollection(c.collection_id)
             .then((p) => p.tracks.length && askAddSongs(p.tracks.map((t) => ({ online: onlineEntryFrom(t) })), c.title))
             .catch((e) => notify(onlineProblem(e))),
+        // Shuffle, its radio, the whole list in one copy, its link, Not interested.
+        ...collectionCardWork(root, c, from),
       },
     )
   return (
     <div className="group relative shrink-0" style={{ width }}>
-      <button onClick={() => openOnlineCollection(c)} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${c.title}”`} className="block w-full text-left">
+      <button onClick={() => openOnlineCollection(c)} onContextMenu={(e) => menuFromEvent(e, menu)} title={`Open “${c.title}”`} className="block w-full text-left">
         <span className={`relative grid w-full place-items-center overflow-hidden bg-ink/[0.06] text-[28px] text-ink/25 shadow-lg shadow-black/20 ${wide ? 'aspect-video rounded-xl' : 'aspect-square rounded-2xl'}`}>
           <RemoteArt url={c.artwork_url} seed={c.title} size={width} imgClassName="h-full w-full object-cover" />
         </span>
@@ -126,11 +133,11 @@ export function OnlineSongCard({ track: t, now, onPlay, width: asked }: { track:
   const width = asked ?? shelfWidth
   const nav = useNav()
   const wide = isVideo(t)
-  const menu = () => menuFor('song', { online: true, noArtist: !t.artists.length }, onlineSongWork(nav, t, onPlay))
+  const menu = () => menuFor('song', onlineSongFacts(t), onlineSongWork(nav, t, onPlay))
   return (
     <button
       onClick={() => (now ? void toggle() : onPlay())}
-      onContextMenu={(e) => menuFromEvent(e, menu())}
+      onContextMenu={(e) => menuFromEvent(e, menu)}
       aria-current={now || undefined}
       title={`Play “${t.title}”`}
       className="group block shrink-0 text-left"

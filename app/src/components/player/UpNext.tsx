@@ -8,7 +8,7 @@ import { Chip } from '../ui'
 import { CARD_FADE, CHIP_FADE, ScrollRow } from '../ScrollRow'
 import { WindowedList, type Grab, type Line, type WindowedListHandle } from '../WindowedList'
 import { PlayingFrom } from './PlayingFrom'
-import { goToEach, menuFor } from '../../lib/actions'
+import { goToEach, menuFor, ytmMenuWork } from '../../lib/actions'
 import { useCovers } from '../../lib/covers'
 import type { OnlineSuggestion, OnlineTrack } from '../../lib/engine'
 import { useLocalOnly } from '../../lib/localOnly'
@@ -23,12 +23,12 @@ import {
   jumpTo,
   move,
   onlineEntryFrom,
+  openedLength,
   openFrom,
   queueKey,
   readFrom,
   removeAt,
   songItemOf,
-  songLength,
   toRemoteItem,
   toggle,
   usePlayer,
@@ -37,7 +37,7 @@ import {
   type QueueItem,
 } from '../../lib/player'
 import { chooseChip, playWithRadio, relatedPage, startRadio, useRadioSession } from '../../lib/radio'
-import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, saveName, type RelatedPart } from '../../lib/upNext'
+import { canPlayNext, chipsShown, onlineAlbumOf, placeOf, queueName, queueNote, relatedParts, rowLabel, rowLength, saveName, type RelatedPart } from '../../lib/upNext'
 import { openMusicPage } from '../../lib/musicPage'
 import { CardWidth, NavContext, type Nav } from '../../screens/listen/model'
 import { useOnlineCards } from '../../screens/listen/useOnlineCards'
@@ -127,9 +127,9 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
   const online = isOnline(props.item)
   const local = !online ? cover(props.item.dir) : null
   // A song YouTube queued without its length (often the one it opens with): while it plays, the
-  // player knows it.
+  // player knows it, and once it has opened its row keeps it. Not known: nothing, not a dash.
   const playingLength = usePlayerValue((s) => s.duration_ms)
-  const length = props.item.duration_ms || (props.current ? playingLength : 0)
+  const length = rowLength(props.item.duration_ms, openedLength(props.item), props.current ? playingLength : 0)
   return (
     <>
       <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-ink/[0.08] text-ink/30">
@@ -146,7 +146,7 @@ function RowBody(props: { item: QueueItem; current: boolean; badge: boolean; onR
         <div className="truncate text-[11.5px] text-ink/55">{props.item.artists.join(', ') || props.item.album_artist}</div>
       </div>
       {props.badge && <AvailabilityBadge quiet availability={availabilityOf(props.item)} />}
-      <span className="text-[11.5px] tabular-nums text-ink/45">{songLength(length)}</span>
+      <span className="text-[11.5px] tabular-nums text-ink/45">{length}</span>
       {props.onRemove ? (
         <button
           aria-label={`Remove ${props.item.title} from the queue`}
@@ -219,6 +219,8 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
           ? undefined
           : () => go({ kind: 'album', ref: q.dir, label: q.album }),
       remove: isCurrent ? undefined : () => void removeAt(r.at),
+      // An online song's own YouTube Music menu, as it was listed (save, pin, not interested).
+      ...(online ? ytmMenuWork(queueKey(q), q.title) : {}),
     })
   }
 
@@ -231,14 +233,14 @@ export function QueueList(props: { open: boolean; onLeave?: () => void }) {
     return (
       <div
         role="listitem"
-        aria-label={rowLabel({ title: r.q.title, artists: r.q.artists, length: r.q.duration_ms > 0 ? songLength(r.q.duration_ms) : '', where, place })}
+        aria-label={rowLabel({ title: r.q.title, artists: r.q.artists, length: rowLength(r.q.duration_ms, openedLength(r.q), isCurrent ? s.duration_ms : 0), where, place })}
         aria-current={isCurrent || undefined}
         aria-keyshortcuts={grab ? `${MOVE_KEYS} Delete Shift+F10` : isCurrent ? 'Shift+F10' : 'Delete Shift+F10'}
         tabIndex={0}
         style={style}
         data-current={isCurrent}
         onPointerDown={grab?.onGrab}
-        onContextMenu={(e) => menuFromEvent(e, rowMenu(r))}
+        onContextMenu={(e) => menuFromEvent(e, () => rowMenu(r))}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button') || grab?.justDropped()) return
           void (isCurrent ? toggle() : jumpTo(r.at))
@@ -406,17 +408,19 @@ function RelatedSongs({ tracks, root, label }: { tracks: OnlineTrack[]; root: st
     <ul aria-label={label} className="grid gap-0.5">
       {tracks.map((t, i) => {
         const item = toRemoteItem(t)
-        const menu = menuFor(
-          'song',
-          { online: true, noArtist: true },
-          {
-            play: () => void playWithRadio(root, item),
-            next: () => void enqueueItems(root, [item], true),
-            queue: () => void enqueueItems(root, [item], false),
-            radio: () => void startRadio(root, item),
-            playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
-          },
-        )
+        const menu = () =>
+          menuFor(
+            'song',
+            { online: true, noArtist: true },
+            {
+              play: () => void playWithRadio(root, item),
+              next: () => void enqueueItems(root, [item], true),
+              queue: () => void enqueueItems(root, [item], false),
+              radio: () => void startRadio(root, item),
+              playlist: () => askAddSongs([{ online: onlineEntryFrom(t) }], t.title),
+              ...ytmMenuWork(queueKey(item), t.title, t.menu),
+            },
+          )
         return (
           <li key={`${t.track_id}#${i}`} className="group flex min-w-0 items-center gap-1 rounded-xl hover:bg-ink/[0.05]" onContextMenu={(e) => menuFromEvent(e, menu)}>
             <button onClick={() => void playWithRadio(root, item)} title={`Play “${t.title}” and songs like it`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left">

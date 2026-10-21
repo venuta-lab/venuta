@@ -48,7 +48,7 @@ function menuOf(saved: YtmSavedAccount[], channels: YtmIdentity[], on: string | 
         label: `${c.current ? '✓ ' : ''}${c.name}${c.handle ? ` (${c.handle})` : ''}`,
         disabled: c.current,
         run: () =>
-          void ytmUseIdentity(c.id)
+          void ytmUseIdentity(c.own ? null : c.id)
             .then(() => notify(`Using ${c.name} on YouTube Music.`))
             .catch((e) => notify(String(e))),
       })),
@@ -115,7 +115,7 @@ export function YtmAccountsSection() {
                 ) : (
                   <button
                     onClick={() =>
-                      void ytmUseIdentity(c.id)
+                      void ytmUseIdentity(c.own ? null : c.id)
                         .then(() => notify(`Using ${c.name} on YouTube Music.`))
                         .catch((e) => notify(String(e)))
                     }

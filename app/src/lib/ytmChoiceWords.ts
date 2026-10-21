@@ -53,6 +53,22 @@ export const SAFE: YtmChoices = {
 /** The same choices, with one that needs another off without it. */
 export const settle = (c: YtmChoices): YtmChoices => ({ ...c, listening_time: c.listening_time && c.count_plays })
 
+/** Every switch about the account at once: all on ("Turn everything on") or all off
+ *  ("Everything off"). How it plays is not about the account and stays as it is. */
+export const everything = (on: boolean): YtmChoices => ({
+  personal: on,
+  library: on,
+  count_plays: on,
+  listening_time: on,
+  likes: on,
+  signed_search: on,
+  new_likes_in: on,
+  links_in_step: on,
+})
+
+/** Every account switch stands `on` already (that quick button has nothing to do). */
+export const allAre = (c: YtmChoices, on: boolean): boolean => (Object.keys(SAFE) as (keyof YtmChoices)[]).every((k) => c[k] === on)
+
 export type Row =
   | { kind: 'account'; key: keyof YtmChoices; name: string; line: string; needs?: keyof YtmChoices }
   | { kind: 'play'; key: keyof PlayChoices; name: string; line: string }
@@ -88,7 +104,7 @@ export const GROUPS: Group[] = [
         kind: 'account',
         key: 'count_plays',
         name: 'Count plays',
-        line: 'After 30 seconds of an online song, Venuta tells YouTube Music you played it, so it joins your YouTube history and recommendations learn from it. Your files are never sent.',
+        line: 'After 30 seconds of an online song, Venuta tells YouTube Music you played it, so it shows in your YouTube Music history and recommendations learn from it. If Venuta can’t pass YouTube’s security check, it tells YouTube through its web client instead, and the play shows in your YouTube watch history. Your files are never sent.',
       },
       {
         kind: 'account',

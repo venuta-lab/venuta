@@ -9,8 +9,8 @@ import { notify } from '../../lib/notify'
 import { isSearchCancelled } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
 import { rankOnlineTracks } from '../../lib/searchRank'
-import { isOnline, playItems, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
-import { copySongLink, goToEach, likeWork, menuFor, showInFolder } from '../../lib/actions'
+import { isOnline, playItems, queueKey, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
+import { copySongLink, goToEach, likeWork, menuFor, showInFolder, ytmMenuWork } from '../../lib/actions'
 import { blockArtist, dislike, startRadio } from '../../lib/radio'
 import { LikeButton } from '../LikeButton'
 import { menuFromEvent } from '../../lib/menu'
@@ -282,6 +282,8 @@ export function SongActions(props: {
         lyrics: [{ label: words ? (timed ? 'Fix the lyrics timing' : 'Time the lyrics') : 'Add lyrics', run: props.onTiming }],
         folder: remote ? undefined : () => showInFolder(props.root, song.path),
         web: () => void invoke('search_web', { words: `${song.title} ${artists[0] ?? ''}` }),
+        // Its own YouTube Music menu, as it was listed (save, pin, not interested).
+        ...(remote ? ytmMenuWork(queueKey(song), song.title) : {}),
       },
     )
   }
@@ -323,7 +325,7 @@ export function SongActions(props: {
               <IconAlbum width={18} height={18} />
             </IconAction>
           )}
-          <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu())}>
+          <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu)}>
             <IconMore width={18} height={18} />
           </IconAction>
         </div>

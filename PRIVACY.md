@@ -19,6 +19,7 @@ Only for something you asked for, or the update check you can switch off:
 | Finding your songs on a service (Send out) | Deezer, iTunes, ListenBrainz, MusicBrainz | When you send a playlist out to a service |
 | Checking for updates | GitHub (venuta-lab/venuta releases) | At most once a day, and only if **Check for updates when Venuta starts** is on (**Settings › About**); or when you click **Check for updates** |
 | The stream tool (yt-dlp) | GitHub (yt-dlp releases) | When the online catalog needs it and it isn't installed |
+| YouTube's security check (only with **Count plays**) | YouTube and Google (www.youtube.com, www.google.com, jnn-pa.googleapis.com), never as your account | When Venuta first tells a play, then about twice a day while it keeps telling them |
 
 These requests carry only what the lookup needs (for example an album's title and artist, or the
 link you pasted), plus Venuta's version in the User-Agent. Each service's own privacy policy
@@ -44,7 +45,11 @@ What Venuta reads with your account (on unless you turn them off):
 What Venuta tells YouTube Music (off until you turn them on):
 
 - **Count plays**: after 30 seconds of an online song, Venuta tells your account you played it,
-  so it joins your YouTube history. Your own files are never sent.
+  so it shows in your YouTube Music history. To tell it the way YouTube Music's own web player
+  does, Venuta passes YouTube's security check in a hidden window of its own, which has no
+  sign-in and nothing of yours in it. If Venuta can't pass the check, it tells YouTube through
+  its web client instead, and the play shows in your YouTube watch history. Your own files are
+  never sent.
 - **How much I listened**: with Count plays, also how many seconds of each online song you heard,
   as YouTube Music's own app reports it.
 - **Likes and dislikes**: a like or thumbs down you press in Venuta is the same on your account.
@@ -54,9 +59,16 @@ What Venuta tells YouTube Music (off until you turn them on):
 - **New YouTube likes come in**: songs you like elsewhere join Liked songs in Venuta when it
   starts. Nothing is sent.
 
-Changes you make to your YouTube Music playlists in Venuta (renaming, adding, removing, voting on
-a song in a collaborative playlist, uploading a file you picked) and plays you take out of your
-YouTube Music history are sent only when you make them. Nothing is uploaded or deleted on its own.
+Changes you make to your YouTube Music account in Venuta (renaming, adding, removing, voting on
+a song in a collaborative playlist, uploading a file you picked, saving a song to your library or
+pinning it, Not interested, deleting an upload, a cover, the artists you choose) and plays or
+searches you take out of your YouTube Music history are sent only when you make them. Nothing is
+uploaded or deleted on its own.
+
+When you open the menu of an online song that was found without your account (a search with
+Signed-in search off), Venuta asks YouTube Music, as your account, for that one song's menu so
+you can save or pin it. Only the song's id is sent, never the words you searched for, and it is
+asked only when you open that menu.
 
 ## Questions
 

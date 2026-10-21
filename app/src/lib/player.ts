@@ -18,6 +18,8 @@ import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 import { canSeekNow } from './streamWait'
+import { songMenus, type TrackMenu } from './ytmSongMenu'
+import { learnLength } from './upNext'
 
 /*
   The player, app-wide. Screens call play / toggle / next…; the engine (in the backend) owns
@@ -158,6 +160,10 @@ const idle: PlayerState = {
 let state: PlayerState = idle
 /** When the last report came (performance.now()), to tell the position between reports. */
 let reportedAt = 0
+/** Lengths of songs queued without one, as they said when opened (by `queueKey`). */
+const opened = new Map<string, number>()
+/** The length a queued song said when it was opened, for a row it was listed without one. */
+export const openedLength = (q: QueueItem) => opened.get(queueKey(q))
 const listeners = new Set<() => void>()
 const tell = () => listeners.forEach((l) => l())
 
@@ -173,6 +179,8 @@ const set = (s: PlayerState) => {
   const was = state
   state = s
   reportedAt = performance.now()
+  const playing = s.queue[s.index]
+  if (playing && !playing.duration_ms) learnLength(opened, queueKey(playing), s.duration_ms)
   if (!isAwake() && s.queue === was.queue && settled(s) === settled(was)) {
     held = true
     return
@@ -244,6 +252,9 @@ export interface RemoteTrack {
   album_id?: string | null
   duration_ms?: number | null
   artwork_url?: string | null
+  /** Its own YouTube Music menu, where it was listed signed in: kept by the song (lib/ytmSongMenu.ts)
+   *  so its queue row offers the same presses. Never part of the queue row itself. */
+  menu?: TrackMenu | null
 }
 
 /** Cover for an online id: catalog picture, else YouTube hqdefault when the id is a video id. */
@@ -261,8 +272,14 @@ export function onlineCoverUrl(t: { track_id: string; artwork_url?: string | nul
 }
 
 /** Build a queue row for an online track. Leaves `path`/`dir` empty so the backend treats it
- *  as remote and resolves its stream at play time. */
-export const toRemoteItem = (t: RemoteTrack): QueueItem => ({
+ *  as remote and resolves its stream at play time. Its YouTube Music menu, when it came with
+ *  one, is kept by the song for the queue's own menu. */
+export const toRemoteItem = (t: RemoteTrack): QueueItem => {
+  if (t.menu) songMenus.remember(`online:${t.provider}:${t.track_id}`, t.menu)
+  return remoteItemOf(t)
+}
+
+const remoteItemOf = (t: RemoteTrack): QueueItem => ({
   path: '',
   dir: '',
   title: t.title,

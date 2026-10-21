@@ -58,6 +58,10 @@ if (inApp()) {
 export const YTM_CHOICES_EVENT = 'venuta:ytm-choices'
 export const openYtmChoices = () => window.dispatchEvent(new Event(YTM_CHOICES_EVENT))
 
+/** Asks "Choose artists you like" (YtmTaste) to open. */
+export const YTM_TASTE_EVENT = 'venuta:ytm-taste'
+export const openTasteBuilder = () => window.dispatchEvent(new Event(YTM_TASTE_EVENT))
+
 /** The choices of the account in use as last read (null: none read, or signed out). */
 export const ytmChoicesNow = () => now
 

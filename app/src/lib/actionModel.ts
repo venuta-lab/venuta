@@ -40,6 +40,12 @@ export type ActionId =
   | 'copy'
   | 'remove'
   | 'delete'
+  | 'ytmLibrary'
+  | 'ytmPin'
+  | 'notInterested'
+  | 'deleteUpload'
+  | 'saveEpisode'
+  | 'follow'
 
 export type Kind = 'song' | 'album' | 'artist' | 'playlist' | 'wanted' | 'queued'
 
@@ -65,6 +71,10 @@ export interface Facts {
   current?: boolean
   /** An online song whose album the catalog named (it can go to that album's online page). */
   onlineAlbum?: boolean
+  /** One of your YouTube Music uploads (a song or an album): it can be deleted there. */
+  upload?: boolean
+  /** An online podcast episode: it can be saved to Episodes for later. */
+  episode?: boolean
 }
 
 /** The words for each action, unless the thing says it better ("Go to A.R. Rahman"). */
@@ -101,6 +111,14 @@ export const LABELS: Record<ActionId, string> = {
   copy: 'Copy its name',
   remove: 'Remove',
   delete: 'Delete…',
+  // The song's own YouTube Music menu: the work gives the words as the song stands, these are
+  // only what it is called.
+  ytmLibrary: 'Save to YouTube Music library',
+  ytmPin: 'Pin to Listen again',
+  notInterested: 'Not interested',
+  deleteUpload: 'Delete upload…',
+  saveEpisode: 'Save episode for later',
+  follow: 'Follow on YouTube Music',
 }
 
 const PLAY: ActionId[] = ['play', 'shuffle', 'next', 'queue']
@@ -114,8 +132,8 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
         return [
           ['play', 'next', 'queue'],
           ['radio', 'like', ...when(f.online, 'dislike')],
-          ['playlist'],
-          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'moreOnline', 'block')],
+          ['playlist', ...when(f.online, 'ytmLibrary', 'ytmPin'), ...when(f.online && f.episode, 'saveEpisode')],
+          [...when(!f.noArtist, 'artist'), 'album', ...when(f.online && !f.noArtist, 'follow', 'moreOnline', 'block'), ...when(f.online, 'notInterested')],
           [
             ...when(f.nowPlaying && !f.online, 'lyrics'),
             ...when(!f.online, 'details', 'folder'),
@@ -124,11 +142,14 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
             'web',
           ],
           when(f.inPlaylist && !f.smart, 'remove'),
+          when(f.online && f.upload, 'deleteUpload'),
         ]
       case 'album':
-        return f.online ? [PLAY, ['playlist', 'shortcut'], ['open']] : [PLAY, ['playlist', 'shortcut'], ['artist'], ['details', 'folder']]
+        return f.online
+          ? [PLAY, ['radio'], ['playlist', 'shortcut'], ['open', 'share'], ['notInterested'], when(f.upload, 'deleteUpload')]
+          : [PLAY, ['playlist', 'shortcut'], ['artist'], ['details', 'folder']]
       case 'artist':
-        return [PLAY, ['radio'], ['playlist', 'shortcut'], ['open']]
+        return [PLAY, ['radio'], ['playlist', 'shortcut'], ['open', ...when(f.online, 'share')]]
       case 'playlist':
         return [
           PLAY,
@@ -148,8 +169,8 @@ export function actionsFor(kind: Kind, f: Facts): ActionId[][] {
         return [
           when(!f.current, 'play', 'next'),
           ['radio'],
-          ['playlist'],
-          [...when(!f.noArtist, 'artist'), ...when(!f.online || !!f.onlineAlbum, 'album')],
+          ['playlist', ...when(f.online, 'ytmLibrary', 'ytmPin'), ...when(f.online && f.episode, 'saveEpisode')],
+          [...when(!f.noArtist, 'artist'), ...when(!f.online || !!f.onlineAlbum, 'album'), ...when(f.online, 'notInterested')],
           when(!f.current, 'remove'),
         ]
     }

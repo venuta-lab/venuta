@@ -24,6 +24,10 @@ pub enum LibraryShelf {
     Podcasts,
     /// Albums the account uploaded itself.
     UploadAlbums,
+    /// The podcast channels followed.
+    PodcastChannels,
+    /// The artists of the account's uploads, each opening on their uploaded songs.
+    UploadArtists,
 }
 
 /// One song as the account's lists hold it: the song, and where it sits in the list (the handle
@@ -43,6 +47,32 @@ pub struct AccountTrack {
     /// Its votes, on a collaborative playlist that has them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub votes: Option<TrackVotes>,
+    /// One of the account's uploads: the id that deletes it ([`AccountAccess::delete_upload`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_id: Option<String>,
+}
+
+/// Which of a song menu's presses a token is, for the words when YouTube turns it down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuPress {
+    /// Save to library, or remove from it.
+    Library,
+    /// Pin to Listen again, or unpin.
+    Pin,
+    /// Not interested, and the other "tell me less of this" items.
+    Feedback,
+}
+
+impl MenuPress {
+    /// What it is, in a sentence: "YouTube Music didn't take {what}."
+    pub fn what(self) -> &'static str {
+        match self {
+            MenuPress::Library => "the library change",
+            MenuPress::Pin => "the pin",
+            MenuPress::Feedback => "that",
+        }
+    }
 }
 
 /// The person who added a song to a collaborative playlist, as the row shows them.
@@ -150,6 +180,28 @@ pub enum PlaylistEdit {
         set_video_id: String,
         before: Option<String>,
     },
+    /// A whole playlist (or an album's list) copied in, on YouTube Music's side, in one edit.
+    AddPlaylist {
+        playlist_id: String,
+    },
+    /// New songs go to the top (`on`) or to the end.
+    AddToTop {
+        on: bool,
+    },
+}
+
+/// One artist the taste builder offers ("Choose artists you like"), and the two values its
+/// answer is made of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TasteArtist {
+    pub name: String,
+    pub selection_value: String,
+    pub impression_value: String,
+    #[serde(default)]
+    pub picture: Option<String>,
+    /// Chosen already, when YouTube Music said so.
+    #[serde(default)]
+    pub selected: bool,
 }
 
 /// Where each added song landed: `(videoId, setVideoId)`.
@@ -185,6 +237,9 @@ pub struct AccountIdentityInfo {
     pub picture: Option<String>,
     /// The one in use now.
     pub current: bool,
+    /// The login's own channel (not a brand account): acted as with no identity chosen.
+    #[serde(default)]
+    pub own: bool,
 }
 
 /// Whether the account has an album or a playlist saved, and the id to save it by.
@@ -207,6 +262,8 @@ pub struct FollowState {
 #[derive(Clone)]
 pub struct Listen {
     pub video_id: String,
+    /// Where its play counts.
+    pub counts: PlayCounts,
     #[cfg(feature = "live-provider")]
     pub(crate) tracking: ytmusic::ListenTracking,
 }
@@ -215,8 +272,21 @@ impl std::fmt::Debug for Listen {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Listen")
             .field("video_id", &self.video_id)
+            .field("counts", &self.counts)
             .finish_non_exhaustive()
     }
+}
+
+/// Where a listen's play counts, as the playback log says it. The reasons are words safe to
+/// log: never an id, a token or an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlayCounts {
+    /// On YouTube Music's History page, as its own web player tells it. `no_token`: told
+    /// without YouTube's security check (PO token), and why there was none.
+    YouTubeMusic { no_token: Option<String> },
+    /// In the YouTube watch history: told through the YouTube web client, because YouTube
+    /// Music's own player gave nowhere to tell it (why).
+    YouTube { why: String },
 }
 
 /// How much of a listen was heard since its last report: each stretch from where it started to
@@ -325,6 +395,115 @@ pub trait AccountAccess: Send + Sync {
     /// Vote on a song of a collaborative playlist, or take the vote back: the token is the one
     /// its [`VoteButton`] sends in the state it is in.
     fn vote(&self, token: &str, cancel: &CancellationToken) -> Result<(), AccessError>;
+
+    /// One press on a song's own menu (save to library, pin, not interested): the token the
+    /// song's [`crate::TrackMenu`] holds for that way.
+    fn menu_press(
+        &self,
+        token: &str,
+        press: MenuPress,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (token, press, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "song menu",
+        ))
+    }
+
+    /// One song's own menu as the account sees it, for a song listed without one (a search sent
+    /// signed out): only the song's id is sent. None when YouTube Music gave none.
+    fn song_menu(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::TrackMenu>, AccessError> {
+        let _ = (video_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "song menu",
+        ))
+    }
+
+    /// Take a past search out of the account's search history, by its
+    /// [`crate::PastSearch::remove_token`].
+    fn remove_past_search(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (token, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "search history",
+        ))
+    }
+
+    /// Give a playlist the account owns its own cover picture (a square JPEG or PNG works best).
+    fn set_playlist_cover(
+        &self,
+        playlist_id: &str,
+        image: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (playlist_id, image, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "playlist covers",
+        ))
+    }
+
+    /// Take a playlist's own cover away, so YouTube Music makes one from its songs again: the
+    /// address of that one, when it said.
+    fn clear_playlist_cover(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let _ = (playlist_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "playlist covers",
+        ))
+    }
+
+    /// The artists YouTube Music's taste builder offers.
+    fn taste_profile(&self, cancel: &CancellationToken) -> Result<Vec<TasteArtist>, AccessError> {
+        let _ = cancel;
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "choosing artists",
+        ))
+    }
+
+    /// Tell YouTube Music the artists chosen: every one shown (`impressions`), the chosen ones
+    /// (`selected`), by their [`TasteArtist`] values.
+    fn set_taste_profile(
+        &self,
+        impressions: &[String],
+        selected: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (impressions, selected, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "choosing artists",
+        ))
+    }
+
+    /// Delete one of the account's uploads, a song by its [`AccountTrack::delete_id`] or an
+    /// album by its page's id. Asked first, in the app.
+    fn delete_upload(
+        &self,
+        entity_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let _ = (entity_id, cancel);
+        Err(AccessError::new(
+            crate::AccessErrorKind::Unsupported,
+            "deleting uploads",
+        ))
+    }
 
     /// Tell the account a song was played (history, and what its recommendations learn from).
     fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError>;

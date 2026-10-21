@@ -152,6 +152,7 @@ mod tests {
             is_upload: false,
             explicit: false,
             play: None,
+            menu: Default::default(),
         }
     }
 

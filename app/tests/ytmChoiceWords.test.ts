@@ -3,7 +3,7 @@
 // and said in words that match what Venuta really does.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SAFE, GROUPS, settle, summary, accountLine, rowOn, playChoicesOf } from '../src/lib/ytmChoiceWords.ts'
+import { SAFE, GROUPS, settle, summary, accountLine, rowOn, playChoicesOf, everything, allAre } from '../src/lib/ytmChoiceWords.ts'
 
 test('a new account starts safe: what reads is on, what writes is off', () => {
   assert.deepEqual(SAFE, {
@@ -93,4 +93,32 @@ test('what Venuta tells YouTube Music is said plainly, as it is sent', () => {
   assert.match(line('How much I listened'), /how many seconds of each online song you heard/)
   assert.match(line('How much I listened'), /skip/)
   for (const n of ['Count plays', 'How much I listened']) assert.doesNotMatch(line(n), /—/, 'no em dashes')
+})
+
+test('turn everything on: every account switch on, each still its own after', () => {
+  const all = everything(true)
+  for (const k of Object.keys(SAFE) as (keyof typeof SAFE)[]) assert.equal(all[k], true, k)
+  // How much I listened stands with Count plays, which is on with it.
+  assert.equal(settle(all).listening_time, true)
+  assert.deepEqual(settle({ ...all, count_plays: false }), { ...all, count_plays: false, listening_time: false })
+})
+
+test('everything off: nothing read, told or kept in step', () => {
+  const none = everything(false)
+  for (const k of Object.keys(SAFE) as (keyof typeof SAFE)[]) assert.equal(none[k], false, k)
+})
+
+test('the quick buttons know when there is nothing left to do', () => {
+  assert.equal(allAre(everything(true), true), true)
+  assert.equal(allAre(everything(false), false), true)
+  assert.equal(allAre(SAFE, true), false)
+  assert.equal(allAre(SAFE, false), false)
+})
+
+test('count plays says where a play lands, and where when the security check cannot be passed', () => {
+  const row = GROUPS.flatMap((g) => g.rows).find((r) => r.name === 'Count plays')!
+  assert.match(row.line, /YouTube Music history/)
+  assert.match(row.line, /security check/)
+  assert.match(row.line, /YouTube watch history/)
+  assert.ok(!row.line.includes(String.fromCharCode(0x2014)), 'no em dash')
 })

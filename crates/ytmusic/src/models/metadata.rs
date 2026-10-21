@@ -110,6 +110,73 @@ pub struct SongItem {
     /// files, On Repeat), where there is nothing to send.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<LibraryToggle>,
+    /// "Pin to Listen again" / "Unpin from Listen again" off the row's own menu ([`pin_toggle`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<PinToggle>,
+    /// The row menu's "tell me less of this" items ("Not interested"), in its order
+    /// ([`menu_feedback`]). Empty on rows that carry none, which is most of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
+    /// One of the account's uploads: the id its Delete item sends (`musicDeletePrivatelyOwnedEntityCommand`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_upload: Option<String>,
+}
+
+/// A song's "Pin to Listen again", as its menu states it: pinned or not, and the token for each
+/// way. Like [`LibraryToggle`], a feedback toggle minted with the row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PinToggle {
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpin_token: Option<String>,
+}
+
+/// One "tell me less of this" item off a row's menu ("Not interested", "Don't recommend …"): its
+/// icon, YouTube's own words for it (localised, so they are shown as they come), and the token
+/// that sends it. One way only: YouTube's own menus offer no way back from Venuta.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MenuFeedback {
+    pub icon: String,
+    pub label: String,
+    pub token: String,
+}
+
+/// Everything a song row's own menu lets the account do with it, read once ([`row_menu`]):
+/// what a card or a row Venuta reads with its own parser carries along.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RowMenu {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<LibraryToggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<PinToggle>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<MenuFeedback>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_upload: Option<String>,
+}
+
+impl SongItem {
+    /// What this row's own menu offers the account, as a card carries it.
+    pub fn menu(&self) -> RowMenu {
+        RowMenu {
+            library: self.library.clone(),
+            pin: self.pin.clone(),
+            feedback: self.feedback.clone(),
+            delete_upload: self.delete_upload.clone(),
+        }
+    }
+}
+
+impl RowMenu {
+    /// Nothing to offer: a signed-out row, or one Venuta built itself.
+    pub fn is_empty(&self) -> bool {
+        self.library.is_none()
+            && self.pin.is_none()
+            && self.feedback.is_empty()
+            && self.delete_upload.is_none()
+    }
 }
 
 /// A track's library membership as its menu states it, with the tokens for both directions.
@@ -427,6 +494,9 @@ pub struct AccountIdentity {
     pub data_sync_id: String,
     /// YouTube's current/default marker. The app's persisted choice may deliberately differ.
     pub is_selected: bool,
+    /// The sign-in's own channel, not a brand account: a row with no `pageIdToken`, which only
+    /// brand accounts carry. It is acted as by sending no `onBehalfOfUser` at all.
+    pub own: bool,
 }
 
 /// Parse a `search` response into song items. context/08.
@@ -739,6 +809,7 @@ fn parse_account_identity(
         .then_some(response_id)
         .flatten()
         .map(str::to_owned);
+    let own = page_id.is_none();
     let data_sync_id = token_data_sync_id.or(page_id).or(selected_response_id)?;
 
     Some(AccountIdentity {
@@ -749,6 +820,7 @@ fn parse_account_identity(
         channel_id: channel_browse_id(item),
         data_sync_id,
         is_selected,
+        own,
     })
 }
 
@@ -879,6 +951,9 @@ pub(crate) fn parse_list_item(node: &Value) -> Option<SongItem> {
         is_upload: is_upload_row(node),
         explicit: is_explicit(node),
         library: library_toggle(node),
+        pin: pin_toggle(node),
+        feedback: menu_feedback(node),
+        delete_upload: upload_entity(node),
     })
 }
 
@@ -905,6 +980,9 @@ pub(crate) fn parse_episode_item(node: &Value) -> Option<SongItem> {
         // otherwise drop. Video mode still reads the player response, so video podcasts keep it.
         is_video: false,
         library: library_toggle(node),
+        pin: pin_toggle(node),
+        feedback: menu_feedback(node),
+        delete_upload: upload_entity(node),
         ..Default::default()
     })
 }
@@ -1175,75 +1253,196 @@ fn removable(node: &Value) -> bool {
 
 /// The row's "Save to library" action, in either shape YouTube sends it.
 ///
-/// Usually a `toggleMenuServiceItemRenderer` holding both directions, one `feedbackEndpoint` each.
-/// It carries no state field, so which way round it is comes from the icons: YouTube puts the
-/// action available *now* in `defaultIcon`/`defaultServiceEndpoint`, so a song already in the
-/// library arrives with the filled bookmark as its default. Some surfaces send a plain
-/// `menuServiceItemRenderer` with one direction only; that is the fallback below.
+/// Usually a `toggleMenuServiceItemRenderer` holding both directions, one `feedbackEndpoint` each
+/// ([`feedback_toggle`]). Some surfaces send a plain `menuServiceItemRenderer` with one direction
+/// only; that is the fallback below.
 ///
 /// Icons, not the label, because the label is localised. A track menu carries other feedback
 /// toggles that must not match: "Add to liked songs" (FAVORITE/UNFAVORITE, a rating and a
-/// different list) and "Pin to Listen again" (KEEP/KEEP_OFF). Live-checked 2026-08-28: search rows
-/// send BOOKMARK_BORDER/BOOKMARK; the LIBRARY_* spellings are kept as YouTube has used them too.
+/// different list) and "Pin to Listen again" (KEEP/KEEP_OFF, [`pin_toggle`]). Live-checked
+/// 2026-08-28: search rows send BOOKMARK_BORDER/BOOKMARK; the LIBRARY_* spellings are kept as
+/// YouTube has used them too.
 fn library_toggle(node: &Value) -> Option<LibraryToggle> {
     /// The bookmark is empty when the song is not in the library — that direction adds it.
     const ADDS: [&str; 2] = ["BOOKMARK_BORDER", "LIBRARY_ADD"];
     /// Filled: it is in there, and this direction takes it out.
     const REMOVES: [&str; 3] = ["BOOKMARK", "LIBRARY_REMOVE", "LIBRARY_SAVED"];
 
-    // Scoped to the row's menu where there is one: `find_all` walks everything, and a row can
-    // carry other people's endpoints (an album's, an artist's) elsewhere in its tree.
-    let menu = node.get("menu").unwrap_or(node);
-    let feedback_token = |endpoint: Option<&Value>| {
-        find_first_str(endpoint?.get("feedbackEndpoint")?, "feedbackToken")
-    };
-    let both = find_all(menu, "toggleMenuServiceItemRenderer")
+    if let Some(t) = feedback_toggle(node, &ADDS, &REMOVES) {
+        return Some(LibraryToggle {
+            in_library: t.on,
+            add_token: Some(t.on_token),
+            remove_token: Some(t.off_token),
+        });
+    }
+    find_all(row_menu_node(node), "menuServiceItemRenderer")
         .into_iter()
-        .find_map(|toggle| {
-            let icon = |key: &str| find_first_str(toggle.get(key)?, "iconType");
-            let default = feedback_token(toggle.get("defaultServiceEndpoint"))?;
-            let toggled = feedback_token(toggle.get("toggledServiceEndpoint"))?;
-            let (default_icon, toggled_icon) = (icon("defaultIcon")?, icon("toggledIcon")?);
-            let (default_icon, toggled_icon) = (default_icon.as_str(), toggled_icon.as_str());
-            if ADDS.contains(&default_icon) && REMOVES.contains(&toggled_icon) {
+        .find_map(|item| {
+            let token = feedback_token(item.get("serviceEndpoint"))?;
+            let icon = find_first_str(item.get("icon")?, "iconType")?;
+            if ADDS.contains(&icon.as_str()) {
                 Some(LibraryToggle {
                     in_library: false,
-                    add_token: Some(default),
-                    remove_token: Some(toggled),
+                    add_token: Some(token),
+                    remove_token: None,
                 })
-            } else if REMOVES.contains(&default_icon) && ADDS.contains(&toggled_icon) {
+            } else if REMOVES.contains(&icon.as_str()) {
                 Some(LibraryToggle {
                     in_library: true,
-                    add_token: Some(toggled),
-                    remove_token: Some(default),
+                    add_token: None,
+                    remove_token: Some(token),
                 })
             } else {
                 None
             }
-        });
-    both.or_else(|| {
-        find_all(menu, "menuServiceItemRenderer")
-            .into_iter()
-            .find_map(|item| {
-                let token = feedback_token(item.get("serviceEndpoint"))?;
-                let icon = find_first_str(item.get("icon")?, "iconType")?;
-                if ADDS.contains(&icon.as_str()) {
-                    Some(LibraryToggle {
-                        in_library: false,
-                        add_token: Some(token),
-                        remove_token: None,
-                    })
-                } else if REMOVES.contains(&icon.as_str()) {
-                    Some(LibraryToggle {
-                        in_library: true,
-                        add_token: None,
-                        remove_token: Some(token),
-                    })
-                } else {
-                    None
-                }
-            })
+        })
+}
+
+/// The row's "Pin to Listen again" / "Unpin from Listen again": a feedback toggle like the
+/// library's, told apart by its pin icons (KEEP pins, KEEP_OFF unpins).
+fn pin_toggle(node: &Value) -> Option<PinToggle> {
+    feedback_toggle(node, &["KEEP"], &["KEEP_OFF"]).map(|t| PinToggle {
+        pinned: t.on,
+        pin_token: Some(t.on_token),
+        unpin_token: Some(t.off_token),
     })
+}
+
+/// A two-way feedback toggle, read: whether it stands on now, and the token for each way.
+struct FeedbackToggle {
+    on: bool,
+    on_token: String,
+    off_token: String,
+}
+
+/// The row menu's scope: `find_all` walks everything, and a row can carry other people's
+/// endpoints (an album's, an artist's) elsewhere in its tree.
+fn row_menu_node(node: &Value) -> &Value {
+    node.get("menu").unwrap_or(node)
+}
+
+fn feedback_token(endpoint: Option<&Value>) -> Option<String> {
+    find_first_str(endpoint?.get("feedbackEndpoint")?, "feedbackToken")
+}
+
+/// The `toggleMenuServiceItemRenderer` wearing one of `turns_on` / `turns_off` as an icon, each
+/// way sending a `feedbackEndpoint` token. Which way each side goes is its own words where they
+/// say it plainly ("Unpin from Listen again" unpins), else its icon (KEEP pins, KEEP_OFF unpins;
+/// BOOKMARK_BORDER saves, BOOKMARK removes), so a token is never sent the wrong way round. Which
+/// way it stands is the side the menu shows now: its toggled side when `isToggled` is true (a
+/// Library ▸ Songs row: "Remove from library" over a "Save to library" default), else its default
+/// side (a pinned song swaps the item round instead, with no flag: live-checked 2026-10-19).
+/// Signed out, a side asks you to sign in (`modalEndpoint`) and there is nothing to send: none.
+fn feedback_toggle(node: &Value, turns_on: &[&str], turns_off: &[&str]) -> Option<FeedbackToggle> {
+    find_all(row_menu_node(node), "toggleMenuServiceItemRenderer")
+        .into_iter()
+        .find_map(|toggle| {
+            let icon = |key: &str| find_first_str(toggle.get(key)?, "iconType");
+            let (default_icon, toggled_icon) = (icon("defaultIcon")?, icon("toggledIcon")?);
+            let ours = |i: &str| turns_on.contains(&i) || turns_off.contains(&i);
+            // This toggle, not its neighbour (a like, the other feedback toggle): told by icons.
+            if !ours(&default_icon) && !ours(&toggled_icon) {
+                return None;
+            }
+            let default = feedback_token(toggle.get("defaultServiceEndpoint"))?;
+            let toggled = feedback_token(toggle.get("toggledServiceEndpoint"))?;
+            // Which way each side goes: its words where they say it plainly, else its icon.
+            let goes_on = |text_key: &str, icon: &str| {
+                side_words_turn_on(toggle.get(text_key)).or_else(|| {
+                    if turns_on.contains(&icon) {
+                        Some(true)
+                    } else if turns_off.contains(&icon) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+            };
+            let default_turns_on = goes_on("defaultText", &default_icon)?;
+            let toggled_turns_on = goes_on("toggledText", &toggled_icon)?;
+            // Both sides the same way: nothing here can be trusted to send the right one.
+            if default_turns_on == toggled_turns_on {
+                return None;
+            }
+            let shows_toggled = toggle
+                .get("isToggled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            // The side on offer turns it on: then it is off now.
+            let offered_turns_on = if shows_toggled {
+                toggled_turns_on
+            } else {
+                default_turns_on
+            };
+            let (on_token, off_token) = if default_turns_on {
+                (default, toggled)
+            } else {
+                (toggled, default)
+            };
+            Some(FeedbackToggle {
+                on: !offered_turns_on,
+                on_token,
+                off_token,
+            })
+        })
+}
+
+/// What a toggle side's words say it does, where they say it plainly in English: "Pin to …" or
+/// "Save to library" turns it on, "Unpin from …" or "Remove from library" turns it off. None in
+/// another language, where the icons decide.
+fn side_words_turn_on(text: Option<&Value>) -> Option<bool> {
+    let words = runs_text(text)?.trim().to_ascii_lowercase();
+    let first = words.split_whitespace().next()?;
+    match first {
+        "pin" | "save" | "add" => Some(true),
+        "unpin" | "remove" => Some(false),
+        _ => None,
+    }
+}
+
+/// The row menu's "tell me less of this" items, by their icons (the words are localised): a
+/// plain `menuServiceItemRenderer` whose endpoint is a `feedbackEndpoint`. NOT_INTERESTED and
+/// DISMISS are "Not interested"; REMOVE / REMOVE_CIRCLE are YouTube's "Don't recommend …".
+/// Needs a live check: no live song menu has carried one in front of Venuta yet.
+pub(crate) fn menu_feedback(node: &Value) -> Vec<MenuFeedback> {
+    const LESS: [&str; 4] = ["NOT_INTERESTED", "DISMISS", "REMOVE", "REMOVE_CIRCLE"];
+    let Some(menu) = node.get("menu") else {
+        return Vec::new();
+    };
+    find_all(menu, "menuServiceItemRenderer")
+        .into_iter()
+        .filter_map(|item| {
+            let icon = find_first_str(item.get("icon")?, "iconType")?;
+            if !LESS.contains(&icon.as_str()) {
+                return None;
+            }
+            let token = feedback_token(item.get("serviceEndpoint"))?;
+            let label = runs_text(item.get("text"))?.trim().to_owned();
+            (!label.is_empty()).then_some(MenuFeedback { icon, label, token })
+        })
+        .collect()
+}
+
+/// An upload's Delete item: the entity id its confirm dialog's button sends
+/// (`musicDeletePrivatelyOwnedEntityCommand`), as ytmusicapi reads it for `delete_upload_entity`.
+fn upload_entity(node: &Value) -> Option<String> {
+    find_all(node.get("menu")?, "musicDeletePrivatelyOwnedEntityCommand")
+        .into_iter()
+        .find_map(|c| c.get("entityId")?.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// Everything a song row's own menu offers the account, for rows read by another parser (a
+/// search page, a playlist page read raw): the same reading `SongItem` gets.
+pub fn row_menu(node: &Value) -> RowMenu {
+    RowMenu {
+        library: library_toggle(node),
+        pin: pin_toggle(node),
+        feedback: menu_feedback(node),
+        delete_upload: upload_entity(node),
+    }
 }
 
 fn like_status(node: &Value) -> Option<Rating> {
@@ -1296,6 +1495,9 @@ fn parse_panel_video(node: &Value) -> Option<SongItem> {
         // flag up for free if YouTube ever adds one.
         explicit: is_explicit(node),
         library: library_toggle(node),
+        pin: pin_toggle(node),
+        feedback: menu_feedback(node),
+        delete_upload: upload_entity(node),
     })
 }
 
@@ -1736,6 +1938,251 @@ mod tests {
         assert_eq!(library_toggle(&toggle("FAVORITE", "UNFAVORITE")), None);
         assert_eq!(library_toggle(&toggle("KEEP", "KEEP_OFF")), None);
         assert_eq!(library_toggle(&json!({})), None);
+    }
+
+    fn row_fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    // A Library ▸ Songs row: every song there is in the library, and its toggle says so with
+    // `isToggled`, not by swapping its icons. Reading the icons alone called each one "not in the
+    // library" and offered "Save to library" on a song already saved.
+    #[test]
+    fn a_library_song_row_reads_its_library_and_pin_toggles() {
+        let root = row_fixture("library_song_row_menu.json");
+        let row = parse_list_item(&root["musicResponsiveListItemRenderer"]).unwrap();
+        assert_eq!(
+            row.library,
+            Some(LibraryToggle {
+                in_library: true,
+                add_token: Some("FIXTURE-LIBRARY-ADD".into()),
+                remove_token: Some("FIXTURE-LIBRARY-REMOVE".into()),
+            })
+        );
+        assert_eq!(
+            row.pin,
+            Some(PinToggle {
+                pinned: false,
+                pin_token: Some("FIXTURE-PIN".into()),
+                unpin_token: Some("FIXTURE-UNPIN".into()),
+            })
+        );
+        // Nothing on this menu is a "tell me less of this".
+        assert!(row.feedback.is_empty(), "{:?}", row.feedback);
+        assert_eq!(row.delete_upload, None);
+    }
+
+    // `isToggled` both ways on both toggles: it is which of the two the menu shows now.
+    #[test]
+    fn is_toggled_says_which_way_a_toggle_stands() {
+        let menu = |default_icon: &str, toggled_icon: &str, toggled: Option<bool>| {
+            let mut t = json!({
+                "defaultIcon": { "iconType": default_icon },
+                "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "DEFAULT" } },
+                "toggledIcon": { "iconType": toggled_icon },
+                "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "TOGGLED" } }
+            });
+            if let Some(on) = toggled {
+                t["isToggled"] = json!(on);
+            }
+            json!({ "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": t } ] } } })
+        };
+        let lib = |d, t, on| library_toggle(&menu(d, t, on)).unwrap().in_library;
+        assert!(!lib("BOOKMARK_BORDER", "BOOKMARK", Some(false)));
+        assert!(lib("BOOKMARK_BORDER", "BOOKMARK", Some(true)));
+        // No flag: the icons alone, as search rows send it.
+        assert!(!lib("BOOKMARK_BORDER", "BOOKMARK", None));
+        assert!(lib("BOOKMARK", "BOOKMARK_BORDER", None));
+        assert!(!lib("BOOKMARK", "BOOKMARK_BORDER", Some(true)));
+
+        let pin = pin_toggle(&menu("KEEP", "KEEP_OFF", Some(true))).unwrap();
+        assert!(pin.pinned);
+        assert_eq!(pin.pin_token.as_deref(), Some("DEFAULT"));
+        assert_eq!(pin.unpin_token.as_deref(), Some("TOGGLED"));
+        assert!(!pin_toggle(&menu("KEEP", "KEEP_OFF", None)).unwrap().pinned);
+        assert!(pin_toggle(&menu("KEEP_OFF", "KEEP", None)).unwrap().pinned);
+        // The library toggle is not a pin, and the other way round.
+        assert_eq!(pin_toggle(&menu("BOOKMARK_BORDER", "BOOKMARK", None)), None);
+        assert_eq!(library_toggle(&menu("KEEP", "KEEP_OFF", None)), None);
+        // Signed out the menu asks you to sign in instead: nothing to send, so no toggle.
+        let signed_out = json!({ "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": {
+            "defaultIcon": { "iconType": "KEEP" },
+            "defaultServiceEndpoint": { "modalEndpoint": {} },
+            "toggledIcon": { "iconType": "KEEP_OFF" },
+            "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "T" } }
+        } } ] } } });
+        assert_eq!(pin_toggle(&signed_out), None);
+    }
+
+    // Pin to Listen again as a real account sends it: no isToggled, the item swapped round on a
+    // pinned song. Pinned reads pinned, and each way sends its own token: pressing Unpin must
+    // never send the pin token, nor Pin the unpin one.
+    #[test]
+    fn a_pin_reads_pinned_or_not_and_each_way_sends_its_own_token() {
+        let root = row_fixture("pin_toggle_states.json");
+        let pinned = pin_toggle(&root["pinned"]).unwrap();
+        assert_eq!(
+            pinned,
+            PinToggle {
+                pinned: true,
+                pin_token: Some("FIXTURE-PIN-TOKEN".into()),
+                unpin_token: Some("FIXTURE-UNPIN-TOKEN".into()),
+            }
+        );
+        let unpinned = pin_toggle(&root["unpinned"]).unwrap();
+        assert_eq!(
+            unpinned,
+            PinToggle {
+                pinned: false,
+                pin_token: Some("FIXTURE-PIN-TOKEN".into()),
+                unpin_token: Some("FIXTURE-UNPIN-TOKEN".into()),
+            }
+        );
+        // The library toggle both ways it comes: saved by isToggled, and saved by the swap.
+        for row in ["saved_library_row", "saved_swapped"] {
+            let lib = library_toggle(&root[row]).unwrap();
+            assert!(lib.in_library, "{row}");
+            assert_eq!(
+                lib.add_token.as_deref(),
+                Some("FIXTURE-SAVE-TOKEN"),
+                "{row}"
+            );
+            assert_eq!(
+                lib.remove_token.as_deref(),
+                Some("FIXTURE-REMOVE-TOKEN"),
+                "{row}"
+            );
+        }
+    }
+
+    // Which way each side goes is its words where they say it plainly (English), else its icon:
+    // a side whose words say "Unpin" unpins whatever icon it wears, and in another language the
+    // icons alone decide.
+    #[test]
+    fn a_toggle_side_goes_the_way_its_words_say_else_its_icon() {
+        let side = |text: &str, icon: &str, token: &str| {
+            (
+                json!({ "runs": [{ "text": text }] }),
+                json!({ "iconType": icon }),
+                json!({ "feedbackEndpoint": { "feedbackToken": token } }),
+            )
+        };
+        let toggle = |d: (Value, Value, Value), t: (Value, Value, Value), on: Option<bool>| {
+            let mut r = json!({
+                "defaultText": d.0, "defaultIcon": d.1, "defaultServiceEndpoint": d.2,
+                "toggledText": t.0, "toggledIcon": t.1, "toggledServiceEndpoint": t.2
+            });
+            if let Some(on) = on {
+                r["isToggled"] = json!(on);
+            }
+            json!({ "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": r } ] } } })
+        };
+        // Words and icons disagree: the words win.
+        let odd = pin_toggle(&toggle(
+            side("Unpin from Listen again", "KEEP", "U"),
+            side("Pin to Listen again", "KEEP_OFF", "P"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                odd.pinned,
+                odd.pin_token.as_deref(),
+                odd.unpin_token.as_deref()
+            ),
+            (true, Some("P"), Some("U"))
+        );
+        // Words not in English: the icons.
+        let other = pin_toggle(&toggle(
+            side("Aus „Erneut hören“ lösen", "KEEP_OFF", "U"),
+            side("An „Erneut hören“ anpinnen", "KEEP", "P"),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                other.pinned,
+                other.pin_token.as_deref(),
+                other.unpin_token.as_deref()
+            ),
+            (true, Some("P"), Some("U"))
+        );
+        // isToggled on top of either: the toggled side is the one on offer.
+        let lib = library_toggle(&toggle(
+            side("Save to library", "BOOKMARK_BORDER", "S"),
+            side("Remove from library", "BOOKMARK", "R"),
+            Some(true),
+        ))
+        .unwrap();
+        assert!(lib.in_library);
+        assert_eq!(
+            (lib.add_token.as_deref(), lib.remove_token.as_deref()),
+            (Some("S"), Some("R"))
+        );
+        // Both sides saying the same way can't be read: no toggle rather than a wrong one.
+        assert_eq!(
+            pin_toggle(&toggle(
+                side("Pin to Listen again", "KEEP", "A"),
+                side("Pin to Listen again", "KEEP", "B"),
+                None,
+            )),
+            None
+        );
+    }
+
+    // An upload's row carries the id that deletes it, inside its Delete item's confirm dialog
+    // (ytmusicapi parse_uploaded_items). Other rows carry none.
+    #[test]
+    fn an_upload_row_carries_the_id_that_deletes_it() {
+        let root = row_fixture("upload_song_row_menu.json");
+        let row = parse_list_item(&root["musicResponsiveListItemRenderer"]).unwrap();
+        assert!(row.is_upload);
+        assert_eq!(row.delete_upload.as_deref(), Some("t_po_FIXTUREENTITY"));
+        let liked = row_fixture("library_song_row_menu.json");
+        let row = parse_list_item(&liked["musicResponsiveListItemRenderer"]).unwrap();
+        assert_eq!(row.delete_upload, None);
+    }
+
+    // "Not interested" and its kind: a feedback item named by its icon, with YouTube's own words.
+    // No live row has shown one yet, so the shape is the one YouTube uses on its other surfaces
+    // (a menuServiceItemRenderer with a feedbackEndpoint) and is read by icon alone. Items with
+    // their own place elsewhere (history, library, pins) and items that send no feedback stay out.
+    #[test]
+    fn tell_me_less_items_are_read_by_icon_with_their_own_words() {
+        let item = |icon: &str, text: &str, endpoint: Value| {
+            json!({ "menuServiceItemRenderer": {
+                "text": { "runs": [ { "text": text } ] },
+                "icon": { "iconType": icon },
+                "serviceEndpoint": endpoint
+            } })
+        };
+        let fb = |t: &str| json!({ "feedbackEndpoint": { "feedbackToken": t } });
+        let node = json!({ "menu": { "menuRenderer": { "items": [
+            item("NOT_INTERESTED", "Not interested", fb("NI")),
+            item("REMOVE", "Don't recommend this artist", fb("DR")),
+            item("REMOVE_FROM_HISTORY", "Remove from history", fb("H")),
+            item("BOOKMARK_BORDER", "Save to library", fb("L")),
+            item("DISMISS", "Not interested", json!({ "queueAddEndpoint": {} })),
+        ] } } });
+        assert_eq!(
+            menu_feedback(&node),
+            vec![
+                MenuFeedback {
+                    icon: "NOT_INTERESTED".into(),
+                    label: "Not interested".into(),
+                    token: "NI".into(),
+                },
+                MenuFeedback {
+                    icon: "REMOVE".into(),
+                    label: "Don't recommend this artist".into(),
+                    token: "DR".into(),
+                },
+            ]
+        );
+        assert!(menu_feedback(&json!({})).is_empty());
     }
 
     // The rating drives both thumbs on every row, and the third state is new: `DISLIKE` used to
@@ -2466,6 +2913,7 @@ mod tests {
         assert_eq!(identity.channel_id.as_deref(), Some("UCSANITIZEDPERSONAL"));
         assert_eq!(identity.data_sync_id, "personal-sync");
         assert!(identity.is_selected);
+        assert!(identity.own, "the sign-in's own channel");
     }
 
     #[test]
@@ -2486,6 +2934,11 @@ mod tests {
         assert_eq!(persisted.name, "Brand channel");
         assert_eq!(persisted.channel_id.as_deref(), Some("UCSANITIZEDBRAND"));
         assert!(!persisted.is_selected);
+
+        // Only a brand account carries a page id: the row without one is the sign-in's own
+        // channel, which is acted as by sending no identity at all.
+        assert!(identities[0].own);
+        assert!(!persisted.own);
     }
 
     #[test]

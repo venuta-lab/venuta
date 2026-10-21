@@ -3,7 +3,7 @@
 // song already there is left out instead of failing the whole add.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { addPlan, canAddTo } from '../src/lib/ytmAdd.ts'
+import { addPlan, canAddTo, copyWhole } from '../src/lib/ytmAdd.ts'
 
 const there = (owned: boolean, collaborative: boolean, ids: string[], complete = true) => ({
   title: 'Road',
@@ -42,4 +42,15 @@ test('one new song is named', () => {
   const p = addPlan(['a'], there(true, false, []), '“Tum Hi Ho”')
   assert.deepEqual(p.send, ['a'])
   assert.equal(p.words, 'Added “Tum Hi Ho” to “Road” on YouTube Music.')
+})
+
+test('a whole list goes in one copy only when all of it is new there and none is a file of yours', () => {
+  const there = { title: 'Mine', owned: true, collaborative: false, tracks: [{ track_id: 'x' }] }
+  const fresh = addPlan(['a', 'b'], there)
+  assert.equal(copyWhole('PLsource', ['a', 'b'], fresh, 0), true)
+  assert.equal(copyWhole(null, ['a', 'b'], fresh, 0), false, 'no list to copy')
+  assert.equal(copyWhole('PLsource', ['a', 'b'], fresh, 1), false, 'a file of yours stays out of a copy')
+  const some = addPlan(['a', 'x'], there)
+  assert.equal(copyWhole('PLsource', ['a', 'x'], some, 0), false, 'one there already: each new one on its own')
+  assert.equal(copyWhole('PLsource', ['a', 'a', 'b'], fresh, 0), false, 'a list with a song twice')
 })

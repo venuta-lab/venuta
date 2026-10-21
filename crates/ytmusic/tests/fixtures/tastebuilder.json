@@ -1,0 +1,39 @@
+{
+  "_note": "Shape of a signed-in FEmusic_tastebuilder browse (YouTube Music's 'Tell us which artists you like') as ytmusicapi reads it (mixins/browsing.py get_tasteprofile: contents.tastebuilderRenderer.contents[].tastebuilderItemListRenderer.contents[].tastebuilderItemRenderer, the artist's name in title.runs[0].text, and selectionFormValue / impressionFormValue). Saving is a browse of FEmusic_home with formData {impressionValues: every artist's impressionFormValue, selectedValues: the chosen ones' selectionFormValue} (set_tasteprofile). Not captured live: the thumbnail and isSelected fields are YouTube's usual names and need a live check. Values replaced.",
+  "contents": {
+    "tastebuilderRenderer": {
+      "title": { "runs": [ { "text": "Tell us which artists you like" } ] },
+      "contents": [
+        { "tastebuilderItemListRenderer": { "contents": [
+          { "tastebuilderItemRenderer": {
+            "title": { "runs": [ { "text": "Arijit Singh" } ] },
+            "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
+              { "url": "https://lh3.googleusercontent.com/fixture-arijit=w120-h120-l90-rj", "width": 120, "height": 120 },
+              { "url": "https://lh3.googleusercontent.com/fixture-arijit=w226-h226-l90-rj", "width": 226, "height": 226 }
+            ] } } },
+            "selectionFormValue": "FIXTURE-SELECT-ARIJIT",
+            "impressionFormValue": "FIXTURE-SEEN-ARIJIT"
+          } },
+          { "tastebuilderItemRenderer": {
+            "title": { "runs": [ { "text": "Shreya Ghoshal" } ] },
+            "selectionFormValue": "FIXTURE-SELECT-SHREYA",
+            "impressionFormValue": "FIXTURE-SEEN-SHREYA",
+            "isSelected": true
+          } }
+        ] } },
+        { "tastebuilderItemListRenderer": { "contents": [
+          { "tastebuilderItemRenderer": {
+            "title": { "runs": [ { "text": "A.R. Rahman" } ] },
+            "selectionFormValue": "FIXTURE-SELECT-RAHMAN",
+            "impressionFormValue": "FIXTURE-SEEN-RAHMAN"
+          } },
+          { "tastebuilderItemRenderer": {
+            "title": { "runs": [ { "text": "" } ] },
+            "selectionFormValue": "FIXTURE-NO-NAME",
+            "impressionFormValue": "FIXTURE-SEEN-NO-NAME"
+          } }
+        ] } }
+      ]
+    }
+  }
+}

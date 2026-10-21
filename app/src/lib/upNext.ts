@@ -8,6 +8,7 @@
 */
 
 import type { OnlineAlbum, OnlineRelatedShelf, OnlineSuggestion, OnlineTrack } from './engine.ts'
+import { knownLength } from './onlineSong.ts'
 import type { QueueItem } from './player.ts'
 import type { RadioView } from './radio.ts'
 
@@ -43,6 +44,24 @@ export const canPlayNext = (at: number, index: number) => at !== index && at !==
 export function rowLabel(r: { title: string; artists: string[]; length: string; where: string | null; place: Place }) {
   const where = r.place === 'current' ? 'playing now' : r.place === 'played' ? 'played' : ''
   return [r.title, ...r.artists, r.length, r.where ?? '', where].filter(Boolean).join(', ')
+}
+
+/** A row's length: as the song was listed, else as it said when it was opened (`opened`), else
+ *  the player's while it plays (`playing`, 0 for another row); nothing while none is known. */
+export const rowLength = (listed: number, opened: number | undefined, playing: number) => knownLength(listed || opened || playing)
+
+/** Lengths of songs opened, by `queueKey`, kept for their rows: at most this many. */
+const LENGTHS_KEPT = 2000
+
+/** Keep the length a song said when it opened, for its row (a song listed without one). */
+export function learnLength(lengths: Map<string, number>, key: string | null, ms: number) {
+  if (!key || !(ms > 0) || lengths.get(key) === ms) return
+  lengths.delete(key)
+  lengths.set(key, ms)
+  for (const old of lengths.keys()) {
+    if (lengths.size <= LENGTHS_KEPT) break
+    lengths.delete(old)
+  }
 }
 
 /** The name suggested for the queue saved as a playlist: the radio's, else what it plays from. */

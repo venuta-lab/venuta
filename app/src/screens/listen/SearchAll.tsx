@@ -15,6 +15,7 @@ import { notify } from '../../lib/notify'
 import { onlineProblem } from '../../lib/online'
 import { fromOnline, itemOf, onlineItems, playOnlineArtistPage, withOnlineAlbum, type MixedSong } from './onlineSearch'
 import { QualityBadge } from './parts'
+import { onlineAlbumCardWork, onlineArtistCardWork } from './cardWork'
 import { LikeButton } from '../../components/LikeButton'
 import { PickMark } from '../../components/SelectBar'
 
@@ -126,7 +127,7 @@ export function MixedSongs(props: {
                   pick.onPick(key, e.shiftKey)
                 } else if (e.key === 'Enter') playIt()
               }}
-              onContextMenu={(e) => menuFromEvent(e, menu())}
+              onContextMenu={(e) => menuFromEvent(e, menu)}
               className={`row group grid h-[52px] cursor-pointer grid-cols-[40px_minmax(0,1fr)_88px_32px_44px_auto_32px] items-center gap-3 rounded-xl px-2 hover:bg-ink/[0.05] focus-visible:bg-ink/[0.06] active:bg-ink/[0.09] ${now ? 'text-accent-ink' : ''} ${picked ? 'bg-ink/[0.07]' : ''}`}
             >
               {pick ? (
@@ -159,7 +160,7 @@ export function MixedSongs(props: {
               <span className="text-right text-[12.5px] tabular-nums text-ink/55">{t.duration_ms ? songLength(t.duration_ms) : ''}</span>
               <AvailabilityBadge availability={s.where === 'library' ? 'local' : 'online'} />
               <button
-                onClick={(e) => menuFromEvent(e, menu())}
+                onClick={(e) => menuFromEvent(e, menu)}
                 aria-label={`More for ${t.title}`}
                 className="grid h-8 w-8 place-items-center rounded-full text-ink/60 opacity-0 hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
               >
@@ -190,12 +191,13 @@ export function OnlineAlbumTile({ album: a, query }: { album: OnlineAlbum; query
         next: () => void withOnlineAlbum(a, (t) => void enqueueItems(root, onlineItems(t), true)),
         queue: () => void withOnlineAlbum(a, (t) => void enqueueItems(root, onlineItems(t), false)),
         playlist: () => void withOnlineAlbum(a, (t) => askAddSongs(t.map((x) => ({ online: onlineEntryFrom(x) })), a.title)),
+        ...onlineAlbumCardWork(root, a, from),
       },
     )
   const line = [a.kind, a.artists.join(', '), a.release_date?.slice(0, 4)].filter(Boolean).join(' · ')
   return (
     <div className="group relative">
-      <button onClick={() => openOnlineAlbum(a)} onContextMenu={(e) => menuFromEvent(e, menu())} title={`Open “${a.title}”`} className="lift block w-full text-left">
+      <button onClick={() => openOnlineAlbum(a)} onContextMenu={(e) => menuFromEvent(e, menu)} title={`Open “${a.title}”`} className="lift block w-full text-left">
         <span className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-2xl bg-ink/[0.06] text-[28px] text-ink/25 shadow-xl shadow-black/25">
           <RemoteArt url={a.artwork_url} seed={a.title} size={168} imgClassName="h-full w-full object-cover" />
         </span>
@@ -226,6 +228,7 @@ export function OnlineArtistCard({ artist: ar }: { artist: OnlineArtist }) {
         menuFromEvent(
           e,
           menuFor('artist', { online: true }, {
+            ...onlineArtistCardWork(root, ar),
             open: () => openOnlineArtist(ar),
             shortcut: shortcutWork({ kind: 'online-artist', artist: ar }, ar.name),
             play: () => void playOnlineArtistPage(root, ar),

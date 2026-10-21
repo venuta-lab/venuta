@@ -1,0 +1,46 @@
+{
+  "_note": "Pin to Listen again on a real signed-in song menu, as seen 2026-10-19 (WEB_REMIX): YouTube sets no isToggled on it. A pinned song swaps the item instead: defaultText 'Unpin from Listen again', defaultIcon KEEP_OFF, defaultServiceEndpoint the unpin token; toggledText 'Pin to Listen again', toggledIcon KEEP. An unpinned one has it the other way round. Both tokens are 119 characters (replaced here). A saved Library row's library toggle keeps 'Save to library' as its default and says it is saved with isToggled true. Each item here is one row's menu.",
+  "pinned": { "menu": { "menuRenderer": { "items": [
+    { "toggleMenuServiceItemRenderer": {
+      "defaultText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+      "defaultIcon": { "iconType": "KEEP_OFF" },
+      "defaultServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-UNPIN-TOKEN" } },
+      "toggledText": { "runs": [ { "text": "Pin to Listen again" } ] },
+      "toggledIcon": { "iconType": "KEEP" },
+      "toggledServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-PIN-TOKEN" } },
+      "trackingParams": "FIXTURE"
+    } }
+  ] } } },
+  "unpinned": { "menu": { "menuRenderer": { "items": [
+    { "toggleMenuServiceItemRenderer": {
+      "defaultText": { "runs": [ { "text": "Pin to Listen again" } ] },
+      "defaultIcon": { "iconType": "KEEP" },
+      "defaultServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-PIN-TOKEN" } },
+      "toggledText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+      "toggledIcon": { "iconType": "KEEP_OFF" },
+      "toggledServiceEndpoint": { "clickTrackingParams": "FIXTURE", "feedbackEndpoint": { "feedbackToken": "FIXTURE-UNPIN-TOKEN" } },
+      "trackingParams": "FIXTURE"
+    } }
+  ] } } },
+  "saved_library_row": { "menu": { "menuRenderer": { "items": [
+    { "toggleMenuServiceItemRenderer": {
+      "defaultText": { "runs": [ { "text": "Save to library" } ] },
+      "defaultIcon": { "iconType": "BOOKMARK_BORDER" },
+      "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-SAVE-TOKEN" } },
+      "toggledText": { "runs": [ { "text": "Remove from library" } ] },
+      "toggledIcon": { "iconType": "BOOKMARK" },
+      "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-REMOVE-TOKEN" } },
+      "isToggled": true
+    } }
+  ] } } },
+  "saved_swapped": { "menu": { "menuRenderer": { "items": [
+    { "toggleMenuServiceItemRenderer": {
+      "defaultText": { "runs": [ { "text": "Remove from library" } ] },
+      "defaultIcon": { "iconType": "BOOKMARK" },
+      "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-REMOVE-TOKEN" } },
+      "toggledText": { "runs": [ { "text": "Save to library" } ] },
+      "toggledIcon": { "iconType": "BOOKMARK_BORDER" },
+      "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "FIXTURE-SAVE-TOKEN" } }
+    } }
+  ] } } }
+}

@@ -987,6 +987,7 @@ fn album_tracks_of(page: &ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack
             } else {
                 named
             };
+            let menu = crate::catalog_cards::menu_of(&s.menu());
             RemoteTrack {
                 provider: PROVIDER.into(),
                 track_id: s.video_id.trim().to_owned(),
@@ -1000,6 +1001,7 @@ fn album_tracks_of(page: &ytmusic::AlbumPage, album_id: &str) -> Vec<RemoteTrack
                     .play_count
                     .as_deref()
                     .and_then(crate::catalog_cards::plays),
+                menu,
                 ..Default::default()
             }
         })
@@ -1053,6 +1055,7 @@ fn album_page_of(page: &ytmusic::AlbumPage, album_id: &str) -> RemoteAlbumPage {
                 .first()
                 .map(|w| (*w).to_owned())
                 .filter(|w| !w.is_empty()),
+            feedback: Vec::new(),
         },
         artists,
         subtitle,
@@ -1445,6 +1448,11 @@ fn account_error(e: ytmusic::Error, what: &str) -> AccessError {
             AccessErrorKind::Transport,
             "YouTube Music asked Venuta to slow down. Try again in a few minutes.",
         ),
+        // A custom cover on an account YouTube won't give one: its own reason, as it is.
+        ytmusic::Error::CoverRefused => AccessError::new(
+            AccessErrorKind::InvalidInput,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover.",
+        ),
         // It answered, and said no (a row's feedback token it would not take).
         ytmusic::Error::ActionRejected => AccessError::new(
             AccessErrorKind::InvalidInput,
@@ -1464,6 +1472,17 @@ fn signed_out() -> AccessError {
     )
 }
 
+/// A taste builder artist as Venuta's.
+fn taste_artist_of(a: ytmusic::TasteArtist) -> crate::account::TasteArtist {
+    crate::account::TasteArtist {
+        name: a.name,
+        selection_value: a.selection_value,
+        impression_value: a.impression_value,
+        picture: clean_artwork_url(a.thumbnail),
+        selected: a.selected,
+    }
+}
+
 /// A song row as the account's lists hold it: the song, its place, whether it's an upload.
 fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTrack> {
     Some(crate::account::AccountTrack {
@@ -1472,6 +1491,7 @@ fn account_track_of(row: &ytmusic::SongItem) -> Option<crate::account::AccountTr
         upload: row.is_upload,
         added_by: contributor_of(row),
         votes: row.vote.as_ref().map(votes_of),
+        delete_id: row.delete_upload.clone(),
     })
 }
 
@@ -1557,7 +1577,30 @@ fn hidden_of(said: Option<u32>, listed: usize) -> usize {
     said.map_or(0, |n| (n as usize).saturating_sub(listed))
 }
 
+/// Where a listen's play counts, from the player that answered for it.
+fn play_counts(route: &ytmusic::ListenRoute) -> crate::account::PlayCounts {
+    match route {
+        ytmusic::ListenRoute::Music { no_token } => crate::account::PlayCounts::YouTubeMusic {
+            no_token: no_token.clone(),
+        },
+        ytmusic::ListenRoute::Web { why } => {
+            crate::account::PlayCounts::YouTube { why: why.clone() }
+        }
+    }
+}
+
 impl YtmBackend {
+    /// The client every report of a listen goes as: the one whose player answered for it.
+    fn listen_client(
+        &self,
+        listen: &crate::account::Listen,
+    ) -> Result<&ytmusic::YouTubeClient, AccessError> {
+        self.client(match listen.tracking.route() {
+            ytmusic::ListenRoute::Music { .. } => PAGES_CLIENT,
+            ytmusic::ListenRoute::Web { .. } => ytmusic::WEB_PLAYS_CLIENT,
+        })
+    }
+
     /// One account request, signed in, cancellable, its failure in words.
     fn account_call<T: Send>(
         &self,
@@ -1615,6 +1658,8 @@ impl crate::account::AccountAccess for YtmBackend {
                 S::Subscriptions => self.it.library_subscriptions(client).await,
                 S::Podcasts => self.it.library_podcasts(client).await,
                 S::UploadAlbums => self.it.upload_albums(client).await,
+                S::PodcastChannels => self.it.library_channels(client).await,
+                S::UploadArtists => self.it.upload_artists(client).await,
             }
         })?;
         Ok(cards
@@ -1623,8 +1668,12 @@ impl crate::account::AccountAccess for YtmBackend {
                 // Podcasts come as playlist-like cards: opened as podcasts.
                 (S::Podcasts, _) => crate::catalog_cards::collection_of(c, "podcast")
                     .map(|collection| crate::RemoteSuggestion::Playlist { collection }),
-                // Library artists and subscriptions come as list rows the card reader calls songs.
-                (S::Artists | S::Subscriptions, _) => {
+                // An upload artist opens on the list of their uploaded songs.
+                (S::UploadArtists, _) => crate::catalog_cards::collection_of(c, "playlist")
+                    .map(|collection| crate::RemoteSuggestion::Playlist { collection }),
+                // Library artists, subscriptions and podcast channels come as list rows the card
+                // reader calls songs.
+                (S::Artists | S::Subscriptions | S::PodcastChannels, _) => {
                     (!c.id.trim().is_empty()).then(|| crate::RemoteSuggestion::Artist {
                         artist: crate::RemoteArtist {
                             provider: PROVIDER.into(),
@@ -1762,6 +1811,16 @@ impl crate::account::AccountAccess for YtmBackend {
                             .playlist_move(client, playlist_id, set_video_id, before.as_deref())
                             .await?;
                     }
+                    E::AddPlaylist { playlist_id: from } => {
+                        self.it
+                            .playlist_add_playlist(client, playlist_id, from)
+                            .await?;
+                    }
+                    E::AddToTop { on } => {
+                        self.it
+                            .playlist_set_add_to_top(client, playlist_id, *on)
+                            .await?;
+                    }
                 }
             }
             if words != (None, None, None) {
@@ -1880,24 +1939,138 @@ impl crate::account::AccountAccess for YtmBackend {
         self.account_call(cancel, "the vote", self.it.vote(client, token))
     }
 
-    fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
+    fn menu_press(
+        &self,
+        token: &str,
+        press: crate::account::MenuPress,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
         let client = self.client(PAGES_CLIENT)?;
-        self.account_call(cancel, "the play", self.it.report_play(client, video_id))
+        self.account_call(cancel, press.what(), self.it.menu_feedback(client, token))
     }
 
+    fn song_menu(
+        &self,
+        video_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::TrackMenu>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let menu = self.account_call(
+            cancel,
+            "the song's menu",
+            self.it.song_menu(client, video_id),
+        )?;
+        Ok(menu.as_ref().and_then(crate::catalog_cards::menu_of))
+    }
+
+    fn remove_past_search(
+        &self,
+        token: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "taking it out of your search history",
+            self.it.remove_search_suggestion(client, token),
+        )
+    }
+
+    fn taste_profile(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<crate::account::TasteArtist>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let artists = self.account_call(
+            cancel,
+            "the artists to choose",
+            self.it.taste_profile(client),
+        )?;
+        Ok(artists.into_iter().map(taste_artist_of).collect())
+    }
+
+    fn set_taste_profile(
+        &self,
+        impressions: &[String],
+        selected: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "the artists you chose",
+            self.it.set_taste_profile(client, impressions, selected),
+        )
+    }
+
+    fn set_playlist_cover(
+        &self,
+        playlist_id: &str,
+        image: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_set_cover(client, id, image),
+        )
+    }
+
+    fn clear_playlist_cover(
+        &self,
+        playlist_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        let id = playlist_id.trim_start_matches("VL");
+        self.account_call(
+            cancel,
+            "the cover",
+            self.it.playlist_clear_cover(client, id),
+        )
+    }
+
+    fn delete_upload(
+        &self,
+        entity_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), AccessError> {
+        let client = self.client(PAGES_CLIENT)?;
+        self.account_call(
+            cancel,
+            "deleting the upload",
+            self.it.delete_upload(client, entity_id),
+        )
+    }
+
+    fn report_play(&self, video_id: &str, cancel: &CancellationToken) -> Result<(), AccessError> {
+        let listen = self.start_listen(video_id, cancel)?;
+        self.report_listen_play(&listen, cancel)
+    }
+
+    /// As YouTube Music's web player asks: the current signature timestamp and a PO token made
+    /// for the song (`ytmusic::potoken`), then its own player, else the web client's (see
+    /// `InnerTube::listen_tracking_either_way`).
     fn start_listen(
         &self,
         video_id: &str,
         cancel: &CancellationToken,
     ) -> Result<crate::account::Listen, AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
-        let tracking = self.account_call(
-            cancel,
-            "the listen",
-            self.it.listen_tracking(client, video_id),
-        )?;
+        let music = self.client(PAGES_CLIENT)?;
+        let web = self.client(ytmusic::WEB_PLAYS_CLIENT)?;
+        let tracking = self.account_call(cancel, "the listen", async {
+            let tokens = ytmusic::potoken::po_tokens();
+            let token = tokens.mint(video_id).await;
+            let sts = tokens.signature_timestamp().await;
+            self.it
+                .listen_tracking_either_way(music, web, video_id, token, sts)
+                .await
+        })?;
         Ok(crate::account::Listen {
             video_id: video_id.to_owned(),
+            counts: play_counts(tracking.route()),
             tracking,
         })
     }
@@ -1907,7 +2080,7 @@ impl crate::account::AccountAccess for YtmBackend {
         listen: &crate::account::Listen,
         cancel: &CancellationToken,
     ) -> Result<(), AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
+        let client = self.listen_client(listen)?;
         self.account_call(
             cancel,
             "the play",
@@ -1921,7 +2094,7 @@ impl crate::account::AccountAccess for YtmBackend {
         heard: &crate::account::Heard,
         cancel: &CancellationToken,
     ) -> Result<(), AccessError> {
-        let client = self.client(PAGES_CLIENT)?;
+        let client = self.listen_client(listen)?;
         let watched = ytmusic::Watched {
             segments: heard.segments.clone(),
             at_ms: heard.at_ms,
@@ -1978,6 +2151,7 @@ impl crate::account::AccountAccess for YtmBackend {
                 current: using
                     .as_deref()
                     .map_or(a.is_selected, |u| u == a.data_sync_id),
+                own: a.own,
                 id: a.data_sync_id,
                 name: a.name,
                 handle: a.handle,
@@ -2195,6 +2369,8 @@ impl MediaAccess for LiveCatalogAccess {
                     .map(|(hits, top)| (hits.as_slice(), top.as_ref())),
                 PROVIDER,
             );
+            // Each song's own account menu (Save to library, Pin…), from the rows as they came.
+            crate::catalog_cards::with_menus(&mut tracks, &result.raw);
             for t in &mut tracks {
                 t.artwork_url = clean_artwork_url(t.artwork_url.take());
             }
@@ -2288,6 +2464,7 @@ impl MediaAccess for LiveCatalogAccess {
                     release_date: a.year,
                     artwork_url: clean_artwork_url(a.thumbnail),
                     kind: a.kind,
+                    feedback: Vec::new(),
                 })
                 .collect()
         };
@@ -2415,7 +2592,9 @@ impl MediaAccess for LiveCatalogAccess {
                 "that artist isn't in the online catalog",
             ));
         }
-        let top_songs: Vec<RemoteTrack> = catalog_json::tracks_from_hits(&page.top_songs, PROVIDER)
+        let mut top_songs = catalog_json::tracks_from_hits(&page.top_songs, PROVIDER);
+        crate::catalog_cards::with_menus(&mut top_songs, &raw);
+        let top_songs: Vec<RemoteTrack> = top_songs
             .into_iter()
             .map(|mut t| {
                 t.artwork_url = clean_artwork_url(t.artwork_url.take());
@@ -2430,7 +2609,7 @@ impl MediaAccess for LiveCatalogAccess {
         let extras = crate::catalog_cards::artist_extras(&raw, id, songs_raw.as_ref());
         let songs = songs_raw
             .as_ref()
-            .map(|raw| catalog_json::tracks_from_hits(&catalog_json::read_hits(raw), PROVIDER))
+            .map(tracks_with_menus)
             .unwrap_or_default()
             .into_iter()
             .filter(|t| !top_songs.iter().any(|top| top.track_id == t.track_id))
@@ -2449,6 +2628,7 @@ impl MediaAccess for LiveCatalogAccess {
             artists: vec![page.name.clone()],
             track_count: None,
             artwork_url: clean_artwork_url(c.thumbnail),
+            feedback: Vec::new(),
         };
         Ok(RemoteArtistPage {
             provider: PROVIDER.into(),
@@ -2496,7 +2676,7 @@ impl MediaAccess for LiveCatalogAccess {
                 .backend
                 .browse(&playlist_browse_id(playlist_id)?, cancel)?,
         };
-        let tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let tracks = tracks_with_menus(&raw);
         let next = catalog_json::read_playlist_continuation(&raw);
         page_batch(tracks, next, cursor, CursorKind::PlaylistTracks, page.limit)
     }
@@ -2511,16 +2691,13 @@ impl MediaAccess for LiveCatalogAccess {
             .browse(&playlist_browse_id(playlist_id)?, cancel)?;
         let title = catalog_json::read_playlist_title(&raw);
         let radio = playlist_radio(&raw);
-        let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(&raw), PROVIDER);
+        let mut tracks = tracks_with_menus(&raw);
         let mut next = catalog_json::read_playlist_continuation(&raw);
         // At most 60 more pages (6,000 songs, more than YouTube keeps in one playlist).
         for _ in 0..60 {
             let Some(token) = next.take() else { break };
             let raw = self.backend.browse_continuation(&token, cancel)?;
-            tracks.extend(catalog_json::tracks_from_hits(
-                &catalog_json::read_hits(&raw),
-                PROVIDER,
-            ));
+            tracks.extend(tracks_with_menus(&raw));
             next = catalog_json::read_playlist_continuation(&raw).filter(|t| *t != token);
         }
         Ok(RemotePlaylist {
@@ -2958,6 +3135,13 @@ fn clean_artwork_url(raw: Option<String>) -> Option<String> {
         .then(|| crate::art_url::sized_art(&url, 544))
 }
 
+/// A page's song rows read raw, each with its own account menu.
+fn tracks_with_menus(raw: &serde_json::Value) -> Vec<RemoteTrack> {
+    let mut tracks = catalog_json::tracks_from_hits(&catalog_json::read_hits(raw), PROVIDER);
+    crate::catalog_cards::with_menus(&mut tracks, raw);
+    tracks
+}
+
 fn normalize_tracks(
     tracks: Vec<MusicTrackItem>,
     fallback_album_id: Option<&str>,
@@ -3010,6 +3194,11 @@ fn playlist_browse_id(playlist_id: &str) -> Result<String, AccessError> {
             AccessErrorKind::InvalidInput,
             "playlist id must not be empty",
         ));
+    }
+    // The account's own library pages (an uploaded album, an upload artist's songs) open by
+    // their own ids, which are no playlist's.
+    if id.starts_with("FEmusic_") {
+        return Ok(id.to_owned());
     }
     let id = id
         .strip_prefix("MPSP")
@@ -3115,6 +3304,33 @@ fn fetch_local_pot(video_id: &str) -> Option<String> {
 mod tests {
     use super::{album_page_of, hidden_of, playlist_browse_id, playlist_radio, read_whole};
     use crate::types::RadioEndpoint;
+
+    // Where a play counts follows the player that answered for its listen, its reason kept.
+    #[test]
+    fn a_listens_play_counts_where_its_player_answered() {
+        use crate::account::PlayCounts;
+        use ytmusic::ListenRoute;
+        assert_eq!(
+            super::play_counts(&ListenRoute::Music { no_token: None }),
+            PlayCounts::YouTubeMusic { no_token: None }
+        );
+        assert_eq!(
+            super::play_counts(&ListenRoute::Music {
+                no_token: Some("x".into())
+            }),
+            PlayCounts::YouTubeMusic {
+                no_token: Some("x".into())
+            }
+        );
+        assert_eq!(
+            super::play_counts(&ListenRoute::Web {
+                why: "no token: x".into()
+            }),
+            PlayCounts::YouTube {
+                why: "no token: x".into()
+            }
+        );
+    }
 
     fn saved(name: &str) -> serde_json::Value {
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3350,6 +3566,60 @@ mod tests {
         assert!(super::history_day_of(&empty).is_none());
     }
 
+    // An upload in the account's list carries the id that deletes it; another song carries none.
+    #[test]
+    fn an_uploaded_song_carries_the_id_that_deletes_it() {
+        let mut up = rows(&["u"]).remove(0);
+        up.is_upload = true;
+        up.delete_upload = Some("t_po_FIXTURE".into());
+        let t = super::account_track_of(&up).unwrap();
+        assert!(t.upload);
+        assert_eq!(t.delete_id.as_deref(), Some("t_po_FIXTURE"));
+        let plain = super::account_track_of(&rows(&["a"])[0]).unwrap();
+        assert_eq!(plain.delete_id, None);
+    }
+
+    // A taste builder artist keeps both values its answer needs, and a sharp picture.
+    #[test]
+    fn a_taste_artist_keeps_what_its_answer_needs() {
+        let a = super::taste_artist_of(ytmusic::TasteArtist {
+            name: "Arijit Singh".into(),
+            selection_value: "SEL".into(),
+            impression_value: "IMP".into(),
+            thumbnail: Some("https://lh3.googleusercontent.com/x=w120-h120-l90-rj".into()),
+            selected: true,
+        });
+        assert_eq!(
+            (a.selection_value.as_str(), a.impression_value.as_str()),
+            ("SEL", "IMP")
+        );
+        assert!(a.selected && a.picture.is_some());
+    }
+
+    // A cover YouTube won't take is said as YouTube's own reason, not as a failure to answer.
+    #[test]
+    fn a_refused_cover_says_why() {
+        let said = super::account_error(ytmusic::Error::CoverRefused, "the cover").message;
+        assert_eq!(
+            said,
+            "YouTube Music only lets accounts with a verified phone number give a playlist its own cover."
+        );
+    }
+
+    // A song menu's press YouTube turns down is said in its own words.
+    #[test]
+    fn a_refused_menu_press_says_what_it_was() {
+        use crate::account::MenuPress;
+        let said =
+            |p: MenuPress| super::account_error(ytmusic::Error::ActionRejected, p.what()).message;
+        assert_eq!(
+            said(MenuPress::Library),
+            "YouTube Music didn't take the library change."
+        );
+        assert_eq!(said(MenuPress::Pin), "YouTube Music didn't take the pin.");
+        assert_eq!(said(MenuPress::Feedback), "YouTube Music didn't take that.");
+    }
+
     // A vote or a play YouTube turns down is said plainly; on a channel chosen, why it may be.
     #[test]
     fn a_refused_vote_or_removal_says_so_plainly() {
@@ -3381,5 +3651,14 @@ mod tests {
         // A podcast's page is its episode list.
         assert_eq!(playlist_browse_id("MPSPPL123").unwrap(), "VLPL123");
         assert!(playlist_browse_id("  ").is_err());
+        // Uploads open by their own library page ids, as they came.
+        assert_eq!(
+            playlist_browse_id("FEmusic_library_privately_owned_release_detailb_po_x").unwrap(),
+            "FEmusic_library_privately_owned_release_detailb_po_x"
+        );
+        assert_eq!(
+            playlist_browse_id("FEmusic_library_privately_owned_artist_detaile_po_x").unwrap(),
+            "FEmusic_library_privately_owned_artist_detaile_po_x"
+        );
     }
 }

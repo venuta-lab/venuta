@@ -4,7 +4,7 @@ import { inApp, ytmSignIn } from '../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../lib/listening'
 import { useLocalOnly } from '../lib/localOnly'
 import { accountLine, playChoicesOf, SAFE } from '../lib/ytmChoiceWords'
-import { saveYtmChoices, useYtmChoices } from '../lib/ytmChoices'
+import { openTasteBuilder, saveYtmChoices, useYtmChoices } from '../lib/ytmChoices'
 import { useYtmAccount } from '../lib/ytmAccount'
 import { askSignOut } from './askSignOut'
 import { YtmAccountsSection } from './YtmProfile'
@@ -106,8 +106,15 @@ function YtmChoicesSection() {
   if (!mine) return null
   return (
     <div className="mt-3 border-t border-edge pt-3">
-      <div className="text-[13.5px] font-medium">Your choices</div>
-      <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">For the account and channel in use; each keeps its own. Signing out keeps them for when you come back.</div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-[200px] flex-1">
+          <div className="text-[13.5px] font-medium">Your choices</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">For the account and channel in use; each keeps its own. Signing out keeps them for when you come back.</div>
+        </div>
+        <button onClick={openTasteBuilder} className="btn btn-sm" title="Tell YouTube Music which artists you like, for your recommendations">
+          Choose artists you like…
+        </button>
+      </div>
       <div className="-mx-3 mt-3">
         <YtmChoiceRows
           choices={mine.choices}

@@ -37,7 +37,39 @@
   Nothing is deleted as a side effect, songs YouTube hides are kept, every sync is in Activity
   with Undo, and writes are sent once and paced.
 - **Uploads**: your files can go to your YouTube Music uploads when you link a playlist, only
-  after the account and the playlist are checked.
+  after the account and the playlist are checked. Delete an uploaded song or album, and browse
+  your uploads by artist.
+- **Everything YouTube Music's own menus do.** Save a song to your YouTube Music library or
+  remove it, pin it to Listen again, Not interested and Don't recommend, on songs, albums and
+  playlists alike. A song found in search reads its own menu when you open it, sending only
+  that song. Albums, playlists and artists have Shuffle, Start radio, Play next and Copy link,
+  and a song's menu follows its artist.
+- **Choose artists you like**, YouTube Music's own taste picker, from Settings or Home.
+- **Podcasts**: save a podcast, keep episodes for later, and see the channels you follow.
+- **Your YouTube Music playlists, further**: a cover of your own, new songs at the top or the
+  end, a new playlist as private, unlisted or public, sorting, and a whole album or playlist
+  copied into one in a single change.
+- **Past searches** show as yours in the suggestions, and can be taken out.
+- **Turn everything on, or everything off**, in one press on the sign-in choices and in
+  Settings, Online. Each switch still stands on its own.
+- **Asked first, never stopped.** Deleting a playlist or an upload, taking a play out of your
+  history, removing a past search or a cover each asks once, in plain words.
+- **Count plays lands in YouTube Music history.** Plays go the way YouTube Music's web player
+  sends them, with YouTube's own security check, run in a hidden window on your PC. If that
+  check can't be passed, the play still counts through YouTube, in your YouTube watch history.
+- **A theme gallery.** Look and feel opens on every theme, filtered by where it comes from
+  (built in, created, recent) and by dark or light, with Explore themes beside it.
+- **Rows that scroll sideways.** A mouse's tilt wheel and Shift with the wheel glide a row a
+  card at a time, arrows appear on hover, and the edges fade where there is more. Sideways
+  scrolling no longer changes the page you are on.
+- **Activity moved into Settings**, and the title bar shows it only while something is running.
+- **Listen together's buttons** wear your theme's colours.
+- **Fixed**: an online song that stopped coming partway no longer freezes silently. Venuta asks
+  for the rest again within seconds, says Buffering while it waits, and if the song can't be
+  saved it says so by name and plays the next one.
+- **Fixed**: uploads work again after switching back to your own channel; songs in the queue
+  show their length instead of a dash, and fill it in once played; Go to album works for songs
+  from your YouTube Music playlists; Choose artists you like shows each artist's picture.
 
 ## 0.3.0 (2026-10-18)
 

@@ -1227,6 +1227,23 @@ impl InnerTube {
         self.row_feedback(client, token).await
     }
 
+    /// A press on a song's own menu: "Save to library" / "Remove from library", "Pin to Listen
+    /// again" / "Unpin", "Not interested". Each is the token the row came with for that one
+    /// way ([`crate::RowMenu`]), sent as the account (ytmusicapi `edit_song_library_status`).
+    pub async fn menu_feedback(&self, client: &YouTubeClient, token: &str) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
+    /// Take one past search out of the account's search history, by the token its suggestion came
+    /// with (ytmusicapi `remove_search_suggestions`).
+    pub async fn remove_search_suggestion(
+        &self,
+        client: &YouTubeClient,
+        token: &str,
+    ) -> Result<(), Error> {
+        self.row_feedback(client, token).await
+    }
+
     /// Take one play out of the account's history, by the token its history row came with.
     /// ytmusicapi notes this doesn't work on a brand account: YouTube turns it down there.
     pub async fn remove_history_item(
@@ -1845,7 +1862,133 @@ impl InnerTube {
         .await
     }
 
-    /// Delete one of the account's uploads (a song or an album) by its entity id.
+    /// One song's own menu as the account sees it, for a song listed without one (a search sent
+    /// signed out): the signed-in `next` for that one video id, whose first row is the song with
+    /// its menu (Save to library, Pin to Listen again…). Only the song's id goes; nothing it was
+    /// found by. None when YouTube gave no menu for it.
+    pub async fn song_menu(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+    ) -> Result<Option<metadata::RowMenu>, Error> {
+        let endpoint = WatchEndpoint {
+            video_id: Some(video_id.to_owned()),
+            ..Default::default()
+        };
+        let mut body = watch_body(&endpoint, None);
+        body.insert(
+            "context".into(),
+            serde_json::to_value(self.context_for(client))?,
+        );
+        let value = self.post("next", client, &body, true).await?;
+        let next = metadata::parse_next(&value);
+        Ok(next
+            .items
+            .iter()
+            .find(|s| s.video_id == video_id || s.counterpart.as_deref() == Some(video_id))
+            .map(SongItem::menu)
+            .filter(|m| !m.is_empty()))
+    }
+
+    /// The podcast channels the account follows (`FEmusic_library_non_music_audio_channels_list`,
+    /// ytmusicapi `get_library_channels`): list rows, one per channel. Needs login.
+    pub async fn library_channels(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
+        self.library_grid(client, "FEmusic_library_non_music_audio_channels_list")
+            .await
+    }
+
+    /// The artists of the account's uploads (`FEmusic_library_privately_owned_artists`, ytmusicapi
+    /// `get_library_upload_artists`). Each opens on its own uploads page, a list of its songs read
+    /// like the library's (`library_songs` with the artist's browse id). Needs login.
+    pub async fn upload_artists(&self, client: &YouTubeClient) -> Result<Vec<BrowseItem>, Error> {
+        self.library_grid(client, "FEmusic_library_privately_owned_artists")
+            .await
+    }
+
+    /// The artists YouTube Music's taste builder offers ("Tell us which artists you like",
+    /// `FEmusic_tastebuilder`, ytmusicapi `get_tasteprofile`). Needs login.
+    pub async fn taste_profile(
+        &self,
+        client: &YouTubeClient,
+    ) -> Result<Vec<crate::TasteArtist>, Error> {
+        let value = self
+            .browse(client, Some("FEmusic_tastebuilder"), None)
+            .await?;
+        Ok(crate::models::taste::parse_taste_profile(&value))
+    }
+
+    /// Tell YouTube Music the artists chosen in its taste builder: every artist shown goes as an
+    /// impression, the chosen ones as selections, in one `browse` of `FEmusic_home` with that
+    /// form (ytmusicapi `set_tasteprofile`). Choosing the same again leaves it as it was.
+    pub async fn set_taste_profile(
+        &self,
+        client: &YouTubeClient,
+        impressions: &[String],
+        selected: &[String],
+    ) -> Result<(), Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form {
+            impression_values: Vec<String>,
+            selected_values: Vec<String>,
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TasteBody {
+            context: Context,
+            browse_id: String,
+            form_data: Form,
+        }
+        let body = TasteBody {
+            context: self.context_for(client),
+            browse_id: "FEmusic_home".to_owned(),
+            form_data: Form {
+                impression_values: impressions.to_vec(),
+                selected_values: selected.to_vec(),
+            },
+        };
+        self.post_account("browse", client, &body, true).await?;
+        Ok(())
+    }
+
+    /// Copy a whole playlist (or an album's `OLAK5uy_…` list) into one the account can change,
+    /// on YouTube's side, in one edit (ytmusicapi `add_playlist_items` with `source_playlist`:
+    /// `ACTION_ADD_PLAYLIST`, then the empty add it notes keeps the edit's answer whole). Never
+    /// sent twice: a lost answer may have added them all.
+    pub async fn playlist_add_playlist(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        source_id: &str,
+    ) -> Result<(), Error> {
+        let actions = vec![
+            serde_json::json!({ "action": "ACTION_ADD_PLAYLIST", "addedFullListId": strip_vl(source_id) }),
+            serde_json::json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": null, "dedupeOption": "DEDUPE_OPTION_SKIP" }),
+        ];
+        self.edit_playlist_send(client, playlist_id, actions, true)
+            .await
+            .map(|_| ())
+    }
+
+    /// The playlist's "new songs go to the top" setting (ytmusicapi `edit_playlist` `addToTop`:
+    /// `ACTION_SET_ADD_TO_TOP`). Off, the default for a new playlist, they go to the end.
+    pub async fn playlist_set_add_to_top(
+        &self,
+        client: &YouTubeClient,
+        playlist_id: &str,
+        on: bool,
+    ) -> Result<(), Error> {
+        self.edit_playlist(
+            client,
+            playlist_id,
+            serde_json::json!({ "action": "ACTION_SET_ADD_TO_TOP", "addToTop": if on { "true" } else { "false" } }),
+        )
+        .await
+    }
+
+    /// Delete one of the account's uploads (a song or an album) by its entity id: a song's from its
+    /// row's Delete item, an album's its browse id less the privately-owned prefix, as ytmusicapi
+    /// `delete_upload_entity` sends it. Paced like the other account writes; going again is harmless.
     pub async fn delete_upload(
         &self,
         client: &YouTubeClient,
@@ -1857,11 +2000,15 @@ impl InnerTube {
             context: Context,
             entity_id: String,
         }
+        let entity_id = entity_id.trim();
+        let entity_id = entity_id
+            .strip_prefix("FEmusic_library_privately_owned_release_detail")
+            .unwrap_or(entity_id);
         let body = DeleteBody {
             context: self.context_for(client),
             entity_id: entity_id.to_owned(),
         };
-        self.post("music/delete_privately_owned_entity", client, &body, true)
+        self.post_account("music/delete_privately_owned_entity", client, &body, true)
             .await?;
         Ok(())
     }
@@ -1883,10 +2030,68 @@ impl InnerTube {
         client: &YouTubeClient,
         video_id: &str,
     ) -> Result<ListenTracking, Error> {
+        let music = ListenRoute::Music { no_token: None };
+        self.listen_tracking_with(client, video_id, None, None, music)
+            .await
+    }
+
+    /// One listen, asked for the way YouTube Music's web page asks: its own player (`music`,
+    /// WEB_REMIX) with the current player's signature timestamp and the PO token made for this
+    /// video, as the account and its channel. With no token YouTube Music's player is still
+    /// asked first. When it gives no address to tell the play to, the plain web client (`web`)
+    /// is asked instead: the play then counts on YouTube (its watch history) rather than on
+    /// YouTube Music's History page. The listen says which, and why ([`ListenTracking::route`]).
+    ///
+    /// `sts`: without a current one every web client answers UNPLAYABLE ("Video unavailable"),
+    /// token or not (measured signed out 2026-10-19).
+    pub async fn listen_tracking_either_way(
+        &self,
+        music: &YouTubeClient,
+        web: &YouTubeClient,
+        video_id: &str,
+        token: Result<String, crate::potoken::PotError>,
+        sts: Option<i32>,
+    ) -> Result<ListenTracking, Error> {
+        let (token, no_token) = match token {
+            Ok(t) => (Some(t), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        let route = ListenRoute::Music {
+            no_token: no_token.clone(),
+        };
+        let listen = self
+            .listen_tracking_with(music, video_id, sts, token.as_deref(), route)
+            .await?;
+        if listen.has_play() {
+            return Ok(listen);
+        }
+        let why = match no_token {
+            Some(e) => format!("no token: {e}"),
+            None => format!(
+                "YouTube Music answered {} with the token",
+                listen.status.as_deref().unwrap_or("without a play address")
+            ),
+        };
+        self.listen_tracking_with(web, video_id, sts, None, ListenRoute::Web { why })
+            .await
+    }
+
+    async fn listen_tracking_with(
+        &self,
+        client: &YouTubeClient,
+        video_id: &str,
+        sts: Option<i32>,
+        po_token: Option<&str>,
+        route: ListenRoute,
+    ) -> Result<ListenTracking, Error> {
         if !self.is_logged_in() {
             return Err(Error::Other("signed out: no listen to tell".into()));
         }
-        let player = self.player(client, video_id, None, None, None).await?;
+        let player = self.player(client, video_id, None, sts, po_token).await?;
+        let status = player.playability_status;
+        let status = (!status.is_ok())
+            .then(|| enum_like(&status.status).map(str::to_owned))
+            .flatten();
         let tracking = player.playback_tracking;
         let url = |pick: fn(
             &crate::models::player::PlaybackTracking,
@@ -1901,6 +2106,8 @@ impl InnerTube {
             playback_url: url(|t| t.videostats_playback_url.as_ref()),
             watchtime_url: url(|t| t.videostats_watchtime_url.as_ref()),
             cpn: crate::transport::generate_cpn(),
+            route,
+            status,
         })
     }
 
@@ -1940,12 +2147,36 @@ pub struct ListenTracking {
     playback_url: Option<String>,
     watchtime_url: Option<String>,
     cpn: String,
+    route: ListenRoute,
+    /// The player's status when it wasn't OK (`UNPLAYABLE`), enum-shaped only.
+    status: Option<String>,
+}
+
+/// Which player a listen was asked of, and so where its play counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenRoute {
+    /// YouTube Music's own (WEB_REMIX): the play is on its History page. `no_token`: it
+    /// answered without a PO token, and why there was none (words safe to log).
+    Music { no_token: Option<String> },
+    /// Plain YouTube on the web, and why YouTube Music's wasn't used (words safe to log): the
+    /// play is in the YouTube watch history.
+    Web { why: String },
 }
 
 impl ListenTracking {
     /// The answer gave a listening-time address.
     pub fn has_watchtime(&self) -> bool {
         self.watchtime_url.is_some()
+    }
+
+    /// The answer gave an address to tell the play to.
+    pub fn has_play(&self) -> bool {
+        self.playback_url.is_some()
+    }
+
+    /// Which player answered: the client every report of this listen goes as.
+    pub fn route(&self) -> &ListenRoute {
+        &self.route
     }
 }
 
@@ -1954,6 +2185,8 @@ impl std::fmt::Debug for ListenTracking {
         f.debug_struct("ListenTracking")
             .field("playback", &self.playback_url.is_some())
             .field("watchtime", &self.watchtime_url.is_some())
+            .field("route", &self.route)
+            .field("status", &self.status)
             .finish_non_exhaustive()
     }
 }
@@ -3242,6 +3475,39 @@ mod upload {
         );
     }
 
+    // Deleting an upload sends its entity id, as the account, to the one place that deletes it.
+    // An album's id is its browse id less the privately-owned prefix, as ytmusicapi sends it.
+    #[tokio::test]
+    async fn deleting_an_upload_sends_its_entity_id_as_the_account() {
+        for (given, sent_id) in [
+            ("t_po_FIXTUREENTITY", "t_po_FIXTUREENTITY"),
+            (
+                "FEmusic_library_privately_owned_release_detailb_po_FIXTUREALBUM",
+                "b_po_FIXTUREALBUM",
+            ),
+        ] {
+            let server = MockServer::start(|_| (200, "{}".to_owned()));
+            let session = Session {
+                cookie: Some("SAPISID=fixture; PREF=x".into()),
+                ..Default::default()
+            };
+            let mut it = InnerTube::new(session, None).unwrap();
+            it.set_base_url(&server.base_url);
+            let client = Clients::bundled().get(METADATA_CLIENT).unwrap().clone();
+            it.delete_upload(&client, given).await.unwrap();
+            let seen = server.requests();
+            assert_eq!(seen.len(), 1);
+            assert!(
+                seen[0].path.contains("music/delete_privately_owned_entity"),
+                "{}",
+                seen[0].path
+            );
+            let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
+            assert_eq!(body["entityId"], sent_id);
+            assert!(seen[0].header("cookie").is_some(), "as the account");
+        }
+    }
+
     #[tokio::test]
     async fn signed_out_nothing_goes_up() {
         let it = InnerTube::new(Session::default(), None).unwrap();
@@ -3424,6 +3690,188 @@ mod report_play {
         assert!(it.listen_tracking(&client, "vid").await.is_err());
         assert!(server.requests().is_empty());
     }
+
+    /// YouTube Music's player answers with its tracking only when `music_ok`; the web client's
+    /// always does (a docid of its own, to tell them apart).
+    fn either_server(music_ok: bool) -> MockServer {
+        MockServer::start(move |req| {
+            if !req.path.contains("/youtubei/v1/player") {
+                return (204, String::new());
+            }
+            let host = req.header("host").unwrap_or_default().to_owned();
+            let body: serde_json::Value = serde_json::from_str(&req.body).unwrap();
+            let docid = match body["context"]["client"]["clientName"].as_str() {
+                Some("WEB_REMIX") if !music_ok => {
+                    return (
+                        200,
+                        json!({ "playabilityStatus": { "status": "UNPLAYABLE", "reason": "Video unavailable" } })
+                            .to_string(),
+                    )
+                }
+                Some("WEB_REMIX") => "music",
+                _ => "web",
+            };
+            (200, json!({ "playabilityStatus": { "status": "OK" }, "playbackTracking": {
+                "videostatsPlaybackUrl": { "baseUrl": format!("http://{host}/api/stats/playback?docid={docid}") },
+                "videostatsWatchtimeUrl": { "baseUrl": format!("http://{host}/api/stats/watchtime?docid={docid}") }
+            } }).to_string())
+        })
+    }
+
+    fn as_brand_channel(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture; PREF=x".into()),
+            visitor_data: Some("v".into()),
+            data_sync_id: Some("fixture-dsid".into()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn music_and_web() -> (crate::YouTubeClient, crate::YouTubeClient) {
+        let clients = Clients::bundled();
+        (
+            clients.get(METADATA_CLIENT).unwrap().clone(),
+            clients
+                .get(crate::clients::WEB_PLAYS_CLIENT)
+                .unwrap()
+                .clone(),
+        )
+    }
+
+    fn sent(seen: &crate::test_server::Seen) -> serde_json::Value {
+        serde_json::from_str(&seen.body).unwrap()
+    }
+
+    fn sts_of(body: &serde_json::Value) -> Option<i64> {
+        body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"].as_i64()
+    }
+
+    // With a token: YouTube Music's own player answer, asked as the web player asks it (the
+    // current signature timestamp, the token in `serviceIntegrityDimensions`, as the account and
+    // its channel), and the play told as YouTube Music.
+    #[tokio::test]
+    async fn with_a_token_the_listen_is_youtube_musics() {
+        let server = either_server(true);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Ok("TOKEN".into()), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Music { no_token: None }
+        );
+        assert!(listen.has_play() && listen.has_watchtime());
+        let seen = server.requests();
+        assert_eq!(seen.len(), 1, "one player answer");
+        let body = sent(&seen[0]);
+        assert_eq!(body["serviceIntegrityDimensions"]["poToken"], "TOKEN");
+        assert_eq!(sts_of(&body), Some(20740));
+        assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+        assert_eq!(body["context"]["user"]["onBehalfOfUser"], "fixture-dsid");
+        assert!(seen[0].header("cookie").is_some());
+
+        it.report_tracked_play(&music, &listen).await.unwrap();
+        let ping = &server.requests()[1];
+        assert!(ping.path.starts_with("/api/stats/playback?docid=music"));
+        assert_eq!(param(&ping.path, "c"), Some("WEB_REMIX"));
+        assert_eq!(
+            param(&ping.path, "cver"),
+            Some(music.client_version.as_str())
+        );
+        assert!(
+            !format!("{listen:?}").contains("TOKEN"),
+            "no token in a log line"
+        );
+    }
+
+    // No token could be made: YouTube Music's own player is still asked (with the signature
+    // timestamp it answers signed out without one), and the listen says why there was none.
+    #[tokio::test]
+    async fn without_a_token_youtube_music_is_still_asked_first() {
+        let server = either_server(true);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let why = crate::potoken::PotError("BotGuard didn't run".into());
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Err(why), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Music {
+                no_token: Some("BotGuard didn't run".into())
+            }
+        );
+        let seen = server.requests();
+        assert_eq!(seen.len(), 1);
+        let body = sent(&seen[0]);
+        assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+        assert!(body.get("serviceIntegrityDimensions").is_none());
+        assert_eq!(sts_of(&body), Some(20740));
+    }
+
+    // No token and YouTube Music won't answer without one: the plain web client instead, as the
+    // account, and why.
+    #[tokio::test]
+    async fn without_a_token_and_unplayable_the_web_client_is_asked() {
+        let server = either_server(false);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let why = crate::potoken::PotError("BotGuard didn't run".into());
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Err(why), Some(20740))
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Web {
+                why: "no token: BotGuard didn't run".into()
+            }
+        );
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2);
+        let body = sent(&seen[1]);
+        assert_eq!(body["context"]["client"]["clientName"], "WEB");
+        assert!(body.get("serviceIntegrityDimensions").is_none());
+        assert_eq!(sts_of(&body), Some(20740));
+        assert_eq!(body["context"]["user"]["onBehalfOfUser"], "fixture-dsid");
+
+        it.report_tracked_play(&web, &listen).await.unwrap();
+        let ping = &server.requests()[2];
+        assert!(ping.path.starts_with("/api/stats/playback?docid=web"));
+        assert_eq!(param(&ping.path, "c"), Some("WEB"));
+        assert_eq!(param(&ping.path, "cver"), Some(web.client_version.as_str()));
+        assert_eq!(ping.header("x-youtube-client-name"), Some("1"));
+    }
+
+    // A token YouTube Music still answers UNPLAYABLE to: the web client, and what it answered.
+    // No signature timestamp to be had: none is sent.
+    #[tokio::test]
+    async fn a_refused_token_falls_back_to_the_web_client() {
+        let server = either_server(false);
+        let it = as_brand_channel(&server);
+        let (music, web) = music_and_web();
+        let listen = it
+            .listen_tracking_either_way(&music, &web, "vid", Ok("TOKEN".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            listen.route(),
+            &super::ListenRoute::Web {
+                why: "YouTube Music answered UNPLAYABLE with the token".into()
+            }
+        );
+        assert!(listen.has_play());
+        let seen = server.requests();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(sent(&seen[1])["context"]["client"]["clientName"], "WEB");
+        assert!(seen.iter().all(|r| sts_of(&sent(r)).is_none()));
+    }
 }
 
 // The account's choices: recommendations as the account, or YouTube's general ones; searches
@@ -3574,6 +4022,172 @@ mod choices {
 
 /// Playlist writes: sent once, and paced.
 #[cfg(test)]
+mod account_more {
+    use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
+    use crate::test_server::MockServer;
+    use crate::transport::{InnerTube, Session};
+
+    fn it_against(server: &MockServer) -> InnerTube {
+        let session = Session {
+            cookie: Some("SAPISID=fixture-sapisid; PREF=x".to_owned()),
+            ..Default::default()
+        };
+        let mut it = InnerTube::new(session, None).unwrap();
+        it.set_base_url(&server.base_url);
+        it
+    }
+
+    fn web() -> YouTubeClient {
+        Clients::bundled().get(METADATA_CLIENT).unwrap().clone()
+    }
+
+    fn body(req: &crate::test_server::Seen) -> serde_json::Value {
+        serde_json::from_str(&req.body).unwrap()
+    }
+
+    const TASTE: &str = include_str!("../tests/fixtures/tastebuilder.json");
+
+    // The taste builder is read as the account, and an answer sends every artist shown as seen
+    // and the chosen ones as chosen, to Home, as YouTube Music's own does.
+    #[tokio::test]
+    async fn the_taste_builder_is_read_and_answered_as_the_account() {
+        let server = MockServer::start(|_| (200, TASTE.to_owned()));
+        let it = it_against(&server);
+        let artists = it.taste_profile(&web()).await.unwrap();
+        assert_eq!(artists.len(), 3);
+        let seen: Vec<String> = artists.iter().map(|a| a.impression_value.clone()).collect();
+        it.set_taste_profile(&web(), &seen, &[artists[0].selection_value.clone()])
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(body(&sent[0])["browseId"], "FEmusic_tastebuilder");
+        assert!(sent[0].header("cookie").is_some(), "read as the account");
+        let answer = body(&sent[1]);
+        assert!(sent[1].path.contains("/browse?"), "{}", sent[1].path);
+        assert_eq!(answer["browseId"], "FEmusic_home");
+        assert_eq!(
+            answer["formData"]["impressionValues"],
+            serde_json::json!([
+                "FIXTURE-SEEN-ARIJIT",
+                "FIXTURE-SEEN-SHREYA",
+                "FIXTURE-SEEN-RAHMAN"
+            ])
+        );
+        assert_eq!(
+            answer["formData"]["selectedValues"],
+            serde_json::json!(["FIXTURE-SELECT-ARIJIT"])
+        );
+        assert!(sent[1].header("cookie").is_some(), "told as the account");
+    }
+
+    // A song listed with no menu has it read on its own: the signed-in next for that one id,
+    // and the menu of the row that is that song.
+    #[tokio::test]
+    async fn one_songs_menu_is_read_signed_in_by_its_id_alone() {
+        let answer = serde_json::json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": { "watchNextTabbedResultsRenderer": { "tabs": [ { "tabRenderer": { "content": { "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+            { "playlistPanelVideoRenderer": {
+                "videoId": "BddP6PYo2gs",
+                "title": { "runs": [ { "text": "Kesariya" } ] },
+                "menu": { "menuRenderer": { "items": [ { "toggleMenuServiceItemRenderer": {
+                    "defaultText": { "runs": [ { "text": "Unpin from Listen again" } ] },
+                    "defaultIcon": { "iconType": "KEEP_OFF" },
+                    "defaultServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "UNPIN" } },
+                    "toggledText": { "runs": [ { "text": "Pin to Listen again" } ] },
+                    "toggledIcon": { "iconType": "KEEP" },
+                    "toggledServiceEndpoint": { "feedbackEndpoint": { "feedbackToken": "PIN" } }
+                } } ] } }
+            } },
+            { "playlistPanelVideoRenderer": { "videoId": "other", "title": { "runs": [ { "text": "Next up" } ] } } }
+        ] } } } } } } ] } } } } });
+        let reply = answer.to_string();
+        let server = MockServer::start(move |_| (200, reply.clone()));
+        let it = it_against(&server);
+        let menu = it.song_menu(&web(), "BddP6PYo2gs").await.unwrap().unwrap();
+        let pin = menu.pin.unwrap();
+        assert!(pin.pinned);
+        assert_eq!(pin.unpin_token.as_deref(), Some("UNPIN"));
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/next?"), "{}", sent[0].path);
+        let b = body(&sent[0]);
+        assert_eq!(b["videoId"], "BddP6PYo2gs");
+        assert!(b.get("query").is_none(), "no search words go with it");
+        assert!(sent[0].header("cookie").is_some(), "as the account");
+        // A song with no menu in the answer has none.
+        assert!(it.song_menu(&web(), "nothing").await.unwrap().is_none());
+    }
+
+    // Podcast channels and upload artists are their own library lists.
+    #[tokio::test]
+    async fn podcast_channels_and_upload_artists_are_read_from_their_own_lists() {
+        let server = MockServer::start(|_| (200, "{}".to_owned()));
+        let it = it_against(&server);
+        it.library_channels(&web()).await.unwrap();
+        it.upload_artists(&web()).await.unwrap();
+        let sent = server.requests();
+        assert_eq!(
+            body(&sent[0])["browseId"],
+            "FEmusic_library_non_music_audio_channels_list"
+        );
+        assert_eq!(
+            body(&sent[1])["browseId"],
+            "FEmusic_library_privately_owned_artists"
+        );
+    }
+
+    // A whole playlist goes in one edit by its list id, sent once; the empty add follows it.
+    #[tokio::test]
+    async fn a_whole_playlist_is_copied_in_one_edit() {
+        let server = MockServer::start(|_| (200, r#"{"status":"STATUS_SUCCEEDED"}"#.to_owned()));
+        let it = it_against(&server);
+        it.playlist_add_playlist(&web(), "VLPLMINE", "VLOLAK5uy_album")
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(
+            sent[0].path.contains("browse/edit_playlist"),
+            "{}",
+            sent[0].path
+        );
+        let b = body(&sent[0]);
+        assert_eq!(b["playlistId"], "PLMINE");
+        assert_eq!(b["actions"][0]["action"], "ACTION_ADD_PLAYLIST");
+        assert_eq!(b["actions"][0]["addedFullListId"], "OLAK5uy_album");
+        assert_eq!(b["actions"][1]["action"], "ACTION_ADD_VIDEO");
+        assert!(b["actions"][1]["addedVideoId"].is_null());
+
+        let hang = MockServer::start(|_| (0, String::new()));
+        let it = it_against(&hang);
+        let lost = it.playlist_add_playlist(&web(), "PLMINE", "PLOTHER").await;
+        assert!(
+            matches!(lost, Err(crate::Error::WriteUncertain)),
+            "{lost:?}"
+        );
+        assert_eq!(hang.requests().len(), 1, "never sent twice");
+    }
+
+    // New songs to the top, or to the end again: the setting as its own edit.
+    #[tokio::test]
+    async fn new_songs_go_to_the_top_or_the_end() {
+        let server = MockServer::start(|_| (200, r#"{"status":"STATUS_SUCCEEDED"}"#.to_owned()));
+        let it = it_against(&server);
+        it.playlist_set_add_to_top(&web(), "PLMINE", true)
+            .await
+            .unwrap();
+        it.playlist_set_add_to_top(&web(), "PLMINE", false)
+            .await
+            .unwrap();
+        let sent = server.requests();
+        let a = body(&sent[0]);
+        assert_eq!(a["actions"][0]["action"], "ACTION_SET_ADD_TO_TOP");
+        assert_eq!(a["actions"][0]["addToTop"], "true");
+        assert_eq!(body(&sent[1])["actions"][0]["addToTop"], "false");
+    }
+}
+
+#[cfg(test)]
 mod playlist_writes {
     use crate::clients::{Clients, YouTubeClient, METADATA_CLIENT};
     use crate::endpoints::ADD_BATCH_PACE;
@@ -3689,6 +4303,48 @@ mod row_feedback {
         assert_eq!(
             tokens_sent(&sent[0]),
             serde_json::json!(["FIXTURE-REMOVE-FROM-HISTORY"])
+        );
+    }
+
+    // Save to library, Pin to Listen again, Not interested: each a token off the song's own menu,
+    // sent as it is. The real answer for a taken one is feedbackResponses[0].isProcessed.
+    #[tokio::test]
+    async fn a_song_menu_press_sends_its_token_to_feedback_as_the_account() {
+        for token in [
+            "FIXTURE-LIBRARY-ADD",
+            "FIXTURE-PIN",
+            "FIXTURE-NOT-INTERESTED",
+        ] {
+            let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+            let it = it_against(&server);
+            it.menu_feedback(&web(), token).await.unwrap();
+            let sent = server.requests();
+            assert_eq!(sent.len(), 1);
+            assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+            assert_eq!(tokens_sent(&sent[0]), serde_json::json!([token]));
+            assert!(sent[0].header("cookie").is_some(), "sent as the account");
+        }
+        let server = MockServer::start(|_| (200, REFUSED.to_owned()));
+        let it = it_against(&server);
+        let refused = it.menu_feedback(&web(), "T").await;
+        assert!(matches!(refused, Err(Error::ActionRejected)), "{refused:?}");
+    }
+
+    // A past search goes from the search history by its own token (ytmusicapi
+    // remove_search_suggestions), the same feedback call.
+    #[tokio::test]
+    async fn a_past_search_is_taken_out_by_its_token() {
+        let server = MockServer::start(|_| (200, TAKEN.to_owned()));
+        let it = it_against(&server);
+        it.remove_search_suggestion(&web(), "FIXTURE-PAST-SEARCH")
+            .await
+            .unwrap();
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].path.contains("/feedback?"), "{}", sent[0].path);
+        assert_eq!(
+            tokens_sent(&sent[0]),
+            serde_json::json!(["FIXTURE-PAST-SEARCH"])
         );
     }
 

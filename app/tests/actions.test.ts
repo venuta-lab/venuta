@@ -144,3 +144,49 @@ test('an online song in the queue goes to its album when YouTube named one', () 
   assert.ok(ids(actionsFor('queued', { online: true, onlineAlbum: true })).includes('album'))
   assert.ok(!ids(actionsFor('queued', { online: true })).includes('album'))
 })
+
+test('an online song carries its YouTube Music menu: save to that library, pin, not interested', () => {
+  const online = actionsFor('song', { online: true })
+  // Beside Add to playlist, as YouTube Music's own menu has them.
+  assert.deepEqual(online[2], ['playlist', 'ytmLibrary', 'ytmPin'])
+  assert.ok(ids(online).includes('notInterested'))
+  const local = ids(actionsFor('song', {}))
+  for (const id of ['ytmLibrary', 'ytmPin', 'notInterested'] as const) assert.ok(!local.includes(id), `a file of yours: ${id}`)
+  const queued = ids(actionsFor('queued', { online: true }))
+  for (const id of ['ytmLibrary', 'ytmPin', 'notInterested'] as const) assert.ok(queued.includes(id), `in the queue: ${id}`)
+  assert.ok(!ids(actionsFor('queued', {})).includes('ytmLibrary'))
+})
+
+test('an upload can be deleted, last and on its own; nothing else can', () => {
+  const up = actionsFor('song', { online: true, upload: true })
+  assert.deepEqual(up.at(-1), ['deleteUpload'])
+  assert.deepEqual(actionsFor('album', { online: true, upload: true }).at(-1), ['deleteUpload'])
+  for (const kind of ['song', 'album', 'queued'] as const) assert.ok(!ids(actionsFor(kind, { online: true })).includes('deleteUpload'), kind)
+})
+
+test('a podcast episode can be saved for later, beside Add to playlist', () => {
+  assert.ok(actionsFor('song', { online: true, episode: true })[2].includes('saveEpisode'))
+  assert.ok(!ids(actionsFor('song', { online: true })).includes('saveEpisode'))
+  assert.ok(ids(actionsFor('queued', { online: true, episode: true })).includes('saveEpisode'))
+})
+
+test('an online album or playlist card starts its radio, shares its link and can be not interested in', () => {
+  const a = actionsFor('album', { online: true })
+  assert.deepEqual(a[0], PLAY)
+  assert.deepEqual(a[1], ['radio'])
+  for (const id of ['share', 'notInterested'] as const) assert.ok(ids(a).includes(id), id)
+  for (const id of ['radio', 'share', 'notInterested'] as const) assert.ok(!ids(actionsFor('album', {})).includes(id), `your own album: ${id}`)
+})
+
+test('an online artist card plays every way, starts their radio and shares their link', () => {
+  const ar = ids(actionsFor('artist', { online: true }))
+  for (const id of [...PLAY, 'radio', 'share'] as const) assert.ok(ar.includes(id), id)
+  assert.ok(!ids(actionsFor('artist', {})).includes('share'))
+})
+
+test('an online song can follow its artist on YouTube Music, beside Go to artist', () => {
+  const o = actionsFor('song', { online: true })
+  assert.ok(o[3].includes('follow'))
+  assert.ok(!ids(actionsFor('song', { online: true, noArtist: true })).includes('follow'))
+  assert.ok(!ids(actionsFor('song', {})).includes('follow'))
+})

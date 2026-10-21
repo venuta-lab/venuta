@@ -1,15 +1,19 @@
 import { askAddSongs } from '../../components/AddToPlaylist'
+import { deleteYtmUpload } from '../../lib/actions'
 import { ytmSignIn, type OnlineSuggestion, type YtmTrack } from '../../lib/engine'
 import { notify } from '../../lib/notify'
 import { current, enqueueItems, onlineEntryFrom, playItems, queueKey, toRemoteItem, toggle, usePlayerValue, type From } from '../../lib/player'
 import { useYtmPart, useYtmStatus, type YtmPart } from '../../lib/ytmLibrary'
 import { useNav } from './model'
+import { useMemo, useState } from 'react'
+import { SORTS, sortedBy, type YtmSort } from '../../lib/ytmSort'
 import { OnlineTrackHeader, OnlineTrackRow } from './OnlineResults'
 import { useOnlineCards } from './useOnlineCards'
 
 /*
   Your YouTube Music library inside Library, beside your own music: the account's albums, artists,
-  podcasts and uploads as cards, its songs as rows, each part read the first time it shows. When
+  podcasts and uploads as cards, its songs as rows, each part read the first time it shows. An
+  upload can be deleted from its menu (asked first). When
   YouTube stops taking the sign-in, one line says so and offers to sign in again; your own music
   is never touched by it.
 */
@@ -36,14 +40,38 @@ function Waiting({ problem, loading, empty, count }: { problem: string; loading:
   return null
 }
 
+/** The name a card goes by, for sorting. */
+const cardName = (c: OnlineSuggestion) =>
+  c.kind === 'song' ? c.track.title : c.kind === 'album' ? c.album.title : c.kind === 'artist' ? c.artist.name : c.collection.title
+
+/** Sort as YouTube Music's own library does: as added, or by name either way. */
+function SortBy({ sort, onSort, count }: { sort: YtmSort; onSort: (s: YtmSort) => void; count: number }) {
+  if (count < 2) return null
+  return (
+    <label className="mb-3 flex items-center justify-end gap-2 text-[12.5px] text-ink/60">
+      Sort
+      <select value={sort} onChange={(e) => onSort(e.target.value as YtmSort)} className="field h-8 rounded-full px-3 text-[12.5px]">
+        {SORTS.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 /** A part of the account's library as a grid of cards (albums, artists, podcasts, uploads). */
 export function YtmGrid({ part, label, empty }: { part: YtmPart; label: string; empty: string }) {
   const { value, problem, loading } = useYtmPart<OnlineSuggestion[]>(part)
-  const cards = useOnlineCards(value ?? [], label)
+  const [sort, setSort] = useState<YtmSort>('added')
+  const sorted = useMemo(() => sortedBy(value ?? [], sort, cardName), [value, sort])
+  const cards = useOnlineCards(sorted, label)
   return (
     <div className="pb-16">
       <YtmSignInAgain />
       <Waiting problem={problem} loading={loading} empty={empty} count={cards.length} />
+      <SortBy sort={sort} onSort={setSort} count={cards.length} />
       {cards.length > 0 && (
         <div className="grid grid-cols-[repeat(auto-fill,168px)] gap-x-5 gap-y-7">
           {cards.map((c) => (
@@ -61,7 +89,8 @@ const keyOf = (t: YtmTrack) => `online:${t.provider}:${t.track_id}`
 export function YtmSongs({ part, label, empty }: { part: 'songs' | 'upload_songs'; label: string; empty: string }) {
   const { root } = useNav()
   const { value, problem, loading } = useYtmPart<YtmTrack[]>(part)
-  const tracks = value ?? []
+  const [sort, setSort] = useState<YtmSort>('added')
+  const tracks = useMemo(() => sortedBy(value ?? [], sort, (t) => t.title), [value, sort])
   const items = tracks.map(toRemoteItem)
   const from: From = { kind: 'search', ref: label, label }
   const nowKey = usePlayerValue((st) => {
@@ -74,10 +103,13 @@ export function YtmSongs({ part, label, empty }: { part: 'songs' | 'upload_songs
       <Waiting problem={problem} loading={loading} empty={empty} count={tracks.length} />
       {tracks.length > 0 && (
         <>
-          <p className="mb-3 text-[12.5px] text-ink/55">
-            {tracks.length.toLocaleString('en-IN')} {tracks.length === 1 ? 'song' : 'songs'}
-            {part === 'upload_songs' ? '. Only you can play your uploads.' : ''}
-          </p>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <p className="mb-3 text-[12.5px] text-ink/55">
+              {tracks.length.toLocaleString('en-IN')} {tracks.length === 1 ? 'song' : 'songs'}
+              {part === 'upload_songs' ? '. Only you can play your uploads.' : ''}
+            </p>
+            <SortBy sort={sort} onSort={setSort} count={tracks.length} />
+          </div>
           <OnlineTrackHeader />
           <div className="mt-1 grid gap-0.5">
             {tracks.map((t, i) => (
@@ -88,6 +120,8 @@ export function YtmSongs({ part, label, empty }: { part: 'songs' | 'upload_songs
                 onPlay={() => (keyOf(t) === nowKey ? void toggle() : void playItems(root, items, i, from))}
                 onQueue={(next) => void enqueueItems(root, [toRemoteItem(t)], next)}
                 onAdd={() => askAddSongs([{ online: onlineEntryFrom(t) }], t.title)}
+                facts={{ upload: !!t.delete_id }}
+                work={{ deleteUpload: t.delete_id ? () => void deleteYtmUpload(t.delete_id ?? '', t.title, 'song') : undefined }}
               />
             ))}
           </div>
