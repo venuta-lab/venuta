@@ -67,6 +67,9 @@
 - **Fixed**: an online song that stopped coming partway no longer freezes silently. Venuta asks
   for the rest again within seconds, says Buffering while it waits, and if the song can't be
   saved it says so by name and plays the next one.
+- **Fixed**: uploads work again after switching back to your own channel; songs in the queue
+  show their length instead of a dash, and fill it in once played; Go to album works for songs
+  from your YouTube Music playlists; Choose artists you like shows each artist's picture.
 
 ## 0.3.0 (2026-10-18)
 
