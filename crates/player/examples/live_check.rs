@@ -1007,6 +1007,62 @@ mod tests {
     }
 
     #[test]
+    fn a_flag_the_solo_run_also_has_is_set_aside_and_a_new_one_counts() {
+        let rate = 48_000;
+        let spike = |x: &mut Vec<f32>, at: usize| {
+            x[at * 2] += 0.5;
+            x[at * 2 + 1] += 0.5;
+        };
+        // The solo run: the music with a sharp peak of its own at 5 s.
+        let mut solo = faults::dense(rate, 16.0, 7);
+        spike(&mut solo, 5 * 48_000);
+        // The room run: 0.3 s later, the same, and a click of the room's at 12 s.
+        let mut room = vec![0.0f32; 2 * 14_400];
+        room.extend_from_slice(&solo);
+        spike(&mut room, 14_400 + 12 * 48_000);
+        let d = std::env::temp_dir().join(format!("venuta-kit-solo-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let sp = d.join("solo.wav");
+        wav::write(
+            &sp,
+            &Wav {
+                rate,
+                channels: 2,
+                data: solo,
+            },
+        )
+        .unwrap();
+        let w = Wav {
+            rate,
+            channels: 2,
+            data: room,
+        };
+        let args = Args::from(
+            vec!["analyze".into(), "--solo".into(), sp.display().to_string()],
+            &[],
+        );
+        let (found, _) = analyze(&w, None, &args).unwrap();
+        let counted: Vec<usize> = found
+            .iter()
+            .filter(|f| f.excused.is_none())
+            .map(|f| f.flag.at)
+            .collect();
+        let set_aside: Vec<usize> = found
+            .iter()
+            .filter(|f| f.excused.is_some())
+            .map(|f| f.flag.at)
+            .collect();
+        assert!(
+            counted.len() == 1 && counted[0].abs_diff(14_400 + 12 * 48_000) < 64,
+            "{counted:?}"
+        );
+        assert!(
+            set_aside.len() == 1 && set_aside[0].abs_diff(14_400 + 5 * 48_000) < 64,
+            "{set_aside:?}"
+        );
+    }
+
+    #[test]
     fn shaped_events_are_named_by_the_log() {
         assert!(declares_event(
             "sync: lined up from 1000 ms to 2000 ms (faded out and in)"

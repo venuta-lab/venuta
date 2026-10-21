@@ -151,6 +151,8 @@ line per flag:
 - Detector 3 is most sensitive on clean, tonal music and least on noisy passages; `tone`
   proves it at full sensitivity on this computer. Detector 4 finds gaps and dips of 5 ms and
   longer.
+- The analysis holds a capture in memory (about 0.8 GB for 10 minutes with its solo run):
+  keep each capture under 30 minutes, one per run of the script.
 
 `acoustic_offset` prints the offset of B against A after the first 5 s (p50, p95, worst, the
 drift in ppm) and `PASS` or `FAIL` against the gate given.
