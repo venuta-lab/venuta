@@ -3,14 +3,15 @@
 //!
 //! Two ways to stay together:
 //! - **Apart** (friends in different places, the default): nobody can hear the others' speakers,
-//!   so smooth sound comes first. Nothing touches the music mid-song: each song lines up from
-//!   silence as it starts, and only a drift past 300 ms that lasts is lined up again, faded.
-//!   Bit-perfect throughout.
+//!   so smooth sound comes first. Each song lines up from silence as it starts; a drift past
+//!   10 ms is taken up by playing a hair faster or slower (never heard), and only one past 250
+//!   ms that lasts is lined up again, faded. Bit-perfect whenever within 3 ms.
 //! - **Same room** (speakers that hear each other, on one network): within a few milliseconds.
-//!   Drift is taken out by playing the music a hair faster or slower, at most 500 per million
-//!   (under a cent of pitch), through a high-quality resampler (`Resampler`) whose rate glides,
-//!   on an error smoothed over a second so clock noise isn't chased. Bit-perfect again once in
-//!   step.
+//!   Drift past 2 ms is taken out the same way, down to half a millisecond.
+//!
+//! The rate change goes through a high-quality resampler (`Resampler`) whose rate glides, at
+//! most 500 per million (under a cent of pitch), asked for by one controller (`Controller`)
+//! on an error smoothed over a second so clock noise isn't chased.
 
 use std::time::{Duration, Instant};
 
@@ -107,9 +108,15 @@ pub fn is_nudge(old: &SyncPlan, new: &SyncPlan, now: Instant) -> bool {
         }
 }
 
-/// Apart: further than this for a while (`far_for`), lined up again (smaller drifts aren't heard
-/// by anyone, in another home).
-pub const APART_SEEK_MS: f64 = 300.0;
+/// Apart: further than this for a while (`far_for`), lined up again (a seek, faded).
+pub const APART_SEEK_MS: f64 = 250.0;
+/// Apart: under this (after smoothing), nothing to do (the clock over the internet can't be
+/// known much better); a correction under way goes on until `APART_DONE_MS`.
+pub const APART_DEAD_MS: f64 = 10.0;
+pub const APART_DONE_MS: f64 = 3.0;
+/// Apart: how much faster or slower per millisecond off (gentle: a slow close is fine when no
+/// one hears the other's speaker).
+pub const APART_PPM_PER_MS: f64 = 25.0;
 /// Same room: under this (after smoothing), nothing to do; clock and position noise is a
 /// millisecond or two.
 pub const SAME_ROOM_DEAD_MS: f64 = 2.0;
@@ -118,6 +125,8 @@ pub const SAME_ROOM_DONE_MS: f64 = 0.5;
 /// Same room: how much faster or slower per millisecond off (a small gap closes in a few
 /// seconds, without overshooting the second the error is smoothed over).
 pub const PPM_PER_MS: f64 = 250.0;
+/// The most the slow part of the controller (which learns a sound card's own drift) adds.
+pub const MAX_LEARNED_PPM: f64 = 200.0;
 /// How fast the rate glides, in parts per million per second of music.
 pub const GLIDE_PPM_PER_S: f64 = 1_000.0;
 /// Same room: further than this, a seek.
@@ -135,7 +144,7 @@ pub const FADE_OUT: Duration = Duration::from_millis(30);
 /// How long an error past the seek line has to last before it is lined up: a stall or a burst
 /// of late clock readings passes; a real drift doesn't.
 pub fn far_for(same_room: bool) -> Duration {
-    Duration::from_secs(if same_room { 1 } else { 3 })
+    Duration::from_secs(if same_room { 2 } else { 3 })
 }
 
 /// The correction for an error (smoothed). `settling` is true just after a start or a seek,
@@ -145,18 +154,16 @@ pub fn correction(error_ms: f64, same_room: bool, settling: bool) -> Correction 
         return Correction::None;
     }
     let e = error_ms.abs();
-    if !same_room {
-        return if e > APART_SEEK_MS {
-            Correction::Seek
-        } else {
-            Correction::None
-        };
-    }
-    if e > SAME_ROOM_SEEK_MS {
+    let (seek, dead) = if same_room {
+        (SAME_ROOM_SEEK_MS, SAME_ROOM_DEAD_MS)
+    } else {
+        (APART_SEEK_MS, APART_DEAD_MS)
+    };
+    if e > seek {
         Correction::Seek
-    } else if e > SAME_ROOM_DEAD_MS {
+    } else if e > dead {
         Correction::Trim {
-            ppm: rate_for(error_ms, false).abs(),
+            ppm: Controller::default().rate(error_ms, 0.0, same_room).abs(),
             ahead: error_ms > 0.0,
         }
     } else {
@@ -164,20 +171,100 @@ pub fn correction(error_ms: f64, same_room: bool, settling: bool) -> Correction 
     }
 }
 
-/// Same room: how much faster (positive: behind) or slower (negative: ahead) to play for an error
-/// (smoothed, milliseconds, positive ahead), in parts per million. `correcting`: one is under
-/// way, and goes on down to `SAME_ROOM_DONE_MS` (one starts only past the dead zone).
-pub fn rate_for(error_ms: f64, correcting: bool) -> f64 {
-    let e = error_ms.abs();
-    let line = if correcting {
-        SAME_ROOM_DONE_MS
-    } else {
-        SAME_ROOM_DEAD_MS
-    };
-    if e <= line || e > SAME_ROOM_SEEK_MS {
-        return 0.0;
+/// Asks for the rate that keeps the music with the room: faster (positive) when behind,
+/// slower when ahead, from the smoothed error.
+///
+/// - A correction starts past the dead zone and goes on until well within it (so it doesn't
+///   flicker on noise): `per_ms` ppm for each millisecond off, at most 500.
+/// - All along it measures, over 5 s at a time, how fast the error moves against the rate it
+///   asked for: what is left over is the sound card's own drift against the room's clock. It
+///   takes half of each measure into what it has learned, and plays that much the other way all
+///   along (a card 80 ppm fast is played 80 ppm slower), so the error closes all the way and then
+///   stays where it is, instead of hanging where the correction balances the drift, or drifting
+///   back to the line and being corrected over and over.
+/// - A card within 5 ppm of the room needs nothing: the song's own rate, bit-perfect.
+#[derive(Debug, Clone, Default)]
+pub struct Controller {
+    correcting: bool,
+    /// The card's drift against the room, learned (parts per million to play faster).
+    learned: f64,
+    /// The measure under way: for how long (s), the error when it began, and the rate asked
+    /// for over it (ppm × s).
+    window: Option<(f64, f64, f64)>,
+}
+
+/// How long each measure of the card's drift is (s).
+const WINDOW_S: f64 = 5.0;
+
+impl Controller {
+    /// The rate (parts per million faster) for `error_ms` (positive: ahead), `dt_s` seconds
+    /// after the last ask.
+    pub fn rate(&mut self, error_ms: f64, dt_s: f64, same_room: bool) -> f64 {
+        let (dead, done, per_ms) = if same_room {
+            (SAME_ROOM_DEAD_MS, SAME_ROOM_DONE_MS, PPM_PER_MS)
+        } else {
+            (APART_DEAD_MS, APART_DONE_MS, APART_PPM_PER_MS)
+        };
+        let e = error_ms.abs();
+        if self.correcting && e <= done {
+            self.correcting = false;
+        } else if !self.correcting && e > dead {
+            self.correcting = true;
+        }
+        let steady = if self.learned.abs() < 5.0 {
+            0.0
+        } else {
+            self.learned
+        };
+        let rate = if self.correcting {
+            (-error_ms * per_ms + steady).clamp(-MAX_PPM, MAX_PPM)
+        } else {
+            steady
+        };
+        // What the error does, against the rate asked for, is the card's drift not yet learned.
+        let (t, e0, asked) = self.window.get_or_insert((0.0, error_ms, 0.0));
+        *t += dt_s;
+        *asked += rate * dt_s;
+        if *t >= WINDOW_S {
+            let moved_ppm = (error_ms - *e0) / *t * 1_000.0;
+            let drift = moved_ppm - *asked / *t;
+            // A card is never that far off: a measure like that saw something else (a stall,
+            // a jump), not drift.
+            if drift.abs() <= MAX_LEARNED_PPM {
+                self.learned = (self.learned + (-drift - self.learned) * 0.5)
+                    .clamp(-MAX_LEARNED_PPM, MAX_LEARNED_PPM);
+            }
+            self.window = Some((0.0, error_ms, 0.0));
+        }
+        rate
     }
-    (e * PPM_PER_MS).min(MAX_PPM) * -error_ms.signum()
+
+    /// Start over (a seek, a new plan, a stall): what was learned of the card stays (it is the
+    /// card's, not the plan's).
+    pub fn reset(&mut self) {
+        self.correcting = false;
+        self.window = None;
+    }
+
+    /// The room's place was known better (a new estimate of the host's clock): the error moved
+    /// by that, not by the card, so the measure under way starts again.
+    pub fn plan_moved(&mut self) {
+        self.window = None;
+    }
+
+    /// Forget the card too (another output).
+    pub fn forget(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn correcting(&self) -> bool {
+        self.correcting
+    }
+
+    /// The card's drift learned, parts per million to play faster.
+    pub fn learned(&self) -> f64 {
+        self.learned
+    }
 }
 
 /// Half the resampler's taps: 32 either side (flat to 20 kHz at 44.1 kHz, images 80 dB down).
@@ -597,9 +684,23 @@ mod tests {
 
     #[test]
     fn apart_listeners_stay_bit_perfect_until_far_off() {
-        assert_eq!(correction(40.0, false, false), Correction::None);
-        assert_eq!(correction(-250.0, false, false), Correction::None);
-        assert_eq!(correction(301.0, false, false), Correction::Seek);
+        assert_eq!(correction(5.0, false, false), Correction::None);
+        assert_eq!(
+            correction(-40.0, false, false),
+            Correction::Trim {
+                ppm: 500.0,
+                ahead: false
+            },
+            "apart, 40 ms off: as fast as it goes, gently"
+        );
+        assert_eq!(
+            correction(12.0, false, false),
+            Correction::Trim {
+                ppm: 300.0,
+                ahead: true
+            }
+        );
+        assert_eq!(correction(251.0, false, false), Correction::Seek);
         assert_eq!(
             correction(900.0, false, true),
             Correction::None,
@@ -619,11 +720,19 @@ mod tests {
                 ahead: true
             }
         );
-        // Once under way, on down to half a millisecond, slower as it closes.
-        assert_eq!(rate_for(1.0, true), -250.0, "ahead: slower");
-        assert_eq!(rate_for(-1.2, true), 300.0, "behind: faster");
-        assert_eq!(rate_for(1.0, false), 0.0, "not started for noise");
-        assert_eq!(rate_for(0.4, true), 0.0, "close enough");
+        // Once under way, on down to half a millisecond, slower as it closes; and not started
+        // for noise within the dead zone.
+        let mut c = Controller::default();
+        assert_eq!(c.rate(1.0, 0.0, true), 0.0, "not started for noise");
+        assert_eq!(c.rate(3.0, 0.0, true), -500.0, "ahead: slower");
+        assert_eq!(c.rate(1.0, 0.0, true), -250.0, "still on, closing");
+        assert_eq!(c.rate(-1.2, 0.0, true), 300.0, "behind: faster");
+        assert_eq!(c.rate(0.4, 0.0, true), 0.0, "close enough: its own rate");
+        assert!(!c.correcting());
+    }
+
+    #[test]
+    fn same_room_seeks_only_when_far() {
         assert_eq!(
             correction(-20.0, true, false),
             Correction::Trim {
@@ -632,6 +741,52 @@ mod tests {
             }
         );
         assert_eq!(correction(60.0, true, false), Correction::Seek);
+    }
+
+    /// `secs` of a card drifting `drift` ppm, the controller asked every 10 ms: the error at the
+    /// end and the largest rate it asked for.
+    fn drifting(c: &mut Controller, err: &mut f64, drift: f64, secs: f64, same_room: bool) -> f64 {
+        let dt = 0.01;
+        let mut most = 0.0f64;
+        for _ in 0..(secs / dt) as usize {
+            let rate = c.rate(*err, dt, same_room);
+            most = most.max(rate.abs());
+            // The error grows with the drift and shrinks with the rate asked for.
+            *err += (drift + rate) * dt / 1000.0;
+        }
+        most
+    }
+
+    #[test]
+    fn the_controller_learns_a_sound_cards_drift_and_stays_put() {
+        for (same_room, drift) in [(false, 100.0), (false, -60.0), (true, 80.0)] {
+            let mut c = Controller::default();
+            let mut err = if same_room { 3.0 } else { 12.0 };
+            let most = drifting(&mut c, &mut err, drift, 600.0, same_room);
+            assert!(most <= MAX_PPM, "never past 500 ppm: {most}");
+            assert!(
+                (c.learned() + drift).abs() < drift.abs() * 0.15,
+                "{drift} ppm learned: {:.0}",
+                c.learned()
+            );
+            // Then it holds: another five minutes, never a correction, the error where it was.
+            let before = err;
+            drifting(&mut c, &mut err, drift, 300.0, same_room);
+            let line = if same_room {
+                SAME_ROOM_DEAD_MS
+            } else {
+                APART_DEAD_MS
+            };
+            assert!(
+                err.abs() < line && (err - before).abs() < line / 2.0,
+                "{drift} ppm, same room {same_room}: held at {err:.2} ms (was {before:.2})"
+            );
+        }
+        // A card as the room's: nothing learned, the song's own rate once in step.
+        let mut c = Controller::default();
+        let mut err = 12.0;
+        drifting(&mut c, &mut err, 0.0, 300.0, false);
+        assert_eq!(c.rate(err, 0.01, false), 0.0, "bit-perfect");
     }
 
     #[test]

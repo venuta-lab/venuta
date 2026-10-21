@@ -9,7 +9,7 @@ use crate::decode::{FileInfo, Source, SourceFormat};
 use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
 use crate::queue::{Queue, Repeat};
-use crate::sync::{Correction, Resampler, SyncNote, SyncPlan};
+use crate::sync::{Controller, Correction, Resampler, SyncNote, SyncPlan};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -333,6 +333,7 @@ struct Engine<T: Item + Serialize> {
     /// rate it is asked for (parts per million faster), and where its frames are made.
     resampler: Resampler,
     rate_target: f64,
+    controller: Controller,
     resampled: Vec<i32>,
     sync_error_ms: Option<f32>,
     settle_until: Option<Instant>,
@@ -434,6 +435,7 @@ impl<T: Item + Serialize> Engine<T> {
             sync: None,
             resampler: Resampler::default(),
             rate_target: 0.0,
+            controller: Controller::default(),
             resampled: Vec::new(),
             sync_error_ms: None,
             settle_until: None,
@@ -1078,8 +1080,7 @@ impl<T: Item + Serialize> Engine<T> {
         // One room's rate (or gliding back from it): the period's frames made at that rate
         // (none while held silent).
         let held = self.fade_out.is_some_and(|f| f.over());
-        if lead == 0 && !held && (self.sync.is_some_and(|p| p.same_room) || !self.resampler.idle())
-        {
+        if lead == 0 && !held && (self.sync.is_some() || !self.resampler.idle()) {
             self.rate_front(want);
         }
         let src_ch = usize::from(fmt.channels.max(1));
@@ -1479,6 +1480,8 @@ impl<T: Item + Serialize> Engine<T> {
             d.close();
         }
         self.resampler.reset();
+        // Another device (or this one again) drifts its own way.
+        self.controller.forget();
         self.dev_fmt = None;
         self.started = false;
         // What the old device held is gone with it, and nothing comes out until another opens.
@@ -1510,6 +1513,7 @@ impl<T: Item + Serialize> Engine<T> {
         {
             self.sync = Some(new);
             self.sync_hold = false;
+            self.controller.plan_moved();
             return;
         }
         // A plan that doesn't simply play on from here (a hold, a start ahead, a pause): the
@@ -1529,6 +1533,7 @@ impl<T: Item + Serialize> Engine<T> {
         };
         // Back to the song's own rate (gliding there, so nothing is heard).
         self.rate_target = 0.0;
+        self.controller.reset();
         self.sync_error_ms = None;
         self.sync_hold = false;
         self.sync_avg = None;
@@ -1725,6 +1730,7 @@ impl<T: Item + Serialize> Engine<T> {
         if starved {
             // Nothing chased while a stream catches up.
             self.rate_target = 0.0;
+            self.controller.reset();
         }
         if settling || starved {
             self.sync_far_since = None;
@@ -1733,12 +1739,10 @@ impl<T: Item + Serialize> Engine<T> {
         match crate::sync::correction(avg, plan.same_room, false) {
             Correction::None | Correction::Trim { .. } => {
                 self.sync_far_since = None;
-                // One room: a hair faster or slower, gliding, until in step (apart: never).
-                self.rate_target = if plan.same_room {
-                    crate::sync::rate_for(avg, self.rate_target != 0.0)
-                } else {
-                    0.0
-                };
+                // A hair faster or slower, gliding, until in step (apart: past 10 ms only).
+                self.rate_target = self
+                    .controller
+                    .rate(avg, want as f64 / rate, plan.same_room);
                 Ok(Some(0))
             }
             Correction::Seek => {
@@ -1758,7 +1762,7 @@ impl<T: Item + Serialize> Engine<T> {
     /// only keeps the last frames in one room (the filter's left side for a correction to come);
     /// outside a room it does nothing at all.
     fn rate_front(&mut self, want: usize) {
-        let same_room = self.sync.is_some_and(|p| p.same_room);
+        let in_room = self.sync.is_some();
         let Some(front) = self.segs.front_mut() else {
             return;
         };
@@ -1768,13 +1772,13 @@ impl<T: Item + Serialize> Engine<T> {
         let near_end = front.source.frames.is_some_and(|total| {
             total.saturating_sub(front.start_frame + front.played) < u64::from(rate)
         });
-        let target = if same_room && !near_end {
+        let target = if in_room && !near_end {
             self.rate_target
         } else {
             0.0
         };
         if self.resampler.idle() && target == 0.0 {
-            if same_room {
+            if in_room {
                 let n = want.min(front.frames()) * ch;
                 let head = front.samples.make_contiguous();
                 self.resampler.played_as_is(&head[..n], ch);
@@ -1866,6 +1870,7 @@ impl<T: Item + Serialize> Engine<T> {
         self.seek(to_ms.max(0.0) as u64);
         self.resampler.reset();
         self.rate_target = 0.0;
+        self.controller.reset();
         self.sync_fine = true;
         self.settle_until = Some(Instant::now() + Duration::from_millis(settle_ms));
     }

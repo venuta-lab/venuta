@@ -310,19 +310,20 @@ fn a_wobbling_or_late_clock_estimate_is_never_heard() {
 
 #[test]
 fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound() {
-    // One room, a sound card 300 ppm fast and one 300 ppm slow (worse than most): the rate is
-    // eased the other way, within 500 ppm, and the music stays with the room.
+    // A sound card 300 ppm fast and one 300 ppm slow (worse than most), in one room; and apart,
+    // a fast card with the room's start known 15 ms later just after it (apart, only past 10
+    // ms is anything done): the rate is eased the other way, within 500 ppm, never a seek, and
+    // the music stays with the room.
     let piece = stereo(48_000);
-    for drift in [300.0, -300.0] {
-        let (c, notes, dry, status) =
-            room(&format!("drift-{drift}"), &piece, true, drift, 12.0, &[]);
-        clean(
-            &format!("one room, card {drift} ppm"),
-            &piece,
-            &c,
-            dry,
-            11.0,
-        );
+    for (same_room, drift, later) in [
+        (true, 300.0, None),
+        (true, -300.0, None),
+        (false, 300.0, Some(15.0)),
+    ] {
+        let name = format!("drift-{same_room}-{drift}");
+        let plans: Vec<(u64, f64)> = later.map(|ms| (1_200, ms)).into_iter().collect();
+        let (c, notes, dry, status) = room(&name, &piece, same_room, drift, 12.0, &plans);
+        clean(&name, &piece, &c, dry, 11.0);
         let rates: Vec<i32> = notes
             .iter()
             .filter_map(|n| match n {
@@ -344,7 +345,8 @@ fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound() {
             "never a seek: {notes:?}"
         );
         let e = status.sync.and_then(|s| s.error_ms).expect("how far off");
-        assert!(e.abs() < 3.0, "{drift} ppm: with the room ({e} ms)");
+        let within = if same_room { 3.0 } else { 20.0 };
+        assert!(e.abs() < within, "{name}: with the room ({e} ms)");
     }
     // Apart, a card far off (0.5%: 300 ms in a minute, compressed here into seconds by the room
     // being suddenly 900 ms on): lined up once, faded out and in, never a click.
