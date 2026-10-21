@@ -527,7 +527,7 @@ The renderer never plays the last `guard = 30 ms + 33 frames + 1 period` of a vo
 
 #### Status by atomics
 
-The renderer publishes, through a seqlock and plain atomics: the voices and their content places, device frames written, the current ppm, its state (playing, fading, starved, silent), dry count, and a histogram of deadline margin (event to buffer released, as a share of the period). The status thread reads these 10 times a second, builds `Status` (the app's type, unchanged in shape), and calls the app. The app's status callback, which today runs on the sound's thread and takes several locks, spawns threads and writes files (`playback.rs:425-616`), now runs on the status thread.
+The renderer publishes, through a seqlock and plain atomics: the voices and their content places, device frames written, the current ppm, its state (playing, fading, starved, silent), dry count, and a histogram of deadline margin (event to buffer released, as a share of the period). The status thread reads these 10 times a second, builds `Status` (the app's type, unchanged in shape), and calls the app. Once a minute, and when the output stops, the status thread also writes the histogram to the playback log as one line, so the 7.5 gate can be read on hardware (WP14's `deadline_probe log`): `render: deadline margin over <s> s: <n> periods, ran dry <d>, late <l>; per 1% of the period from 0%: <100 counts>`, the counts space-separated, bucket 0 holding margins from 0 to 1% of the period and late periods (no margin left) counted apart. The format is `crates/player/examples/live_kit/deadline.rs`'s `Histogram::to_log_line`. The app's status callback, which today runs on the sound's thread and takes several locks, spawns threads and writes files (`playback.rs:425-616`), now runs on the status thread.
 
 #### Rules for the render thread, checked by tests
 
@@ -1099,8 +1099,8 @@ Every detector proves itself first on injected faults: one dropped frame, one re
 
 1. **Bit-exact with declared edits** (today's counting songs, extended): every output frame equals the source frame, except inside the regions the renderer declared in its notes (fades, crossfades, resampled spans).
 2. **Sine lock** (after OboeTester's GlitchAnalyzer): 1 kHz and 15 kHz at -6 dBFS; magnitude and phase fitted over 8 periods and re-estimated every period; any residual over -60 dB outside a declared fade is a click; inside a fade the envelope must change by at most 1/240 per sample.
-3. **LPC residual on real music** (after Essentia's ClickDetector): order 12 to 32, 512-sample frames, peaks 30 dB over the robust floor; calibrated on the same tracks played solo; a room run may flag nothing that solo doesn't.
-4. **Dip and gap**: 5 ms RMS windows more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
+3. **LPC residual on real music** (after Essentia's ClickDetector): order 12 to 32, 512-sample frames, peaks 30 dB over the robust floor (the clipped mean error power); each hop is predicted by the filter learned on the 512 samples before it, never on a frame that holds the samples it judges (a model learned on a fault whitens the fault too: measured in WP14, a dropped frame then stands only about 30 dB over the floor, against 60 dB and more when learned before it); calibrated on the same tracks played solo; a room run may flag nothing that solo doesn't.
+4. **Dip and gap**: 5 ms RMS windows, one starting at every sample (so a 5 ms gap fills one window whole), more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
 
 Plus today's music-shaped detector (steps, third-difference breaks, hard-edged gaps) stays as a fast first check.
 
