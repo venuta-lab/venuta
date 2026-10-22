@@ -176,9 +176,16 @@ export function useSongLyrics(root: string, song: QueueItem | undefined, enabled
   const fileless = !local || (file !== null && !hasWords(file))
   const found = useOnlineLyrics(song, enabled && !!song && fileless)
   if (!enabled || !song) return null
+  if (previewWords && !inApp()) return previewWords(song)
   if (local && file === null) return null
   if (local && hasWords(file)) return file
   return found
+}
+
+/** UI previews outside the app (dev only: lyrics-preview.html): the words a song shows. */
+let previewWords: ((song: QueueItem) => Lyrics | null) | null = null
+export function setPreviewLyrics(words: ((song: QueueItem) => Lyrics | null) | null) {
+  if (import.meta.env.DEV) previewWords = words
 }
 
 /**

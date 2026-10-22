@@ -117,7 +117,7 @@ function Stage({ frame }: { frame: Frame }) {
     <div className="relative h-full w-full">
       <div className="relative flex h-full flex-col items-center justify-center px-[7vw]">
         {timed ? (
-          <div ref={stack} className="flex w-full min-w-0 max-w-[min(92vw,1600px)] flex-col items-stretch gap-[3vh]">
+          <div ref={stack} data-stack className="flex w-full min-w-0 max-w-[min(92vw,1600px)] flex-col items-stretch gap-[3vh]">
             <div data-row className="min-h-[1.2em] w-full min-w-0 opacity-40" style={{ fontSize: px * 0.55 }}>
               <AnimatePresence mode="popLayout" initial={false}>
                 {prev !== undefined && (
@@ -175,7 +175,7 @@ function Stage({ frame }: { frame: Frame }) {
 
       {/* The song, small, at the bottom (not in Clear: the words alone). */}
       {song && !clear && (
-        <div className="absolute inset-x-[5vw] bottom-[4vh] flex items-center gap-4 opacity-80">
+        <div data-song-bar className="absolute inset-x-[5vw] bottom-[4vh] flex items-center gap-4 opacity-80">
           {cover && <img src={cover.src} alt="" className="h-[6vh] w-[6vh] rounded-lg object-cover shadow-lg" />}
           <div className="min-w-0 flex-1">
             <div className="truncate font-semibold" style={{ fontSize: Math.max(15, view.h * 0.022) }}>

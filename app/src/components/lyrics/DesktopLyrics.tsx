@@ -127,7 +127,7 @@ function Lines({ frame }: { frame: Frame }) {
   const px = want * fit
 
   return (
-    <div ref={box} className="flex h-full w-full items-center justify-center overflow-hidden p-3">
+    <div ref={box} data-fit-box className="flex h-full w-full items-center justify-center overflow-hidden p-3">
       <motion.div ref={inner} animate={{ opacity: shown || editing ? 1 : 0 }} transition={{ duration: 0.6 }} className="w-full select-none">
         {editing && !shown ? (
           <LyricText text={song ? 'Lyrics show here as the song plays' : 'Play a song with lyrics'} look={look.look} now progress={1} colour={frame.colour} px={px * 0.7} ground={frame.ground} />

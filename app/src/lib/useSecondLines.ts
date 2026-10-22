@@ -69,7 +69,8 @@ export function useSecondLines(song: QueueItem | null | undefined, lyrics: Lyric
       toggle: (kind) => setSecondLine(lang, kind, !on[kind]),
       notes: { roman: src.roman && noteWords('roman', src.roman), translation: src.translation && noteWords('translation', src.translation) },
       translation: translationStatus({ have: carried, on: on.translation, from: lang, to: reader, models }),
-      dictionary: lang === 'ja' || model?.lines.some((l) => l.script === 'Jpan') ? dictionaryWords(dict) : null,
+      // Said only while some Japanese line still waits for it.
+      dictionary: model?.lines.some((l) => !l.roman && (l.script === 'Jpan' || (lang === 'ja' && l.script === 'Hani'))) ? dictionaryWords(dict) : null,
     }
   }, [key, model, lang, reader, choice.roman, choice.translation, models, dict])
 

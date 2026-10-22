@@ -106,7 +106,7 @@ function SecondRowLine(props: { kind: SecondKind; text: string; lang?: string; s
       </span>
     )
   return (
-    <span className={`group/row flex items-baseline gap-2 ${size} leading-snug ${tone} transition-colors duration-300`}>
+    <span data-second={props.kind} className={`group/row flex items-baseline gap-2 ${size} leading-snug ${tone} transition-colors duration-300`}>
       <span lang={props.lang} title={props.source} className="min-w-0">
         {props.text}
       </span>

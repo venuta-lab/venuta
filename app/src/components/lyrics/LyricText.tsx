@@ -51,8 +51,10 @@ export interface SecondRowView {
   lang?: string
 }
 
-/** The second rows' sizes and gaps, as a share of the line's size (lib/lyricRows.ts counts them). */
+/** The second rows' sizes and gaps, as a share of the line's size (lib/lyricRows.ts counts them),
+ *  never under a size that still reads (the windows' fit then makes room), never over the line's. */
 const SECOND = { roman: { size: 0.52, gap: 0.22 }, translation: { size: 0.46, gap: 0.16 } }
+const SECOND_MIN_PX = 11
 
 /**
  * One line of lyrics in a look. `now` is the line being sung; `progress` (0 to 1) how far through
@@ -152,7 +154,7 @@ export function LyricText(props: {
             lang={r.lang}
             style={{
               ...base,
-              fontSize: props.px * size,
+              fontSize: Math.min(props.px * 0.9, Math.max(SECOND_MIN_PX, props.px * size)),
               fontWeight: 500,
               marginTop: props.px * gap,
               color: ink,

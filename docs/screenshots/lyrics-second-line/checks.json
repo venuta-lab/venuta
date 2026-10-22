@@ -1,0 +1,161 @@
+{
+  "shots": [
+    {
+      "name": "nowplaying-hindi-small-dark",
+      "size": "1100x700",
+      "bad": [],
+      "rows": 10
+    },
+    {
+      "name": "nowplaying-hindi-large-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 10
+    },
+    {
+      "name": "bigscreen-hindi-small-dark",
+      "size": "960x540",
+      "bad": [],
+      "rows": 6
+    },
+    {
+      "name": "bigscreen-hindi-large-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6
+    },
+    {
+      "name": "desktop-hindi-small-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "desktop-hindi-large-dark",
+      "size": "1400x296",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "mini-bar-hindi-dark",
+      "size": "380x132",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "mini-card-hindi-dark",
+      "size": "300x400",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "settings-lyrics-dark",
+      "size": "900x1000",
+      "bad": [],
+      "rows": 0
+    },
+    {
+      "name": "nowplaying-hindi-small-light",
+      "size": "1100x700",
+      "bad": [],
+      "rows": 10
+    },
+    {
+      "name": "nowplaying-hindi-large-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 10
+    },
+    {
+      "name": "bigscreen-hindi-small-light",
+      "size": "960x540",
+      "bad": [],
+      "rows": 6
+    },
+    {
+      "name": "bigscreen-hindi-large-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6
+    },
+    {
+      "name": "desktop-hindi-small-light",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "desktop-hindi-large-light",
+      "size": "1400x296",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "mini-bar-hindi-light",
+      "size": "380x132",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "mini-card-hindi-light",
+      "size": "300x400",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "settings-lyrics-light",
+      "size": "900x1000",
+      "bad": [],
+      "rows": 0
+    },
+    {
+      "name": "bigscreen-mixed-english-line-large-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6
+    },
+    {
+      "name": "bigscreen-japanese-small-dark",
+      "size": "960x540",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "nowplaying-japanese-large-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 4
+    },
+    {
+      "name": "nowplaying-plain-small-light",
+      "size": "1100x700",
+      "bad": [],
+      "rows": 0
+    },
+    {
+      "name": "desktop-spanish-smallest-dark",
+      "size": "360x130",
+      "bad": [],
+      "rows": 1
+    },
+    {
+      "name": "mini-card-mixed-light",
+      "size": "300x400",
+      "bad": [],
+      "rows": 2
+    },
+    {
+      "name": "bigscreen-hindi-outline-large-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6
+    }
+  ],
+  "clock": {
+    "framesIn5s": 1173,
+    "loopCallbacksPerFrame": 1.15,
+    "mainThreadMsPerFrame": 2.51,
+    "worstLoopMsInAFrame": 0.7,
+    "note": "headless Chrome draws without vsync, so it draws more frames than a 60 Hz screen; per-frame time is the measure"
+  }
+}

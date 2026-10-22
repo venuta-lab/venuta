@@ -262,10 +262,11 @@ export function MiniPlayer() {
           <Art src={art?.src} title={song.album} seed={online ? song.album || song.title : undefined} className="aspect-square h-full rounded-[14px]" />
           <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 self-stretch">
             <div className={`min-w-0 pr-16 ${rowsOn ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
-              <div className={`truncate text-[14.5px] font-semibold leading-tight ${retro ? 'title' : ''}`}>{song.title}</div>
+              {/* With rows under the line, the line takes the title's place (the card shows both). */}
+              {!rowsOn && <div className={`truncate text-[14.5px] font-semibold leading-tight ${retro ? 'title' : ''}`}>{song.title}</div>}
               {rowsOn ? (
                 // The line and the rows under it, wrapped, made smaller rather than cut off.
-                <FittedLines lines={[{ text: line || '♪', now: true, rows }]} size={12.5} lang={seconds.lang} className="mt-0.5" />
+                <FittedLines lines={[{ text: line || '♪', now: true, rows }]} size={13.5} lang={seconds.lang} />
               ) : (
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -665,7 +666,7 @@ function FittedLines(props: { lines: { text: string; now: boolean; rows: SecondR
   const key = props.lines.map((l) => `${l.text}|${l.rows.map((r) => r.text).join('|')}`).join('/')
   const { box, inner, fit } = useShrinkToFit<HTMLDivElement, HTMLDivElement>(key)
   return (
-    <div ref={box} className={`flex min-h-0 flex-1 flex-col overflow-hidden ${props.bottom ? 'justify-end' : 'justify-start'} ${props.className ?? ''}`}>
+    <div ref={box} data-fit-box className={`flex min-h-0 flex-1 flex-col overflow-hidden ${props.bottom ? 'justify-end' : 'justify-start'} ${props.className ?? ''}`}>
       <div ref={inner} style={{ fontSize: props.size * fit, overflowWrap: 'anywhere' }} className="grid gap-0.5">
         {props.lines.map((l, i) => (
           <div key={i} className={l.now ? '' : 'text-ink/45'}>
@@ -673,7 +674,7 @@ function FittedLines(props: { lines: { text: string; now: boolean; rows: SecondR
               {l.text || '\u00a0'}
             </div>
             {l.rows.map((r) => (
-              <div key={r.kind} lang={r.lang} className={`leading-snug ${r.kind === 'roman' ? 'text-ink/70' : 'text-ink/55'}`} style={{ fontSize: r.kind === 'roman' ? '0.86em' : '0.8em' }}>
+              <div key={r.kind} data-second={r.kind} lang={r.lang} className={`leading-snug ${r.kind === 'roman' ? 'text-ink/70' : 'text-ink/55'}`} style={{ fontSize: r.kind === 'roman' ? '0.86em' : '0.8em' }}>
                 {r.text || '\u00a0'}
               </div>
             ))}
