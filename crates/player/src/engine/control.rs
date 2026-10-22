@@ -1714,6 +1714,18 @@ impl Controller {
         self.out
     }
 
+    /// What is measured moved by `by_ms` at once, not by drifting (a refined offset, WP11): the
+    /// filter moves with it, so the proportional part takes it up and the integral, which
+    /// learns from the filtered error's slope, learns nothing from it.
+    pub(super) fn shift(&mut self, by_ms: f64) {
+        for e in &mut self.errs {
+            *e += by_ms;
+        }
+        if let Some(a) = self.avg.as_mut() {
+            *a += by_ms;
+        }
+    }
+
     /// One tick: `err_ms` the error measured now (none: nothing to measure, the trim kept);
     /// `ff` the feed-forward (ppm); `bound_ms` the clock's bound.
     pub(super) fn tick(
