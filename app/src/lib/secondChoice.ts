@@ -81,6 +81,12 @@ export function readerLang(c: SecondChoices, system: string): string {
   return langBase(system) || 'en'
 }
 
+/** The two switches: what each is called, and its key on the big screen. */
+export const SECOND_NAMES: Record<SecondKind, { name: string; keys: string; line: string }> = {
+  roman: { name: 'Pronunciation', keys: 'T', line: 'The words in English letters, under each line' },
+  translation: { name: 'Translation', keys: 'Shift+T', line: 'What each line means, in the language you read' },
+}
+
 /** A key's switch: T for pronunciation (as it was for Roman letters), Shift+T for translation. */
 export function keyAction(e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'altKey' | 'metaKey'>): SecondKind | null {
   if (e.ctrlKey || e.altKey || e.metaKey || e.key.toLowerCase() !== 't') return null

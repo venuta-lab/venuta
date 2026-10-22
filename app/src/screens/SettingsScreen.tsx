@@ -34,6 +34,7 @@ import { ActivityPage } from './ActivityScreen'
 import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
 import { PlaybackSettings } from './settings/PlaybackSettings'
 import { LyricWindowsSettings } from './settings/LyricWindowsSettings'
+import { LyricLinesSettings } from './settings/LyricLinesSettings'
 import { Group, More, PageHead, Row } from './settings/parts'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
@@ -583,13 +584,14 @@ function useSettings() {
 function LyricsPage() {
   return (
     <div>
-      <PageHead title="Lyrics" line="Where lyrics come from, and the two windows that show them away from Venuta." />
+      <PageHead title="Lyrics" line="Where lyrics come from, what shows under each line, and the two windows that show them away from Venuta." />
       <Group
         title="Sources, in the order they are asked"
         line="For songs without lyrics of their own, the first source with timed lyrics is used. Any song can use another one (Now Playing, under its lyrics)."
       >
         <LyricsSources />
       </Group>
+      <LyricLinesSettings />
       <LyricWindowsSettings />
       <p className="mt-6 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/50">
         Each window's own toolbar changes the same settings while it is open. Lyrics found online are kept so each song is
@@ -1087,6 +1089,11 @@ function SystemPage(props: { onShortcuts: () => void }) {
         <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
           Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
           published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
+        </p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Pronunciation under lyrics is made on this PC with word lists adapted from Google's Dakshina dataset (CC BY-SA 4.0),
+          OpenCC's character tables (Apache-2.0), pinyin_pro (MIT), a port of koroman (MIT), and lindera (MIT) with the IPADIC
+          dictionary (under its NAIST notice), fetched the first time a Japanese song needs it.
         </p>
       </div>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}

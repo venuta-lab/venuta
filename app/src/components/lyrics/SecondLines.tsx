@@ -5,7 +5,7 @@ import { useEscape } from '../../lib/layers'
 import { rowsFor, type SecondKind } from '../../lib/secondLines'
 import { downloadModel, languageName, sizeWords } from '../../lib/translation'
 import type { SecondLinesView } from '../../lib/useSecondLines'
-import { SECOND_NAMES } from './LookPanel'
+import { SECOND_NAMES } from '../../lib/secondChoice'
 
 /*
   The second lines in Now Playing: the two switches over the words (with where the rows came from,
@@ -17,11 +17,11 @@ import { SECOND_NAMES } from './LookPanel'
 export function SecondSwitches(props: { seconds: SecondLinesView; className?: string }) {
   const v = props.seconds
   const kinds = (['roman', 'translation'] as const).filter((k) => v.offered[k])
-  if (!kinds.length) return null
-  const notes = [v.notes.roman, v.notes.translation].filter(Boolean)
+  if (!kinds.length && !v.dictionary) return null
+  const notes = [v.notes.roman, v.notes.translation, v.dictionary].filter(Boolean)
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 ${props.className ?? ''}`}>
-      <div role="group" aria-label="Under each line" className="inline-flex items-center gap-1 rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
+      {kinds.length > 0 && <div role="group" aria-label="Under each line" className="inline-flex items-center gap-1 rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
         {kinds.map((k) => (
           <button
             key={k}
@@ -33,7 +33,7 @@ export function SecondSwitches(props: { seconds: SecondLinesView; className?: st
             {SECOND_NAMES[k].name}
           </button>
         ))}
-      </div>
+      </div>}
       {notes.length > 0 && <span className="text-[12px] text-ink/45">{notes.join('. ')}</span>}
       <TranslationNote seconds={v} />
     </div>

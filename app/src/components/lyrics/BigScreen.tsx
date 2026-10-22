@@ -185,9 +185,9 @@ function Stage({ frame }: { frame: Frame }) {
               {song.artists.join(', ') || song.album_artist}
             </div>
             {/* Where the rows under the lines came from, quietly. */}
-            {(seconds.notes.roman || seconds.notes.translation) && (
+            {(seconds.notes.roman || seconds.notes.translation || seconds.dictionary) && (
               <div className="opacity-50" style={{ fontSize: Math.max(12, view.h * 0.0145) }}>
-                {[seconds.notes.roman, seconds.notes.translation].filter(Boolean).join('. ')}
+                {[seconds.notes.roman, seconds.notes.translation, seconds.dictionary].filter(Boolean).join('. ')}
               </div>
             )}
             <div className="mt-2 flex items-center gap-3 opacity-60" style={{ fontSize: Math.max(12, view.h * 0.015) }}>

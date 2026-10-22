@@ -7,6 +7,7 @@ import { inApp, lyricsFind, type FoundLine, type LyricsAnswer, type LyricsAsk, t
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
 import { modelOf, shownLines, type LyricsModel } from './lyricsModel'
+import { watchJapaneseDictionary } from './japaneseDictionary'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -45,6 +46,9 @@ if (typeof window !== 'undefined')
     if (e.key !== CHANGED_KEY || !e.newValue) return
     heard(e.newValue.slice(e.newValue.indexOf('|') + 1))
   })
+// The Japanese dictionary has come: this window reads its lyrics again (every window hears the
+// engine itself), so their Japanese lines get a pronunciation.
+watchJapaneseDictionary(() => heard('*'))
 
 /** What a song is called for the lyrics services: `online:<provider>:<id>`, or its file. */
 export function lyricsKey(song: QueueItem | undefined): string {

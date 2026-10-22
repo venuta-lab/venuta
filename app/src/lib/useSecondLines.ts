@@ -4,6 +4,7 @@
 // Worked out once per song (memoised), never per frame.
 
 import { useEffect, useMemo } from 'react'
+import { dictionaryWords, useJapaneseDictionary } from './japaneseDictionary'
 import { applyCorrections, useCorrections } from './lyricCorrections'
 import { lyricsChanged, lyricsChoiceChanged, lyricsKey, type Lyrics } from './lyrics'
 import { fromLegacy, songLang, type LyricsModel } from './lyricsModel'
@@ -31,6 +32,8 @@ export interface SecondLinesView {
   /** Where the rows came from, in a line each (null: not shown). */
   notes: Record<SecondKind, string | null>
   translation: TranslationStatus
+  /** The Japanese dictionary on its way, for a song that waits for it (null: nothing to say). */
+  dictionary: string | null
 }
 
 const NONE: SecondSwitches = { roman: false, translation: false }
@@ -42,6 +45,7 @@ export function useSecondLines(song: QueueItem | null | undefined, lyrics: Lyric
   const choices = useSecondChoices()
   const corrections = useCorrections(key)
   const models = useTranslationModels()
+  const dict = useJapaneseDictionary()
   const reader = readerLang(choices, systemLang())
   const base = useMemo(() => (lyrics?.lines.length ? fromLegacy(lyrics) : null), [lyrics])
   const model = useMemo(() => (base ? applyCorrections(base, corrections, reader) : null), [base, corrections, reader])
@@ -65,8 +69,9 @@ export function useSecondLines(song: QueueItem | null | undefined, lyrics: Lyric
       toggle: (kind) => setSecondLine(lang, kind, !on[kind]),
       notes: { roman: src.roman && noteWords('roman', src.roman), translation: src.translation && noteWords('translation', src.translation) },
       translation: translationStatus({ have: carried, on: on.translation, from: lang, to: reader, models }),
+      dictionary: lang === 'ja' || model?.lines.some((l) => l.script === 'Jpan') ? dictionaryWords(dict) : null,
     }
-  }, [key, model, lang, reader, choice.roman, choice.translation, models])
+  }, [key, model, lang, reader, choice.roman, choice.translation, models, dict])
 
   // Translation on, its model on this PC, and nothing in your language yet: translate the song
   // here (once), then read its lyrics again with the translation in them.

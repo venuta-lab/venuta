@@ -1,14 +1,8 @@
 import { motion } from 'motion/react'
 import { LOOKS, SIZES, setLyricLook, useLyricLook, type Ground, type LookId, type LyricColour, type LyricWindow } from '../../lib/lyricLook'
-import type { SecondKind } from '../../lib/secondLines'
+import { SECOND_NAMES } from '../../lib/secondChoice'
 import type { SecondLinesView } from '../../lib/useSecondLines'
 import { LyricText } from './LyricText'
-
-/** The two switches: what each is called, and its key on the big screen. */
-export const SECOND_NAMES: Record<SecondKind, { name: string; keys: string; line: string }> = {
-  roman: { name: 'Pronunciation', keys: 'T', line: 'The words in English letters, under each line' },
-  translation: { name: 'Translation', keys: 'Shift+T', line: 'What each line means, in the language you read' },
-}
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
@@ -181,7 +175,7 @@ export function LookPanel(props: {
                     </button>
                   )
                 })}
-              {[props.seconds.notes.roman, props.seconds.notes.translation].filter(Boolean).map((n) => (
+              {[props.seconds.notes.roman, props.seconds.notes.translation, props.seconds.dictionary].filter(Boolean).map((n) => (
                 <span key={n} className={`text-[11.5px] ${quiet}`}>
                   {n}
                 </span>
@@ -262,6 +256,7 @@ export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColou
             </button>
           )
         })}
+      {props.seconds?.dictionary && <span className="px-2 text-[11.5px] text-white/60">{props.seconds.dictionary}</span>}
     </div>
   )
 }
