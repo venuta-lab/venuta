@@ -101,6 +101,12 @@ pub trait Output: Send {
     fn latency(&self) -> Option<Latency> {
         None
     }
+    /// What the device said about itself at the last open (its endpoint id, the exclusive
+    /// formats it takes, why it opened shared when exclusive was asked). `None` for outputs
+    /// that say nothing.
+    fn notes(&self) -> Option<crate::output::DeviceNotes> {
+        None
+    }
 }
 
 /// One reading of the device: device frame `frame` was at the DAC at mono time `time_ns`.

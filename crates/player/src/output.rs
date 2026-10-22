@@ -1374,6 +1374,11 @@ pub struct DeviceNotes {
     pub stream_latency_frames: u32,
     /// The render thread is scheduled as pro audio (MMCSS on Windows).
     pub pro_audio: bool,
+    /// The exclusive formats the device takes (probed once per device, `devices::ProbeCache`),
+    /// when exclusive mode was asked.
+    pub exclusive_formats: Option<Arc<crate::devices::FormatTable>>,
+    /// Exclusive mode was asked and shared mode opened: why, in words.
+    pub why_shared: Option<String>,
 }
 
 /// An opened pull device and what it runs at.
@@ -1670,6 +1675,10 @@ impl<O: PullOpener> Output for PullOutput<O> {
 
     fn latency(&self) -> Option<Latency> {
         self.latency.read()
+    }
+
+    fn notes(&self) -> Option<DeviceNotes> {
+        PullOutput::notes(self)
     }
 
     fn presentation(&self) -> Arc<Presentation> {
