@@ -476,7 +476,17 @@ impl Transport for SimTransport {
             let there = net.route(me, to, SentKind::Media, 0)?;
             let back = net.route(to, me, SentKind::Media, 0)?;
             let server = net.lock().peers.get(&to).and_then(|p| p.server.clone());
-            let body = server.and_then(|s| s.open(me, &get)).ok_or(Gone)?;
+            let server = server.ok_or(Gone)?;
+            // Bytes in memory, or a file the server describes (read whole: test files are small).
+            let info = server.describe(me, &get);
+            let mime = info.as_ref().and_then(|i| i.mime.clone());
+            let body: Arc<[u8]> = match server.open(me, &get) {
+                Some(b) => b,
+                None => {
+                    let file = info.and_then(|i| i.file).ok_or(Gone)?;
+                    std::fs::read(file).map_err(|_| Gone)?.into()
+                }
+            };
             let from = (get.from as usize).min(body.len());
             let end = get
                 .to
@@ -492,16 +502,16 @@ impl Transport for SimTransport {
                 chunks.push((at, c.to_vec()));
             }
             let live = (back.key, back.generation);
-            Ok::<_, Gone>((open_at, (end - from) as u64, chunks, live))
+            Ok::<_, Gone>((open_at, (end - from) as u64, chunks, live, mime))
         })();
         let tb = self.net.tb.clone();
         let net2 = self.net.clone();
         Box::pin(async move {
-            let (open_at, total, chunks, live) = opened?;
+            let (open_at, total, chunks, live, mime) = opened?;
             Wait::until(tb.clone(), open_at).await;
             Ok(MediaStream {
                 total: Some(total),
-                mime: None,
+                mime,
                 body: Box::new(SimBody {
                     tb,
                     net: net2,
@@ -518,6 +528,49 @@ impl Transport for SimTransport {
             p.events = Some(tx);
         }
         rx
+    }
+
+    /// A simulated peer's key is its name on the network: `peer<n>`.
+    fn peer_key(&self, peer: PeerId) -> Option<String> {
+        self.net
+            .lock()
+            .peers
+            .contains_key(&peer)
+            .then(|| format!("peer{}", peer.0))
+    }
+
+    /// The link's ways from here, as a transport sees them: direct or relayed, and the round
+    /// trip (both ways' delays).
+    fn path(&self, peer: PeerId) -> Option<PathInfo> {
+        let n = self.net.lock();
+        let (k, side) = key(self.me, peer);
+        let l = n.links.get(&k).filter(|l| !l.lost)?;
+        let (out, back) = (l.ways[side], l.ways[1 - side]);
+        Some(PathInfo {
+            direct: !(out.relay || back.relay),
+            relay: out.relay || back.relay,
+            rtt_us: Some(((out.delay_ms + back.delay_ms) * 1_000.0) as u32),
+        })
+    }
+
+    /// Nothing more either way; both sides are told `Lost` at once (a closed connection is
+    /// known at once, unlike a cut one). `restore` connects them again.
+    fn close(&self, peer: PeerId) {
+        let (k, _) = key(self.me, peer);
+        let mut n = self.net.lock();
+        let closed = match n.links.get_mut(&k) {
+            Some(l) if !l.lost => {
+                l.cut = true;
+                l.lost = true;
+                l.generation += 1;
+                true
+            }
+            _ => false,
+        };
+        if closed {
+            n.tell(self.me, TransportEvent::Lost { peer });
+            n.tell(peer, TransportEvent::Lost { peer: self.me });
+        }
     }
 }
 
@@ -939,5 +992,54 @@ mod tests {
             panic!("{e:?}");
         };
         assert!(at_ns >= t0 + 30_000_000);
+    }
+}
+
+#[cfg(test)]
+mod peer_tests {
+    use super::*;
+    use crate::time::{SimClock, Timebase};
+
+    #[test]
+    fn a_peer_has_a_key_a_path_and_can_be_closed() {
+        let clock = SimClock::new(0);
+        let tb: Arc<dyn Timebase> = Arc::new(clock.clone());
+        let net = SimNet::new(tb, 3);
+        let base: Arc<dyn MonoClock> = Arc::new(clock.clone());
+        let host = net.peer(base.clone());
+        let guest = net.peer(base);
+        let (hrx, grx) = (host.events(), guest.events());
+        let relayed = Way {
+            relay: true,
+            ..Way::internet(40.0, 0.0)
+        };
+        net.connect(&guest, &host, Way::internet(10.0, 0.0), relayed);
+        assert_eq!(
+            host.peer_key(guest.id()),
+            Some(format!("peer{}", guest.id().0))
+        );
+        assert_eq!(
+            host.path(guest.id()),
+            Some(PathInfo {
+                direct: false,
+                relay: true,
+                rtt_us: Some(50_000)
+            })
+        );
+        host.close(guest.id());
+        let lost = |rx: &Receiver<TransportEvent>, p: PeerId| {
+            rx.try_iter().any(|e| e == TransportEvent::Lost { peer: p })
+        };
+        assert!(
+            lost(&hrx, guest.id()) && lost(&grx, host.id()),
+            "both told at once"
+        );
+        assert_eq!(
+            guest.send(host.id(), ControlMsg(b"x\n".to_vec())),
+            Err(Gone)
+        );
+        assert_eq!(host.path(guest.id()), None);
+        net.restore(&guest, &host);
+        assert!(guest.send(host.id(), ControlMsg(b"x\n".to_vec())).is_ok());
     }
 }

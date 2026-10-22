@@ -136,6 +136,18 @@ pub trait Transport: Send + Sync {
     fn open_media(&self, to: PeerId, get: Get) -> BoxFuture<'static, Result<MediaStream, Gone>>;
     /// Events from now on; each call gives a new receiver and the older one hears no more.
     fn events(&self) -> Receiver<TransportEvent>;
+    /// The peer's own key, as its invite proof is made for (a guest proves it holds the
+    /// invite's secret for this key): `None` when the transport doesn't know it.
+    fn peer_key(&self, _peer: PeerId) -> Option<String> {
+        None
+    }
+    /// How the connection to `peer` reaches it now (the host polls it once a second).
+    fn path(&self, _peer: PeerId) -> Option<PathInfo> {
+        None
+    }
+    /// Close the connection to `peer` (both sides are told `Lost`); nothing more is sent to
+    /// it or taken from it on this connection.
+    fn close(&self, _peer: PeerId) {}
 }
 
 /// A clock datagram's fixed length.

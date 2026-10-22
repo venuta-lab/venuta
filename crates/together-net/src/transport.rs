@@ -235,6 +235,35 @@ impl Transport for IrohTransport {
         *self.inner.events.lock().unwrap() = Some(tx);
         rx
     }
+
+    /// The remote's endpoint key (the one its invite proof is made for).
+    fn peer_key(&self, peer: PeerId) -> Option<String> {
+        let peers = self.inner.peers.lock().unwrap();
+        Some(peers.get(&peer)?.conn.remote_id().to_string())
+    }
+
+    fn path(&self, peer: PeerId) -> Option<PathInfo> {
+        IrohTransport::path(self, peer)
+    }
+
+    /// Close that connection: its watcher tells `Lost` here, and the other side learns it at
+    /// once. A guest's transport doesn't dial again after this.
+    fn close(&self, peer: PeerId) {
+        let conn = self
+            .inner
+            .peers
+            .lock()
+            .unwrap()
+            .get(&peer)
+            .map(|p| p.conn.clone());
+        if let Some(c) = conn {
+            if self.inner.server.is_none() {
+                // A guest closing its one connection: the session is over.
+                self.inner.closed.store(true, Ordering::Relaxed);
+            }
+            c.close(5u32.into(), b"closed");
+        }
+    }
 }
 
 impl Inner {
