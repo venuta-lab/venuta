@@ -46,6 +46,7 @@ pub mod sync;
 pub mod text;
 pub mod themes;
 pub mod tidy;
+pub mod translation;
 pub mod volumes;
 pub mod ytm_links;
 
