@@ -486,3 +486,55 @@ fn silence_the_position_counts_in_a_gap_is_taken_off() {
     out.stop();
     out.close();
 }
+
+#[test]
+fn a_trace_has_a_row_for_every_device_event_with_the_decisions() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        late: vec![(100, 80 * MS)],
+        ..FakeCfg::default()
+    });
+    let trace = out.trace(1_000);
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    clock.pass(3_000 * MS);
+    out.stop();
+    clock.pass(200 * MS);
+    out.close();
+    let rows = trace.rows();
+    let col = |name: &str| {
+        player::output::TRACE_COLUMNS
+            .iter()
+            .position(|c| *c == name)
+            .unwrap()
+    };
+    // About one row per 10 ms pass; times rising; frames handed over never going back.
+    assert!(rows.len() > 250 && rows.len() < 320, "{} rows", rows.len());
+    for w in rows.windows(2) {
+        assert!(w[1][col("wake_ns")] > w[0][col("wake_ns")]);
+        assert!(w[1][col("before")] >= w[0][col("before")]);
+    }
+    assert!(
+        rows.iter()
+            .all(|r| r[col("held")] >= 0 && r[col("pos_ok")] == 1)
+    );
+    // The one xrun is in the trace, where the event says, and the gap where the fake had it.
+    let xruns: Vec<i64> = rows
+        .iter()
+        .map(|r| r[col("xrun_at")])
+        .filter(|&a| a >= 0)
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    let said: Vec<i64> = events
+        .try_iter()
+        .filter_map(|e| match e {
+            OutputEvent::Xrun { at } => Some(at as i64),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(xruns, said);
+    assert_eq!(xruns, [fake.lock().unwrap().gap_at.unwrap() as i64]);
+    let csv = trace.csv();
+    assert_eq!(csv.lines().count(), rows.len() + 1);
+    assert!(csv.starts_with("wake_ns,filled_ns,free,held,padding,"));
+}

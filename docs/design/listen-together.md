@@ -671,6 +671,7 @@ Only a device event leads to a buffer call (in exclusive event mode a buffer may
 | `wasapi_device_change_events_fire` | nothing (silence on the default output) | the owner picks another default output within 60 s: `DefaultChanged`; then unplugs or disables the first one within 60 s: `Lost`, and render is no longer called |
 
 `cargo test -p player --test wasapi_hw -- --ignored --test-threads 1 --nocapture <name>`, one at a time; each prints what it measured.
+**Traces** (WP1c). `PullOutput::trace(rows)` records, for every device event, what woke the render thread and when, what the device held (and, when tracing, its padding even in exclusive mode), what was handed over and made, the position as the device gave it (its own units, its clock's frequency, its QPC stamp) and what the position map decided and why (`Why`: the lead or pipeline, the usual one, how late or how far behind, buffers counted as replayed, flags, the slip). The rows are made before the run, so the render thread only stores into atomics (the allocation test runs traced). With `VENUTA_HW_TRACE=<stem>` the late-period hardware test writes `<stem>-shared.csv` and `<stem>-exclusive.csv` with a `.txt` beside each (the device's format, notes, events and what the columns mean). Found on the owner's laptop in exclusive mode: 26 xruns in 5 s, all at whole buffers, and a lead of 226 ms growing to 414 ms; the trace decides why before anything is changed.
 
 ### 4.9 Drift and error control
 

@@ -18,7 +18,7 @@ use crate::output_api::{
 };
 use serde::Serialize;
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -638,10 +638,35 @@ pub struct PositionMap {
     usual: Ring,
     /// Shared: a suspect being settled.
     watch: Option<Watch>,
+    /// Why the last reading decided as it did.
+    why: Why,
 }
 
 /// Samples kept for a usual value.
 const SAMPLES: usize = 16;
+
+/// Why the last reading decided as it did (for traces): a value (exclusive: the lead; shared:
+/// the pipeline, or after a settle the shift), the usual one (`i64::MIN` when not known yet), a
+/// difference (exclusive: frames later than usual; shared: the position'"'"'s lag behind time),
+/// buffers counted as played again, flags (`WHY_*`) and the slip after it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Why {
+    pub value: i64,
+    pub usual: i64,
+    pub delta: i64,
+    pub replayed: i64,
+    pub flags: u32,
+    pub slip: i64,
+}
+
+pub const WHY_NEAR: u32 = 1;
+pub const WHY_PASSED: u32 = 2;
+pub const WHY_SUSPECT: u32 = 4;
+pub const WHY_CERTAIN: u32 = 8;
+pub const WHY_SETTLED: u32 = 16;
+pub const WHY_COUNTED: u32 = 32;
+pub const WHY_DRY: u32 = 64;
+pub const WHY_WATCHING: u32 = 128;
 /// Shared mode: the DAC moves this long before the pipeline counts as usual, and after a
 /// suspect the pipeline has this long to refill before it is judged.
 const SETTLE_NS: u64 = 100_000_000;
@@ -751,6 +776,7 @@ impl PositionMap {
     /// gaps are said by the readings that settle what this suspects.
     pub fn space(&mut self, held: Option<u32>, before: u64, now_ns: u64) {
         self.pending = None;
+        self.why.flags &= !WHY_SUSPECT;
         let Some(held) = held else {
             return;
         };
@@ -760,6 +786,7 @@ impl PositionMap {
         }
         if held < self.period {
             self.suspect(before, now_ns);
+            self.why.flags |= WHY_SUSPECT;
         } else {
             self.pending = Some((held, before, now_ns));
         }
@@ -772,6 +799,7 @@ impl PositionMap {
             let used = self.frames_of_ns(now_ns.saturating_sub(since));
             if used + f64::from(self.period) > f64::from(held) {
                 self.suspect(before, since);
+                self.why.flags |= WHY_SUSPECT;
             }
         }
     }
@@ -785,6 +813,15 @@ impl PositionMap {
         let passed = if lead <= 0 { (-lead) / p + 1 } else { 0 };
         let late = self.usual.median().map_or(0, |u| (u - lead).max(0));
         let replayed = (late / p).max(passed);
+        self.why = Why {
+            value: lead,
+            usual: self.usual.median().unwrap_or(i64::MIN),
+            delta: late,
+            replayed,
+            flags: if passed > 0 { WHY_PASSED } else { 0 }
+                | if late + p / 8 >= p { WHY_NEAR } else { 0 },
+            slip: 0,
+        };
         let near = late + p / 8 >= p;
         if replayed == 0 && !near {
             self.usual.push(lead);
@@ -801,6 +838,10 @@ impl PositionMap {
             && time_ns > pt
         {
             let lag = pr as f64 + self.frames_of_ns(time_ns - pt) - raw as f64;
+            self.why.delta = lag.round() as i64;
+            if lag > f64::from(self.rate) / 1_000.0 {
+                self.why.flags |= WHY_CERTAIN;
+            }
             if lag > f64::from(self.rate) / 1_000.0 {
                 let at = self.watch.map_or(raw, |w| w.at);
                 xrun = self.gap(at);
@@ -826,6 +867,8 @@ impl PositionMap {
             return xrun;
         };
         let pipeline = read as i64 - raw as i64;
+        self.why.value = pipeline;
+        self.why.usual = self.usual.median().unwrap_or(i64::MIN);
         match &mut self.watch {
             None => {
                 if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
@@ -844,7 +887,10 @@ impl PositionMap {
                         _ => 0,
                     };
                     let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
+                    self.why.flags |= WHY_SETTLED;
+                    self.why.value = shift;
                     if counted {
+                        self.why.flags |= WHY_COUNTED;
                         self.slip += shift;
                     }
                     if (counted || w.certain)
@@ -865,6 +911,10 @@ impl PositionMap {
     /// start) at mono time `time_ns`; `before` frames had been handed over before this period's
     /// fill, `after` after it.
     pub fn reading(&mut self, raw: u64, time_ns: u64, before: u64, after: u64) -> Reading {
+        self.why = Why {
+            flags: self.why.flags & WHY_SUSPECT,
+            ..Why::default()
+        };
         let mut xrun = None;
         if self.exclusive {
             if before > 0 {
@@ -895,7 +945,19 @@ impl PositionMap {
         if pair.is_some() {
             self.last = pair;
         }
+        if self.dry {
+            self.why.flags |= WHY_DRY;
+        }
+        if self.watch.is_some() {
+            self.why.flags |= WHY_WATCHING;
+        }
+        self.why.slip = self.slip;
         Reading { pair, xrun }
+    }
+
+    /// Why the last reading decided as it did (for traces).
+    pub fn why(&self) -> Why {
+        self.why
     }
 
     /// Frames the position counted that were never the stream's (exclusive mode's replayed
@@ -1025,6 +1087,115 @@ impl EventSink {
     }
 }
 
+// --- Output v2: traces ----------------------------------------------------------------------
+
+/// The columns of a trace row, in order (the CSV header).
+pub const TRACE_COLUMNS: [&str; TRACE_FIELDS] = [
+    "wake_ns",
+    "filled_ns",
+    "free",
+    "held",
+    "padding",
+    "before",
+    "after",
+    "made",
+    "pos_ok",
+    "raw",
+    "pos_units",
+    "freq",
+    "pos_ns",
+    "xrun_at",
+    "pair_frame",
+    "value",
+    "usual",
+    "delta",
+    "replayed",
+    "flags",
+    "slip",
+    "state",
+];
+pub const TRACE_FIELDS: usize = 22;
+const T_WAKE: usize = 0;
+const T_FILLED: usize = 1;
+const T_FREE: usize = 2;
+const T_HELD: usize = 3;
+const T_PADDING: usize = 4;
+const T_BEFORE: usize = 5;
+const T_AFTER: usize = 6;
+const T_MADE: usize = 7;
+const T_POS_OK: usize = 8;
+const T_RAW: usize = 9;
+const T_POS_UNITS: usize = 10;
+const T_FREQ: usize = 11;
+const T_POS_NS: usize = 12;
+const T_XRUN: usize = 13;
+const T_PAIR: usize = 14;
+const T_VALUE: usize = 15;
+const T_USUAL: usize = 16;
+const T_DELTA: usize = 17;
+const T_REPLAYED: usize = 18;
+const T_FLAGS: usize = 19;
+const T_SLIP: usize = 20;
+const T_STATE: usize = 21;
+
+/// A diagnostic trace of an output's render thread: one row per device event (what woke it,
+/// what the device held, what was handed over, the position as the device gave it, and what
+/// the position map decided and why, `Why` and its `WHY_*` flags). Every row is made before
+/// the run, so the render thread only stores into atomics; rows past the last are dropped.
+/// Times are mono ns; frame counts are device frames since the start; -1 is "none".
+pub struct Trace {
+    rows: Box<[[AtomicI64; TRACE_FIELDS]]>,
+    next: AtomicUsize,
+}
+
+impl Trace {
+    pub fn new(rows: usize) -> Trace {
+        Trace {
+            rows: (0..rows)
+                .map(|_| std::array::from_fn(|_| AtomicI64::new(0)))
+                .collect(),
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    fn push(&self, row: &[i64; TRACE_FIELDS]) {
+        let k = self.next.fetch_add(1, Ordering::Relaxed);
+        if let Some(slot) = self.rows.get(k) {
+            for (s, v) in slot.iter().zip(row) {
+                s.store(*v, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The rows so far (read once the output has stopped).
+    pub fn rows(&self) -> Vec<[i64; TRACE_FIELDS]> {
+        let n = self.next.load(Ordering::Acquire).min(self.rows.len());
+        self.rows[..n]
+            .iter()
+            .map(|r| std::array::from_fn(|i| r[i].load(Ordering::Relaxed)))
+            .collect()
+    }
+
+    /// Rows that didn't fit.
+    pub fn dropped(&self) -> usize {
+        self.next
+            .load(Ordering::Acquire)
+            .saturating_sub(self.rows.len())
+    }
+
+    /// The rows as CSV, with the header.
+    pub fn csv(&self) -> String {
+        let mut s = TRACE_COLUMNS.join(",");
+        s.push('\n');
+        for r in self.rows() {
+            let line: Vec<String> = r.iter().map(i64::to_string).collect();
+            s.push_str(&line.join(","));
+            s.push('\n');
+        }
+        s
+    }
+}
+
 // --- Output v2: the pull loop ---------------------------------------------------------------
 
 /// Why a pull device's wait ended.
@@ -1075,6 +1246,15 @@ pub trait PullDevice {
     fn start(&mut self) -> Result<(), Fault>;
     /// Stop, and let go of everything held (the position goes back to 0).
     fn halt(&mut self) -> Result<(), Fault>;
+    /// For traces: the last position in the device'"'"'s own units, and its clock'"'"'s frequency.
+    fn raw_clock(&self) -> (u64, u64) {
+        (0, 0)
+    }
+    /// For traces: what the device holds unread, where it can say (asked only when tracing,
+    /// so exclusive event mode, which doesn'"'"'t use it, can be asked too).
+    fn probe_padding(&mut self) -> Option<u32> {
+        None
+    }
 }
 
 /// What a device says about itself, beyond `OutputInfo`.
@@ -1170,6 +1350,7 @@ pub struct PullOutput<O: PullOpener> {
     started: bool,
     /// The last open's mode, name and notes.
     last: Option<(Mode, String, DeviceNotes)>,
+    trace: Option<Arc<Trace>>,
 }
 
 impl<O: PullOpener> PullOutput<O> {
@@ -1184,10 +1365,19 @@ impl<O: PullOpener> PullOutput<O> {
             open: None,
             started: false,
             last: None,
+            trace: None,
         }
     }
 
     /// What the device said about itself at the last open (kept after a close).
+    /// Trace every period of the opens from now on into `rows` rows made now (a diagnostic:
+    /// see `Trace`).
+    pub fn trace(&mut self, rows: usize) -> Arc<Trace> {
+        let t = Arc::new(Trace::new(rows));
+        self.trace = Some(t.clone());
+        t
+    }
+
     pub fn notes(&self) -> Option<DeviceNotes> {
         self.last.as_ref().map(|l| l.2.clone())
     }
@@ -1260,6 +1450,7 @@ impl<O: PullOpener> Output for PullOutput<O> {
             sink: self.sink.clone(),
             link: link.clone(),
             forwarder: forwarder.thread().clone(),
+            trace: self.trace.clone(),
         };
         let (opener, want2) = (self.opener.clone(), want.clone());
         // Made here, before the thread starts, so a simulated clock counts it from its start.
@@ -1406,6 +1597,8 @@ struct Ctx {
     sink: Arc<EventSink>,
     link: Arc<RtLink>,
     forwarder: std::thread::Thread,
+    /// Every period's row, when tracing.
+    trace: Option<Arc<Trace>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1562,13 +1755,15 @@ impl<D: PullDevice> Loop<D> {
 
     /// One device event.
     fn period(&mut self, sleeper: &Sleeper) {
+        let mut row = self.ctx.trace.as_ref().map(|_| [-1i64; TRACE_FIELDS]);
+        let wake_ns = sleeper.now_ns();
         let cell = &self.ctx.cell;
         if self.state == RtState::Running
             && (cell.is_empty() || cell.generation() != self.generation)
         {
             self.state = RtState::Draining;
             self.drain_until = self.pump.made();
-            self.drain_deadline = sleeper.now_ns() + self.buffer_ns + DRAIN_SLACK_NS;
+            self.drain_deadline = wake_ns + self.buffer_ns + DRAIN_SLACK_NS;
         }
         let draining = self.state == RtState::Draining;
         let space = match self.dev.space() {
@@ -1578,31 +1773,68 @@ impl<D: PullDevice> Loop<D> {
                 return;
             }
         };
+        let probe = if row.is_some() {
+            self.dev.probe_padding()
+        } else {
+            None
+        };
         let before = self.pump.written();
         if !draining {
-            self.map.space(space.held, before, sleeper.now_ns());
+            self.map.space(space.held, before, wake_ns);
         }
         if let Err(f) = self.fill(space.free, !draining) {
             self.fault(f);
             return;
         }
+        let filled_ns = sleeper.now_ns();
         if !draining {
-            self.map.filled(sleeper.now_ns());
+            self.map.filled(filled_ns);
         }
         let after = self.pump.written();
-        match self.dev.position() {
+        let mut done = false;
+        let position = self.dev.position();
+        if let Some(r) = row.as_mut() {
+            let (units, freq) = self.dev.raw_clock();
+            r[T_WAKE] = wake_ns as i64;
+            r[T_FILLED] = filled_ns as i64;
+            r[T_FREE] = i64::from(space.free);
+            r[T_HELD] = space.held.map_or(-1, i64::from);
+            r[T_PADDING] = probe.map_or(-1, i64::from);
+            r[T_BEFORE] = before as i64;
+            r[T_AFTER] = after as i64;
+            r[T_MADE] = self.pump.made() as i64;
+            r[T_POS_UNITS] = units as i64;
+            r[T_FREQ] = freq as i64;
+            r[T_STATE] = i64::from(draining) + 1;
+            r[T_POS_OK] = match &position {
+                Ok(Some(_)) => 1,
+                Ok(None) => 0,
+                Err(_) => -1,
+            };
+        }
+        match position {
             Ok(Some((raw, time_ns))) => {
                 let r = self.map.reading(raw, time_ns, before, after);
+                if let Some(t) = row.as_mut() {
+                    let why = self.map.why();
+                    t[T_RAW] = raw as i64;
+                    t[T_POS_NS] = time_ns as i64;
+                    t[T_XRUN] = r.xrun.map_or(-1, |a| a as i64);
+                    t[T_PAIR] = r.pair.map_or(-1, |p| p.frame as i64);
+                    t[T_VALUE] = why.value;
+                    t[T_USUAL] = why.usual;
+                    t[T_DELTA] = why.delta;
+                    t[T_REPLAYED] = why.replayed;
+                    t[T_FLAGS] = i64::from(why.flags);
+                    t[T_SLIP] = why.slip;
+                }
                 if let Some(p) = r.pair {
                     self.ctx.presentation.publish(p);
                 }
                 if !draining && let Some(at) = r.xrun {
                     self.xrun(at);
                 }
-                if draining && raw as i64 - self.map.slip() >= self.drain_until as i64 {
-                    self.drained();
-                    return;
-                }
+                done = draining && raw as i64 - self.map.slip() >= self.drain_until as i64;
             }
             Ok(None) => {}
             Err(f) => {
@@ -1610,7 +1842,10 @@ impl<D: PullDevice> Loop<D> {
                 return;
             }
         }
-        if draining && sleeper.now_ns() >= self.drain_deadline {
+        if let (Some(t), Some(r)) = (self.ctx.trace.as_ref(), row.as_ref()) {
+            t.push(r);
+        }
+        if done || (draining && sleeper.now_ns() >= self.drain_deadline) {
             self.drained();
         }
     }

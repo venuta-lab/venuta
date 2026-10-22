@@ -629,6 +629,8 @@ pub struct WasapiPull {
     bpf: usize,
     rate: u32,
     freq: u64,
+    /// The last position, in the clock'"'"'s units (for traces).
+    last_units: u64,
     buffer: u32,
     exclusive: bool,
     _pro: ProAudio,
@@ -725,6 +727,7 @@ impl PullDevice for WasapiPull {
         if hr != windows::Win32::Foundation::S_OK {
             return Ok(None);
         }
+        self.last_units = pos;
         // The stamp is the performance counter in 100 ns units: the same counter as RealClock.
         Ok(Some((
             frames_of(pos, self.freq, self.rate),
@@ -743,6 +746,15 @@ impl PullDevice for WasapiPull {
             self.client.Stop().map_err(|e| fault(&e))?;
             self.client.Reset().map_err(|e| fault(&e))
         }
+    }
+
+    fn raw_clock(&self) -> (u64, u64) {
+        (self.last_units, self.freq)
+    }
+
+    fn probe_padding(&mut self) -> Option<u32> {
+        // SAFETY: a plain call on an initialised client.
+        unsafe { self.client.GetCurrentPadding() }.ok()
     }
 }
 
@@ -864,6 +876,7 @@ fn open_pull(
                 bpf: init.format.bytes_per_frame(),
                 rate,
                 freq,
+                last_units: 0,
                 buffer,
                 exclusive: init.exclusive,
                 _pro: pro,
