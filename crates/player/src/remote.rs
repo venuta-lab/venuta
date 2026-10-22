@@ -4,7 +4,7 @@
 //! provider id and its [`MediaAccess`] handle, and resolves [`EphemeralAudio`] the moment it is
 //! opened — so snapshots and restored queues carry metadata and ids, never an address.
 
-use crate::decode::Source;
+use crate::decode::{Source, Streams};
 use crate::engine::Item;
 use media_access::{EphemeralAudio, MediaAccess};
 use serde::Serialize;
@@ -93,6 +93,27 @@ impl Item for RemoteItem {
                 access,
                 duration_hint_ms,
             } => Source::open_remote_deferred(
+                Arc::clone(access),
+                self.track_id.clone(),
+                *duration_hint_ms,
+            ),
+        }
+    }
+
+    fn stream_key(&self) -> Option<String> {
+        Some(format!("{}:{}", self.provider, self.track_id))
+    }
+
+    /// On the player's shared downloads: every voice of this song reads one download.
+    fn open_on(&self, streams: &Streams) -> Result<Source, String> {
+        let key = format!("{}:{}", self.provider, self.track_id);
+        match &self.source {
+            AudioSource::Resolved(audio) => streams.open_remote(&key, audio.clone()),
+            AudioSource::Deferred {
+                access,
+                duration_hint_ms,
+            } => streams.open_remote_deferred(
+                &key,
                 Arc::clone(access),
                 self.track_id.clone(),
                 *duration_hint_ms,
