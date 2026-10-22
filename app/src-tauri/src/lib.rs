@@ -3003,6 +3003,7 @@ pub fn run() {
         .manage(playback::Playback::default())
         .manage(together::Together::default())
         .manage(lyric_windows::Locks::default())
+        .manage(lyric_windows::Shelf::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
@@ -3122,6 +3123,7 @@ pub fn run() {
             lyric_windows::desktop_lyrics_lock,
             lyric_windows::desktop_lyrics_open,
             lyric_windows::lyrics_window,
+            lyric_windows::lyrics_window_toggle,
             lyric_windows::lyrics_window_set,
             lyric_windows::lyrics_window_open,
             lyric_windows::lyrics_window_frost,
