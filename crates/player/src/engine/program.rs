@@ -453,8 +453,10 @@ impl<T: Item + Serialize> OwnProgram<T> {
         let Some(c) = self.cur.as_ref() else {
             return 0;
         };
+        // Where it reaches your ear: through the output's extra delay (lyrics follow this).
         if matches!(c.state, State::Sounding | State::Stopping(_))
-            && let (Some(content), Some(f)) = (deck.heard_content(c.vid()), c.lane.status().format)
+            && let (Some(content), Some(f)) =
+                (deck.heard_content_by_ear(c.vid()), c.lane.status().format)
         {
             return (content.max(0.0) as u64) * 1000 / u64::from(f.rate.max(1));
         }
@@ -868,7 +870,8 @@ impl<T: Item + Serialize> OwnProgram<T> {
         let c = self.cur.as_ref()?;
         let s = c.lane.status();
         let src = s.format.clone()?;
-        let (name, mode, out, latency_ms) = deck.output_signal()?;
+        let side = deck.output_signal()?;
+        let (mode, out) = (side.mode, side.format.clone());
         let (mut steps, active) = deck.steps(&c.lane.gain, s.loudness_db, out.rate, src.channels);
         let fading = self.link == Some(Link::Crossfade);
         if fading {
@@ -877,8 +880,13 @@ impl<T: Item + Serialize> OwnProgram<T> {
                 deck.sound.crossfade_s
             ));
         }
+        if let Some(why) = &side.why_shared {
+            steps.push(format!("Not exclusive: {why}"));
+        }
         if mode == Mode::Shared {
-            steps.push("Mixed by Windows (shared mode), which may resample".into());
+            // D2: the song reaches Windows at its mix format (the resampler's step says so), and
+            // Windows mixes it with other apps' sound and its own effects.
+            steps.push("Mixed by Windows (shared mode)".into());
         }
         if out.rate != src.rate {
             steps.push(format!("Resampled to {} kHz", out.rate as f32 / 1000.0));
@@ -889,23 +897,33 @@ impl<T: Item + Serialize> OwnProgram<T> {
         if !src.lossless {
             steps.push(format!("Decoded from {}", src.codec));
         }
+        // What the device itself does (Bluetooth's codec, a virtual device's software).
+        let device_steps = side
+            .kind
+            .map(|k| crate::devices::device_steps(k, side.hands_free))
+            .unwrap_or_default();
+        let device_keeps = device_steps.is_empty();
+        steps.extend(device_steps);
         let rate = src.rate.max(1) as f32;
         Some(Signal {
-            device: name,
+            device: side.name,
             mode,
             file: s.info.clone(),
             buffer_ms: (s.in_ring as f32 * 1000.0 / rate) as u32,
-            latency_ms,
-            bit_perfect: !active && !fading && output::bit_perfect(&src, &out, mode, deck.volume),
+            latency_ms: side.latency_ms,
+            bit_perfect: !active
+                && !fading
+                && device_keeps
+                && output::bit_perfect(&src, &out, mode, deck.volume),
             source: src,
             output: out,
             steps,
-            endpoint: deck.endpoint.clone(),
-            kind: None,
-            note: None,
-            delay_ms: None,
-            suggested_delay_ms: None,
-            follows_default: false,
+            endpoint: side.endpoint,
+            kind: side.kind,
+            note: side.note,
+            delay_ms: side.delay_ms,
+            suggested_delay_ms: side.suggested_delay_ms,
+            follows_default: side.follows_default,
         })
     }
 }

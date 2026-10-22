@@ -286,7 +286,22 @@ fn judge_run(what: &str, run: &player::sim::Run, rate: u32, ends_faded: bool, ex
     assert_eq!(run.stale, 0, "{what}: nothing held from before");
     assert!(run.dry.is_empty(), "{what}: the DAC never ran dry");
     let ms = |n: u64| (u64::from(rate) * n / 1000) as usize;
-    let reference = render_kit::Song::music(rate, 2, 0, u64::from(rate) * 24);
+    let reference = render_kit::Song::music(rate, 2, 0, u64::from(rate) * 13);
+    // Song boundaries inside the run: a song falls to silence and the next rises from it, so
+    // a millisecond there is far under the music's level on both channels (the music itself
+    // never is).
+    let (l, r) = (run.left_justified(0), run.left_justified(1));
+    let lo = l.iter().position(|&v| v != 0).unwrap_or(0);
+    let hi = l.iter().rposition(|&v| v != 0).unwrap_or(0);
+    let quiet = |x: &[i32], i: usize| {
+        x[i..(i + ms(1)).min(x.len())]
+            .iter()
+            .all(|&v| (f64::from(v) / FULL).abs() < 0.02)
+    };
+    let boundaries: Vec<usize> = (lo..hi)
+        .step_by(ms(1).max(1))
+        .filter(|&i| quiet(&l, i) && quiet(&r, i))
+        .collect();
     for c in 0..2u16 {
         let heard = run.left_justified(c);
         let Some(first) = heard.iter().position(|&v| v != 0) else {
@@ -313,11 +328,17 @@ fn judge_run(what: &str, run: &player::sim::Run, rate: u32, ends_faded: bool, ex
                 "{what}, channel {c}: ends faded ({tail:.3} FS in its last ms)"
             );
         }
+        // Declared: the start (a 15 ms fade in, or a song's own 50 ms rise) and the end (a 30 ms
+        // fade out, a song's own fall, or where its device went).
         let n = heard.len();
-        let declared = Declared::new(vec![
-            0..(first + ms(25)).min(n),
-            n.saturating_sub(ms(45))..n,
-        ]);
+        let last = heard.iter().rposition(|&v| v != 0).unwrap();
+        let mut spans = vec![0..(first + ms(55)).min(n), last.saturating_sub(ms(55))..n];
+        spans.extend(
+            boundaries
+                .iter()
+                .map(|&b| b.saturating_sub(ms(60))..(b + ms(60)).min(n)),
+        );
+        let declared = Declared::new(spans);
         let mut v = judge_music(
             &heard,
             &reference.channel(c, 0, reference.frames),
@@ -452,10 +473,11 @@ fn a_device_with_only_its_hands_free_endpoint_plays_there_and_says_why_it_sounds
 #[test]
 fn a_usb_dac_plays_each_song_at_its_own_format_where_it_can_and_says_so_where_it_cant() {
     let mut b = bench(vec![speakers(), dac()], Some("speakers"), Some("dac"), true);
-    // 96 kHz, then 192 kHz (more than it takes), then 48 kHz: the test music, one piece.
-    let s96 = song(96_000, 0.0, 3.0, true, false);
-    let s192 = song(192_000, 3.0, 3.0, false, false);
-    let s48 = song(48_000, 6.0, 3.0, false, true);
+    // Songs at 96 kHz, 192 kHz (more than it takes) and 48 kHz, each from and to silence: a
+    // join into another rate is a song boundary (a resampler starts afresh with the song).
+    let s96 = song(96_000, 0.0, 3.0, true, true);
+    let s192 = song(192_000, 3.0, 3.0, true, true);
+    let s48 = song(48_000, 6.0, 3.0, true, true);
     b.rig.send(play(vec![s96, s192, s48]));
     assert!(b.until_on("dac", 3_000));
     b.rig.pass(300);
@@ -536,7 +558,7 @@ fn an_hdmi_output_that_vanishes_falls_back_to_the_default_and_comes_back_when_it
         Some("hdmi"),
         false,
     );
-    b.rig.send(play(vec![song(48_000, 0.0, 20.0, true, true)]));
+    b.rig.send(play(vec![song(48_000, 0.0, 12.0, true, true)]));
     assert!(b.until_on("hdmi", 3_000));
     b.rig.pass(2_000);
     let before = b.status().position_ms;
@@ -593,7 +615,7 @@ fn windows_changing_the_format_while_playing_reopens_cleanly_at_the_new_one() {
 #[test]
 fn sleep_and_wake_play_on_the_fallback_until_the_dac_is_back_without_anything_old() {
     let mut b = bench(vec![speakers(), dac()], Some("speakers"), Some("dac"), true);
-    b.rig.send(play(vec![song(48_000, 0.0, 20.0, true, true)]));
+    b.rig.send(play(vec![song(48_000, 0.0, 12.0, true, true)]));
     assert!(b.until_on("dac", 3_000));
     b.rig.pass(3_000);
     let before = b.status().position_ms;
@@ -614,7 +636,11 @@ fn sleep_and_wake_play_on_the_fallback_until_the_dac_is_back_without_anything_ol
     b.rig.pass(1_000);
     b.never_stopped();
     let d = b.finish("sleep and wake", &[0], |_| true);
-    assert_eq!(d.probed(), 1, "the DAC's formats are known from before");
+    assert_eq!(
+        d.probed(),
+        2,
+        "the DAC and the speakers each asked once: the DAC not again"
+    );
 }
 
 #[test]
@@ -700,20 +726,26 @@ fn the_place_reported_is_what_reaches_the_ear_through_the_outputs_delay() {
         Some("speakers"),
         false,
     );
-    b.rig.send(play(vec![song(48_000, 0.0, 20.0, true, true)]));
+    b.rig.send(play(vec![song(48_000, 0.0, 12.0, true, true)]));
     assert!(b.until_on("speakers", 3_000));
     b.rig.pass(3_000);
-    let p1 = b.status().position_ms;
+    // The place as each command's answer gives it (the view at that moment).
+    let now = |b: &mut Bench| {
+        b.rig.send(Cmd::Refresh);
+        b.rig.pass(2);
+        b.status()
+    };
+    let p1 = now(&mut b).position_ms;
     b.rig.send(Cmd::OutputDelays(BTreeMap::from([(
         "speakers".to_owned(),
         200,
     )])));
-    b.rig.pass(1_000);
-    let s = b.status();
+    b.rig.pass(998);
+    let s = now(&mut b);
     assert_eq!(s.signal.as_ref().unwrap().delay_ms, Some(200));
     let moved = s.position_ms as i64 - p1 as i64;
     assert!(
-        (moved - 800).abs() <= 30,
+        (moved - 800).abs() <= 10,
         "a second on, heard 200 ms later: moved {moved} ms"
     );
     // Another output has its own (none set): picked up on the switch.
