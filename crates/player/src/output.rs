@@ -13,8 +13,8 @@
 
 use crate::decode::SourceFormat;
 use crate::output_api::{
-    OpenRequest, Output, OutputError, OutputEvent, OutputInfo, Presentation, PresentationPair,
-    Render,
+    Latency, LatencyCell, LatencyTracker, OpenRequest, Output, OutputError, OutputEvent,
+    OutputInfo, Presentation, PresentationPair, Render,
 };
 use serde::Serialize;
 use std::cell::UnsafeCell;
@@ -748,12 +748,19 @@ impl PositionMap {
 
     /// A start: device frame 0 again, nothing known.
     pub fn restart(&mut self) {
+        // What the device is (a queue) is kept: it decides how the next start is made.
         *self = PositionMap {
             rate: self.rate,
             period: self.period,
             exclusive: self.exclusive,
+            queued: self.queued,
             ..PositionMap::default()
         };
+    }
+
+    /// The device queues what it is given (exclusive mode; see `note_wake`).
+    pub fn queued(&self) -> bool {
+        self.queued
     }
 
     fn frames_of_ns(&self, ns: u64) -> f64 {
@@ -1327,6 +1334,12 @@ pub trait PullDevice {
     fn start(&mut self) -> Result<(), Fault>;
     /// Stop, and let go of everything held (the position goes back to 0).
     fn halt(&mut self) -> Result<(), Fault>;
+    /// Stop, and make the stream anew, as it was when the device was opened: for a device whose
+    /// stop and reset do not bring back what a fresh stream does (the Realtek laptop's queue in
+    /// exclusive mode). The default halts.
+    fn renew(&mut self) -> Result<(), Fault> {
+        self.halt()
+    }
     /// For traces: the last position in the device'"'"'s own units, and its clock'"'"'s frequency.
     fn raw_clock(&self) -> (u64, u64) {
         (0, 0)
@@ -1425,6 +1438,7 @@ pub struct PullOutput<O: PullOpener> {
     opener: O,
     tb: Arc<dyn Timebase>,
     presentation: Arc<Presentation>,
+    latency: Arc<LatencyCell>,
     sink: Arc<EventSink>,
     cell: Arc<RenderCell>,
     open: Option<OpenState>,
@@ -1441,6 +1455,7 @@ impl<O: PullOpener> PullOutput<O> {
             opener,
             tb,
             presentation: Arc::new(Presentation::default()),
+            latency: Arc::new(LatencyCell::default()),
             sink: Arc::new(EventSink::default()),
             cell: Arc::new(RenderCell::new()),
             open: None,
@@ -1532,6 +1547,7 @@ impl<O: PullOpener> Output for PullOutput<O> {
             link: link.clone(),
             forwarder: forwarder.thread().clone(),
             trace: self.trace.clone(),
+            latency: self.latency.clone(),
         };
         let (opener, want2) = (self.opener.clone(), want.clone());
         // Made here, before the thread starts, so a simulated clock counts it from its start.
@@ -1640,6 +1656,10 @@ impl<O: PullOpener> Output for PullOutput<O> {
         self.presentation.clear();
     }
 
+    fn latency(&self) -> Option<Latency> {
+        self.latency.read()
+    }
+
     fn presentation(&self) -> Arc<Presentation> {
         self.presentation.clone()
     }
@@ -1680,6 +1700,7 @@ struct Ctx {
     forwarder: std::thread::Thread,
     /// Every period's row, when tracing.
     trace: Option<Arc<Trace>>,
+    latency: Arc<LatencyCell>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1703,6 +1724,8 @@ struct Loop<D: PullDevice> {
     drain_until: u64,
     drain_deadline: u64,
     buffer_ns: u64,
+    /// The latency as this start learns it.
+    learned: LatencyTracker,
     /// The generation of the renderer this start plays (`RenderCell`).
     generation: u64,
 }
@@ -1734,6 +1757,7 @@ fn render_thread<O: PullOpener>(
     let buffer_ns =
         u64::from(info.buffer_frames) * 1_000_000_000 / u64::from(info.format.rate.max(1));
     let pump = Pump::new(&info.format, info.period_frames);
+    let learned = LatencyTracker::new(info.format.rate);
     if answer
         .send(Ok(OpenAnswer {
             info,
@@ -1755,6 +1779,7 @@ fn render_thread<O: PullOpener>(
         drain_until: 0,
         drain_deadline: 0,
         buffer_ns,
+        learned,
         generation: 0,
     };
     lp.run(cmds, sleeper);
@@ -1802,13 +1827,23 @@ impl<D: PullDevice> Loop<D> {
             return Err(OutputError::Lost);
         }
         // Whatever the device still holds (a tail still draining) is from before: let it go,
-        // so nothing held from before plays and the position starts again from 0.
+        // so nothing held from before plays and the position starts again from 0. A device that
+        // queues gets a new stream: after a stop and reset the Realtek laptop's queue took one
+        // buffer per event, never filled, and its clock ran past everything handed over, where
+        // a fresh stream takes ten buffers at once.
         self.state = RtState::Idle;
-        self.dev.halt().map_err(|f| self.fault(f))?;
+        let renewed = if self.map.queued() {
+            self.dev.renew()
+        } else {
+            self.dev.halt()
+        };
+        renewed.map_err(|f| self.fault(f))?;
         self.generation = self.ctx.cell.generation();
         self.pump.restart();
         self.map.restart();
         self.ctx.presentation.clear();
+        self.ctx.latency.clear();
+        self.learned.restart();
         let space = self.dev.space().map_err(|f| self.fault(f))?;
         self.fill(space.free, true).map_err(|f| self.fault(f))?;
         self.dev.start().map_err(|f| self.fault(f))?;
@@ -1911,6 +1946,9 @@ impl<D: PullDevice> Loop<D> {
                 }
                 if let Some(p) = r.pair {
                     self.ctx.presentation.publish(p);
+                    // What was handed over and is not yet at the DAC, right after this fill.
+                    let l = self.learned.push(after.saturating_sub(p.frame));
+                    self.ctx.latency.publish(l);
                 }
                 if !draining && let Some(at) = r.xrun {
                     self.xrun(at);

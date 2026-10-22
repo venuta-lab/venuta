@@ -8,7 +8,7 @@ mod pull_kit;
 
 use player::conformance;
 use player::output::PullOutput;
-use player::output_api::{Output, OutputError, OutputEvent};
+use player::output_api::{Latency, Output, OutputError, OutputEvent};
 use pull_kit::*;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -623,6 +623,13 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             PositionMap::shared(RATE, 480)
         };
         let mut xruns = Vec::new();
+        let mut t = player::output_api::LatencyTracker::new(RATE);
+        let mut learned: Option<Latency> = None;
+        let mut most_ever = 0u32;
+        let mut worst_after_settle = i64::MIN;
+        let (mut steady, mut after_first) = (0usize, 0usize);
+        let mut last_pair: Option<player::output_api::PresentationPair> = None;
+        let mut ahead_at = None;
         for line in text.lines().skip(1) {
             let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
             if r[col("state")] != 1 {
@@ -630,6 +637,16 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             }
             let held = u32::try_from(r[col("held")]).ok();
             let before = r[col("before")] as u64;
+            if let Some(p) = last_pair
+                && before < 96_000
+            {
+                let at = p.frame as f64
+                    + (r[col("wake_ns")] as u64).saturating_sub(p.time_ns) as f64 * f64::from(RATE)
+                        / 1e9;
+                if at > before as f64 + f64::from(RATE) / 1_000.0 && ahead_at.is_none() {
+                    ahead_at = Some((before, at));
+                }
+            }
             m.space(held, before, r[col("wake_ns")] as u64);
             m.filled(r[col("filled_ns")] as u64);
             if r[col("pos_ok")] == 1 {
@@ -640,13 +657,138 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
                     r[col("after")] as u64,
                 );
                 xruns.extend(rd.xrun);
+                if let Some(p) = rd.pair {
+                    last_pair = Some(p);
+                    let after = r[col("after")] as u64;
+                    let now = t.push(after - p.frame);
+                    if let Some(prev) = learned.filter(|l: &Latency| l.settled) {
+                        let behind = before as i64 - p.frame as i64;
+                        worst_after_settle = worst_after_settle
+                            .max(behind - i64::from(prev.most) - i64::from(prev.band));
+                    }
+                    most_ever = most_ever.max(now.most);
+                    if learned.is_some_and(|l: Latency| l.settled) || after_first > 0 {
+                        after_first += 1;
+                        steady += usize::from(now.settled);
+                    }
+                    learned = Some(now);
+                }
             }
         }
         assert_eq!(xruns, [96_000], "{name}");
+        // The start (the driver takes ten buffers in 1.2 ms there): the presentation never
+        // claims a frame not handed over, at any wake up to the late period.
+        assert_eq!(ahead_at, None, "{name}: the DAC past what was rendered");
+        let l = learned.expect("a latency learned");
+        eprintln!(
+            "{name}: learned {l:?}, most at any time {most_ever}, the driver says {}",
+            if exclusive { 1_440 } else { 2_400 }
+        );
+        assert!(l.settled, "{name}: steady by the end");
+        // Once first steady, steady nearly all the time (the wobble of a queue is its band, not
+        // a change): only the gap and its refill may unsettle it.
+        eprintln!("{name}: steady at {steady} of {after_first} fills after the first");
+        assert!(
+            steady * 10 >= after_first * 9,
+            "{name}: steady {steady} of {after_first}"
+        );
+        // More than the driver says (2400 shared, 1440 exclusive): what made the suite fail.
+        assert!(l.frames > if exclusive { 1_440 } else { 2_400 }, "{name}");
+        // Once steady, the DAC was never further behind than it said (the suite'"'"'s check).
+        assert!(
+            worst_after_settle <= 0,
+            "{name}: {worst_after_settle} frames further behind than most and band"
+        );
         if exclusive {
             let s = m.slip();
             eprintln!("{name}: slip {s} frames");
             assert!((2_399..2_600).contains(&s), "the silence counted: {s}");
         }
     }
+}
+
+/// The conformance suite's exclusive run on the owner's laptop (WP1d, `tests/fixtures`): three
+/// starts. The first (a fresh stream) took ten buffers in under a millisecond and its position
+/// stayed behind everything handed over all through the 10 s tone. The two after a stop and
+/// reset took one buffer per event and never filled: their position ran past everything handed
+/// over within a fifth of a second (by 1086 frames 65 ms in, 4305 at 182 ms; the third by 296
+/// at 118 ms), and at the end of the trace it stood at 30073 with 28320 rendered: the suite's
+/// "past the 28320 rendered". A device clock past every frame handed over has played silence.
+#[test]
+fn the_laptops_exclusive_restarts_ran_past_what_was_handed_over() {
+    use player::output::TRACE_COLUMNS;
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/realtek-exclusive-restarts-trace.csv"),
+    )
+    .unwrap();
+    let col = |c: &str| TRACE_COLUMNS.iter().position(|x| *x == c).unwrap();
+    let rows: Vec<Vec<i64>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').map(|v| v.parse().unwrap()).collect())
+        .collect();
+    // Starts: where what was handed over goes back to one buffer.
+    let starts: Vec<usize> = (0..rows.len())
+        .filter(|&i| rows[i][col("state")] == 1 && rows[i][col("before")] == 480)
+        .collect();
+    assert_eq!(starts.len(), 3);
+    let run = |k: usize| {
+        let end = starts.get(k + 1).copied().unwrap_or(rows.len());
+        &rows[starts[k]..end]
+    };
+    let past = |r: &[Vec<i64>]| {
+        r.iter()
+            .filter(|x| x[col("state")] == 1)
+            .map(|x| x[col("raw")] - x[col("before")])
+            .max()
+            .unwrap()
+    };
+    // The fresh start: ten buffers in under a millisecond, never past what was handed over.
+    let a = run(0);
+    assert!(a[9][col("wake_ns")] - a[0][col("wake_ns")] < 1_000_000);
+    assert!(past(a) < 0, "{}", past(a));
+    // After a stop and reset: no burst, and the clock past everything handed over.
+    for k in [1, 2] {
+        let r = run(k);
+        assert!(
+            r[9][col("wake_ns")] - r[0][col("wake_ns")] > 50_000_000,
+            "start {k} filled at once"
+        );
+        assert!(past(r) > 2_000, "start {k}: {}", past(r));
+    }
+    let last = rows.last().unwrap();
+    assert_eq!(
+        last[col("after")],
+        28_320,
+        "what the suite said was rendered"
+    );
+    assert!(last[col("raw")] > last[col("after")]);
+}
+
+/// A queue that, after a stop and reset, takes one buffer at a time (as the laptop's did) with
+/// the driver's uneven events: the suite fails on it when the stream is only stopped and reset,
+/// and passes when every start of a queue makes the stream anew (as fresh as at the open).
+#[test]
+fn a_queue_is_made_anew_at_every_start() {
+    let cfg = |renew_works| FakeCfg {
+        exclusive: true,
+        queue: Some(10),
+        latency: 48,
+        restart_starves: true,
+        renew_works,
+        // The driver's uneven events, now and then, all through the run.
+        late: (0..3_000).step_by(37).map(|k| (k, 30 * MS)).collect(),
+        ..FakeCfg::default()
+    };
+    let (mut out, _fake, clock) = sim_output(cfg(false));
+    let err = conformance::run(&mut out, &clock, &want()).expect_err("only stopped and reset");
+    eprintln!("stopped and reset: {err}");
+    let (mut out, fake, clock) = sim_output(cfg(true));
+    let report = conformance::run(&mut out, &clock, &want()).expect("made anew");
+    assert_eq!(report.xruns, 0);
+    assert!(
+        fake.lock().unwrap().renewals >= 2,
+        "every start after the first"
+    );
 }

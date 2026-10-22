@@ -14,8 +14,8 @@
 
 use crate::output::{DeviceFormat, Mode, SampleKind};
 use crate::output_api::{
-    OpenRequest, Output, OutputError, OutputEvent, OutputInfo, Presentation, PresentationPair,
-    Render,
+    Latency, LatencyCell, LatencyTracker, OpenRequest, Output, OutputError, OutputEvent,
+    OutputInfo, Presentation, PresentationPair, Render,
 };
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -173,6 +173,8 @@ struct State {
     tape: Tape,
     events: Option<Sender<OutputEvent>>,
     rng: u64,
+    /// The latency as the output learns it (one sample per wake'"'"'s fill).
+    learned: LatencyTracker,
 }
 
 impl State {
@@ -328,6 +330,7 @@ struct Shared {
     state: Mutex<State>,
     presentation: Arc<Presentation>,
     tb: Arc<dyn Timebase>,
+    latency: Arc<LatencyCell>,
 }
 
 impl Shared {
@@ -374,8 +377,10 @@ impl SimOutput {
                 tape: Tape::default(),
                 events: None,
                 rng,
+                learned: LatencyTracker::new(1),
             }),
             presentation: Arc::new(Presentation::default()),
+            latency: Arc::new(LatencyCell::default()),
             tb,
         });
         (
@@ -418,6 +423,15 @@ fn thread(shared: Arc<Shared>, sleeper: Sleeper) {
             shared.presentation.publish(p);
         }
         s.fill();
+        if s.rendering
+            && let Some(p) = s.pair(now)
+        {
+            let at_dac =
+                p.frame as f64 + now.saturating_sub(p.time_ns) as f64 * s.ticks_per_s / 1e9;
+            let ahead = (s.written as f64 - at_dac).max(0.0).round() as u64;
+            let l = s.learned.push(ahead);
+            shared.latency.publish(l);
+        }
         s.schedule();
     }
 }
@@ -502,6 +516,8 @@ impl Output for SimOutput {
             ..Run::default()
         });
         self.shared.presentation.clear();
+        self.shared.latency.clear();
+        s.learned = LatencyTracker::new(info.format.rate);
         // Filled before the DAC starts, as a real device is; then the DAC plays tick 0 now.
         s.fill();
         s.advance(now);
@@ -529,6 +545,10 @@ impl Output for SimOutput {
 
     fn presentation(&self) -> Arc<Presentation> {
         self.shared.presentation.clone()
+    }
+
+    fn latency(&self) -> Option<Latency> {
+        self.shared.latency.read()
     }
 
     fn events(&self) -> Receiver<OutputEvent> {

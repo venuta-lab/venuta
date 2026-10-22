@@ -4,10 +4,11 @@
 //!
 //! `run` drives an output through its whole life with a -6 dBFS tone: open; 10 s of a 1 kHz
 //! tone with render's `at` contiguous and periods no longer than promised; the presentation
-//! monotonic and within 1 ms of the frames rendered (never ahead of them, never more than the
-//! buffer behind), at the DAC's own pace; the tone's 30 ms fade and silence, then a stop that
-//! hands the renderer back, never calls it again, and lets the tail play; a restart from device
-//! frame 0 (600 Hz), another (1.5 kHz) straight after a stop; close, and open again.
+//! monotonic and within 1 ms of the frames rendered (never ahead of them, never more behind
+//! than the most of the latency the output learned and its band, steady by the end of the
+//! tone), at the DAC's own pace; the tone's 30 ms fade and silence, then a stop that hands
+//! the renderer back, never calls it again, and lets the tail play; a restart from device frame
+//! 0 (600 Hz), another (1.5 kHz) straight after a stop; close, and open again.
 //!
 //! What can only be heard is checked on the simulated output's tape by `check_tape`: every frame
 //! the DAC played is the frame rendered for that place (bit for bit, so nothing stale plays
@@ -16,7 +17,9 @@
 //! loopback capture does that part.
 
 use crate::output::{DeviceFormat, SampleKind};
-use crate::output_api::{OpenRequest, Output, OutputEvent, OutputInfo, PresentationPair, Render};
+use crate::output_api::{
+    Latency, OpenRequest, Output, OutputEvent, OutputInfo, PresentationPair, Render,
+};
 use crate::sim::{Run, Tape};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -68,6 +71,14 @@ impl ToneRender {
                 longest: AtomicU64::new(0),
             }),
         }
+    }
+
+    /// The tone as it was rendered in a run whose fade began at device frame `tail_from` (a
+    /// report's `tones`): to compare what an output played, or recorded, with it.
+    pub fn faded(freq: f64, fmt: DeviceFormat, tail_from: u64) -> ToneRender {
+        let t = ToneRender::new(freq, fmt);
+        t.s.tail_from.store(tail_from, Ordering::SeqCst);
+        t
     }
 
     /// The renderer to hand an output.
@@ -208,12 +219,16 @@ pub struct Report {
     pub rendered: u64,
     /// The DAC's pace against its rate, in ppm.
     pub pace_ppm: f64,
-    /// The furthest the DAC was behind the frames rendered, in ms (at most the buffer and 1).
+    /// The furthest the DAC was behind the frames rendered, in ms (at most the learned
+    /// latency'"'"'s most and 1).
     pub worst_behind_ms: f64,
     /// The three tones (Hz), each with where its fade began and its silence began.
     pub tones: Vec<(f64, u64, u64)>,
     /// Gaps the output said it had.
     pub xruns: usize,
+    /// The latency the output learned, at the end of the 10 s tone (steady, or the run fails);
+    /// the driver'"'"'s own figure is `info.buffer_frames`.
+    pub latency: Option<Latency>,
 }
 
 fn fail(what: impl Into<String>) -> String {
@@ -235,7 +250,7 @@ fn wait_for(time: &dyn Timebase, max_ns: u64, mut cond: impl FnMut() -> bool) ->
 /// Watches the presentation against what was rendered.
 struct Watch {
     rate: f64,
-    buffer: f64,
+
     tolerance: f64,
     last: Option<PresentationPair>,
     first: Option<PresentationPair>,
@@ -247,7 +262,7 @@ impl Watch {
         let rate = f64::from(info.format.rate);
         Watch {
             rate,
-            buffer: f64::from(info.buffer_frames),
+
             tolerance: rate / 1000.0,
             last: None,
             first: None,
@@ -279,10 +294,15 @@ impl Watch {
         }
         let behind = before - at_dac;
         self.worst_behind = self.worst_behind.max(behind);
-        if behind > self.buffer + self.tolerance {
+        // Against the latency the output learned (the driver's own figure, `buffer_frames`,
+        // is often less than it holds), once it is steady: at most its most and its band (the
+        // fill-to-fill wobble, at least 1 ms).
+        if let Some(l) = out.latency().filter(|l| l.settled)
+            && behind > f64::from(l.most) + f64::from(l.band)
+        {
             return Err(fail(format!(
-                "the DAC is {behind:.0} frames behind what was rendered, more than its buffer of {} and 1 ms",
-                self.buffer
+                "the DAC is {behind:.0} frames behind what was rendered, more than the most it learned ({}) and its band ({})",
+                l.most, l.band
             )));
         }
         Ok(())
@@ -385,6 +405,14 @@ pub fn run(
     // 10 s of 1 kHz, watched; its fade and silence; a stop once the silence is all it holds.
     let a = ToneRender::new(1_000.0, info.format.clone());
     let w = play(out, time, &info, &a, 10)?;
+    // After 10 s the output must have learned a steady latency (and the DAC was never further
+    // behind than it said, checked all along once it was steady).
+    let latency = out.latency();
+    if !latency.is_some_and(|l| l.settled && l.frames <= l.most) {
+        return Err(fail(format!(
+            "no steady latency learned in 10 s: {latency:?}"
+        )));
+    }
     let buffer_ns = u64::from(info.buffer_frames) * 1_000_000_000 / u64::from(info.format.rate);
     let silent = a.silent_from().unwrap_or(0);
     if !wait_for(time, 2_000 * MS, || {
@@ -442,6 +470,7 @@ pub fn run(
         rendered,
         pace_ppm,
         worst_behind_ms: w.worst_behind * 1000.0 / w.rate,
+        latency,
         tones,
         xruns: seen
             .iter()
