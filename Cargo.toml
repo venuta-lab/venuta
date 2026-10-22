@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/together-net", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/audio-check", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/together-net", "app/src-tauri"]
 
 [workspace.package]
 version = "0.3.0"
@@ -52,4 +52,8 @@ codegen-units = 1
 opt-level = 3
 
 [profile.dev.package.player]
+opt-level = 3
+
+# The ears of the tests judge hours of sound: always optimised.
+[profile.dev.package.audio-check]
 opt-level = 3

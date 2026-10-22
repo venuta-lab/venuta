@@ -1,0 +1,11 @@
+[package]
+name = "audio-check"
+description = "Venuta's ears for tests: detectors that find clicks, gaps and broken lines in what a player played, each proven on injected faults"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]

@@ -80,7 +80,8 @@ The "Basis" column says where a number comes from: **measured** (a published mea
 | Rate change heard as pitch | 1 cent = 578 ppm; threshold about 5 to 6 cents | measured (note 03) |
 | Bluetooth A2DP delay | 34 to 241 ms by codec and headset (SBC 173, aptX 166, aptX LL 34, Sony WH-1000XM5 241) | measured (RTINGS) |
 | Android timestamps include Bluetooth delay | yes, from the sink's delay report | source (AOSP), to be checked on the handheld |
-| Windows `GetPosition` includes Bluetooth delay | unknown | must be measured (WP14) |
+| Windows `GetPosition` includes Bluetooth delay | unknown | must be measured: WP14 built the tool and the steps (`docs/qa/output-delay.md`); no Bluetooth output was at hand, so the owner's run decides |
+| Windows `GetPosition` includes the delay of an output's sound effects (vendor effect modules such as Nahimic) | not on the owner's laptop speakers: their loopback, taken after the effects, has the sound about 104 ms after `GetPosition`'s time (three runs, spread under 2 ms) | measured (WP14, against the loopback); a microphone run confirms |
 | Sound card drift | 50 to 100 ppm typical (3 to 6 ms a minute) | measured (roc, Roon, note 03) |
 | Same-room buffers in products | Cast 500 ms, Snapcast 1000 ms, Sonos line-in 2000 ms default | measured (note 07 A8) |
 | Apart thresholds in open peers | Metrolist soft 50 ms, hard 750 ms; Teleparty 2.5 s; Jellyfin 500 ms | source (note 07 A6, A7) |
@@ -256,10 +257,14 @@ Changes:
 | Change | Why |
 |---|---|
 | The published value is a `ClockMap { epoch, local_ref, host_ref, rate, bound }`, a line, not an offset | Today `offset()` returns the offset at the last sample time, ignoring skew until the next sample; a line extrapolates correctly between samples |
-| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit | An honest error bound, shown in the panel and used to widen the controller's band (4.9) |
-| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s | The path changed, so the old asymmetry no longer holds |
-| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map | A machine that slept, a clock reset; old samples describe another world |
-| Ready after 8 samples or 1 s of burst, whichever is later | A ready clock has a known bound |
+| `bound` = least delay / 2 + the 90th percentile of the residuals of the fit, + three standard errors of the fit's slope times how far it is carried, + what is still to slew | An honest error bound, shown in the panel and used to widen the controller's band (4.9). The two added terms keep it honest between the fit's samples and while slewing (gate 7.2: within the bound in 99% of samples; 100% in every simulated scenario but the sleeps) |
+| Samples are kept per path: a path change or a reconnect starts a new one, and the line is fitted through one path's samples only | Each path has its own asymmetry, so a fit across two paths turns the jump in bias into a false skew |
+| The target is the best-founded estimate: the current path's, or the last good one carried forward while its bound (growing by its slope's uncertainty each second) is still smaller | The true offset is a property of the two clocks, not of the path: a slower path or a standing queue (bufferbloat past the 64-sample window) never pulls the clock away from a line the quick samples gave, and a quicker path is taken at once |
+| A step is allowed for a lasting jump: over 5 ms (same room) or 20 ms (apart) lasting 10 s, as now; after a reconnect or a path change, lasting 2 s. Only a jump to a better-founded estimate can last, so a change to a quicker path steps after 2 s and a change to a slower one keeps the old line | The old path's bias no longer holds when the new path's samples are better founded |
+| An answer whose timestamps rule out the kept line (its offset outside `t3 - t4` to `t2 - t1`) counts as a path change | The clocks moved against each other (a small clock jump): the samples before describe another relation |
+| A new epoch (window cleared, burst) when a sample is more than 500 ms off the map, measured as how far the map is outside what the sample's own timestamps allow (so a 2 s late answer never starts one) | A machine that slept, a clock reset; old samples describe another world. The session also starts one itself on waking (a clock that counts sleep, like QPC, shows no jump). The fitted skew is kept across epochs (the same two crystals) |
+| Ready after 8 samples spread over 900 ms of burst (the burst's 20 pings take 950 ms) | A ready clock has a known bound |
+| Before the 30 s fit, the mean of the 3 quickest is carried forward at the last known skew, and the quickest are chosen by delay / 2 + age x the rate's uncertainty; a line through the shorter time is used instead when its bound is smaller | Unchanged, the flat mean lags a host 150 ppm fast by over a millisecond for the first 30 s, as the slew can't follow it; on one Wi-Fi the rate is known well within seconds |
 
 **How it reaches the player.** The session publishes the `ClockMap` into a shared snapshot (an `ArcSwap` or a seqlock). The player's sync tick reads it every 20 ms. Nobody re-plans anything when the estimate improves: the error the controller sees moves by at most 50 µs per second, which the controller takes up by rate without a sound.
 
@@ -300,7 +305,7 @@ While `InRoom`, the person's player has its own sub-state (shown beside their na
 | InStep | playing, error inside the band |
 | Correcting | playing, rate being changed (error between band and realign line) |
 | Realigning | a crossfade to the room's place is prepared or under way |
-| Suspended(reason) | faded out locally: `Buffering`, `OutputLost`, `Interrupted` (Android audio focus), the room goes on |
+| Suspended(reason) | faded out locally: `Buffering`, `OutputLost`, `Interrupted` (Android audio focus), `Sleeping` (the computer or phone going to sleep), the room goes on |
 | SteppedOut | paused just for you; the room goes on |
 | CannotPlay | no copy of this entry; back for the next one |
 | Remote | one speaker mode: this person plays nothing, sees the room and controls it as their role allows |
@@ -420,16 +425,18 @@ On one network the host's stream costs nothing worth noticing, and an exact copy
 
 | Class | How it is known | Offset |
 |---|---|---|
-| Exact | the host's own bytes; or a lossless copy whose first 10 s of decoded PCM hash the same as the host's (the host sends a 16-byte hash with the envelope) | 0 |
+| Exact | the host's own bytes; or a copy whose first 10 s of decoded PCM hash the same as the host's (the host sends a 16-byte hash with the envelope), and whose later windows show no edit | 0 |
 | Measured | envelope correlation with enough confidence | measured, refined during the song |
-| Approximate | no reference envelope (the host can't play it), or low confidence, or the copy is another edit | 0, plus known codec delays |
+| Approximate | no reference envelope (the host can't play it), or low confidence, or the copy is another edit | the start's offset when the start was measured with confidence (another edit), otherwise 0 plus known codec delays |
 
 #### Measuring the offset
 
-- **Envelope** (the host, for its reference copy; each guest, for its own): mono, 10 ms hop, onset strength from the rise of log energy in four bands (below 200 Hz, 200 Hz to 2 kHz, 2 to 6 kHz, above 6 kHz), one byte per hop. Windows: the first 30 s, then 10 s every 60 s through the song. Deflated, about 4 to 8 KB for a song. Made by the decode thread as it prepares the song (local files decode 30 s in well under a second; streams as their bytes come).
-- **Correlation** (guest): normalised cross-correlation over lags of -5 s to +5 s on the first window, refined by a parabola through the peak (resolution about 2 ms).
-- **Confidence:** the peak at least 8 standard deviations over the mean, and at least 1.3 times the best peak more than 50 ms away. Otherwise "approximate".
-- **Refinement:** each later window re-measures. A change under 20 ms moves the offset gradually, which the controller takes up by rate, without a sound. A change over 20 ms between windows means another edit or another tempo: the copy becomes approximate from there, and the panel says so.
+- **Envelope** (the host, for its reference copy; each guest, for its own): mono, 10 ms hop, onset strength from the rise of log energy in four bands (below 200 Hz, 200 Hz to 2 kHz, 2 to 6 kHz, above 6 kHz; three second-order low-passes, the bands their differences), one byte per hop. The energies are taken on 5 ms sub-blocks (20 ms frames, weighted 1/2, 1, 1, 1/2, every 5 ms); the rise per band is capped at 16 dB, the bands summed, and each hop takes the rises around it through a 40 ms triangle (1, 2, 3, 4, 3, 2, 1 over 8), at 4 units per dB. The triangle is needed: the log puts an onset's whole rise in one step, so rises sampled straight at 10 ms put two copies half a hop apart in different hops (a perfect copy 25 ms late correlated at 0.76 and failed the ratio rule); the triangle sums to 1 over every other step, so each rise counts once whatever its phase. Windows: 0 to 30 s, then 10 s from every multiple of 60 s (60, 120, ...); a window the song's end cuts under 1 s is left out. The PCM hash is blake3 over the rate, the channels, the first 10 s of samples (interleaved left-justified `i32`, as decoded) and their count, cut to 16 bytes. Deflated, about 4 to 8 KB for a song. Made by the decode thread as it prepares the song (local files decode 30 s in well under a second; streams as their bytes come). Cost (measured on the desktop while other builds ran): about 5 ms per minute of audio fed (only the windows are filtered, about a quarter of a song) and 20 ms per minute analysed; align 3 to 4 ms for a 5-minute song.
+- **Correlation** (guest): normalised cross-correlation over lags of -5 s to +5 s on the first window (each lag over the copies' overlap, at least 4 s), integer dot products on the bytes, refined by a parabola through the peak (measured: within 0.6 ms on synthetic music at any sub-hop offset and rate, within 0.8 ms on MP3, AAC and Opus copies).
+- **Confidence:** the peak at least 8 robust standard deviations (1.4826 times the median absolute deviation) over the median of all lags, and at least 1.3 times the best local peak more than 50 ms away. A plain standard deviation does not work: the music's own beat puts a peak at every beat's lag, which inflates it, and a perfect copy scored 7. Robustly, copies score 15 to 18 and unrelated songs 2.6 to 4.7. The ratio rule is what turns down repetitive music (a loop's bars score within 1.15 of each other).
+- **Several windows must agree:** the first window's 10 s parts are each correlated on their own against the whole reference window; at least two must pass the confidence rules at the same offset (within 20 ms), and none may show an edit (a song too short for two parts needs only the whole). Otherwise "approximate".
+- **Refinement:** each later window re-measures against the offset known so far and must match about as well as the first window did (its peak at the offset at least the first window's peak / 1.3, and 8 robust deviations up): then it agrees, and a change under 20 ms moves the offset gradually, which the controller takes up by rate, without a sound. A confident peak over 20 ms away that is as good as the first window's means another edit or another tempo ("moved"); so does a window where both copies have music (one strong rise a second) but the offset matches under half as well as at the start ("lost": an edit longer than the search). A beat's or a bar's echo scores about half the true peak, so it neither agrees nor moves. After an edit the copy is approximate from there, and the panel says so. `align` returns one `Alignment` for the song (approximate once any window shows an edit, with the start's offset); `player::analysis::align_track` also returns each later window's verdict and where the edit showed, for WP11 to glide the offset and change the class at that place.
+- **Exact** needs both hashes and no edit later: a radio edit can share its first 10 s with the album version.
 - **Where the offset is used:** `my content time = room content time + offset`. Every prepare, every boundary and every error measurement uses it. The host never needs to know it.
 
 ### 4.6 The player: programs, voices and decode threads
@@ -527,7 +534,7 @@ The renderer never plays the last `guard = 30 ms + 33 frames + 1 period` of a vo
 
 #### Status by atomics
 
-The renderer publishes, through a seqlock and plain atomics: the voices and their content places, device frames written, the current ppm, its state (playing, fading, starved, silent), dry count, and a histogram of deadline margin (event to buffer released, as a share of the period). The status thread reads these 10 times a second, builds `Status` (the app's type, unchanged in shape), and calls the app. The app's status callback, which today runs on the sound's thread and takes several locks, spawns threads and writes files (`playback.rs:425-616`), now runs on the status thread.
+The renderer publishes, through a seqlock and plain atomics: the voices and their content places, device frames written, the current ppm, its state (playing, fading, starved, silent), dry count, and a histogram of deadline margin (event to buffer released, as a share of the period). The status thread reads these 10 times a second, builds `Status` (the app's type, unchanged in shape), and calls the app. Once a minute, and when the output stops, the status thread also writes the histogram to the playback log as one line, so the 7.5 gate can be read on hardware (WP14's `deadline_probe log`): `render: deadline margin over <s> s: <n> periods, ran dry <d>, late <l>; per 1% of the period from 0%: <100 counts>`, the counts space-separated, bucket 0 holding margins from 0 to 1% of the period and late periods (no margin left) counted apart. The format is `crates/player/examples/live_kit/deadline.rs`'s `Histogram::to_log_line`. The app's status callback, which today runs on the sound's thread and takes several locks, spawns threads and writes files (`playback.rs:425-616`), now runs on the status thread.
 
 #### Rules for the render thread, checked by tests
 
@@ -563,7 +570,7 @@ Today the engine's one thread calls `wait()` and `write()` on a `Device`. AAudio
 #### Latency compensation
 
 - **What the device knows** is in the presentation pair: the frame reaching the DAC at a moment. This already includes the device's buffer and the engine.
-- **What it may not know** (Bluetooth's codec and the headset's buffer, 34 to 241 ms measured; an AV receiver) is a per-output extra delay, kept by output endpoint id and picked up again on an output switch. Whether Windows' `GetPosition` already includes the Bluetooth delay is not documented (Mozilla saw unpredictable delays on switches), so it is measured, not assumed: on Windows on the owner's hardware first (WP14), and in every room by calibration (4.14). On Android the Bluetooth stack subtracts the headset's own delay report from the timestamp (AOSP source), which is checked on the handheld.
+- **What it may not know** (Bluetooth's codec and the headset's buffer, 34 to 241 ms measured; an AV receiver; an output's sound effects, about 100 ms on the owner's laptop speakers by WP14's loopback measure) is a per-output extra delay, kept by output endpoint id and picked up again on an output switch. Whether Windows' `GetPosition` already includes the Bluetooth delay is not documented (Mozilla saw unpredictable delays on switches), so it is measured, not assumed: on Windows on the owner's hardware first (WP14), and in every room by calibration (4.14). On Android the Bluetooth stack subtracts the headset's own delay report from the timestamp (AOSP source), which is checked on the handheld.
 - **Apart**, the extra delay matters little (it is under a call's own latency) and the slider (-500 to +500 ms) is enough; the panel says "Bluetooth: about 200 ms behind" when a value is set. **Every device** mode needs it measured (4.14).
 - **Heard time** of the frame at the DAC at local time t is `t + extra`. Lyrics and the spectrum follow the same heard time, so they match what you hear in a room and alone.
 
@@ -661,6 +668,7 @@ Solo playback must be as if rooms did not exist. This is guaranteed by structure
 | Suspended(Buffering) | Buffering |
 | Suspended(OutputLost) | Sound output unavailable |
 | Suspended(Interrupted) | Interrupted |
+| Suspended(Sleeping) | Sleeping |
 | SteppedOut | Stepped out |
 | CannotPlay | Not available for you, back with the next song |
 | Remote | Listening on Asha's speaker |
@@ -702,8 +710,8 @@ As in the rest of section 4. Each person on their own best copy, apart controlle
 | Platform and output | Where the delay comes from | Status |
 |---|---|---|
 | Android, any output | the timestamp already includes the Bluetooth headset's own delay report (AOSP source) | to check on the handheld |
-| Windows, wired and built-in | `GetPosition` with its QPC stamp covers the device buffer and the engine | measured by the first pass in simulation; checked on hardware in WP14 |
-| Windows, Bluetooth | unknown whether `GetPosition` includes it | WP14 measures it on the owner's hardware with the acoustic rig; if it does not, the extra delay must be set |
+| Windows, wired and built-in | `GetPosition` with its QPC stamp covers the device buffer and the engine, but not (on the owner's laptop) the output's sound effects | checked on hardware in WP14: steady (positions on a line within 0.03 ms), but the laptop speakers' effects add about 100 ms it does not count (`docs/qa/output-delay.md`; a microphone run confirms). An output with sound effects is treated like Bluetooth: its delay must be measured or set |
+| Windows, Bluetooth | unknown whether `GetPosition` includes it | WP14's `output_delay` measures it against a microphone, with the owner's headphones and speaker (`docs/qa/output-delay.md`); if it does not, the extra delay must be set |
 | AV receivers, HDMI, USB DACs with buffers | not reported anywhere | set by the person |
 
 **The setting now** (decision D13): an extra delay per output, keyed by the output's endpoint id, remembered, and picked up on every switch to that output. The slider runs -500 to +500 ms. Two helpers make it quick:
@@ -742,7 +750,24 @@ An automatic hand-over when the host crashes (to the member present longest) is 
 
 ## 5. Interface contracts
 
-These are the contracts agents build against. They are sketches: names and shapes, not final code. Each has a fake (in the simulation harness) so both sides can be built and tested apart.
+These are the contracts agents build against. Each has a fake (in the simulation harness) so both sides can be built and tested apart. WP0 wrote them as code; the code is the reference, and the sketches below say what it settled where it differs from the first sketch.
+
+### 5.0 Where the contracts live
+
+`player` depends on `together` (both stay platform-neutral; `together` stays free of networking and audio). The conductor (in `together`) and the player's room program (WP5) both need `RoomHandle`, which takes a `ClockMapHandle` and an `Alignment`, so the shared declarations sit in the lower crate.
+
+| Contract | File |
+|---|---|
+| 5.1 Time, real and simulated | `crates/together/src/time.rs` (re-exported as `player::sim`) |
+| 5.2 Output | `crates/player/src/output_api.rs`; `SimOutput` in `crates/player/src/sim.rs`; the conformance suite in `crates/player/src/conformance.rs` |
+| 5.3 Voices and render commands | `crates/player/src/voice_api.rs` |
+| 5.4 The room's hold on the player | `crates/together/src/room_player.rs`; fakes in `crates/together/src/fakes.rs` |
+| 5.5 Clock map | `crates/together/src/clock_map.rs` (the struct and handle); `host_of` and `local_of` are an `impl ClockMap` written by WP6 in `clock.rs` |
+| 4.4 Entries, anchor, next | `crates/together/src/anchor.rs` |
+| 5.6 Transport | `crates/together/src/transport.rs`; `SimTransport` in `crates/together/src/sim_net.rs` |
+| 5.8 Alignment | `crates/together/src/align.rs` (the types); `envelope` and `align` are WP10's, in `player::analysis` |
+| 5.9 The window's view | `crates/together/src/view.rs`; fixtures in `app/tests/fixtures/together-views.json` |
+| 7.1 Detectors | `crates/audio-check` (a dev crate, no dependency on the player) |
 
 ### 5.1 Time
 
@@ -751,8 +776,19 @@ These are the contracts agents build against. They are sketches: names and shape
 pub trait MonoClock: Send + Sync {
     fn now_ns(&self) -> u64;
 }
-// Real: from Instant (QPC on Windows, CLOCK_MONOTONIC on Android). Sim: virtual time.
+// Real: RealClock reads QPC on Windows and CLOCK_MONOTONIC on Unix and Android directly, in ns
+// since boot (not from Instant, which has no absolute reading). Sim: SimClock, virtual time.
+
+/// A clock things can wait on.
+pub trait Timebase: MonoClock {
+    fn at(&self, t_ns: u64, f: Box<dyn FnOnce() + Send>);   // a timer thread, or the simulation's own thread
+    fn pass(&self, d_ns: u64);                              // sleep, or run the simulation that far
+    fn sleeper(&self) -> Sleeper;                           // one waiting thread: sleep_until(t_ns), now_ns()
+}
+// SkewedClock: another computer's clock over a shared one (offset, ppm, jumps for a sleep).
 ```
+
+`SimClock` runs in lockstep: `pass` runs callbacks and wakes sleeping threads in time order, one at a time, and waits for each woken thread to sleep again before time moves. So a simulated hour runs in seconds and the same way on a busy machine. A thread on a `SimClock` waits only through its `Sleeper` and polls channels between sleeps; a thread that blocks on anything else stops the run with a clear panic after 30 s.
 
 ### 5.2 Output
 
@@ -779,7 +815,15 @@ pub trait Render: Send {
 }
 ```
 
-The simulated output (`SimOutput`) takes: clock skew (±ppm), wake jitter (0 to 3 ms), position granularity (1 or 10 ms), missed periods, a held buffer that plays on after a stop without a reset, and a lost-device event on demand. The output conformance suite (open, render a sine for 10 s, presentation monotonic and within 1 ms of the frames rendered, silence before stop) runs on every implementation: Sim in CI, WASAPI and AAudio on hardware.
+Settled in WP0:
+
+- `Mode` is today's `output::Mode`; its `Memory` variant is the simulated output's (no separate `Sim`).
+- `OpenRequest { rate, channels, bits }` is the music's format; `OutputError` is `Busy`, `Lost`, `Unsupported`, `State`, `Other`; `OutputEvent` is `Lost`, `DefaultChanged`, `Xrun { at }`.
+- Device frames count from 0 at every `start`, and a start never plays anything held from before. `stop` returns at once with the renderer; what the output holds (the silence tail the renderer wrote before the call) still plays out, then the device stops.
+- `Presentation` is a sequence lock over atomics: `publish(PresentationPair { frame, time_ns })` by the output, `read() -> Option<PresentationPair>` by anyone, `clear()` at a start.
+- `events()` gives a new receiver on each call; the older one hears no more.
+
+The simulated output (`SimOutput`) takes: clock skew (±ppm), wake jitter (0 to 3 ms), position granularity (1 or 10 ms), missed periods, a held buffer that plays on after a stop without a reset, and a lost-device event on demand. It runs on any `Timebase`: virtual time for fast, repeatable runs, or real time. What its DAC played is kept on a tape (every frame, with the underrun silence), with when each was heard. The output conformance suite (`player::conformance::run`: open, render a sine for 10 s, `at` contiguous, presentation monotonic and within 1 ms of the frames rendered, the pace of the DAC, render never called after stop and the tail played, a restart from frame 0, close and open again) runs on every implementation: Sim in CI, WASAPI and AAudio on hardware (ignored in CI). On the simulated output it also checks the tape: the sine clean by the sine lock, silence before stop, nothing stale after a restart; the held-buffer fault makes it fail, which is its own self-test.
 
 ### 5.3 Voices and render commands
 
@@ -804,6 +848,14 @@ pub struct Marker { pub frame: u64, pub voice: VoiceId, pub content: f64, pub ra
 ```
 
 The rate target is an atomic (`AtomicU64` holding `f64` bits, ppm), written by the sync tick.
+
+Settled in WP0:
+
+- `voice_ring(voice, blocks) -> (VoiceFeed, VoiceTap)` makes every block at once. `VoiceFeed::take_empty`, `VoiceFeed::push`, `VoiceTap::pop`, `VoiceTap::give_back`; none of them waits, and neither side blocks on these queues (a blocked receiver would make the render thread's send take a lock to wake it), so the decode thread polls for empty blocks.
+- `Block` also carries `channels`; `BLOCK_FRAMES` is 1024 and `MAX_CH` is 8.
+- `StartAt` and `SwitchAt` carry the new voice's `tap`: that is how a voice reaches the renderer. `Drop` and `Chain` send the old tap or chain back as `Returned`, so nothing is freed on the render thread.
+- `render_link(commands, markers) -> (RenderLink, RenderEnds)`: the bounded queues for commands, markers and returned things.
+- `Splice::Crossfade` starts at the switch frame; `FadeOutThenIn` and `EndFade` end the old voice's fade at it.
 
 ### 5.4 The room's hold on the player
 
@@ -830,6 +882,15 @@ pub trait RoomHandle: Send {
 
 The fake `RoomHandle` records calls and answers readiness on a script, so the conductor and sessions are built before the player side exists. The fake `RoomPlayer` on the other side is a script of room calls, so the player side is built before the sessions exist.
 
+Settled in WP0:
+
+- Both traits are generic over the player's item type: `RoomPlayer<I>`, `RoomHandle<I>` (`together` never looks inside an item; the player's is `player::engine::Item`).
+- `RoomPlayStatus { ready: Option<PrepId>, next_ready: Option<EntryId>, entry: Option<EntryId>, sub_state: SubState, error_us: Option<i64>, bound_us: Option<u32>, copy: Option<CopyClass>, ppm: f64 }`.
+- `SubState` is the table of 4.3; `Suspended` carries a `Suspension`: `Buffering`, `OutputLost`, `Interrupted`, and `Sleeping` (4.10's sleep case, which the table left out).
+- `SyncMode { EveryDevice, Apart }` is the player's; `ListenMode { OneSpeaker, EveryDevice, Apart }` is the person's (the wire and the window), and `ListenMode::sync()` gives `None` for a remote.
+- `EntryId`, `PrepId`, `Anchor`, `Next`, `Transition` and `Purpose` are in `anchor.rs`, serialised as protocol 3 will carry them (`Transition` as `{"kind": "crossfade", "ms": 4000}`).
+- The fakes: `FakeRoomPlayer` / `FakeRoomHandle` record every call in order and answer `status` from a script (ready after a delay, unable, a sub-state at a time); `RoomScript` plays timed room calls (by host time) against any `RoomPlayer` on a `Timebase`.
+
 ### 5.5 Clock map
 
 ```rust
@@ -841,6 +902,8 @@ impl ClockMap {
 }
 pub type ClockMapHandle = Arc<ArcSwap<Option<ClockMap>>>;   // None until the clock is ready
 ```
+
+`rate` is host µs per local µs (the line's slope, about 1.0). `clock_map::handle()` makes an empty handle. The struct and handle are declared in `clock_map.rs`; `host_of` and `local_of` are the clock package's (WP6).
 
 ### 5.6 Transport
 
@@ -854,6 +917,15 @@ pub trait Transport: Send + Sync {
 ```
 
 `SimTransport` grows from `room_check.rs`'s `Link`: delay, jitter, asymmetry, loss, bufferbloat episodes, a path change (a step in delay and asymmetry), and cuts.
+
+Settled in WP0:
+
+- `ControlMsg` is one JSON line as `proto::line` makes it (`ControlMsg::of(&m)`, `msg.read::<T>()` checked by `proto::read`), so the transport doesn't change with the protocol.
+- Every `Message` and `Datagram` event carries `at_ns`, the receiver's monotonic time as the transport read it, so `t4` (and the host's `t2`) is exact however late the session takes the event. The host stamps `t3` as it calls `send_datagram`.
+- `ClockDatagram::{encode, decode}` is the 29-byte format of 4.1.
+- `TransportEvent` is `Message`, `Datagram`, `Joined`, `Lost`, `PathChanged { peer, path: PathInfo { direct, relay, rtt_us } }`. `events()` gives a new receiver on each call.
+- `MediaStream { total, body: Box<dyn MediaRead> }` with `read_chunk() -> BoxFuture<Result<Option<Vec<u8>>, Gone>>`; `BoxFuture` is a plain `Pin<Box<dyn Future + Send>>`, so no runtime is assumed. The host's side serves through a `MediaServer` it builds its transport with.
+- `SimNet` holds the simulated peers and their links (`Way`: delay, jitter, loss, bandwidth, bufferbloat; `set_way` is a path change; `cut`, `restore`), on any `Timebase`, each peer reading its own `MonoClock`. Control lines arrive in order (a lost packet arrives a retransmit later), datagrams independently (lost, and possibly reordered); a cut peer is declared `Lost` after the idle timeout. It records every send, for checks.
 
 ### 5.7 Protocol v3 (wire)
 
@@ -884,9 +956,26 @@ pub struct Alignment { pub offset_us: i64, pub class: CopyClass, pub confidence:
 pub enum CopyClass { Exact, Measured, Approximate }
 ```
 
+The types are in `together::align` (the envelope goes over the `env:` stream, and `RoomHandle::prepare` takes an `Alignment`), with `Alignment::EXACT` and `Alignment::APPROXIMATE` for the two cases that need no measure. The two functions are the alignment package's, in `player::analysis`.
+
+Settled in WP10:
+
+- `envelope` reads the iterator to its end and analyses only the windows; blocks may be any size, even ones that split a frame. Empty input, rate 0 or no channels give no windows and no hash.
+- `confidence` is the first window's peak in robust standard deviations (4.5) for a measured copy, 0 otherwise (as `Alignment::EXACT` and `APPROXIMATE` have it).
+- Beside the contract: `align_track(reference, mine) -> Track { alignment, windows: Vec<WindowCheck { start_ms, verdict }>, edit_at_ms }`, with `Verdict` `Agrees { offset_us }`, `Moved { offset_us }`, `Lost`, `Unknown`; `align` is its `alignment`.
+
 ### 5.9 The window's view
 
 `View` (today's shape in `together/mod.rs`) gains: per member `{ mode, sub_state, line, copy }`, for you `{ sub_state, pressing: Option<String> }`, the room's `transition`, and per output `{ delay_ms, bluetooth }`. A fixture JSON of every state goes in `app/tests/fixtures` so the window is built and tested against it.
+
+Settled in WP0 (`together::view`, the window's copy of the shapes in `app/src/lib/togetherView.ts`):
+
+- `View.state` is a `SessionState` enum (the same words as today's string). `delay_ms` moves into `output: OutputView { name, delay_ms, bluetooth, delay_known }` (`delay_known`: every device mode needs it, 4.14).
+- `you: Option<You { mode, sub_state, line, pressing, joining_pct }>`; `pressing` comes from `view::pressing(Press)` ("Starting...", "Pausing...", "Moving to 1:35...", "Skipping...", "Going back...").
+- `RoomView` (the window's, not the wire's) holds `queue: Vec<EntryView { id, song }>`, `anchor`, `next`, `transition`, `starting`, and `host_away` (controls greyed, "Host reconnecting").
+- `MemberView { id, name, host, role, mode, sub_state: Option<SubState> (None while away), away, line, copy: Option<CopyView { kind, class, length_diff_s }>, error_ms, bound_ms }`. `CopyKind` is `own_file`, `catalog`, `host_stream`, `close_match`; `CopyView::words()` says "own file, matched" or "YouTube Music, another version (+12 s)".
+- The lines of 4.12 are made in Rust by `view::line(...)` and `view::joining_line(pct)`, so Windows and Android say the same; the window only shows them. A suspension for sleep reads "Sleeping".
+- `app/tests/fixtures/together-views.json` is made by `view.rs`'s test (run it with `UPDATE_FIXTURES=1` after a change; it fails while the file is out of date), and `app/tests/togetherViews.test.ts` checks it holds every session state, sub-state, mode, copy, press and transition in plain words.
 
 ## 6. Use cases
 
@@ -1099,10 +1188,27 @@ Every detector proves itself first on injected faults: one dropped frame, one re
 
 1. **Bit-exact with declared edits** (today's counting songs, extended): every output frame equals the source frame, except inside the regions the renderer declared in its notes (fades, crossfades, resampled spans).
 2. **Sine lock** (after OboeTester's GlitchAnalyzer): 1 kHz and 15 kHz at -6 dBFS; magnitude and phase fitted over 8 periods and re-estimated every period; any residual over -60 dB outside a declared fade is a click; inside a fade the envelope must change by at most 1/240 per sample.
-3. **LPC residual on real music** (after Essentia's ClickDetector): order 12 to 32, 512-sample frames, peaks 30 dB over the robust floor; calibrated on the same tracks played solo; a room run may flag nothing that solo doesn't.
-4. **Dip and gap**: 5 ms RMS windows more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
+3. **LPC residual on real music** (after Essentia's ClickDetector): order 12 to 32, 512-sample frames, peaks 30 dB over the robust floor (the clipped mean error power); each hop is predicted by the filter learned on the 512 samples before it, never on a frame that holds the samples it judges (a model learned on a fault whitens the fault too: measured in WP14, a dropped frame then stands only about 30 dB over the floor, against 60 dB and more when learned before it); calibrated on the same tracks played solo; a room run may flag nothing that solo doesn't.
+4. **Dip and gap**: 5 ms RMS windows, one starting at every sample (so a 5 ms gap fills one window whole), more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
 
 Plus today's music-shaped detector (steps, third-difference breaks, hard-edged gaps) stays as a fast first check.
+
+As built in WP0 (`crates/audio-check`, self-tests in its `tests/self_test.rs`):
+
+- The sine lock fits cos, sin and both times t over the 8 periods around each one-period block, so a 500 ppm rate change and a slow level change are part of the line. Inside a declared span, the envelope from a two-period fit may move by at most 1/240 of the level per sample, and no sample may be off a short fit by more than -40 dB (a fade bends the line, so -60 dB would flag every 15 ms fade).
+- The LPC detector learns each frame's predictor on the 512 samples before it (learned on a frame that holds the fault, the model whitens it), uses order 32, and adds Essentia's matched filter after the inverse filter (without it, a repeated frame at a flat moment of the test music reached only 31 times the floor, under the 30 dB line). The threshold is 30 dB or 6 dB over the worst peak of the solo calibration, whichever is higher.
+- Which detector proves itself on which fault (each caught at 12 places, the single frames also at a peak and at a zero crossing for the sine lock; the gain step is 1 dB, the step -40 dBFS):
+
+| Fault | music-shaped | bit-exact | sine lock | LPC | dip and gap |
+|---|---|---|---|---|---|
+| dropped frame | 9 of 12 or more (flat moments are near silent) | all | all | all | |
+| repeated frame | 9 of 12 or more | all | all | all | |
+| 1-sample step of -40 dBFS | all | all | all | all | |
+| 5 ms gap | all | all | all | all | all |
+| hard cut | all | all | all (a cut of whole periods is no fault in a pure sine, so a quarter period more) | all | |
+| gain step | all (its step is 6 dB: it judges the line, not the level) | all | all | all | |
+
+  The dip detector is for what the others can't judge on music captured through a loopback (a level dropping out), not for single frames.
 
 **Gate:** 0 flags from all of them, in every scenario of 6.1 that makes sound, run for one simulated hour each in CI (the simulation runs faster than real time), and on hardware in the live matrix (7.7).
 
@@ -1176,7 +1282,7 @@ Run by hand before each release, with two copies of Venuta (two machines, or two
 
 **Pass:** 0 clicks in every capture; N0 host output bit-identical to solo (loopback compared with a solo run); N1 acoustic p95 within 2 ms, N1b within 5 ms; the throttled guest buffers alone and the host never pauses; after each ending everyone's own queue resumes paused at its place and plays clean; the playback log has no room lines after the ending.
 
-**Also measured once on the rig (WP14), before every device mode ships:** whether Windows' `GetPosition` includes the Bluetooth delay on the owner's headphones and speaker (acoustic delay against the reported one).
+**Also measured once on the rig (WP14), before every device mode ships:** whether Windows' `GetPosition` includes the Bluetooth delay on the owner's headphones and speaker (acoustic delay against the reported one), by `output_delay` and the steps in `docs/qa/output-delay.md`. The matrix itself, with the exact steps and the playback log lines, is `docs/qa/listen-together-live.md`.
 
 ### 7.8 Mode and fairness gates (simulation)
 
@@ -1428,9 +1534,10 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Next song armed | 20 s before the boundary (at once for songs under 20 s) | 4.4 |
 | Exact gapless window | 5 ms | 4.4 |
 | Clock pings | burst 20 x 50 ms (connect, reconnect, path change), then 1 Hz | 4.2 |
-| Clock window, fit | 64 samples; fit after 8 over 30 s; slew 50 µs/s | 4.2 |
-| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change | 4.2 |
-| New clock epoch | a sample over 500 ms off | 4.2 |
+| Clock window, fit | 64 samples, per path; fit after 8 over 30 s (sooner when better founded); slew 50 µs/s | 4.2 |
+| Clock step | over 5 ms (same room) / 20 ms (apart) lasting 10 s; 2 s after a reconnect or path change; only to a better-founded estimate | 4.2 |
+| New clock epoch | a sample over 500 ms outside what its timestamps allow of the map; on waking | 4.2 |
+| Clock ready | 8 samples over 900 ms | 4.2 |
 | Sync tick | 20 ms, rooms only | 4.9 |
 | Error filter | median of 10, then 1 s average | 4.9 |
 | Same room band, gain | in at 1 ms, out at 0.3 ms; 250 ppm per ms | 4.9 |
@@ -1453,8 +1560,8 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Host file pacing | 10 s burst, then 2 x the song's bitrate; one bucket per person and song, a new burst only for a seek; chunks of 20 ms of the rate | 4.1 |
 | Stream priorities | control 100, envelopes 50, files 0, covers -10 | 4.1 |
 | Envelope | 10 ms hop, 4 bands, first 30 s then 10 s every 60 s | 4.5 |
-| Alignment confidence | peak 8 sd over the mean and 1.3 x the next peak 50 ms away | 4.5 |
-| Offset refinement | under 20 ms change: glide; over: approximate | 4.5 |
+| Alignment confidence | peak 8 robust sd (1.4826 MAD) over the median and 1.3 x the next local peak 50 ms away; two 10 s parts of the first window agreeing within 20 ms | 4.5 |
+| Offset refinement | under 20 ms change: glide; over, or matching under half as well as the start where both have music: approximate | 4.5 |
 | Voice slots | 3 | 4.6 |
 | Lossy seek pre-roll | Opus 80 ms; AAC, Vorbis, MP3 one packet | 4.6 |
 | Download chunks | 64 KiB | 4.6 |
