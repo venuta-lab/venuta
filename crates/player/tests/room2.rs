@@ -71,11 +71,11 @@ impl Room {
     }
 
     /// Prepare `entry` (its song `f`, ramp from `base`) at the room's `content_us`.
-    fn prepare(&mut self, entry: u64, f: &PathBuf, content_us: i64) -> PrepId {
+    fn prepare(&mut self, entry: u64, f: &std::path::Path, content_us: i64) -> PrepId {
         self.prep += 1;
         let prep = PrepId(self.prep);
         self.h()
-            .prepare(prep, EntryId(entry), f.clone(), content_us, EXACT);
+            .prepare(prep, EntryId(entry), f.to_path_buf(), content_us, EXACT);
         prep
     }
 
@@ -86,7 +86,7 @@ impl Room {
     }
 
     /// The room starts `entry` at its `content_us`, `lead_ms` from now, after getting it ready.
-    fn start(&mut self, entry: u64, f: &PathBuf, base: i32, content_us: i64, lead_ms: i64) {
+    fn start(&mut self, entry: u64, f: &std::path::Path, base: i32, content_us: i64, lead_ms: i64) {
         self.prepare(entry, f, content_us);
         self.pass(300);
         let a = anchor(entry, content_us, self.host_now() + lead_ms * 1_000);
@@ -292,7 +292,7 @@ fn far_off_apart_realigns_once_by_a_crossfade_at_a_quiet_moment() {
         "lined up again: {st:?}"
     );
     let heard = r.finish();
-    assert_music_clean("far off", &heard);
+    assert_music_clean_with("far off", &heard, &heard.playing_span(base, 10.0, 10.12));
     let at = heard.tick_at(t_step) as u64;
     let xf: Vec<(u64, u64)> = heard
         .notes
@@ -913,5 +913,40 @@ fn the_hosts_room_is_made_in_place_without_a_sample_changed() {
         "no fade: {:?}",
         hh.notes
     );
-    assert_exact_where_undeclared("the host", &hh, &hs.left[..n]);
+    assert_exact_where_undeclared("the host", &hh.upto(n), &hs.left[..n]);
+}
+
+// --- Every device: an output that can't hold ---------------------------------------------------
+
+#[test]
+fn an_output_that_cant_hold_in_every_device_mode_fades_out_alone_until_apart() {
+    // The room's clock runs 1000 ppm faster than this one: more than any trim may take up, so
+    // this player falls behind half a millisecond a second, over 5 ms after 10 s.
+    let a = song(0.0, 80.0, BASES[0], true, true);
+    let host = HostTime {
+        t0_ns: 1_000_000_000,
+        h0_us: 1_000_000.0,
+        ppm: 1_000.0,
+    };
+    let mut r = Room::with(SimConfig::default(), host, SyncMode::EveryDevice);
+    r.start(1, &a, BASES[0], 0, 400);
+    r.pass(30_000);
+    assert!(!r.h().status().cant_hold, "not yet: {:?}", r.h().status());
+    r.pass(12_000);
+    let st = r.h().status();
+    assert!(st.cant_hold, "{st:?}");
+    r.pass(1_500);
+    assert_eq!(r.h().status().entry, None, "faded out");
+    // The person chooses apart: back in at the room's place.
+    r.h().set_mode(SyncMode::Apart);
+    r.pass(2_000);
+    let st = r.h().status();
+    assert!(!st.cant_hold && st.entry == Some(EntryId(1)), "{st:?}");
+    let heard = r.finish();
+    assert_music_clean("can't hold", &heard);
+    assert!(has(
+        &heard.notes,
+        |n| matches!(n, RenderNote::Faded { from, to, kind: FadeKind::Out, .. }
+        if to - from == ms(1_000))
+    ));
 }

@@ -259,6 +259,37 @@ impl Heard {
         self.right[k] >> 8
     }
 
+    /// The first `n` ticks.
+    pub fn upto(&self, n: usize) -> Heard {
+        Heard {
+            left: self.left[..n].to_vec(),
+            right: self.right[..n].to_vec(),
+            at_ns: self.at_ns[..n].to_vec(),
+            notes: self.notes.clone(),
+        }
+    }
+
+    /// The ticks where the ramp says the song with `base` played its seconds `from_s..to_s`
+    /// (a quiet passage of the song itself, which the dip detector would rightly call a dip),
+    /// widened by 50 ms each side.
+    pub fn playing_span(&self, base: i32, from_s: f64, to_s: f64) -> Vec<Range<u64>> {
+        let (lo, hi) = (
+            base + 1 + ((from_s - 0.05) * f64::from(R)) as i32,
+            base + 1 + ((to_s + 0.05) * f64::from(R)) as i32,
+        );
+        let mut out: Vec<Range<u64>> = Vec::new();
+        for k in 0..self.right.len() {
+            let v = self.count(k);
+            if v >= lo && v <= hi {
+                match out.last_mut() {
+                    Some(r) if r.end == k as u64 => r.end += 1,
+                    _ => out.push(k as u64..k as u64 + 1),
+                }
+            }
+        }
+        out
+    }
+
     /// The first tick at or after `t_ns`.
     pub fn tick_at(&self, t_ns: f64) -> usize {
         self.at_ns.partition_point(|&t| t < t_ns)
@@ -614,10 +645,16 @@ fn declared(spans: &[Range<u64>]) -> Declared {
 /// source with every resampled span declared too, LPC calibrated on the music played solo, and
 /// dip and gap. A flag is a failure.
 pub fn assert_music_clean(what: &str, heard: &Heard) {
+    assert_music_clean_with(what, heard, &[]);
+}
+
+/// `assert_music_clean`, with `extra` spans declared too (the song's own quiet passages).
+pub fn assert_music_clean_with(what: &str, heard: &Heard, extra: &[Range<u64>]) {
     let x = &heard.left;
     assert!(x.iter().any(|&v| v != 0), "{what}: something played");
     let end = x.len() as u64;
-    let spans = shaped(&heard.notes, end);
+    let mut spans = shaped(&heard.notes, end);
+    spans.extend_from_slice(extra);
     let d = declared(&spans);
     let piece = audio_check::music::Piece {
         rate: R,

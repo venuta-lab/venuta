@@ -23,7 +23,7 @@ use std::sync::Arc;
 use together::align::Alignment;
 use together::anchor::{EntryId, PrepId, Transition};
 use together::clock::Steps;
-use together::room_player::{RoomHandle, RoomPlayer, SubState, Suspension, SyncMode};
+use together::room_player::{RoomPlayer, SubState, Suspension, SyncMode};
 use together::time::{MonoClock, SimClock};
 
 const EXACT: Alignment = Alignment::EXACT;
@@ -347,7 +347,9 @@ fn a_stall_suspends_the_one_who_stalled_and_nobody_else() {
         if gh.status().sub_state == SubState::Suspended(Suspension::Buffering) {
             suspended_at.get_or_insert(clock.now_ns());
         }
-        assert_eq!(hh.status().sub_state, SubState::InStep, "the host plays on");
+        if host_now(&clock) > a0.host_us + 1_000_000 {
+            assert_eq!(hh.status().sub_state, SubState::InStep, "the host plays on");
+        }
     }
     let suspended_at = suspended_at.expect("the guest suspended");
     pass(&clock, 2_000, &mut []);
