@@ -1,0 +1,3559 @@
+{
+  "about": "Every state the room panel draws, made by crates/together/src/view.rs (run its tests with UPDATE_FIXTURES=1 to remake it).",
+  "cases": [
+    {
+      "name": "off",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": null,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": null,
+        "state": "off",
+        "you": null
+      }
+    },
+    {
+      "name": "starting",
+      "view": {
+        "host": true,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": null,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": null,
+        "state": "starting",
+        "you": null
+      }
+    },
+    {
+      "name": "hosting, everyone in every state",
+      "view": {
+        "host": true,
+        "invite": {
+          "code": "ABCD-EFGH",
+          "host": "Asha",
+          "link": "https://venuta.app/join#v1.example",
+          "qr_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+          "until": 1790000000
+        },
+        "let_in": true,
+        "local_only": false,
+        "me": 0,
+        "message": null,
+        "name": "Asha",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": true,
+              "id": 0,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "approximate",
+                "kind": "catalog",
+                "length_diff_s": 12
+              },
+              "error_ms": 0.30000001192092896,
+              "host": false,
+              "id": 1,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Ravi",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "Getting ready",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "opening"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Ready",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "ready"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": false,
+              "id": 4,
+              "line": "Catching up",
+              "mode": "every_device",
+              "name": "Kabir",
+              "role": "add",
+              "sub_state": {
+                "state": "correcting"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "catalog",
+                "length_diff_s": 12
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 5,
+              "line": "Catching up",
+              "mode": "apart",
+              "name": "Sara",
+              "role": "add",
+              "sub_state": {
+                "state": "realigning"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 6,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Dev",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 7,
+              "line": "Sound output unavailable",
+              "mode": "apart",
+              "name": "Ira",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "output_lost"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 8,
+              "line": "Interrupted",
+              "mode": "apart",
+              "name": "Noor",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "interrupted"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "catalog",
+                "length_diff_s": 12
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 9,
+              "line": "Sleeping",
+              "mode": "apart",
+              "name": "Zoya",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "sleeping"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 10,
+              "line": "Stepped out",
+              "mode": "apart",
+              "name": "Om",
+              "role": "add",
+              "sub_state": {
+                "state": "stepped_out"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 11,
+              "line": "Not available for you, back with the next song",
+              "mode": "apart",
+              "name": "Tara",
+              "role": "add",
+              "sub_state": {
+                "state": "cannot_play"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 12,
+              "line": "Listening on Asha's speaker",
+              "mode": "one_speaker",
+              "name": "Veer",
+              "role": "add",
+              "sub_state": {
+                "state": "remote"
+              }
+            },
+            {
+              "away": true,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "catalog",
+                "length_diff_s": 12
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 13,
+              "line": "Reconnecting",
+              "mode": "apart",
+              "name": "Ishan",
+              "role": "add",
+              "sub_state": null
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "hosting",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, ±9 ms",
+          "mode": "every_device",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "hosting alone, nothing playing",
+      "view": {
+        "host": true,
+        "invite": {
+          "code": "ABCD-EFGH",
+          "host": "Asha",
+          "link": "https://venuta.app/join#v1.example",
+          "qr_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+          "until": 1790000000
+        },
+        "let_in": false,
+        "local_only": false,
+        "me": 0,
+        "message": null,
+        "name": "Asha",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": {
+          "activity": [],
+          "anchor": null,
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "Ready",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "ready"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": null,
+          "queue": [],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": []
+        },
+        "state": "hosting",
+        "you": {
+          "joining_pct": null,
+          "line": "Ready",
+          "mode": "every_device",
+          "pressing": null,
+          "sub_state": {
+            "state": "ready"
+          }
+        }
+      }
+    },
+    {
+      "name": "joining, buffering",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": true,
+          "relay": false,
+          "rtt_ms": 42
+        },
+        "room": null,
+        "state": "joining",
+        "you": {
+          "joining_pct": 60,
+          "line": "Joining... buffering 60%",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "opening"
+          }
+        }
+      }
+    },
+    {
+      "name": "waiting at the door",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": null,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": null,
+        "state": "waiting",
+        "you": null
+      }
+    },
+    {
+      "name": "in, pausing",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": "Pausing...",
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, moving",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": "Moving to 1:35...",
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, skipping",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": "Skipping...",
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, starting",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": "Starting...",
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, going back",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": "Going back...",
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, crossfading between songs",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "crossfade",
+              "ms": 4000
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "crossfade",
+            "ms": 4000
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, cut between songs",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "cut"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "cut"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, a remote on the host's speaker",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "Listening on Asha's speaker",
+          "mode": "one_speaker",
+          "pressing": null,
+          "sub_state": {
+            "state": "remote"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, the room paused",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": false,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "Ready",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "ready"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, a start waiting for someone",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": [
+            "Ali"
+          ],
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "Ready",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "ready"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, the host reconnecting",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": true,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, on Bluetooth with its delay set",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": true,
+          "delay_known": true,
+          "delay_ms": 200,
+          "name": "WH-1000XM5"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "in, on Bluetooth with its delay not known",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": true,
+          "delay_known": false,
+          "delay_ms": 0,
+          "name": "JBL Flip"
+        },
+        "path": {
+          "direct": false,
+          "relay": true,
+          "rtt_ms": 118
+        },
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "in",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, ±9 ms",
+          "mode": "every_device",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "reconnecting",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": 2,
+        "message": null,
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": {
+          "activity": [
+            {
+              "at_us": 3590000000,
+              "name": "Ravi",
+              "undoable": true,
+              "what": "added 2 songs",
+              "who": 2
+            }
+          ],
+          "anchor": {
+            "content_us": 95000000,
+            "entry": 41,
+            "host_us": 3600000000,
+            "playing": true,
+            "seq": 12
+          },
+          "host_away": false,
+          "host_name": "Asha",
+          "members": [
+            {
+              "away": false,
+              "bound_ms": 0.8999999761581421,
+              "copy": {
+                "class": "exact",
+                "kind": "host_stream",
+                "length_diff_s": null
+              },
+              "error_ms": 0.30000001192092896,
+              "host": true,
+              "id": 0,
+              "line": "In step, ±2 ms",
+              "mode": "every_device",
+              "name": "Asha",
+              "role": "control",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "measured",
+                "kind": "own_file",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 2,
+              "line": "In step, about ±13 ms",
+              "mode": "apart",
+              "name": "Meera",
+              "role": "add",
+              "sub_state": {
+                "state": "in_step"
+              }
+            },
+            {
+              "away": false,
+              "bound_ms": 9.0,
+              "copy": {
+                "class": "approximate",
+                "kind": "close_match",
+                "length_diff_s": null
+              },
+              "error_ms": -4.0,
+              "host": false,
+              "id": 3,
+              "line": "Buffering",
+              "mode": "apart",
+              "name": "Ali",
+              "role": "add",
+              "sub_state": {
+                "state": "suspended",
+                "why": "buffering"
+              }
+            }
+          ],
+          "new_role": "add",
+          "next": {
+            "boundary_host_us": 3706000000,
+            "entry": 42,
+            "seq": 13,
+            "transition": {
+              "kind": "gapless"
+            }
+          },
+          "queue": [
+            {
+              "id": 41,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 201000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000001",
+                "mbid": null,
+                "online_id": "song0000001",
+                "title": "Song 1"
+              }
+            },
+            {
+              "id": 42,
+              "song": {
+                "added_by": 2,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 202000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:a219ab2c23a1bef42927addc4e576777",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 2"
+              }
+            },
+            {
+              "id": 43,
+              "song": {
+                "added_by": 0,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 203000,
+                "format": null,
+                "host_file": false,
+                "isrc": null,
+                "key": "online:song0000003",
+                "mbid": null,
+                "online_id": "song0000003",
+                "title": "Song 3"
+              }
+            },
+            {
+              "id": 44,
+              "song": {
+                "added_by": 1,
+                "album": "Test Album",
+                "artists": [
+                  "Test Artist"
+                ],
+                "artwork_url": null,
+                "duration_ms": 204000,
+                "format": "flac",
+                "host_file": true,
+                "isrc": null,
+                "key": "host:853803f5a1f35aac5cb00608aaa43144",
+                "mbid": null,
+                "online_id": null,
+                "title": "Song 4"
+              }
+            }
+          ],
+          "starting": null,
+          "transition": {
+            "kind": "gapless"
+          },
+          "waiting": [
+            [
+              7,
+              "Kabir"
+            ]
+          ]
+        },
+        "state": "reconnecting",
+        "you": {
+          "joining_pct": null,
+          "line": "In step, about ±9 ms",
+          "mode": "apart",
+          "pressing": null,
+          "sub_state": {
+            "state": "in_step"
+          }
+        }
+      }
+    },
+    {
+      "name": "ended",
+      "view": {
+        "host": false,
+        "invite": null,
+        "let_in": false,
+        "local_only": false,
+        "me": null,
+        "message": "Asha ended the room",
+        "name": "Meera",
+        "output": {
+          "bluetooth": false,
+          "delay_known": true,
+          "delay_ms": 0,
+          "name": "Speakers"
+        },
+        "path": null,
+        "room": null,
+        "state": "ended",
+        "you": null
+      }
+    }
+  ]
+}

@@ -24,13 +24,16 @@ pub mod align;
 pub mod anchor;
 pub mod clock;
 pub mod clock_map;
+pub mod fakes;
 pub mod invite;
 pub mod proto;
 pub mod room;
 pub mod room_player;
+pub mod sim_net;
 pub mod time;
 pub mod timeline;
 pub mod transport;
+pub mod view;
 
 /// The protocol version both sides speak; a Venuta speaking another is told to update.
 pub const PROTOCOL: u32 = 2;

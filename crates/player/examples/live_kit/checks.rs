@@ -10,8 +10,8 @@
 //! from audio-check (`player` takes it as a dev-dependency, as its tests will), `detect34.rs`
 //! is deleted, and nothing else in the kit changes: the tools only use the names below.
 
-#[path = "../../tests/common/mod.rs"]
-mod common;
+// The music-shaped detector and its test music now live in audio-check.
+use audio_check::music as common;
 
 pub use super::detect34::{DipParams, Flag, LpcParams, Quiet};
 

@@ -305,7 +305,7 @@ While `InRoom`, the person's player has its own sub-state (shown beside their na
 | InStep | playing, error inside the band |
 | Correcting | playing, rate being changed (error between band and realign line) |
 | Realigning | a crossfade to the room's place is prepared or under way |
-| Suspended(reason) | faded out locally: `Buffering`, `OutputLost`, `Interrupted` (Android audio focus), the room goes on |
+| Suspended(reason) | faded out locally: `Buffering`, `OutputLost`, `Interrupted` (Android audio focus), `Sleeping` (the computer or phone going to sleep), the room goes on |
 | SteppedOut | paused just for you; the room goes on |
 | CannotPlay | no copy of this entry; back for the next one |
 | Remote | one speaker mode: this person plays nothing, sees the room and controls it as their role allows |
@@ -668,6 +668,7 @@ Solo playback must be as if rooms did not exist. This is guaranteed by structure
 | Suspended(Buffering) | Buffering |
 | Suspended(OutputLost) | Sound output unavailable |
 | Suspended(Interrupted) | Interrupted |
+| Suspended(Sleeping) | Sleeping |
 | SteppedOut | Stepped out |
 | CannotPlay | Not available for you, back with the next song |
 | Remote | Listening on Asha's speaker |
@@ -967,6 +968,15 @@ Settled in WP10:
 
 `View` (today's shape in `together/mod.rs`) gains: per member `{ mode, sub_state, line, copy }`, for you `{ sub_state, pressing: Option<String> }`, the room's `transition`, and per output `{ delay_ms, bluetooth }`. A fixture JSON of every state goes in `app/tests/fixtures` so the window is built and tested against it.
 
+Settled in WP0 (`together::view`, the window's copy of the shapes in `app/src/lib/togetherView.ts`):
+
+- `View.state` is a `SessionState` enum (the same words as today's string). `delay_ms` moves into `output: OutputView { name, delay_ms, bluetooth, delay_known }` (`delay_known`: every device mode needs it, 4.14).
+- `you: Option<You { mode, sub_state, line, pressing, joining_pct }>`; `pressing` comes from `view::pressing(Press)` ("Starting...", "Pausing...", "Moving to 1:35...", "Skipping...", "Going back...").
+- `RoomView` (the window's, not the wire's) holds `queue: Vec<EntryView { id, song }>`, `anchor`, `next`, `transition`, `starting`, and `host_away` (controls greyed, "Host reconnecting").
+- `MemberView { id, name, host, role, mode, sub_state: Option<SubState> (None while away), away, line, copy: Option<CopyView { kind, class, length_diff_s }>, error_ms, bound_ms }`. `CopyKind` is `own_file`, `catalog`, `host_stream`, `close_match`; `CopyView::words()` says "own file, matched" or "YouTube Music, another version (+12 s)".
+- The lines of 4.12 are made in Rust by `view::line(...)` and `view::joining_line(pct)`, so Windows and Android say the same; the window only shows them. A suspension for sleep reads "Sleeping".
+- `app/tests/fixtures/together-views.json` is made by `view.rs`'s test (run it with `UPDATE_FIXTURES=1` after a change; it fails while the file is out of date), and `app/tests/togetherViews.test.ts` checks it holds every session state, sub-state, mode, copy, press and transition in plain words.
+
 ## 6. Use cases
 
 ### 6.0 How shipped products do it (from note 07)
@@ -1182,6 +1192,23 @@ Every detector proves itself first on injected faults: one dropped frame, one re
 4. **Dip and gap**: 5 ms RMS windows, one starting at every sample (so a 5 ms gap fills one window whole), more than 20 dB under the median of the surrounding 200 ms, away from song boundaries and declared pauses.
 
 Plus today's music-shaped detector (steps, third-difference breaks, hard-edged gaps) stays as a fast first check.
+
+As built in WP0 (`crates/audio-check`, self-tests in its `tests/self_test.rs`):
+
+- The sine lock fits cos, sin and both times t over the 8 periods around each one-period block, so a 500 ppm rate change and a slow level change are part of the line. Inside a declared span, the envelope from a two-period fit may move by at most 1/240 of the level per sample, and no sample may be off a short fit by more than -40 dB (a fade bends the line, so -60 dB would flag every 15 ms fade).
+- The LPC detector learns each frame's predictor on the 512 samples before it (learned on a frame that holds the fault, the model whitens it), uses order 32, and adds Essentia's matched filter after the inverse filter (without it, a repeated frame at a flat moment of the test music reached only 31 times the floor, under the 30 dB line). The threshold is 30 dB or 6 dB over the worst peak of the solo calibration, whichever is higher.
+- Which detector proves itself on which fault (each caught at 12 places, the single frames also at a peak and at a zero crossing for the sine lock; the gain step is 1 dB, the step -40 dBFS):
+
+| Fault | music-shaped | bit-exact | sine lock | LPC | dip and gap |
+|---|---|---|---|---|---|
+| dropped frame | 9 of 12 or more (flat moments are near silent) | all | all | all | |
+| repeated frame | 9 of 12 or more | all | all | all | |
+| 1-sample step of -40 dBFS | all | all | all | all | |
+| 5 ms gap | all | all | all | all | all |
+| hard cut | all | all | all (a cut of whole periods is no fault in a pure sine, so a quarter period more) | all | |
+| gain step | all (its step is 6 dB: it judges the line, not the level) | all | all | all | |
+
+  The dip detector is for what the others can't judge on music captured through a loopback (a level dropping out), not for single frames.
 
 **Gate:** 0 flags from all of them, in every scenario of 6.1 that makes sound, run for one simulated hour each in CI (the simulation runs faster than real time), and on hardware in the live matrix (7.7).
 
