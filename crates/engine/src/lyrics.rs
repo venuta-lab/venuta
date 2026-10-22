@@ -181,6 +181,108 @@ pub fn roman_lang(song_lang: Option<&str>, script: &str) -> String {
     format!("{}-Latn", base.unwrap_or("und"))
 }
 
+/// The languages written in a script other than Latin letters (ISO 639 codes), and the one a
+/// song in it most likely is (as the views guess it from the letters, lib/lyricsModel.ts).
+fn written_in(script: &str) -> (&'static [&'static str], &'static str) {
+    match script {
+        "Deva" => (
+            &[
+                "hi", "mr", "ne", "sa", "mai", "bho", "kok", "doi", "brx", "new", "awa", "mag",
+                "hne", "raj", "bh", "sd", "ks", "pi",
+            ],
+            "hi",
+        ),
+        "Beng" => (&["bn", "as", "mni", "sat"], "bn"),
+        "Guru" => (&["pa"], "pa"),
+        "Gujr" => (&["gu"], "gu"),
+        "Orya" => (&["or"], "or"),
+        "Taml" => (&["ta"], "ta"),
+        "Telu" => (&["te"], "te"),
+        "Knda" => (&["kn", "tcy", "kok"], "kn"),
+        "Mlym" => (&["ml"], "ml"),
+        "Sinh" => (&["si"], "si"),
+        "Arab" => (
+            &[
+                "ur", "ar", "fa", "ps", "sd", "ks", "pa", "ug", "ckb", "ku", "prs", "bal", "skr",
+                "ms", "az",
+            ],
+            "ur",
+        ),
+        "Thaa" => (&["dv"], "dv"),
+        "Syrc" => (&["syr", "aii"], "syr"),
+        "Hebr" => (&["he", "iw", "yi", "lad"], "he"),
+        "Thai" => (&["th"], "th"),
+        "Laoo" => (&["lo"], "lo"),
+        "Khmr" => (&["km"], "km"),
+        "Mymr" => (&["my", "shn"], "my"),
+        "Tibt" => (&["bo", "dz"], "bo"),
+        "Geor" => (&["ka"], "ka"),
+        "Armn" => (&["hy"], "hy"),
+        "Ethi" => (&["am", "ti"], "am"),
+        "Hang" => (&["ko"], "ko"),
+        "Jpan" | "Hira" | "Kana" => (&["ja"], "ja"),
+        "Hani" | "Bopo" => (
+            &[
+                "zh", "ja", "ko", "yue", "cmn", "wuu", "nan", "hak", "lzh", "gan", "hsn", "vi",
+            ],
+            "zh",
+        ),
+        "Cyrl" => (
+            &[
+                "ru", "uk", "bg", "sr", "mk", "be", "kk", "ky", "tg", "mn", "tt", "ba", "cv",
+                "sah", "ce", "os", "bs", "uz", "az", "ab",
+            ],
+            "ru",
+        ),
+        "Grek" => (&["el", "grc"], "el"),
+        _ => (&[], ""),
+    }
+}
+
+/// The song's language: the source's label, unless most of its lines with letters are in a
+/// script that language isn't written in (Devanagari lines labelled "en", as LyricsPlus labels
+/// some Hindi songs): then the language their script most likely means. Lines in Latin letters
+/// can be in any language, so they never overrule a label; with no label, none is made up (the
+/// views read the letters themselves).
+pub fn song_lang(tag: Option<&str>, lines: &[LyricLine]) -> Option<String> {
+    let tag = tag.map(str::trim).filter(|t| !t.is_empty())?;
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    let mut lettered = 0;
+    for l in lines {
+        let script = match l.script.as_str() {
+            "Hira" | "Kana" => "Jpan",
+            s => s,
+        };
+        if matches!(script, "" | "Zyyy" | "Zinh" | "Zzzz") {
+            continue;
+        }
+        lettered += 1;
+        match counts.iter_mut().find(|(s, _)| *s == script) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((script, 1)),
+        }
+    }
+    // Lines of kanji alone beside lines with kana are Japanese too.
+    if let Some(hani) = counts.iter().position(|(s, _)| *s == "Hani")
+        && counts.iter().any(|(s, _)| *s == "Jpan")
+    {
+        let (_, n) = counts.remove(hani);
+        if let Some((_, j)) = counts.iter_mut().find(|(s, _)| *s == "Jpan") {
+            *j += n;
+        }
+    }
+    let Some(&(script, n)) = counts.iter().max_by_key(|(_, n)| *n) else {
+        return Some(tag.to_owned());
+    };
+    let (langs, likely) = written_in(script);
+    let base = tag.split(['-', '_']).next().unwrap_or("").to_lowercase();
+    if n * 2 <= lettered || langs.is_empty() || langs.contains(&base.as_str()) {
+        Some(tag.to_owned())
+    } else {
+        Some(likely.to_owned())
+    }
+}
+
 /// The BCP 47 tag of a translation the lyrics carried, from its own letters. The Chinese
 /// services write theirs in simplified Chinese.
 pub fn translation_lang(text: &str, provider: &str) -> String {
@@ -1382,5 +1484,54 @@ mod tests {
         ] {
             assert!(!is_credit(sung), "{sung}");
         }
+    }
+
+    fn lines_of(texts: &[&str]) -> Vec<LyricLine> {
+        let mut lines: Vec<LyricLine> = texts
+            .iter()
+            .map(|t| LyricLine {
+                text: (*t).to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        finish(&mut lines);
+        lines
+    }
+
+    #[test]
+    fn a_songs_language_is_its_label_unless_most_of_its_lines_letters_disprove_it() {
+        let hindi = lines_of(&["तू मेरा कोई ना होके भी कुछ लागे", "किया रे जो भी तूने", "♪"]);
+        assert_eq!(song_lang(Some("en"), &hindi).as_deref(), Some("hi"));
+        assert_eq!(song_lang(Some("mr"), &hindi).as_deref(), Some("mr"));
+        // Nothing said: nothing made up (the views read the letters themselves).
+        assert_eq!(song_lang(None, &hindi), None);
+        // Mostly English with a Hindi line or two: the label stands.
+        let mostly_english = lines_of(&[
+            "I want you to stay",
+            "Every night and day",
+            "Hold me close tonight",
+            "तू मेरा कोई ना होके भी",
+        ]);
+        assert_eq!(
+            song_lang(Some("en"), &mostly_english).as_deref(),
+            Some("en")
+        );
+        // Latin letters can be any language's.
+        let latin = lines_of(&["Tu mera koi na hoke bhi kuchh laage"]);
+        assert_eq!(song_lang(Some("id"), &latin).as_deref(), Some("id"));
+        // Korean and Punjabi lines labelled English; Chinese lines labelled Japanese stand
+        // (Japanese is written with Chinese characters too).
+        let korean = lines_of(&["사랑해 너를", "보고 싶어"]);
+        assert_eq!(song_lang(Some("en"), &korean).as_deref(), Some("ko"));
+        let punjabi = lines_of(&["ਤੇਰੀ ਹੋਕੇ ਮਰਾਂ", "ਹੀਰੀਏ-ਹੀਰੀਏ, ਆ"]);
+        assert_eq!(song_lang(Some("hi"), &punjabi).as_deref(), Some("pa"));
+        let chinese = lines_of(&["我们都是勇敢的", "爱你孤身走暗巷"]);
+        assert_eq!(song_lang(Some("ja"), &chinese).as_deref(), Some("ja"));
+        assert_eq!(song_lang(Some("en"), &chinese).as_deref(), Some("zh"));
+        // No letters at all: nothing to go on.
+        assert_eq!(
+            song_lang(Some("en"), &lines_of(&["♪", "..."])).as_deref(),
+            Some("en")
+        );
     }
 }
