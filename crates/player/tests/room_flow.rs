@@ -184,6 +184,26 @@ impl Run {
     }
 
     /// The last error the player reported at or before `at`.
+    /// How far off the player says it is, as it says so after `after` (waiting for that up to a
+    /// few seconds: a busy computer makes reports late, never the music wrong).
+    fn error_after(&self, after: Instant) -> Option<f32> {
+        let t0 = Instant::now();
+        loop {
+            let e = self
+                .errors
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(t, _)| *t >= after)
+                .map(|(_, e)| *e)
+                .next_back();
+            if e.is_some() || t0.elapsed() > Duration::from_secs(5) {
+                return e;
+            }
+            sleep(20);
+        }
+    }
+
     fn error_at(&self, at: Instant) -> Option<f32> {
         self.errors
             .lock()
@@ -221,7 +241,40 @@ fn resume(r: &Run, held: &Timeline, from_ms: u64) -> Timeline {
     r.start(from_ms, 500)
 }
 
-/// Nothing but silence between the stretches heard: no music faded out and moved after a start.
+/// Between two stretches heard: at most the music before fading out where it was (a pause, a
+/// hold), silence, then at most the music fading in to the stretch that follows (a start partway
+/// into a song rises from silence over a moment): each frame the true one scaled, softer each
+/// time on the way out and louder each time on the way in. Nothing else: no music moved.
+fn silence_then_fade_in(gap: &[i32], last: i32, next: i32) -> bool {
+    let scaled = |x: i32, own: i32| f64::from(x) / f64::from(own);
+    let out = gap.iter().position(|&x| x == 0).unwrap_or(gap.len());
+    let fading_out = gap[..out]
+        .iter()
+        .enumerate()
+        .map(|(j, &x)| scaled(x, last + 1 + j as i32))
+        .try_fold(1.0 + 1e-3, |was, g| {
+            (g <= was + 1e-3 && g >= -1e-3).then_some(g)
+        })
+        .is_some();
+    let rest = &gap[out..];
+    let k = rest.iter().position(|&x| x != 0).unwrap_or(rest.len());
+    let tail = &rest[k..];
+    let n = tail.len() as i32;
+    out <= 2_000
+        && fading_out
+        && tail.len() <= 1_200
+        && tail
+            .iter()
+            .enumerate()
+            .map(|(j, &x)| scaled(x, next - (n - j as i32)))
+            .try_fold(0.0, |was, g| {
+                (g >= was - 1e-3 && g <= 1.0 + 1e-3).then_some(g)
+            })
+            .is_some()
+}
+
+/// Nothing but silence between the stretches heard (and a fade in from it): no music faded out
+/// and moved after a start.
 fn only_silence_between(h: &[i32]) -> bool {
     let mut at = 0;
     let mut gaps_clean = true;
@@ -233,7 +286,7 @@ fn only_silence_between(h: &[i32]) -> bool {
         }
         if h[i] != 0 && j - i >= 200 {
             if at > 0 {
-                gaps_clean &= h[at..i].iter().all(|&x| x == 0);
+                gaps_clean &= silence_then_fade_in(&h[at..i], h[at - 1], h[i]);
             }
             at = j;
         }
@@ -437,7 +490,8 @@ fn another_output_mid_song_lines_up_with_the_room_at_once() {
     }));
     r.send(Cmd::Output(OutputChoice::PacedMemory(next.clone())));
     sleep(1_500);
-    let e = r.error_at(Instant::now()).expect("an error reported");
+    // Settled on the new output: what it says from here on.
+    let e = r.error_after(Instant::now()).expect("an error reported");
     assert!(e.abs() < 40.0, "in step after the switch: {e} ms off");
     // On the new device: one stretch of music, from where the room was (no jump after it).
     drop(r);

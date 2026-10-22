@@ -42,8 +42,7 @@ tauri-plugin-global-shortcut = "2"
 image = { workspace = true, features = ["ico"] }
 tauri-plugin-notification = "2"
 together = { path = "../../crates/together" }
-iroh = "1.3"
-iroh-tickets = "1"
+together-net = { path = "../../crates/together-net" }
 getrandom = "0.3"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }

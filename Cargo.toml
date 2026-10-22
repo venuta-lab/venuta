@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/lyrics-text", "crates/lyrics-translate", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/audio-check", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/together-net", "crates/lyrics-text", "crates/lyrics-translate", "app/src-tauri"]
 
 [workspace.package]
 version = "0.3.0"
@@ -58,4 +58,8 @@ opt-level = 3
 
 # Second lines are worked out when a song's lyrics arrive: keep that quick in debug builds too.
 [profile.dev.package.lyrics-text]
+opt-level = 3
+
+# The ears of the tests judge hours of sound: always optimised.
+[profile.dev.package.audio-check]
 opt-level = 3

@@ -215,7 +215,11 @@ fn apart_a_moving_clock_estimate_is_never_heard() {
     r.player
         .send(Cmd::Sync(Some(plan(shifted(at, 120.0), 0, false))));
     std::thread::sleep(Duration::from_millis(2_500));
-    assert_eq!(breaks(&finish(r), &[]), (0, 0, 0));
+    // Never a jump or a gap; the 120 ms is taken up by the rate (a hair faster: on a counting
+    // song, a frame of 2 now and then, never more), not by a seek.
+    let (small, jumps, gaps) = breaks(&finish(r), &[]);
+    assert_eq!((jumps, gaps), (0, 0));
+    assert!(small <= 48_000 * 9 / 1_000, "{small} frames stretched over");
 }
 
 #[test]

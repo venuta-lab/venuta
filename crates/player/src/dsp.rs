@@ -176,7 +176,19 @@ pub struct Chain {
     rng: u64,
     pub active: bool,
     pub steps: Vec<String>,
+    /// While gliding: the chain this one took over from (none: the sound untouched). It stays
+    /// here after the glide, until this chain is handed back, so nothing is freed where the
+    /// chain runs (the render thread).
+    prev: Option<Box<Chain>>,
+    /// Frames of the glide done, and its length (0: no glide).
+    glide_done: u64,
+    glide_len: u64,
+    /// The old chain's work during a glide (made with the chain, never where it runs).
+    scratch: Box<[i32]>,
 }
+
+/// The most samples a glide works on at once (more are taken in pieces).
+const GLIDE_PIECE: usize = 4096;
 
 fn db(x: f32) -> f64 {
     10f64.powf(f64::from(x) / 20.0)
@@ -266,7 +278,43 @@ impl Chain {
             rng: 0x9E37_79B9_7F4A_7C15,
             active,
             steps,
+            prev: None,
+            glide_done: 0,
+            glide_len: 0,
+            scratch: Box::default(),
         }
+    }
+
+    /// This chain, to take over from the one a voice has over `frames` frames instead of at once
+    /// (a change of the tools while the voice sounds: a step in them would be heard). Its room
+    /// for the glide is made here (on the control thread).
+    pub fn gliding(mut self, frames: u32) -> Self {
+        self.glide_len = u64::from(frames);
+        self.glide_done = 0;
+        if frames > 0 {
+            self.scratch = vec![0; GLIDE_PIECE].into_boxed_slice();
+        }
+        self
+    }
+
+    /// Take over from `old`, the chain the voice had (`None`: no tools). Without a glide `old`
+    /// comes back at once; with one it is kept to glide from, and what it was itself gliding
+    /// from comes back instead. Only moves boxes (the renderer calls it on its own thread), and
+    /// whatever comes back is for the caller to hand off that thread.
+    pub fn take_over(&mut self, old: Option<Box<Chain>>) -> Option<Box<Chain>> {
+        if self.glide_len == 0 {
+            return old;
+        }
+        let mut old = old;
+        let older = old.as_mut().and_then(|o| o.prev.take());
+        self.prev = old;
+        self.glide_done = 0;
+        older
+    }
+
+    /// The chain changes the sound: a tool is on, or it is gliding from the chain before.
+    pub fn touches(&self) -> bool {
+        self.active || self.glide_done < self.glide_len
     }
 
     fn noise(&mut self) -> f64 {
@@ -278,8 +326,56 @@ impl Chain {
     }
 
     /// Process left-justified interleaved samples in place. Does nothing (not one bit) when
-    /// no tool is on.
+    /// no tool is on and it isn't gliding. Never allocates: the renderer runs it on the render
+    /// thread, after the resampler, so a chain for the renderer is made for the device's rate
+    /// and the voice's channels.
+    ///
+    /// Gliding, it runs the chain before it and itself on the same frames and goes from the
+    /// first's output to its own on a raised cosine over the glide, with equal gains (both are
+    /// the same music, so the sum keeps its level).
     pub fn process(&mut self, samples: &mut [i32], channels: u16) {
+        if self.glide_done >= self.glide_len {
+            self.run(samples, channels);
+            return;
+        }
+        let ch = usize::from(channels.max(1));
+        let piece = (GLIDE_PIECE / ch).max(1) * ch;
+        for part in samples.chunks_mut(piece) {
+            let n = part.len();
+            if n > self.scratch.len() {
+                // Never reached: `gliding` made the room.
+                self.run(part, channels);
+                continue;
+            }
+            let mut scratch = std::mem::take(&mut self.scratch);
+            scratch[..n].copy_from_slice(part);
+            if let Some(p) = self.prev.as_mut() {
+                p.process(&mut scratch[..n], channels);
+            }
+            self.run(part, channels);
+            for (k, (new, old)) in part
+                .chunks_exact_mut(ch)
+                .zip(scratch[..n].chunks_exact(ch))
+                .enumerate()
+            {
+                let done = self.glide_done + k as u64;
+                if done >= self.glide_len {
+                    break;
+                }
+                let t = (done + 1) as f64 / self.glide_len as f64;
+                let w = (1.0 - (std::f64::consts::PI * t).cos()) / 2.0;
+                for (y, &x) in new.iter_mut().zip(old) {
+                    let v = f64::from(x) * (1.0 - w) + f64::from(*y) * w;
+                    *y = v.round().clamp(-2_147_483_648.0, 2_147_483_647.0) as i32;
+                }
+            }
+            self.scratch = scratch;
+            self.glide_done = (self.glide_done + (n / ch) as u64).min(self.glide_len);
+        }
+    }
+
+    /// The tools themselves.
+    fn run(&mut self, samples: &mut [i32], channels: u16) {
         if !self.active {
             return;
         }
@@ -400,6 +496,83 @@ mod tests {
             c.steps[0].starts_with("Volume levelled (song, +0.9 dB)"),
             "{:?}",
             c.steps
+        );
+    }
+
+    /// A steady signal through a chain gliding from `old` (`None`: no tools) to `new`, in calls
+    /// of 100 frames: the samples of the left channel.
+    fn glide(old: Option<Chain>, new: Chain, frames: usize) -> Vec<i32> {
+        let mut new = new;
+        assert!(new.take_over(old.map(Box::new)).is_none());
+        let mut out = Vec::new();
+        for _ in 0..frames / 100 {
+            let mut x = vec![(0.25 * 2_147_483_648.0) as i32; 200];
+            new.process(&mut x, 2);
+            out.extend(x.iter().step_by(2));
+        }
+        out
+    }
+
+    #[test]
+    fn a_change_of_the_tools_glides_from_the_old_sound_to_the_new() {
+        let loud = || {
+            Chain::new(
+                &Sound {
+                    preamp_db: 6.0,
+                    limiter: false,
+                    ..Sound::default()
+                },
+                &Gain::default(),
+                48_000,
+                2,
+                24,
+            )
+        };
+        let plain = Chain::new(&Sound::default(), &Gain::default(), 48_000, 2, 24);
+        // From +6 dB to nothing over 480 frames: from the old level to the new, never a step
+        // bigger than the raised cosine's steepest, and the source itself after it.
+        let x = 0.25 * 2_147_483_648.0;
+        let out = glide(Some(loud()), plain.gliding(480), 1_000);
+        let (hi, lo) = (x * 10f64.powf(0.3), x);
+        assert!((f64::from(out[0]) - hi).abs() < hi * 1e-4, "{}", out[0]);
+        let most = (hi - lo) * std::f64::consts::PI / 2.0 / 480.0 + 2.0;
+        for w in out.windows(2) {
+            assert!(f64::from(w[0] - w[1]).abs() <= most, "a step: {w:?}");
+            assert!(w[1] <= w[0], "only down");
+        }
+        assert!(
+            out[480..].iter().all(|&v| v == lo as i32),
+            "untouched after"
+        );
+        // And up again, from no tools at all.
+        let out = glide(None, loud().gliding(480), 1_000);
+        assert!((f64::from(out[0]) - lo).abs() < 1e-3 * lo);
+        assert!((f64::from(out[999]) - hi).abs() < 1.0);
+        for w in out.windows(2) {
+            assert!(f64::from(w[1] - w[0]).abs() <= most, "a step: {w:?}");
+        }
+    }
+
+    #[test]
+    fn a_glide_keeps_what_it_glides_from_and_hands_back_what_that_glided_from() {
+        let plain = || Chain::new(&Sound::default(), &Gain::default(), 48_000, 2, 24);
+        let mut a = plain().gliding(10);
+        assert!(a.take_over(Some(Box::new(plain()))).is_none());
+        assert!(a.touches(), "gliding");
+        let mut x = vec![7; 40];
+        a.process(&mut x, 2);
+        assert!(!a.touches(), "the glide is over, and nothing is on");
+        assert!(
+            a.prev.is_some(),
+            "kept until the chain itself is handed back"
+        );
+        let mut b = plain().gliding(10);
+        let back = b.take_over(Some(Box::new(a)));
+        assert!(back.is_some(), "what the old chain glided from comes back");
+        let mut c = plain();
+        assert!(
+            c.take_over(Some(Box::new(b))).is_some(),
+            "no glide: the old one back"
         );
     }
 }

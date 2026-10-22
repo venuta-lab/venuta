@@ -4,18 +4,34 @@
 //! and buffered) continues at the very next sample; if its format differs, the device is
 //! reopened for it. Status (position, what's playing, the signal path) goes out about ten
 //! times a second, and the queue whenever it changes.
+//!
+//! That is engine 1. Engine 2 (section 4 of the Listen together design, its WP4 notes in 9.2)
+//! is built beside it in the submodules (`control`, `program`, `status`, `memory`) and chosen
+//! with [`Player::spawn_with`]: a control thread that only sends render commands at device
+//! frames, decode threads per voice, the renderer on the output's own thread, and a status
+//! thread for the app's callback. Both take the same `Cmd`s and give the same `Status`.
 
-use crate::decode::{FileInfo, Source, SourceFormat};
+use crate::decode::{FileInfo, Source, SourceFormat, Streams};
 use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
+use crate::output_api::{Output, Render};
 use crate::queue::{Queue, Repeat};
-use crate::sync::{Correction, SyncPlan, Trimmer};
+use crate::sync::{Controller, Correction, Resampler, SyncNote, SyncPlan};
+use crate::voice_api::RenderNote;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use together::room_player::{RoomHandle, RoomPlayer, SyncMode};
+use together::time::{SimClock, Timebase};
+
+mod control;
+mod memory;
+mod program;
+mod status;
 
 /// Something the queue holds: a local file or an ephemeral resolved media source.
 pub trait Item: Clone + Send + 'static {
@@ -44,6 +60,18 @@ pub trait Item: Clone + Send + 'static {
     fn reopen_when_stopped(&self) -> bool {
         true
     }
+    /// Names an online song's download (engine 2), so it is kept while no voice reads it (a
+    /// pause, the moment between a voice and the next of the same song). `None`: nothing to
+    /// keep.
+    fn stream_key(&self) -> Option<String> {
+        None
+    }
+    /// Open on the player's shared downloads (engine 2: a seek in a stream is a new voice on
+    /// the same bytes, never a new download). By default as `open`.
+    fn open_on(&self, streams: &Streams) -> Result<Source, String> {
+        let _ = streams;
+        self.open()
+    }
 }
 
 impl Item for PathBuf {
@@ -62,6 +90,63 @@ pub enum OutputChoice {
     /// Memory taking sound at the pace a real device would (for checks that depend on time,
     /// like playing in step with a room).
     PacedMemory(std::sync::Arc<std::sync::Mutex<output::Captured>>),
+    /// Engine 2 only: an output a test makes, on the test's simulated clock (see [`SimChoice`]).
+    Sim(SimChoice),
+}
+
+/// An output on a simulated clock that the test moves (`pass`): engine 2 runs every thread of
+/// its own on that clock, so a run is the same every time. Dropping the player moves the clock
+/// until the engine has quit: drop it from the thread that runs the simulation.
+#[derive(Clone)]
+pub struct SimChoice {
+    pub clock: SimClock,
+    /// Makes the output (called on the control thread, each time an output is needed).
+    pub output: Arc<dyn Fn() -> Box<dyn Output> + Send + Sync>,
+}
+
+/// Which engine plays (section 9.1: engine 2 is built beside engine 1, chosen by the setting
+/// `player.engine`, until it passes every gate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EngineKind {
+    One,
+    #[default]
+    Two,
+}
+
+impl EngineKind {
+    /// From the setting's number: engine 2 passed every gate and is the default (release R1);
+    /// 1 still chooses engine 1, until it is removed.
+    pub fn from_setting(n: u32) -> EngineKind {
+        if n == 1 {
+            EngineKind::One
+        } else {
+            EngineKind::Two
+        }
+    }
+}
+
+#[cfg(test)]
+mod engine_kind_tests {
+    use super::EngineKind;
+
+    #[test]
+    fn engine_two_is_the_default_and_one_still_chooses_engine_one() {
+        assert_eq!(EngineKind::from_setting(0), EngineKind::Two);
+        assert_eq!(EngineKind::from_setting(2), EngineKind::Two);
+        assert_eq!(EngineKind::from_setting(1), EngineKind::One);
+        assert_eq!(EngineKind::default(), EngineKind::Two);
+    }
+}
+
+/// What a test may watch of engine 2 as it plays (engine 1 ignores it).
+#[derive(Default)]
+pub struct Watch {
+    /// Every note the renderer sends, with its frames counted from the first frame the player
+    /// ever rendered, every start of every output end to end (as a capture lays them).
+    pub notes: Option<Sender<RenderNote>>,
+    /// Wraps the render path handed to every output (a counting allocator's switch, say).
+    #[allow(clippy::type_complexity)]
+    pub wrap: Option<Box<dyn Fn(Box<dyn Render>) -> Box<dyn Render> + Send>>,
 }
 
 pub enum Cmd<T> {
@@ -162,6 +247,12 @@ pub struct Status<T: Serialize> {
     pub bands: Option<Vec<u8>>,
     /// While playing in step with a room: ready to start, and how far off it is.
     pub sync: Option<SyncStatus>,
+    /// What was done to the music to stay with a room since the last status (every seek, every
+    /// change of rate): none at all outside a room.
+    pub sync_notes: Vec<SyncNote>,
+    /// How many times, since the player started, the device played all it had while music was
+    /// coming out (this thread late with the next period): each is a gap, heard as a click.
+    pub ran_dry: u64,
 }
 
 /// How playing in step with a room is going.
@@ -224,39 +315,139 @@ impl Said {
 }
 
 pub struct Player<T> {
-    tx: Sender<Cmd<T>>,
+    /// Engine 1's commands.
+    tx: Option<Sender<Cmd<T>>>,
+    /// Engine 2's: commands and a room's calls, in one queue, in order.
+    msgs: Option<Sender<control::Msg<T>>>,
     thread: Option<JoinHandle<()>>,
+    kind: EngineKind,
+    /// An engine on a test's simulated clock: dropping the player moves that clock until the
+    /// engine has quit.
+    sim: Option<SimClock>,
 }
 
 impl<T: Item + Serialize> Player<T> {
-    /// Start the player thread. `on_status` is called from it.
+    /// Start engine 1's player thread. `on_status` is called from it.
     pub fn spawn(output: OutputChoice, on_status: impl FnMut(Status<T>) + Send + 'static) -> Self {
-        let (tx, rx) = channel();
-        let thread = std::thread::Builder::new()
-            .name("venuta-player".into())
-            .spawn(move || Engine::new(output, Box::new(on_status)).run(rx))
-            .expect("start the player thread");
-        Self {
-            tx,
-            thread: Some(thread),
+        Self::spawn_with(EngineKind::One, output, on_status)
+    }
+
+    /// Start the engine `kind`. Engine 1 calls `on_status` from its one thread; engine 2 from
+    /// its status thread.
+    pub fn spawn_with(
+        kind: EngineKind,
+        output: OutputChoice,
+        on_status: impl FnMut(Status<T>) + Send + 'static,
+    ) -> Self {
+        Self::spawn_watched(kind, output, on_status, Watch::default())
+    }
+
+    /// `spawn_with`, with what a test watches of engine 2 (see [`Watch`]).
+    pub fn spawn_watched(
+        kind: EngineKind,
+        output: OutputChoice,
+        on_status: impl FnMut(Status<T>) + Send + 'static,
+        watch: Watch,
+    ) -> Self {
+        match kind {
+            EngineKind::One => {
+                let (tx, rx) = channel();
+                let thread = std::thread::Builder::new()
+                    .name("venuta-player".into())
+                    .spawn(move || Engine::new(output, Box::new(on_status)).run(rx))
+                    .expect("start the player thread");
+                Self {
+                    tx: Some(tx),
+                    msgs: None,
+                    thread: Some(thread),
+                    kind,
+                    sim: None,
+                }
+            }
+            EngineKind::Two => {
+                let sim = match &output {
+                    OutputChoice::Sim(s) => Some(s.clock.clone()),
+                    _ => None,
+                };
+                let spawned = control::spawn(output, Box::new(on_status), watch);
+                Self {
+                    tx: None,
+                    msgs: Some(spawned.msgs),
+                    thread: Some(spawned.thread),
+                    kind,
+                    sim,
+                }
+            }
         }
     }
 
     pub fn send(&self, cmd: Cmd<T>) {
-        let _ = self.tx.send(cmd);
+        match (&self.tx, &self.msgs) {
+            (Some(tx), _) => {
+                let _ = tx.send(cmd);
+            }
+            (None, Some(m)) => {
+                let _ = m.send(control::Msg::Cmd(cmd));
+            }
+            (None, None) => {}
+        }
     }
 
     /// Whether the player thread is still running (it ends only on Quit, or a panic).
     pub fn is_alive(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
+
+    /// Which engine this is.
+    pub fn engine(&self) -> EngineKind {
+        self.kind
+    }
 }
 
 impl<T> Drop for Player<T> {
     fn drop(&mut self) {
-        let _ = self.tx.send(Cmd::Quit);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Cmd::Quit);
+        }
+        if let Some(m) = &self.msgs {
+            let _ = m.send(control::Msg::Cmd(Cmd::Quit));
+        }
         if let Some(t) = self.thread.take() {
+            // On a test's clock the engine quits only as that clock moves (its fade, its
+            // output's tail): moved here, on the thread that runs the simulation.
+            if let Some(clock) = &self.sim {
+                while !t.is_finished() {
+                    clock.pass(1_000_000);
+                }
+            }
             let _ = t.join();
+        }
+    }
+}
+
+/// Engine 2 is a player rooms can take (contract 5.4); engine 1's rooms go through
+/// `Cmd::Sync`, so its handle does nothing and says it can't play.
+impl<T: Item + Serialize> RoomPlayer<T> for Player<T> {
+    fn attach(
+        &self,
+        clock: together::clock_map::ClockMapHandle,
+        mode: SyncMode,
+    ) -> Box<dyn RoomHandle<T>> {
+        match &self.msgs {
+            Some(tx) => program::attach(tx.clone(), clock, mode),
+            None => Box::new(program::Inert),
+        }
+    }
+
+    fn adopt(
+        &self,
+        clock: together::clock_map::ClockMapHandle,
+        mode: SyncMode,
+        entry: together::anchor::EntryId,
+    ) -> Box<dyn RoomHandle<T>> {
+        match &self.msgs {
+            Some(tx) => program::adopt(tx.clone(), clock, mode, entry),
+            None => Box::new(program::Inert),
         }
     }
 }
@@ -320,10 +511,15 @@ struct Engine<T: Item + Serialize> {
     scratch: Vec<i32>,
     mapped: Vec<i32>,
     bytes: Vec<u8>,
-    /// Playing in step with a room: the room's plan, the frames trimmer, the last error, and
-    /// until when a fresh start or seek is left to settle.
+    /// Playing in step with a room: the room's plan, the last error, and until when a fresh
+    /// start or seek is left to settle.
     sync: Option<SyncPlan>,
-    trimmer: Trimmer,
+    /// One room: plays the song a hair faster or slower (idle, and bit-perfect, otherwise), the
+    /// rate it is asked for (parts per million faster), and where its frames are made.
+    resampler: Resampler,
+    rate_target: f64,
+    controller: Controller,
+    resampled: Vec<i32>,
     sync_error_ms: Option<f32>,
     settle_until: Option<Instant>,
     /// A new plan whose sound hasn't come out yet: lined up exactly when it first does.
@@ -338,8 +534,6 @@ struct Engine<T: Item + Serialize> {
     sync_avg: Option<f64>,
     /// Since when the error has been past the seek line (it is lined up only once it lasts).
     sync_far_since: Option<Instant>,
-    /// The last frames changed went this way (ahead): trimming starts over when it turns.
-    sync_trim_ahead: Option<bool>,
     /// Decoding last fell behind (a stream waiting for bytes): no lining up for a while, so a
     /// stall plays late instead of skipping ahead into what hasn't arrived.
     starved_at: Option<Instant>,
@@ -352,6 +546,46 @@ struct Engine<T: Item + Serialize> {
     flush_before_start: bool,
     /// Frames of fade-in still to come after such a seek.
     fade_in_left: usize,
+    /// A stream that ran out faded out, waiting in silence to have enough again (see
+    /// `suspend_or_resume`).
+    suspended: bool,
+    /// Music fading out to silence, across periods (before a seek, a pause, another song), and
+    /// whether a command is waiting for it to be done (`fade_out_now`).
+    fade_out: Option<FadeOut>,
+    fading_out: bool,
+    /// What was done to stay with the room, to say in the next status.
+    notes: Vec<SyncNote>,
+    /// The rate last said (parts per million faster), to say only when it changes.
+    rate_said: i32,
+    /// How many times the device ran dry while music played (see `Status::ran_dry`).
+    ran_dry: u64,
+    /// The volume the last period ended at, and a change of it gliding (see `GainRamp`).
+    gain_out: Option<f64>,
+    gain_ramp: Option<GainRamp>,
+}
+
+/// Music fading out: `done` of `len` frames so far; once all are, silence comes out (`silent`
+/// frames of it so far) and nothing more is taken from the song.
+#[derive(Debug, Clone, Copy)]
+struct FadeOut {
+    done: usize,
+    len: usize,
+    silent: usize,
+}
+
+impl FadeOut {
+    fn over(&self) -> bool {
+        self.done >= self.len
+    }
+}
+
+/// A change of volume under way: from one gain to another over `len` frames, `done` so far.
+#[derive(Debug, Clone, Copy)]
+struct GainRamp {
+    from: f64,
+    to: f64,
+    done: usize,
+    len: usize,
 }
 
 impl<T: Item + Serialize> Engine<T> {
@@ -384,7 +618,10 @@ impl<T: Item + Serialize> Engine<T> {
             mapped: Vec::new(),
             bytes: Vec::new(),
             sync: None,
-            trimmer: Trimmer::default(),
+            resampler: Resampler::default(),
+            rate_target: 0.0,
+            controller: Controller::default(),
+            resampled: Vec::new(),
             sync_error_ms: None,
             settle_until: None,
             sync_fresh: false,
@@ -392,16 +629,28 @@ impl<T: Item + Serialize> Engine<T> {
             sync_hold: false,
             sync_avg: None,
             sync_far_since: None,
-            sync_trim_ahead: None,
             starved_at: None,
             sounding: false,
             seek_after_fade: None,
             flush_before_start: false,
             fade_in_left: 0,
+            fade_out: None,
+            fading_out: false,
+            suspended: false,
+            notes: Vec::new(),
+            rate_said: 0,
+            ran_dry: 0,
+            gain_out: None,
+            gain_ramp: None,
         }
     }
 
     fn run(mut self, rx: Receiver<Cmd<T>>) {
+        crate::sync::Resampler::warm();
+        // The sound comes first: Windows schedules this thread as pro audio (MMCSS), so nothing
+        // else on the computer (a room's network, the window drawing) makes it late.
+        #[cfg(windows)]
+        let _pro_audio = crate::wasapi_out::ProAudio::enter();
         loop {
             // Commands first; when not playing, wait for one.
             // Playing with no device yet: the first song is still arriving, so look again soon
@@ -453,6 +702,12 @@ impl<T: Item + Serialize> Engine<T> {
                 play,
                 from,
             } => {
+                // What's playing fades out first (never cut off mid-wave).
+                self.fade_out_now();
+                // A new queue is never under an old room's plan: a room's follower sends its
+                // plan after loading its song; your own queue (a room's goodbye that never came,
+                // a window that thought it was out of the room) plays as it does alone.
+                self.set_sync(None);
                 let shuffle = self.queue.shuffled();
                 self.queue.set(items, index);
                 if shuffle {
@@ -467,8 +722,14 @@ impl<T: Item + Serialize> Engine<T> {
             Cmd::Play => self.set_playing(true),
             Cmd::Pause => self.set_playing(false),
             Cmd::Toggle => self.set_playing(!self.playing),
-            Cmd::Seek(ms) => self.seek(ms),
+            Cmd::Seek(ms) => {
+                // Out of the old place, in at the new one.
+                self.fade_out_now();
+                self.seek(ms);
+                self.fade_in_mid_song();
+            }
             Cmd::Next => {
+                self.fade_out_now();
                 let ahead = self.queue.peek_next();
                 if self.queue.skip_next().is_some() {
                     self.play_ahead_or_load(ahead);
@@ -477,6 +738,7 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Previous => {
+                self.fade_out_now();
                 // Into a song: back to its start. At its start: the one before.
                 if self.position_ms() > 3000 || self.queue.skip_previous().is_none() {
                     self.seek(0);
@@ -485,6 +747,7 @@ impl<T: Item + Serialize> Engine<T> {
                 }
             }
             Cmd::Jump(i) => {
+                self.fade_out_now();
                 // Same song again: rewind in place (no re-resolve / re-download).
                 if self.queue.index == Some(i) {
                     self.seek(0);
@@ -508,9 +771,14 @@ impl<T: Item + Serialize> Engine<T> {
             }
             Cmd::Insert { items, next } => {
                 let was_empty = self.queue.items().is_empty();
+                let next_before = self.queue.peek_next();
                 self.queue.insert(items, next);
                 self.queue_changed = true;
-                self.drop_prefetch();
+                // The song decoded ahead is kept when it is still the next one (songs added
+                // after it): a stream readied ahead isn't opened again.
+                if next || self.queue.peek_next() != next_before {
+                    self.drop_prefetch();
+                }
                 if was_empty {
                     self.load_current(0);
                     self.set_playing(true);
@@ -518,6 +786,9 @@ impl<T: Item + Serialize> Engine<T> {
             }
             Cmd::Remove(i) => {
                 let current = self.queue.index == Some(i);
+                if current {
+                    self.fade_out_now();
+                }
                 self.queue.remove(i);
                 self.queue_changed = true;
                 if current {
@@ -541,6 +812,7 @@ impl<T: Item + Serialize> Engine<T> {
                 self.queue_changed = true;
             }
             Cmd::Output(choice) => {
+                self.fade_out_now();
                 self.release();
                 self.choice = choice;
             }
@@ -567,11 +839,21 @@ impl<T: Item + Serialize> Engine<T> {
     }
 
     fn set_playing(&mut self, on: bool) {
+        if !on {
+            // Down to silence before the device stops (a stop mid-wave is a click), and only
+            // silence left in it for the next start.
+            self.fade_out_now();
+        }
         if on && self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(0);
         }
+        let resuming = on && !self.playing;
         self.playing = on && !self.segs.is_empty();
         if self.playing {
+            if resuming && !self.started {
+                // On again partway into the song: up from silence.
+                self.fade_in_mid_song();
+            }
             self.paused_at = None;
             if self.started
                 && let Some(d) = self.device.as_mut()
@@ -600,6 +882,9 @@ impl<T: Item + Serialize> Engine<T> {
         }
         self.segs.clear();
         self.seek_waiting = None;
+        self.resampler.reset();
+        self.suspended = false;
+        self.fade_out = None;
         // A seek or fade-in meant for the song before is not this one's.
         self.seek_after_fade = None;
         self.fade_in_left = 0;
@@ -638,6 +923,8 @@ impl<T: Item + Serialize> Engine<T> {
 
     fn seek(&mut self, ms: u64) {
         self.seek_waiting = None;
+        // Another place: nothing before it for the resampler to carry on from.
+        self.resampler.reset();
         if !self.playing {
             self.flush_before_start = true;
         }
@@ -702,6 +989,7 @@ impl<T: Item + Serialize> Engine<T> {
                 .get(1)
                 .is_some_and(|s| !(s.ended && s.frames() == 0));
         if usable {
+            self.resampler.reset();
             self.segs.pop_front();
             self.segs.truncate(1);
             self.seek_waiting = None;
@@ -768,6 +1056,9 @@ impl<T: Item + Serialize> Engine<T> {
                 #[cfg(not(windows))]
                 OutputChoice::Device { .. } => {
                     return Err("Playing to a sound device needs Windows for now.".into());
+                }
+                OutputChoice::Sim(_) => {
+                    return Err("A simulated output plays only with engine 2.".into());
                 }
             });
             self.dev_fmt = None;
@@ -951,6 +1242,11 @@ impl<T: Item + Serialize> Engine<T> {
         } else {
             dev.available()?
         };
+        // Music was coming out and the device has played all it was given: it ran dry (a gap,
+        // heard as a click), because this thread was late.
+        if self.started && self.sounding && dev.queued_frames() == Some(0) {
+            self.ran_dry += 1;
+        }
         if want == 0 {
             // Stopped with its buffer full (paused mid-song): on again from what it holds.
             if !self.started {
@@ -968,11 +1264,23 @@ impl<T: Item + Serialize> Engine<T> {
         } else {
             0
         };
+        self.suspend_or_resume(want, &fmt);
+        // One room's rate (or gliding back from it): the period's frames made at that rate
+        // (none while held silent).
+        let held = self.fade_out.is_some_and(|f| f.over());
+        if lead == 0 && !held && (self.sync.is_some() || !self.resampler.idle()) {
+            self.rate_front(want);
+        }
         let src_ch = usize::from(fmt.channels.max(1));
         let mut taken: Vec<i32> = Vec::with_capacity(want * src_ch);
         // The room starts within this period: silence up to the very frame it starts on.
         taken.resize(lead * src_ch, 0);
-        let mut frames = lead;
+        // Faded out all the way: silence, the song held where the fade ended.
+        let mut frames = if self.fade_out.is_some_and(|f| f.over()) {
+            want
+        } else {
+            lead
+        };
         let mut reopen_after = false;
         while frames < want {
             let Some(front) = self.segs.front_mut() else {
@@ -1017,8 +1325,9 @@ impl<T: Item + Serialize> Engine<T> {
                 }
                 continue;
             }
-            // This song is over: on to the next.
+            // This song is over: on to the next (the rate came back to its own before its end).
             self.segs.pop_front();
+            self.resampler.reset();
             // In a room, the next song plays straight on until the room's plan for it comes.
             if self.sync.is_some() {
                 self.sync_hold = true;
@@ -1053,36 +1362,46 @@ impl<T: Item + Serialize> Engine<T> {
             }
         }
         // Silence for the rest of the period (end of the queue, or before a format change).
-        let music = frames.saturating_sub(lead);
+        let held = self.fade_out.is_some_and(|f| f.over());
+        let music = if held { 0 } else { frames.saturating_sub(lead) };
         taken.resize(want * src_ch, 0);
-        // Either side of a seek that would be heard: out to silence, then back up from it.
-        if self.seek_after_fade.is_some() || self.fade_in_left > 0 {
-            let len = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
-            let out = self.seek_after_fade.is_some();
-            for (i, frame) in taken.chunks_exact_mut(src_ch).enumerate().skip(lead) {
-                let k = i - lead;
-                let g = if out {
-                    // Down over the period's last `len` frames, silent after.
-                    let from = music.saturating_sub(len);
-                    if k < from {
-                        1.0
-                    } else {
-                        crate::sync::fade_gain(k - from, len, false)
-                    }
-                } else if k < self.fade_in_left {
-                    crate::sync::fade_gain(len - self.fade_in_left + k, len, true)
+        // Fading out (carried on across periods until it's all the way down, then silence), or
+        // fading in from silence.
+        if let Some(mut f) = self.fade_out {
+            for frame in taken.chunks_exact_mut(src_ch).skip(lead).take(music) {
+                let g = if f.done < f.len {
+                    crate::sync::fade_gain(f.done, f.len, false)
                 } else {
-                    1.0
+                    0.0
                 };
-                if g < 1.0 {
-                    frame.iter_mut().for_each(|x| *x = (*x as f32 * g) as i32);
+                f.done += 1;
+                frame
+                    .iter_mut()
+                    .for_each(|x| *x = (f64::from(*x) * f64::from(g)) as i32);
+            }
+            if held {
+                f.silent += want;
+            }
+            self.fade_out = Some(f);
+        } else if self.fade_in_left > 0 {
+            let len = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
+            for (k, frame) in taken
+                .chunks_exact_mut(src_ch)
+                .skip(lead)
+                .take(music)
+                .enumerate()
+            {
+                if k >= self.fade_in_left {
+                    break;
                 }
+                let g = crate::sync::fade_gain(len - self.fade_in_left + k + 1, len, true);
+                frame
+                    .iter_mut()
+                    .for_each(|x| *x = (f64::from(*x) * f64::from(g)) as i32);
             }
-            if !out {
-                self.fade_in_left = self.fade_in_left.saturating_sub(music);
-            }
+            self.fade_in_left = self.fade_in_left.saturating_sub(music);
         }
-        self.sounding = music > 0;
+        self.sounding = music > 0 && !self.fade_out.is_some_and(|f| f.over());
         // What's heard (after the sound tools), kept as mono for a spectrum display.
         if self.spectrum {
             let full = i32::MAX as f32;
@@ -1108,7 +1427,44 @@ impl<T: Item + Serialize> Engine<T> {
             }
             fade = (left / 10.0).min(1.0);
         }
-        output::encode(&self.mapped, &dev_fmt, self.volume * fade, &mut self.bytes);
+        // A change of volume glides over 20 ms on a raised-cosine curve, across periods, instead
+        // of stepping (a step is a click); a steady volume is applied as it is (bit-perfect at 1).
+        let gain = f64::from(self.volume * fade);
+        let gain_now = self.gain_out.unwrap_or(gain);
+        if self.gain_ramp.is_none_or(|r| r.to != gain) && (gain - gain_now).abs() > 1e-9 {
+            let len = (0.020 * f64::from(dev_fmt.rate)) as usize;
+            self.gain_ramp = Some(GainRamp {
+                from: gain_now,
+                to: gain,
+                done: 0,
+                len: len.max(1),
+            });
+        }
+        if let Some(mut r) = self.gain_ramp {
+            let ch = usize::from(dev_fmt.channels.max(1));
+            let mut g = gain_now;
+            for frame in self.mapped.chunks_exact_mut(ch) {
+                if r.done < r.len {
+                    r.done += 1;
+                    let t = r.done as f64 / r.len as f64;
+                    g = r.from + (r.to - r.from) * (1.0 - (std::f64::consts::PI * t).cos()) / 2.0;
+                } else {
+                    g = r.to;
+                }
+                for x in frame {
+                    *x = (f64::from(*x) * g)
+                        .round()
+                        .clamp(f64::from(i32::MIN), f64::from(i32::MAX))
+                        as i32;
+                }
+            }
+            output::encode(&self.mapped, &dev_fmt, 1.0, &mut self.bytes);
+            self.gain_out = Some(g);
+            self.gain_ramp = (r.done < r.len).then_some(r);
+        } else {
+            output::encode(&self.mapped, &dev_fmt, gain as f32, &mut self.bytes);
+            self.gain_out = Some(gain);
+        }
         let dev = self.device.as_mut().expect("opened");
         dev.write(&self.bytes, want)?;
         if !self.started {
@@ -1136,15 +1492,109 @@ impl<T: Item + Serialize> Engine<T> {
             self.dev_fmt = None;
             self.publish(true);
         }
-        // Faded out: now the seek, and a fade back in from it.
-        if let Some(to) = self.seek_after_fade.take() {
+        // Faded out all the way: now the seek, and a fade back in from it.
+        if self.fade_out.is_some_and(|f| f.over())
+            && let Some(to) = self.seek_after_fade.take()
+        {
+            self.fade_out = None;
+            let to = self.room_place_now().unwrap_or(to);
             self.realign(to, 600);
             // No closing-up a few frames after it: that would cut into the fade-in. The few ms a
-            // seek lands off aren't heard apart, and in one room the trimming takes them up.
+            // seek lands off aren't heard apart, and in one room the rate takes them up.
             self.sync_fine = false;
             self.fade_in_left = (crate::sync::FADE.as_secs_f64() * f64::from(fmt.rate)) as usize;
         }
         Ok(())
+    }
+
+    /// A stream that can't keep up: rather than play what has come a few frames at a time (gaps
+    /// with hard edges, heard as crackle), the music fades out over what is left, waits in
+    /// silence until a second of it is ready, and fades back in from where it stopped. In a
+    /// room it then plays a little late, and catches up gently as the room's rules say.
+    fn suspend_or_resume(&mut self, want: usize, fmt: &SourceFormat) {
+        let Some(front) = self.segs.front() else {
+            return;
+        };
+        let rate = f64::from(fmt.rate.max(1));
+        if self.suspended {
+            self.starved_at = Some(Instant::now());
+            let refilled = front.ended || front.frames() as f64 >= rate * 0.9;
+            if refilled {
+                self.suspended = false;
+                self.fade_out = None;
+                // Back from silence: nothing before it for the resampler to carry on from.
+                self.resampler.reset();
+                self.fade_in_mid_song();
+            }
+            return;
+        }
+        // Enough left to fade out over in full, the resampler's look-ahead included.
+        let reserve = (crate::sync::FADE_OUT.as_secs_f64() * rate) as usize + 64;
+        let running_out = !front.ended
+            && front.source.is_waiting()
+            && front.frames() < want + reserve
+            && self.seek_waiting.is_none();
+        if running_out && self.fade_out.is_none() && self.sounding {
+            let len = (crate::sync::FADE_OUT.as_secs_f64() * rate) as usize;
+            self.fade_out = Some(FadeOut {
+                done: 0,
+                len: len.min(front.frames()).max(1),
+                silent: 0,
+            });
+            self.suspended = true;
+            self.starved_at = Some(Instant::now());
+        }
+    }
+
+    /// Music is coming out: fade it out to silence now, and wait until the device holds only
+    /// silence, so whatever comes next (a pause, a stop, a seek, another song, another output)
+    /// starts from silence instead of cutting the wave. Nothing happens when nothing sounds.
+    fn fade_out_now(&mut self) {
+        if self.fading_out
+            || !(self.playing && self.started && self.sounding)
+            || self.device.is_none()
+        {
+            return;
+        }
+        self.fading_out = true;
+        let Some(rate) = self.segs.front().map(|f| f.source.format.rate) else {
+            return;
+        };
+        let len = (crate::sync::FADE_OUT.as_secs_f64() * f64::from(rate)) as usize;
+        let hold = self
+            .device
+            .as_ref()
+            .map_or(0, |d| d.latency_frames())
+            .max(len / 2);
+        // A seek waiting for its fade is the fade already under way: it comes after.
+        let pending = self.seek_after_fade.take();
+        if !self.fade_out.is_some() {
+            self.fade_out = Some(FadeOut {
+                done: 0,
+                len,
+                silent: 0,
+            });
+        }
+        // Each step is a device period: the fade and then a device's worth of silence.
+        for _ in 0..200 {
+            if self.step().is_err() || !self.playing {
+                break;
+            }
+            match self.fade_out {
+                Some(f) if f.over() && f.silent >= hold => break,
+                Some(_) => {}
+                None => break,
+            }
+        }
+        self.fade_out = None;
+        self.sounding = false;
+        self.fading_out = false;
+        if let Some(to) = pending {
+            let to = self.room_place_now().unwrap_or(to);
+            self.realign(to, 600);
+            self.sync_fine = false;
+            self.fade_in_mid_song();
+        }
     }
 
     /// Mix the start of the next song into the end of this one (the last `crossfade_s`
@@ -1217,6 +1667,9 @@ impl<T: Item + Serialize> Engine<T> {
         if let Some(mut d) = self.device.take() {
             d.close();
         }
+        self.resampler.reset();
+        // Another device (or this one again) drifts its own way.
+        self.controller.forget();
         self.dev_fmt = None;
         self.started = false;
         // What the old device held is gone with it, and nothing comes out until another opens.
@@ -1248,20 +1701,42 @@ impl<T: Item + Serialize> Engine<T> {
         {
             self.sync = Some(new);
             self.sync_hold = false;
+            self.controller.plan_moved();
             return;
         }
-        self.trimmer.reset();
+        // A plan that doesn't simply play on from here (a hold, a start ahead, a pause): the
+        // music fades out first, so the hold is silence, not a cut.
+        if let Some(p) = plan
+            && !(p.playing && p.anchor.is_some_and(|a| a <= Instant::now()))
+        {
+            self.fade_out_now();
+        }
+        // The next song just took over: its first plan is lined up with only if off by more
+        // than anyone hears (copies of a song differ by a few tens of ms; apart, the drift rule
+        // takes up what's left; in one room, the rate).
+        let limit_ms: i64 = match plan {
+            Some(p) if self.sync_hold && p.same_room => crate::sync::NUDGE_MS as i64,
+            Some(_) if self.sync_hold => crate::sync::APART_SEEK_MS as i64,
+            _ => 30,
+        };
+        // Back to the song's own rate (gliding there, so nothing is heard).
+        self.rate_target = 0.0;
+        self.controller.reset();
         self.sync_error_ms = None;
         self.sync_hold = false;
         self.sync_avg = None;
         self.sync_far_since = None;
-        self.sync_trim_ahead = None;
         // A seek still waiting for its fade-out was the old plan's place: never carried into
         // this one (a pause stops the device before it runs, and it would land later, in a
         // resumed or the next song, as a jump back to where that pause was).
         self.seek_after_fade = None;
         let Some(plan) = plan else {
+            // On its own again: nothing of the room is left to act on the music.
             self.sync = None;
+            self.sync_fresh = false;
+            self.sync_fine = false;
+            self.settle_until = None;
+            self.starved_at = None;
             return;
         };
         let now = Instant::now();
@@ -1275,12 +1750,17 @@ impl<T: Item + Serialize> Engine<T> {
         };
         if self.segs.is_empty() && self.queue.current().is_some() {
             self.load_current(target);
-        } else if (self.position_ms() as i64 - target as i64).abs() > 30 {
+        } else if (self.position_ms() as i64 - target as i64).abs() > limit_ms {
             if plan.playing {
                 self.seek_heard(target as f64);
             } else {
                 // Paused: the device stops now, so nothing of the move is heard; made at once,
                 // and what it holds from before the move is let go before it starts again.
+                self.notes.push(SyncNote::Seek {
+                    from_ms: self.position_ms(),
+                    to_ms: target,
+                    faded: false,
+                });
                 self.realign(target as f64, 600);
                 self.flush_before_start = true;
             }
@@ -1330,7 +1810,11 @@ impl<T: Item + Serialize> Engine<T> {
                 .unwrap_or(a)
         });
         // Before the start (or not started yet): silence, the song decoding ahead meanwhile.
-        if !starts.is_some_and(|s| now >= s) {
+        // Once this plan's music is coming out, never again: a start known a little later
+        // (the host's clock estimated better just after a start) would otherwise cut silence
+        // into the music; the usual rules take up the difference.
+        let begun = !self.sync_fresh && self.sounding;
+        if !begun && !starts.is_some_and(|s| now >= s) {
             // The start falls within this period: its first sound on the very frame (a start
             // from silence needs no lining up after).
             if let Some(s) = starts
@@ -1342,6 +1826,10 @@ impl<T: Item + Serialize> Engine<T> {
                 if lead < want {
                     self.sync_fresh = false;
                     self.settle_until = Some(now + Duration::from_millis(400));
+                    self.notes.push(SyncNote::Started {
+                        position_ms: self.position_ms(),
+                    });
+                    self.fade_in_mid_song();
                     return Ok(Some(lead));
                 }
             }
@@ -1376,6 +1864,10 @@ impl<T: Item + Serialize> Engine<T> {
             } else {
                 crate::sync::APART_NUDGE_MS
             };
+            // From silence partway into the song (joining, another output): faded in, not cut in.
+            if !self.sounding {
+                self.fade_in_mid_song();
+            }
             if off > limit {
                 self.seek_heard(expected + delay);
             } else {
@@ -1391,13 +1883,20 @@ impl<T: Item + Serialize> Engine<T> {
             let frames = (error.abs() * rate / 1_000.0).round() as usize;
             if error < -1.0 && frames > 0 {
                 // Behind: past the first few frames just decoded.
-                if self.skip_front(frames) < frames {
+                let skipped = self.skip_front(frames);
+                if skipped < frames {
                     self.sync_fine = true;
                 }
+                self.notes.push(SyncNote::Fine {
+                    frames: skipped as i64,
+                });
                 return Ok(Some(0));
             }
             if error > 1.0 && frames > 0 && frames < want {
                 // Ahead: a moment of silence first.
+                self.notes.push(SyncNote::Fine {
+                    frames: -(frames as i64),
+                });
                 return Ok(Some(frames));
             }
         }
@@ -1416,13 +1915,22 @@ impl<T: Item + Serialize> Engine<T> {
         let starved = self
             .starved_at
             .is_some_and(|t| now.duration_since(t) < Duration::from_secs(3));
+        if starved {
+            // Nothing chased while a stream catches up.
+            self.rate_target = 0.0;
+            self.controller.reset();
+        }
         if settling || starved {
             self.sync_far_since = None;
             return Ok(Some(0));
         }
         match crate::sync::correction(avg, plan.same_room, false) {
-            Correction::None => {
+            Correction::None | Correction::Trim { .. } => {
                 self.sync_far_since = None;
+                // A hair faster or slower, gliding, until in step (apart: past 10 ms only).
+                self.rate_target = self
+                    .controller
+                    .rate(avg, want as f64 / rate, plan.same_room);
                 Ok(Some(0))
             }
             Correction::Seek => {
@@ -1434,28 +1942,113 @@ impl<T: Item + Serialize> Engine<T> {
                 }
                 Ok(Some(0))
             }
-            Correction::Trim { ppm, ahead } => {
-                self.sync_far_since = None;
-                if self.sync_trim_ahead != Some(ahead) {
-                    self.sync_trim_ahead = Some(ahead);
-                    self.trimmer.reset();
+        }
+    }
+
+    /// The next `want` frames of the playing song, a hair faster or slower when one room asks
+    /// (and while the rate glides back to the song's own, and lands on a whole frame). Idle, it
+    /// only keeps the last frames in one room (the filter's left side for a correction to come);
+    /// outside a room it does nothing at all.
+    fn rate_front(&mut self, want: usize) {
+        let in_room = self.sync.is_some();
+        let Some(front) = self.segs.front_mut() else {
+            return;
+        };
+        let ch = usize::from(front.source.format.channels.max(1));
+        let rate = front.source.format.rate;
+        // The last second of a song: back to its own rate, so the next one follows exactly.
+        let near_end = front.source.frames.is_some_and(|total| {
+            total.saturating_sub(front.start_frame + front.played) < u64::from(rate)
+        });
+        let target = if in_room && !near_end {
+            self.rate_target
+        } else {
+            0.0
+        };
+        if self.resampler.idle() && target == 0.0 {
+            if in_room {
+                let n = want.min(front.frames()) * ch;
+                let head = front.samples.make_contiguous();
+                self.resampler.played_as_is(&head[..n], ch);
+            }
+            return;
+        }
+        let mut out = std::mem::take(&mut self.resampled);
+        out.clear();
+        let ended = front.ended;
+        let input = front.samples.make_contiguous();
+        match self
+            .resampler
+            .process(input, ch, rate, ended, want, target, &mut out, None)
+        {
+            Some(used) => {
+                let used = used.min(front.frames());
+                front.samples.drain(..used * ch);
+                for &v in out.iter().rev() {
+                    front.samples.push_front(v);
                 }
-                let n = self.trimmer.due(want, ppm);
-                if n > 0 {
-                    self.trim_front(want, n, ahead);
-                }
-                Ok(Some(0))
+                // The count of frames played stays true to the song (the loop adds `want`).
+                front.played = (front.played + used as u64).saturating_sub(want as u64);
+            }
+            // Not decoded far enough to work out (a stream that stalled): as it is, from here.
+            None => {
+                let n = (want * ch).min(input.len());
+                self.resampler.as_is_for_now(&input[..n], ch);
             }
         }
+        self.resampled = out;
+        let ppm = self.resampler.ppm().round() as i32;
+        self.say_rate(ppm);
     }
 
     /// A seek that may be heard: while music is coming out, this period fades out and the seek
     /// comes after it, fading back in; from silence, at once.
     fn seek_heard(&mut self, to_ms: f64) {
+        self.notes.push(SyncNote::Seek {
+            from_ms: self.position_ms(),
+            to_ms: to_ms.max(0.0) as u64,
+            faded: self.sounding && self.playing,
+        });
+        self.say_rate(0);
         if self.sounding && self.playing {
             self.seek_after_fade = Some(to_ms);
+            if self.fade_out.is_none() {
+                let rate = self.segs.front().map_or(48_000, |f| f.source.format.rate);
+                self.fade_out = Some(FadeOut {
+                    done: 0,
+                    len: (crate::sync::FADE_OUT.as_secs_f64() * f64::from(rate)) as usize,
+                    silent: 0,
+                });
+            }
         } else {
             self.realign(to_ms, 600);
+        }
+    }
+
+    /// Where the room's song is heard now (milliseconds), when it plays: where a seek lands that
+    /// waited for a fade-out (the room went on meanwhile).
+    fn room_place_now(&self) -> Option<f64> {
+        let p = self.sync.filter(|p| p.playing)?;
+        Some(p.expected_ms(Instant::now())? + self.heard_delay_ms(&p))
+    }
+
+    /// Music about to come out of silence partway into the song: it fades in over a moment
+    /// (from its very start it rises on its own).
+    fn fade_in_mid_song(&mut self) {
+        if let Some(front) = self.segs.front()
+            && front.start_frame + front.played > 0
+        {
+            self.fade_in_left =
+                (crate::sync::FADE.as_secs_f64() * f64::from(front.source.format.rate)) as usize;
+        }
+    }
+
+    /// Say the rate when it changed by enough to matter (or to or from the song's own).
+    fn say_rate(&mut self, ppm: i32) {
+        let changed = (ppm == 0) != (self.rate_said == 0) || (ppm - self.rate_said).abs() >= 100;
+        if changed {
+            self.rate_said = ppm;
+            self.notes.push(SyncNote::Rate { ppm });
         }
     }
 
@@ -1463,7 +2056,9 @@ impl<T: Item + Serialize> Engine<T> {
     /// the seek itself takes is closed on the next period.
     fn realign(&mut self, to_ms: f64, settle_ms: u64) {
         self.seek(to_ms.max(0.0) as u64);
-        self.trimmer.reset();
+        self.resampler.reset();
+        self.rate_target = 0.0;
+        self.controller.reset();
         self.sync_fine = true;
         self.settle_until = Some(Instant::now() + Duration::from_millis(settle_ms));
     }
@@ -1478,35 +2073,6 @@ impl<T: Item + Serialize> Engine<T> {
         front.samples.drain(..k * ch);
         front.played += k as u64;
         k
-    }
-
-    /// Repeat (`ahead`) or take out `n` frames among the next `want` of the playing song, keeping
-    /// its count of frames played true to the song.
-    fn trim_front(&mut self, want: usize, n: usize, ahead: bool) {
-        let Some(front) = self.segs.front_mut() else {
-            return;
-        };
-        let ch = usize::from(front.source.format.channels.max(1));
-        let span = if ahead {
-            want.saturating_sub(n)
-        } else {
-            want + n
-        }
-        .min(front.frames());
-        if span <= n {
-            return;
-        }
-        let mut head: Vec<i32> = front.samples.drain(..span * ch).collect();
-        if ahead {
-            crate::sync::repeat_frames(&mut head, ch, n);
-            front.played = front.played.saturating_sub(n as u64);
-        } else {
-            crate::sync::drop_frames(&mut head, ch, n);
-            front.played += n as u64;
-        }
-        for v in head.into_iter().rev() {
-            front.samples.push_front(v);
-        }
     }
 
     /// A period of silence (the device keeps its clock while the room hasn't started).
@@ -1618,6 +2184,7 @@ impl<T: Item + Serialize> Engine<T> {
         // stream, not playing, though the device runs on in silence.
         let stalled = !opening
             && (self.seek_waiting.is_some()
+                || self.suspended
                 || self
                     .segs
                     .front()
@@ -1656,12 +2223,18 @@ impl<T: Item + Serialize> Engine<T> {
                 crate::spectrum::levels(self.recent.make_contiguous(), rate)
             }),
             sync: self.sync.map(|_| self.sync_status()),
+            sync_notes: std::mem::take(&mut self.notes),
+            ran_dry: self.ran_dry,
         };
         // The regular report, when it would only repeat the last one (paused, or nothing loaded),
         // is not sent: every window would otherwise redraw several times a second for nothing.
         // A command always gets its answer (`now`), and so does a new queue.
         let said = Said::of(&status);
-        if !now && status.queue.is_none() && self.said.as_ref() == Some(&said) {
+        if !now
+            && status.queue.is_none()
+            && status.sync_notes.is_empty()
+            && self.said.as_ref() == Some(&said)
+        {
             return;
         }
         self.said = Some(said);
@@ -1696,6 +2269,11 @@ mod tests {
 
     /// A silent 16-bit stereo WAV of `frames` frames.
     fn wav(path: &Path, frames: usize) {
+        std::fs::write(path, wav_data(frames)).unwrap();
+    }
+
+    /// A silent 16-bit stereo WAV of `frames` frames, as bytes.
+    fn wav_data(frames: usize) -> Vec<u8> {
         let data_len = frames * 4;
         let mut v = Vec::with_capacity(44 + data_len);
         v.extend_from_slice(b"RIFF");
@@ -1711,7 +2289,7 @@ mod tests {
         v.extend_from_slice(b"data");
         v.extend_from_slice(&(data_len as u32).to_le_bytes());
         v.resize(44 + data_len, 0);
-        std::fs::write(path, v).unwrap();
+        v
     }
 
     fn songs(n: usize) -> (PathBuf, Vec<Counted>) {
@@ -1853,25 +2431,25 @@ mod tests {
     }
 
     /// A 16-bit stereo 44.1 kHz WAV of `secs` seconds, as bytes (a quiet ramp, never silent).
+    /// Made in memory: no folder for tests running at once to share (two of them making the
+    /// same one and one removing it under the other made them fail now and then).
     fn wav_bytes(secs: usize) -> Vec<u8> {
-        let frames = secs * 44_100;
-        let dir = std::env::temp_dir().join(format!("venuta-wav-{}-{secs}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("song.wav");
-        wav(&path, frames);
-        let mut v = std::fs::read(&path).unwrap();
-        std::fs::remove_dir_all(dir).ok();
+        let mut v = wav_data(secs * 44_100);
         for (i, s) in v[44..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
             *s = ((((i / 2) % 400) as i16 - 200) * 8).to_le_bytes();
         }
         v
     }
 
-    /// Plays `items` at a device's pace, and hands back each status as it comes.
-    fn play(items: Vec<Song>) -> (Player<Song>, std::sync::mpsc::Receiver<Status<Song>>) {
+    /// Plays `items` at a device's pace on the engine `kind`, and hands back each status as it
+    /// comes.
+    fn play(
+        kind: EngineKind,
+        items: Vec<Song>,
+    ) -> (Player<Song>, std::sync::mpsc::Receiver<Status<Song>>) {
         let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
         let (tx, rx) = channel::<Status<Song>>();
-        let player = Player::spawn(OutputChoice::PacedMemory(captured), move |s| {
+        let player = Player::spawn_with(kind, OutputChoice::PacedMemory(captured), move |s| {
             let _ = tx.send(s);
         });
         player.send(Cmd::Set {
@@ -1884,8 +2462,31 @@ mod tests {
         (player, rx)
     }
 
-    #[test]
-    fn a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come() {
+    /// Each stream test runs on both engines: `name::engine_1`, `name::engine_2`.
+    macro_rules! on_both {
+        ($($name:ident),*) => {
+            $(
+                mod $name {
+                    #[test]
+                    fn engine_1() {
+                        super::$name(super::EngineKind::One)
+                    }
+                    #[test]
+                    fn engine_2() {
+                        super::$name(super::EngineKind::Two)
+                    }
+                }
+            )*
+        };
+    }
+
+    on_both!(
+        a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come,
+        a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on,
+        a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts
+    );
+
+    fn a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come(kind: EngineKind) {
         use crate::decode::mock_host::{Serve, host};
         let song = Arc::new(wav_bytes(3));
         // About 0.6 s arrives, then the host stalls; asked again, it sends the rest.
@@ -1896,11 +2497,14 @@ mod tests {
                 Serve::Full
             }
         });
-        let (_player, rx) = play(vec![Song::Streamed {
-            url: host.url.clone(),
-            len: song.len() as u64,
-            stall_ms: 1_500,
-        }]);
+        let (_player, rx) = play(
+            kind,
+            vec![Song::Streamed {
+                url: host.url.clone(),
+                len: song.len() as u64,
+                stall_ms: 1_500,
+            }],
+        );
         let started = Instant::now();
         let (mut waited_at, mut moved_on) = (None, false);
         while started.elapsed() < Duration::from_secs(15) {
@@ -1925,22 +2529,24 @@ mod tests {
         assert!(moved_on, "and played on once they came");
     }
 
-    #[test]
-    fn a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on() {
+    fn a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on(kind: EngineKind) {
         use crate::decode::mock_host::{Serve, host};
         let song = Arc::new(wav_bytes(3));
         let host = host(song.clone(), |n, _| {
             Serve::ThenStall(if n == 0 { 100 * 1024 } else { 0 })
         });
         let (dir, files) = songs(1);
-        let (_player, rx) = play(vec![
-            Song::Streamed {
-                url: host.url.clone(),
-                len: song.len() as u64,
-                stall_ms: 600,
-            },
-            Song::File(files[0].path.clone()),
-        ]);
+        let (_player, rx) = play(
+            kind,
+            vec![
+                Song::Streamed {
+                    url: host.url.clone(),
+                    len: song.len() as u64,
+                    stall_ms: 600,
+                },
+                Song::File(files[0].path.clone()),
+            ],
+        );
         let started = Instant::now();
         let (mut said, mut moved_on) = (None, false);
         while started.elapsed() < Duration::from_secs(15) {
@@ -1960,5 +2566,84 @@ mod tests {
         assert!(said.contains("The streamed song"), "{said}");
         assert!(said.contains(crate::decode::STREAM_LOST), "{said}");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts(kind: EngineKind) {
+        use crate::decode::mock_host::{Serve, host};
+        // A 440 Hz sine (16-bit stereo, 44.1 kHz), served at about three quarters of the pace it
+        // plays at: it runs out again and again.
+        let mut song = wav_bytes(6);
+        for (i, s) in song[44..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let t = (i / 2) as f64 / 44_100.0;
+            *s = ((8_000.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16).to_le_bytes();
+        }
+        let song = Arc::new(song);
+        let len = song.len() as u64;
+        let host = host(song, |_, _| Serve::Paced {
+            first: 96 * 1024,
+            piece: 8 * 1024,
+            every_ms: 60,
+        });
+        let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
+        let (tx, rx) = channel::<Status<Song>>();
+        let player = Player::spawn_with(
+            kind,
+            OutputChoice::PacedMemory(captured.clone()),
+            move |s| {
+                let _ = tx.send(s);
+            },
+        );
+        player.send(Cmd::Set {
+            items: vec![Song::Streamed {
+                url: host.url.clone(),
+                len,
+                stall_ms: 30_000,
+            }],
+            index: 0,
+            start_ms: 0,
+            play: true,
+            from: String::new(),
+        });
+        let (mut waited, t0) = (false, Instant::now());
+        while t0.elapsed() < Duration::from_secs(5) {
+            if let Ok(s) = rx.recv_timeout(Duration::from_millis(200)) {
+                waited |= s.playing && s.position_ms > 500 && s.buffering;
+            }
+        }
+        drop(player);
+        let c = std::mem::take(&mut *captured.lock().unwrap());
+        // Left channel, 16-bit values.
+        let x: Vec<i32> = c
+            .bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .step_by(2)
+            .map(|b| i32::from_le_bytes(*b) >> 16)
+            .collect();
+        let first = x.iter().position(|&v| v != 0).expect("it played");
+        let last = x.iter().rposition(|&v| v != 0).unwrap();
+        // The sine's own largest step from one frame to the next, and gaps inside the music.
+        let step = 8_000.0 * 2.0 * std::f64::consts::PI * 440.0 / 44_100.0;
+        let (mut gaps, mut hard) = (0, 0);
+        let mut i = first;
+        while i <= last {
+            if x[i] == 0 && x.get(i + 1) == Some(&0) {
+                let start = i;
+                while i <= last && x[i] == 0 {
+                    i += 1;
+                }
+                gaps += 1;
+                let edge = f64::from(x[start - 1].abs().max(x[i].abs()));
+                if edge > step * 0.5 {
+                    hard += 1;
+                }
+                continue;
+            }
+            i += 1;
+        }
+        assert!(gaps > 0, "it did run out (or the test proves nothing)");
+        assert!(waited, "and said it was buffering meanwhile");
+        assert_eq!(hard, 0, "every wait faded out and back in ({gaps} waits)");
     }
 }

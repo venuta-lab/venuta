@@ -63,6 +63,18 @@ pub struct Settings {
     /// another account, or from the old switches for the whole library.
     #[serde(default)]
     pub ytm_choices: BTreeMap<String, YtmChoices>,
+    /// The player's own settings.
+    #[serde(default)]
+    pub player: PlayerSettings,
+}
+
+/// The player's settings: `engine` 1 plays with engine 1, kept as a fallback until it is removed;
+/// anything else (and no setting) plays with engine 2, the default since it passed every gate
+/// (release R1 of the Listen together design).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerSettings {
+    #[serde(default)]
+    pub engine: u32,
 }
 
 impl Settings {

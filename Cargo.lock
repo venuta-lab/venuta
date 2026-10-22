@@ -169,8 +169,6 @@ dependencies = [
  "engine",
  "getrandom 0.3.4",
  "image",
- "iroh",
- "iroh-tickets",
  "lyrics-text",
  "lyrics-translate",
  "media-access",
@@ -194,6 +192,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "together",
+ "together-net",
  "tokio",
  "ureq",
  "urlencoding",
@@ -448,6 +447,10 @@ dependencies = [
  "log",
  "url",
 ]
+
+[[package]]
+name = "audio-check"
+version = "0.3.0"
 
 [[package]]
 name = "audio-codec-algorithms"
@@ -5559,6 +5562,8 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "player"
 version = "0.3.0"
 dependencies = [
+ "audio-check",
+ "blake3",
  "md-5",
  "media-access",
  "rand 0.9.5",
@@ -5566,8 +5571,11 @@ dependencies = [
  "serde_json",
  "symphonia",
  "symphonia-adapter-libopus",
+ "together",
  "ureq",
  "wasapi",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -8373,10 +8381,30 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 name = "together"
 version = "0.3.0"
 dependencies = [
+ "arc-swap",
  "base64 0.22.1",
  "blake3",
+ "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "together-net"
+version = "0.3.0"
+dependencies = [
+ "blake3",
+ "bytes",
+ "getrandom 0.3.4",
+ "iroh",
+ "iroh-tickets",
+ "n0-future",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "together",
+ "tokio",
 ]
 
 [[package]]

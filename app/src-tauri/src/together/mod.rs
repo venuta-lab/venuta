@@ -10,6 +10,8 @@ mod follow;
 mod guest;
 mod host;
 mod net;
+#[cfg(test)]
+mod room_check;
 mod sources;
 
 use crate::playback::{Playback, QueueItem};

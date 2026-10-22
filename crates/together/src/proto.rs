@@ -5,7 +5,11 @@
 //! and no message ever carries a file path (the host's songs are known by a hash, and their
 //! bytes are only ever streamed by the host on request).
 
+/// Protocol 3, beside this one until the live sessions move to it (R2).
+pub mod v3;
+
 use crate::timeline::Timeline;
+
 use serde::{Deserialize, Serialize};
 
 /// The longest message line accepted, in bytes (a full room with a long queue fits easily).
