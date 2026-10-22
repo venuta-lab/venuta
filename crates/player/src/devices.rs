@@ -594,7 +594,11 @@ fn all_depths(bits: u16) -> Vec<(u16, u16, SampleKind)> {
 
 /// 44.1 kHz and its multiples, or 48 kHz and its.
 fn family(rate: u32) -> u32 {
-    if rate % 11_025 == 0 { 44_100 } else { 48_000 }
+    if rate.is_multiple_of(11_025) {
+        44_100
+    } else {
+        48_000
+    }
 }
 
 /// The rates to try for a song at `want`, among `have`: its own, then its family's (the
