@@ -106,3 +106,21 @@ save(
     line(13000, 17000, 'Before the streetlights fade', 'Latn'),
   ]),
 )
+
+// Lines with nowhere to wrap: one very long word, a line whose words are joined by no-break
+// spaces (as some lyrics send them), a long line in a script written without spaces (Thai), and
+// a short one after them.
+const NB = '\u00a0'
+save(
+  'unbroken',
+  song('hi', [
+    line(1000, 5000, 'Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch', 'Latn', { ...ES, tr: 'A town with a very long name' }),
+    line(5000, 9000, ['सपनों', 'की', 'इस', 'नगरी', 'में', 'हम', 'दोनों', 'साथ', 'चलेंगे', 'हमेशा'].join(NB), 'Deva', {
+      ...MIX,
+      roman: 'Sapnon ki is nagri mein hum dono saath chalenge hamesha',
+      tr: 'In this city of dreams the two of us will always walk together',
+    }),
+    line(9000, 13000, 'ฉันจะรอเธออยู่ตรงนี้ตลอดไปไม่ว่าจะนานแค่ไหนก็ตามเพราะหัวใจของฉันเป็นของเธอ', 'Thai'),
+    line(13000, 17000, 'Short and sweet', 'Latn'),
+  ]),
+)

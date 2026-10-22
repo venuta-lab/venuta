@@ -38,3 +38,20 @@ test('nothing measured yet (no room, no width) asks nothing', () => {
   assert.equal(shrinkFor({ rows: [row(0, 0)], height: 0, room: 0 }), 1)
   assert.equal(shrinkFor({ rows: [], height: 10, room: 0 }), 1)
 })
+
+test('the desktop strip: a line with nowhere to wrap shrinks across before it is cut, and breaks only at the smallest size', () => {
+  // A strip 496 px across (520 less its padding); the line one word, 1100 px wide at the chosen size.
+  const strip = 496
+  const word = 1100
+  let fit = 1
+  for (let i = 0; i < 10; i++) {
+    const step = nextFit(fit, shrinkFor({ rows: [row(word * fit, strip)], height: 60 * fit, room: 248 }))
+    if (step === fit) break
+    fit = step
+  }
+  assert.ok(word * fit <= strip && fit > MIN_FIT, `fits across at ${fit}`)
+  // Four times wider than the strip: it stops at the smallest size (where its word may break).
+  fit = 1
+  for (let i = 0; i < 10; i++) fit = nextFit(fit, shrinkFor({ rows: [row(4 * strip * fit, strip)], height: 60 * fit, room: 248 }))
+  assert.equal(fit, MIN_FIT)
+})

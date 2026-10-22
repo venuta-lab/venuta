@@ -1,0 +1,53 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch",
+      "script": "Latn",
+      "translation": {
+        "text": "A town with a very long name",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "firefox-translations"
+        }
+      }
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "सपनों की इस नगरी में हम दोनों साथ चलेंगे हमेशा",
+      "script": "Deva",
+      "roman": {
+        "text": "Sapnon ki is nagri mein hum dono saath chalenge hamesha",
+        "lang": "hi-Latn",
+        "source": {
+          "kind": "made"
+        }
+      },
+      "translation": {
+        "text": "In this city of dreams the two of us will always walk together",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "ฉันจะรอเธออยู่ตรงนี้ตลอดไปไม่ว่าจะนานแค่ไหนก็ตามเพราะหัวใจของฉันเป็นของเธอ",
+      "script": "Thai"
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "Short and sweet",
+      "script": "Latn"
+    }
+  ],
+  "lang": "hi",
+  "version": 1
+}

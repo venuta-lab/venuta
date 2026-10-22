@@ -6,8 +6,9 @@
 //   /lyrics-preview.html?view=stage&song=hindi&theme=dark&rows=all&size=xl&line=2
 //
 //   view   nowplaying | stage | overlay | mini | settings
-//   song   hindi | japanese | spanish | mixed | plain
+//   song   hindi | japanese | spanish | mixed | plain | unbroken (lines with nowhere to wrap)
 //   theme  dark | light
+//   style  a theme (venuta, thermoptic, skin99...): its fonts, for the Theme look
 //   rows   all | none | roman | translation   (the two switches, for every language)
 //   size   s | m | l | xl                     (the big screen's and desktop lyrics' size)
 //   look   karaoke | clean | glow | outline | serif | theme
@@ -28,7 +29,7 @@ const through = Number(q.get('at') ?? 0.45)
 // What every module reads as it loads, so it is set first.
 const put = (k: string, v: unknown) => localStorage.setItem(k, JSON.stringify(v))
 localStorage.clear()
-put('appearance', { theme })
+put('appearance', q.get('style') ? { theme, style: q.get('style') } : { theme })
 put('lyric-second-lines', { defaults: { roman: rows === 'all' || rows === 'roman', translation: rows === 'all' || rows === 'translation' }, byLang: {}, into: 'en' })
 for (const w of ['stage', 'overlay']) put(`lyric-look-${w}`, { look, size, colour: 'accent', lines: 2 })
 put('mini-player', { lyrics: true, onTop: true })
@@ -69,6 +70,7 @@ const TITLES: Record<string, [string, string]> = {
   spanish: ['Bajo la luna', 'Preview Artist'],
   mixed: ['Dil Ye Mera', 'Preview Artist'],
   plain: ['Morning Comes', 'Preview Artist'],
+  unbroken: ['Nowhere to Wrap', 'Preview Artist'],
 }
 const [title, artist] = TITLES[song] ?? ['Preview', 'Preview Artist']
 const line = m.lines[Math.min(lineAt, m.lines.length - 1)]

@@ -2,9 +2,11 @@ import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { inApp } from '../../lib/engine'
+import { MIN_FIT, nextFit, shrinkFor } from '../../lib/lyricFit'
 import { grownStrip, stripRows } from '../../lib/lyricRows'
 import { scaleOf, useLyricLook } from '../../lib/lyricLook'
 import { connectPlayer } from '../../lib/player'
+import { usePrefs } from '../../lib/prefs'
 import { keyAction } from '../../lib/secondChoice'
 import { rowViewsAt } from '../../lib/useSecondLines'
 import { LyricText } from './LyricText'
@@ -78,8 +80,12 @@ function Lines({ frame }: { frame: Frame }) {
   const editing = !frame.locked
 
   // The words size to the window: the chosen size is a share of what fits in its height (Medium
-  // keeps the size it always had in its first place), and a line that wraps shrinks only as much
-  // as it must, so nothing is ever cut off.
+  // keeps the size it always had in its first place), and the lines shrink only as much as they
+  // must to fit it, across and down, so nothing is ever cut off: a line that wraps too tall, and a
+  // line with nowhere to wrap (one long word, words joined by no-break spaces, a wide theme font)
+  // too wide. Only past the smallest size does the line being sung break inside a word; the next
+  // line, smaller and dim, breaks inside a word rather than shrink it (as on the big screen,
+  // lib/lyricFit.ts).
   const box = useRef<HTMLDivElement>(null)
   const inner = useRef<HTMLDivElement>(null)
   // The room the words have (the window, less the bar while it shows).
@@ -106,11 +112,18 @@ function Lines({ frame }: { frame: Frame }) {
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [])
+  const prefs = usePrefs()
+  const [fonts, setFonts] = useState(0)
+  useEffect(() => {
+    const f = () => setFonts((n) => n + 1)
+    document.fonts?.addEventListener('loadingdone', f)
+    return () => document.fonts?.removeEventListener('loadingdone', f)
+  }, [])
   const fits = (area.h - 24) / share
   const want = Math.max(14, fits * 0.5 * scaleOf(look.size))
   const [fit, setFit] = useState(1)
   // A new line (or size, or window): measured afresh.
-  const measureKey = `${at}|${want}|${area.w}|${look.lines}|${look.look}|${rowsKey}`
+  const measureKey = JSON.stringify([at, now, next, want, area.w, look.lines, look.look, rowsKey, prefs.style, prefs.pack, fonts])
   const [measured, setMeasured] = useState(measureKey)
   if (measured !== measureKey) {
     setMeasured(measureKey)
@@ -120,11 +133,14 @@ function Lines({ frame }: { frame: Frame }) {
     const b = box.current
     const i = inner.current
     if (!b || !i) return
+    // The line being sung (not the one on its way out): how wide its words are, against the strip.
+    const rows = [...i.querySelectorAll<HTMLElement>(`[data-fit="${at}"]`)].map((r) => ({ scroll: r.scrollWidth, client: r.clientWidth }))
     // Its padding (p-3) is no room for words.
-    const room = b.clientHeight - 24
-    if (i.scrollHeight - room > 1 && fit > 0.4) setFit(Math.max(0.4, fit * (room / i.scrollHeight) * 0.98))
-  }, [fit, measureKey])
+    const step = nextFit(fit, shrinkFor({ rows, height: i.scrollHeight, room: b.clientHeight - 24 }))
+    if (step !== fit) setFit(step)
+  }, [fit, measureKey, at])
   const px = want * fit
+  const breakAnywhere = fit <= MIN_FIT
 
   return (
     <div ref={box} data-fit-box className="flex h-full w-full items-center justify-center overflow-hidden p-3">
@@ -134,7 +150,7 @@ function Lines({ frame }: { frame: Frame }) {
         ) : (
           <>
             <AnimatePresence mode="popLayout" initial={false}>
-              <motion.div key={`n${at}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -14 }} transition={{ duration: 0.3 }}>
+              <motion.div key={`n${at}`} data-fit={at} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -14 }} transition={{ duration: 0.3 }}>
                 <LyricText
                   text={now ?? ''}
                   seconds={rowViewsAt(seconds, at, { position, progress })}
@@ -145,13 +161,14 @@ function Lines({ frame }: { frame: Frame }) {
                   colour={frame.colour}
                   px={px}
                   ground={frame.ground}
+                  breakAnywhere={breakAnywhere}
                 />
               </motion.div>
             </AnimatePresence>
             {look.lines === 2 && next !== undefined && (
               <AnimatePresence mode="popLayout" initial={false}>
                 <motion.div key={`x${at}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} className="mt-1">
-                  <LyricText text={next} look={look.look === 'karaoke' ? 'clean' : look.look} now={false} colour={frame.colour} px={px * 0.7} ground={frame.ground} />
+                  <LyricText text={next} look={look.look === 'karaoke' ? 'clean' : look.look} now={false} colour={frame.colour} px={px * 0.7} ground={frame.ground} breakAnywhere />
                 </motion.div>
               </AnimatePresence>
             )}
