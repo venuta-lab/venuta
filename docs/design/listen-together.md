@@ -1695,6 +1695,88 @@ A queue edit that changes which song is next drops the next voice (a `Drop` also
 - *Measured* (`cargo test -p player`, all on simulated clocks unless said): the suite, both engines, 14 + 4 + 7 + 6 tests; `engine2.rs` 12 gates (every solo action clean by the music-shaped, bit-exact, LPC and dip detectors; status reports on "venuta-status" only; a room taking the player and the own queue coming back bit-identical for 1.5 s against a player that never joined); `engine2_alloc.rs`: 0 allocations and 0 frees over more than 1,000 render calls through every solo action; `engine2_log.rs`: a line at 60 s with 6,000 periods and one at the stop. A renderer made again for every start costs nothing after the first per device rate (the kernels are kept: they took 15 to 25 ms).
 - *Left to WP5:* the sync tick, `arm_next` and `disarm` (kept as messages, not acted on), suspensions, modes, the host's room made from its own program in place (no fade: note 07 C1.1), and `Cmd::Sync`.
 
+#### WP5 notes: room playback in engine 2 (the plan)
+
+**Where it is.** The sync tick (the measure, the controller, the DAC's rate) is in `engine/control.rs` beside the deck; the room program and the `Cmd::Sync` adapter are in `engine/program.rs`. The renderer, the voices and the output are used as WP3, WP2 and WP1 left them; three small additions elsewhere are listed at the end.
+
+**The tick.** While a room program (or the adapter) exists, the control thread runs its tick every 20 ms of the engine's clock (it already wakes every 5 ms then). Nothing of it runs for your own queue: the own program has no tick, no rate and no room field.
+
+**The error, measured from the presentation** (4.9 as written, with these choices):
+
+1. Only from a presentation pair. `f = pair.frame + (now - pair.time) x rate` is the frame at the DAC now. Before the first pair of a start there is no measure (the controller holds). The output's learned latency (`Output::latency()`, WP1d: about 105 ms held in exclusive mode on the owner's Realtek, with a band of about 5 ms from its uneven events) is used where no pair can be: to place a start before a pair comes, and as the deck's lead. `OutputInfo::buffer_frames` is used only before the output has learned anything. The band is the wobble of what the driver holds, not of the pair (the position itself is smooth), so it does not widen the controller's band.
+2. The content at `f` from the voice's markers (`Deck::content_at`), in source frames; the room's content `c_room = c / source rate - offset`.
+3. Heard at `now + extra`; the room is then at `anchor.content_at(map.host_of(now + extra))`; `error = c_room - expected`, positive ahead.
+
+**The DAC's rate** (the feed-forward's second half). Each tick keeps the newest pair; a least-squares line through the pairs of the last 10 s gives frames per second of the mono clock, so `dac_ppm`. Used once the pairs span 2 s. A new start (frames from 0) or a pair more than 2 ms off the line (a gap, a slip) starts the window again, so a gap never reads as drift. The learned value per output (WP15) is not kept yet.
+
+**The controller** is 4.9's table: per tick the raw error goes into a median of 10; the median into an average with a 1 s time constant (reset to the median at a settle); `ff = (map.rate - 1) x 1e6 - dac_ppm`; the proportional part `-gain x error` only while correcting (on past the band's in-edge, off under its out-edge; the band at least half the clock's bound); the integral `-gain x error / T` per second, only while settled and under 20 ms, clamped to ±200 ppm; the sum clamped to ±500 ppm into the renderer's `RateTarget` (the renderer glides at 1000 ppm/s). Same room: 250 ppm/ms, band 1 ms in and 0.3 ms out, T 30 s, realign line 50 ms for 2 s. Apart: 25 ppm/ms, 10 and 3 ms, 60 s, 250 ms for 3 s. An approximate copy takes the apart column whatever the mode. Settling (400 ms after a start, a switch or a realign): no integral, no realign line. Suspended or stepped out: frozen (the rate target stays). With proportional gain 250 ppm/ms the loop closes at 0.25/s against the filter's 1/s: critically damped, no overshoot past the band. Under D3 the rate target is the feed-forward whenever the room plays, so the room is never bit-perfect (the signal path says "Kept in step with the room").
+
+**Status.** `error_us` is the filtered error; `ppm` the trim the renderer reports; `sub_state` InStep inside the band, Correcting while the proportional part acts, Realigning while a realign or an output switch's re-entry is prepared or under way; `heard` (below).
+
+**The room program's voices.** The song playing, the armed next, and one spare, shared by a prepare, a realign and a re-entry (a prepare cancels a realign or a re-entry: the commit that follows puts the person where the room is anyway). The renderer's fourth slot stays the one fading out.
+
+**Ready** (4.4): a file with 2 s decoded at its place (its ring full) or its end; a stream with 3 s decoded and either 10 s of bytes past the place (by the byte share of the song's length) or the whole download. Re-entries after a stall want 5 s decoded past where the room will be, so they open with an 8 s ring.
+
+**Commit** (4.4's table, by what plays against the anchor):
+
+| Situation | What the renderer is told |
+|---|---|
+| The prepared entry, something sounding, the same entry | `SwitchAt Crossfade 40 ms` at the frame the anchor gives the prepared place |
+| The prepared entry, something else sounding | `SwitchAt FadeOutThenIn 30 ms` ending there |
+| The prepared entry, nothing sounding | `StartAt` there: no fade at the song's first frame, 15 ms partway, 300 ms when it is a join (the commit's frame already past when it is ready) |
+| The entry already playing (the commit after a boundary, the host's own first anchor, a re-sent anchor) | nothing: a no-op; the controller measures against the new anchor |
+| The armed next, not switched (its boundary missed) | a re-entry into it at the room's place |
+| Anything else (no item known) | the anchor is kept; nothing plays until a prepare |
+
+A commit that moves the room (not a no-op) and every hold withdraw the armed next (the room arms again after every new anchor, Room v2). Late commits are the renderer's (it starts at the room's place for now, faded in).
+
+**Hold.** `StopAt` 30 ms at the frame of `anchor.host_us` (at once when that has passed); once silent the voice goes, and the held anchor is kept: the resume comes as a prepare.
+
+**The armed next, switched by the player at its boundary.** `arm_next` opens the next voice at my copy's place for the room's content 0 (`offset`, or the song's start and a later frame for a negative offset). With the boundary's frame `F` (the clock map and the presentation) and the playing voice's end `E` (its length and its rendered place), from 1 s before `F`, once the next is ready:
+
+| Case | Command |
+|---|---|
+| Crossfade transition, the old one still sounding at `F` | `SwitchAt Crossfade` (the room's length) at `F` |
+| Gapless, both copies exact, `|E - F|` within 5 ms | `SwitchAt Gapless` (at the old one's own end; the few ms are taken up by rate) |
+| `E` before `F` by more than 5 ms (a shorter copy, an offset), or the old one gone | `StartAt` the next at `F` (no fade from its first frame, 15 ms partway) |
+| `E` after `F` by more than 5 ms (a longer copy, or its length unknown), and `Cut` | `SwitchAt EndFade 150 ms` ending at `F` |
+
+The next not ready by `F` less two periods: the old one fades out 150 ms ending at `F` (when it is longer) and the next joins late, alone, as a re-entry (300 ms). When the next takes over (`Joined` or `Started`), it is the song playing, its anchor `{next, content 0, boundary}` (the commit that follows is a no-op), and the controller settles. `disarm` drops the next unless it is already given (inside the last second; Room v2 never disarms inside 3 s of the boundary).
+
+**Realign** (4.9's conditions 1 to 5). Wanted once the line has held; then the quiet moment: the voice's blocks' loudness (below) from 0.5 s to 2 s ahead of what is rendered, the first 50 ms under -40 dBFS; none: looked for again each tick as more decodes, up to 10 s or 30 s from when it was wanted, then the quietest 50 ms in hand ahead. The spare is opened at my place for the room at the moment's frame; ready before that frame less two periods: `SwitchAt Crossfade 40 ms` there; not ready: the moment is given up and the next one looked for. At most one per 10 s (same room) or 30 s (apart), never within 3 s of the song's end or the armed boundary, never while a fade is under way or due in the next second.
+
+**Suspensions and re-entries** (4.10). A re-entry is one way back in for every case: a voice opened at my place for where the room will be 1 s on, started when ready at the room's place then (the renderer skips to it inside what is decoded), faded in; if by then the room has moved past what the voice holds, it is opened again further on, the lead doubled (a stream still behind).
+
+| Case | Sub-state meanwhile | Back in with |
+|---|---|---|
+| The voice ran dry (`Starved` note): the renderer has faded it out; it is dropped at once (never the renderer's own resume at the old place) | `Suspended(Buffering)` | 5 s decoded past the room's place, 300 ms fade-in |
+| The output lost (the deck reopens it with back-off) | `Suspended(OutputLost)` | the new output started, 300 ms fade-in |
+| An output switch (`Cmd::Output`) | `Realigning` | 15 ms fade-in (the splice table's output switch) |
+| `rejoin` after `step_out`, the armed next missed | `SteppedOut` (until `rejoin`), `Opening` | 300 ms fade-in |
+
+The room is never told to wait: nothing here touches the anchor. `Interrupted` (Android audio focus) and `Sleeping` (the session's wake) have no player trigger yet: a new clock epoch is measured afresh (the filter restarts; a far error realigns as above), and the session's sleep handling is WP9's and the Android output's.
+
+**Modes.** `set_mode` changes the controller's column at once (no sound). Every device that can't hold (over 5 ms for 30 s, after settling): the music fades out over 1 s and `RoomPlayStatus::cant_hold` says so; the person chooses (the conductor calls `set_mode(Apart)`, which re-enters at apart quality, or detaches for one speaker).
+
+**The host's room from its own music in place** (A1, note 07 C1.1). `RoomPlayer::adopt(clock, mode, entry)`: the own program's sounding voice is handed to the room program as `entry` (offset 0, exact) with no command to the renderer at all; the own program keeps its queue and waits paused at the place heard then (a fresh voice there, as at any pause). What was decoded ahead for the own queue is dropped (it never sounded). Until the first anchor nothing acts on the music (no rate either). `RoomPlayStatus::heard` gives, every tick, the room's content heard at a host time (`Anchor { entry, content_us, host_us, playing, seq: 0 }`), from the presentation: the session makes Room v2's opening anchor from it, and the commit of that anchor is a no-op. Nothing sounding: `adopt` is `attach`. A one-speaker host's re-anchoring (WP18) reads the same `heard`.
+
+**Detach** (unchanged from WP4): the room's voices fade out over 1 s, the room program is dropped whole, the own program comes back paused. New here: the deck renews its renderer before the own program sounds again (the output stops once the fade is over and starts a fresh renderer, with a fresh `RateTarget` at 0), so no trim or resampler state of the room can reach your own music, by structure.
+
+**The `Cmd::Sync` adapter** (protocol 2 rooms on engine 2, until WP13). A plan makes `Program::Followed { own, plan }`: your own program, driven by the plan. Today's follower loads the room's songs into the own queue (`Set`, `Insert`, `Next`, `Pause`), and the own program still does what it does with them (the next decoded ahead, the gapless link, the queue moving on). The plan takes the start and the place: the current song starts (`StartAt`) on the frame the plan's anchor gives (an `Instant`, turned into the engine's clock as it arrives), waiting silent before (the output runs in silence, so the start's frame is exact); `playing: false` holds it at `position_ms` (faded out, moved in silence). The tick is the same measure and controller, with the plan as the room's timeline (`same_room` picks the column). A new plan within 20 ms (same room) or 300 ms (apart) of the old is a nudge, taken up by rate; any other moves the music: playing, the old place fades out over 30 ms and the new one fades in (`SwitchAt FadeOutThenIn`, engine 1's faded seek), paused or waiting, in silence. After the own queue moves on to the next song, the plan is held (no correction) until the follower's plan for it comes. The realign line acts at once with the same faded seek (engine 1's rule, no quiet moment). Engine 1's `SyncNote`s are said (`Rate` on a change of 100 ppm or to or from 0, `Seek`, `Started`) through a new queue the status thread drains. `Cmd::Sync(None)` returns to `Program::Own` and renews the renderer.
+
+**Additions outside WP5's files**, each its own commit:
+
+- `contract:` `RoomPlayer::adopt` (a provided method: by default `attach`) and `RoomPlayStatus::{heard, cant_hold}` (`together/src/room_player.rs`; `Player`'s `adopt` in `engine.rs`).
+- `contract:` a voice keeps the loudness of the blocks it decoded (`Voice::loudness`, the last 45 s, for the quiet moment; `voice.rs`).
+- `engine/status.rs` and `engine/memory.rs` (WP4's): the sync notes' queue; the memory output passes its simulated output's learned latency on.
+- `audio-check`: the music-shaped detector reads a lone exact zero that lies on the music's line as music (a crossing that resampling put exactly on a frame, `-217384, 0, 256673`), and a self-test that a frame zeroed off the line is still a cut.
+
+**Tests first** (`crates/player/tests`, all on simulated clocks unless said):
+
+- `room2.rs`, the room scenarios of today's `room_clicks`, `room_flow`, `room_smooth` and `room_end` through `RoomHandle`: in step apart and same room; a wobbling clock map; a card ±300 ppm; joining partway; another output mid-song; pause, resume, seek, skip; a seek while a resume gets ready; a song change at the armed boundary (gapless exact, a shorter copy, a longer copy, a crossfade); far off, realigned once by a crossfade; the room ending in every state and your music after it bit-identical to a player that never joined; the host's room made in place with not one sample of its music changed.
+- `room2_sync.rs`, the 7.2 simulation gates: a guest (clock map from WP6's `Clock` fed by simulated pings) and the truth (a counting channel beside the music, read off the simulated DAC's tape at its exact times, against the host's true clock): every device on one Wi-Fi p95 within 1 ms and max 3 ms after 5 s; apart on one Wi-Fi p95 within 5 ms; internet direct (20 up, 40 down, jitter, loss) p95 within the asymmetry / 2 + 5 ms; drift ±300 ppm; joins, seeks, skips and song changes in step after each; every run clean by all four detectors (bit-exact, sine lock, LPC, dip) and the music-shaped check; a stall: the stalled guest suspends and comes back in step, the host beside it on the same clock untouched (bit-identical to a run without the guest's stall).
+- `room_clicks.rs` on both engines (real time, as today).
+
 #### WP12 notes: the room panel (the plan, as built)
 
 **Beside today's panel, switched by the view.** The app sends today's view (protocol 2) until WP9 moves the sessions, so the desktop stays releasable: `lib/together.ts` takes either shape from the `together` event and tells them apart by `output` (only `View` v2 has it). A v2 view is kept as it is for the new panel, and projected down to today's `TogetherView` for everything else that reads the room (the queue drawer, Now Playing, radio's top-up, the availability badge), so none of them changes: members get a `hearing` from their sub-state and copy, the queue its songs, the timeline its index from the anchor's entry. Presses from the player's buttons and the queue go out in protocol 3's actions (entry ids, `content_us`), the queue's indices mapped to entry ids. The title bar's chip draws the v2 chip and panel (`RoomChipV2.tsx`, `RoomPanel.tsx`) for a v2 view and today's (`RoomChip.tsx`, unchanged) otherwise. WP13 deletes today's panel, the projection and the v1 types once R2 ships.
