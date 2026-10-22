@@ -608,3 +608,39 @@ impl Raw {
         }
     }
 }
+
+/// [`endpoint_on`] with these QUIC settings.
+pub async fn endpoint_with(
+    v6: bool,
+    host: bool,
+    key: Option<SecretKey>,
+    cfg: iroh::endpoint::QuicTransportConfig,
+) -> Endpoint {
+    let mut b = Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .clear_ip_transports()
+        .transport_config(cfg);
+    b = if v6 {
+        b.bind_addr("[::1]:0").unwrap()
+    } else {
+        b.bind_addr("127.0.0.1:0").unwrap()
+    };
+    if host {
+        b = b.alpns(vec![net::ALPN.to_vec()]);
+    }
+    if let Some(k) = key {
+        b = b.secret_key(k);
+    }
+    b.bind().await.unwrap()
+}
+
+impl Link {
+    /// Carry again.
+    pub fn restore(&self) {
+        self.cut.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Carry nothing more.
+    pub fn cut(&self) {
+        self.cut.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}

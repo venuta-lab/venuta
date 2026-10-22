@@ -8108,9 +8108,11 @@ name = "together-net"
 version = "0.3.0"
 dependencies = [
  "blake3",
+ "bytes",
  "getrandom 0.3.4",
  "iroh",
  "iroh-tickets",
+ "n0-future",
  "serde",
  "serde_json",
  "tempfile",
