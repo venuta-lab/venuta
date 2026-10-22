@@ -12,7 +12,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState } from 'react'
-import { langBase } from './lyricModel.ts'
+import { langBase } from './lyricsModel.ts'
 
 export interface TranslationModel {
   id: string

@@ -4,37 +4,25 @@
       "start_ms": 1000,
       "end_ms": 5000,
       "text": "Morning comes in slowly",
-      "words": [],
-      "script": "Latn",
-      "roman": null,
-      "translation": null
+      "script": "Latn"
     },
     {
       "start_ms": 5000,
       "end_ms": 9000,
       "text": "Coffee cooling on the window sill",
-      "words": [],
-      "script": "Latn",
-      "roman": null,
-      "translation": null
+      "script": "Latn"
     },
     {
       "start_ms": 9000,
       "end_ms": 13000,
       "text": "We will find our way back home",
-      "words": [],
-      "script": "Latn",
-      "roman": null,
-      "translation": null
+      "script": "Latn"
     },
     {
       "start_ms": 13000,
       "end_ms": 17000,
       "text": "Before the streetlights fade",
-      "words": [],
-      "script": "Latn",
-      "roman": null,
-      "translation": null
+      "script": "Latn"
     }
   ],
   "lang": "en",

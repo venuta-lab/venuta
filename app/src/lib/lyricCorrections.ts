@@ -5,7 +5,7 @@
 // computer and heard in every window.
 
 import { useEffect, useMemo, useState } from 'react'
-import { langBase, type LyricLine, type LyricsModel, type Second } from './lyricModel.ts'
+import { langBase, type LyricLine, type LyricsModel, type Second } from './lyricsModel.ts'
 import type { SecondKind } from './secondLines.ts'
 
 /** A song's corrections: per original line (its words, trimmed), the rows corrected. */
@@ -26,11 +26,11 @@ export function withCorrection(c: Corrections, lineText: string, kind: SecondKin
 }
 
 function corrected(line: LyricLine, kind: SecondKind, text: string, reader: string): Second {
-  if (kind === 'translation') return { text, words: [], lang: langBase(reader) || 'en', source: 'Corrected' }
+  if (kind === 'translation') return { text, words: [], lang: langBase(reader) || 'en', source: { kind: 'corrected' } }
   // Timed by the original words when it has as many.
   const mine = text.split(/\s+/).filter(Boolean)
   const words = line.words.length === mine.length ? line.words.map((w, i) => ({ ...w, text: mine[i] })) : []
-  return { text, words, lang: line.roman?.lang ?? 'und-Latn', source: 'Corrected' }
+  return { text, words, lang: line.roman?.lang ?? 'und-Latn', source: { kind: 'corrected' } }
 }
 
 /** The song with your corrections in place (the same song when there are none). */

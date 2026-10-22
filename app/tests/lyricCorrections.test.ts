@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { readModel, sourceKind, type LyricsModel } from '../src/lib/lyricModel.ts'
+import { readModel, sourceKind, type LyricsModel } from '../src/lib/lyricsModel.ts'
 import { applyCorrections, readCorrections, withCorrection } from '../src/lib/lyricCorrections.ts'
 
 const fixture = (name: string): LyricsModel => readModel(JSON.parse(readFileSync(new URL(`./fixtures/lyrics-second/${name}.json`, import.meta.url), 'utf8')))

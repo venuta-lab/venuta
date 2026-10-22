@@ -79,10 +79,14 @@ function Stage({ frame }: { frame: Frame }) {
   const rowsKey = `${seconds.rows.roman}|${seconds.rows.translation}`
   const lang = seconds.lang ?? undefined
 
-  // The lines always fit the screen, with its margins, in every theme: they wrap where they can,
-  // and a line that still doesn't fit (too long, a run with nowhere to wrap, a wide theme font,
-  // the rows under it) makes them all smaller, as much as it must; only past the smallest size
-  // does a word break. The song at the bottom keeps its room: the lines stay clear of it.
+  // The lines always fit the screen, with its margins, in every theme. Each row is as wide as the
+  // screen allows (a grid column sized to its widest line once let one line with nowhere to wrap,
+  // even the next one, push every line off the right edge), and the words wrap where they can.
+  // The line being sung that still doesn't fit (a run with nowhere to wrap, a wide theme font), or
+  // lines too tall together, make them all smaller, as much as they must; only past the smallest
+  // size does a word break. The lines around it, smaller and dim, break inside a word rather than
+  // shrink the line being sung. The rows under each line (pronunciation, translation) count in the
+  // height. The song at the bottom keeps its room: the lines stay clear of it.
   const stack = useRef<HTMLDivElement>(null)
   const prefs = usePrefs()
   const [fonts, setFonts] = useState(0)
@@ -102,7 +106,7 @@ function Stage({ frame }: { frame: Frame }) {
   useLayoutEffect(() => {
     const s = stack.current
     if (!s) return
-    const rows = [...s.querySelectorAll<HTMLElement>('[data-row]')].map((r) => ({ scroll: r.scrollWidth, client: r.clientWidth }))
+    const rows = [...s.querySelectorAll<HTMLElement>('[data-fit]')].map((r) => ({ scroll: r.scrollWidth, client: r.clientWidth }))
     const want = nextFit(fit, shrinkFor({ rows, height: s.scrollHeight, room }))
     if (want !== fit) setFit(want)
   }, [fit, measureKey, room])
@@ -118,12 +122,12 @@ function Stage({ frame }: { frame: Frame }) {
               <AnimatePresence mode="popLayout" initial={false}>
                 {prev !== undefined && (
                   <motion.div key={`p${at}`} initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -30 }} transition={{ duration: 0.45 }}>
-                    <LyricText text={prev} seconds={rowViewsAt(seconds, at - 1)} lang={lang} look={quiet} now={false} colour={colour} px={px * 0.55} ground={ground} breakAnywhere={breakAnywhere} />
+                    <LyricText text={prev} seconds={rowViewsAt(seconds, at - 1)} lang={lang} look={quiet} now={false} colour={colour} px={px * 0.55} ground={ground} breakAnywhere />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-            <div data-row className="w-full min-w-0">
+            <div data-row data-fit className="w-full min-w-0">
               <AnimatePresence mode="popLayout" initial={false}>
                 <motion.div key={`n${at}`} initial={{ opacity: 0, y: 50, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -50 }} transition={{ type: 'spring', stiffness: 170, damping: 24 }}>
                   <LyricText
@@ -145,7 +149,7 @@ function Stage({ frame }: { frame: Frame }) {
               <AnimatePresence mode="popLayout" initial={false}>
                 {next !== undefined && (
                   <motion.div key={`x${at}`} initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.45 }}>
-                    <LyricText text={next} seconds={rowViewsAt(seconds, at + 1)} lang={lang} look={quiet} now={false} colour={colour} px={px * 0.62} ground={ground} breakAnywhere={breakAnywhere} />
+                    <LyricText text={next} seconds={rowViewsAt(seconds, at + 1)} lang={lang} look={quiet} now={false} colour={colour} px={px * 0.62} ground={ground} breakAnywhere />
                   </motion.div>
                 )}
               </AnimatePresence>

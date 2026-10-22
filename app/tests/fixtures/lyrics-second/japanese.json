@@ -4,6 +4,7 @@
       "start_ms": 1000,
       "end_ms": 5000,
       "text": "夜空に星が光る",
+      "script": "Jpan",
       "words": [
         {
           "start_ms": 1000,
@@ -31,7 +32,6 @@
           "text": "光る"
         }
       ],
-      "script": "Hira",
       "roman": {
         "text": "yozora ni hoshi ga hikaru",
         "words": [
@@ -63,15 +63,16 @@
         ],
         "lang": "ja-Latn",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       },
       "translation": {
         "text": "夜空中星星闪耀",
-        "words": [],
-        "lang": "zh",
+        "lang": "zh-Hans",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       }
     },
@@ -79,6 +80,7 @@
       "start_ms": 5000,
       "end_ms": 9000,
       "text": "君の声が聞こえる",
+      "script": "Jpan",
       "words": [
         {
           "start_ms": 5000,
@@ -106,7 +108,6 @@
           "text": "聞こえる"
         }
       ],
-      "script": "Hira",
       "roman": {
         "text": "kimi no koe ga kikoeru",
         "words": [
@@ -138,15 +139,16 @@
         ],
         "lang": "ja-Latn",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       },
       "translation": {
         "text": "我听见你的声音",
-        "words": [],
-        "lang": "zh",
+        "lang": "zh-Hans",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       }
     },
@@ -154,6 +156,7 @@
       "start_ms": 9000,
       "end_ms": 13000,
       "text": "明日もまた会おう",
+      "script": "Jpan",
       "words": [
         {
           "start_ms": 9000,
@@ -176,7 +179,6 @@
           "text": "会おう"
         }
       ],
-      "script": "Hira",
       "roman": {
         "text": "ashita mo mata aou",
         "words": [
@@ -203,15 +205,16 @@
         ],
         "lang": "ja-Latn",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       },
       "translation": {
         "text": "明天也再见面吧",
-        "words": [],
-        "lang": "zh",
+        "lang": "zh-Hans",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       }
     },
@@ -219,6 +222,7 @@
       "start_ms": 13000,
       "end_ms": 17000,
       "text": "遠くまで歩いていこう、二人で手をつないで",
+      "script": "Jpan",
       "words": [
         {
           "start_ms": 13000,
@@ -271,7 +275,6 @@
           "text": "つないで"
         }
       ],
-      "script": "Hira",
       "roman": {
         "text": "tooku made aruite ikou, futari de te wo tsunaide",
         "words": [
@@ -328,15 +331,16 @@
         ],
         "lang": "ja-Latn",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       },
       "translation": {
         "text": "牵着手，我们一起走向远方",
-        "words": [],
-        "lang": "zh",
+        "lang": "zh-Hans",
         "source": {
-          "Lyrics": "netease"
+          "kind": "lyrics",
+          "by": "netease"
         }
       }
     }

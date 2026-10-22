@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { correctLine } from '../../lib/lyricCorrections'
-import { sourceKind, sourceWords, type LyricLine } from '../../lib/lyricModel'
+import { sourceKind, sourceWords, type LyricLine } from '../../lib/lyricsModel'
 import { useEscape } from '../../lib/layers'
 import { rowsFor, type SecondKind } from '../../lib/secondLines'
 import { downloadModel, languageName, sizeWords } from '../../lib/translation'

@@ -1,25 +1,43 @@
-// The lyrics model every package builds against (docs/design/lyrics-second-line.md, "The
-// contract"): each line as sung, with up to two second lines under it, pronunciation and
-// translation, each saying where it came from. The engine (Rust) works them out once per song;
-// until it sends them, today's lyrics are read into the same shape here (`fromLegacy`), Roman
-// letters for Indian scripts made by rule once per song. Pure, so tests run it as is.
+// Lyrics as the engine sends them (crates/engine/src/lyrics.rs, the contract in
+// docs/design/lyrics-second-line.md): each line as sung, with up to two second lines under it,
+// pronunciation and translation, each saying where it came from. Turned here into what the lyrics
+// views draw: the lines beside their words and second lines, in step (`shownLines`), and the
+// model the second-line views read (`modelOf`, `fromLegacy`). Pure, so tests run it as is.
 
-import { toLatin } from './textsearch.ts'
+import type { FoundLine, LyricWord, SecondSource as EngineSource } from './engine'
 import type { Lyrics } from './lyrics'
+import { toLatin } from './textsearch.ts'
 
-/** A word and when it is sung. */
-export interface Word {
-  start_ms: number
-  end_ms: number
-  text: string
+export interface ShownLines {
+  /** [ms, line], in order. */
+  lines: [number, string][]
+  /** Each line's words with their times [start, end, word], when any line times words. */
+  words?: [number, number, string][][]
+  /** Each line's translation, when any line has one. */
+  translations?: (string | null)[]
+  /** Each line in Roman letters, when any line has them. */
+  romanized?: (string | null)[]
 }
 
-/**
- * Where a second line came from, as serde writes the engine's enum: the lyrics themselves (and
- * which provider), another copy of the lyrics paired line by line, made on this device, a
- * translation engine (and which), or corrected by hand.
- */
-export type SecondSource = { Lyrics: string } | { Paired: string } | 'Made' | { Translated: string } | 'Corrected'
+/** The engine's lines as the views draw them, every time moved by `offsetMs` (never before 0). */
+export function shownLines(found: FoundLine[], offsetMs = 0): ShownLines {
+  const at = (ms: number) => Math.max(0, ms + offsetMs)
+  const out: ShownLines = { lines: found.map((l) => [at(l.start_ms), l.text] as [number, string]) }
+  if (found.some((l) => l.words?.length))
+    out.words = found.map((l) => (l.words ?? []).map((w) => [at(w.start_ms), at(w.end_ms), w.text] as [number, number, string]))
+  if (found.some((l) => l.translation?.text)) out.translations = found.map((l) => l.translation?.text ?? null)
+  if (found.some((l) => l.roman?.text)) out.romanized = found.map((l) => l.roman?.text ?? null)
+  return out
+}
+
+// --- The model the second-line views read ---------------------------------------------------
+// The engine's shape with every field filled in (words always a list, a second line or null),
+// so the views never ask what is missing.
+
+export type Word = LyricWord
+
+/** Where a second line came from: `{ kind: "lyrics", by: "netease" }`, `{ kind: "made" }`, ... */
+export type SecondSource = EngineSource
 
 /** A second line: pronunciation or translation. */
 export interface Second {
@@ -37,7 +55,7 @@ export interface LyricLine {
   /** The original, as sung. */
   text: string
   words: Word[]
-  /** Detected: Deva, Guru, Arab, Hira, Hang, Hani, Cyrl, Latn, ... (ISO 15924). */
+  /** ISO 15924, as the engine has it: Latn, Deva, Jpan, Hang, Hani, Cyrl, ...; Zyyy for none. */
   script: string
   /** Pronunciation. */
   roman: Second | null
@@ -45,46 +63,49 @@ export interface LyricLine {
   translation: Second | null
 }
 
-/** The contract's `Lyrics { lines, lang, version }` (named so beside today's `Lyrics`). */
+/** The contract's `Lyrics { lines, lang, version }` (named so beside the views' `Lyrics`). */
 export interface LyricsModel {
   lines: LyricLine[]
   lang: string | null
   version: number
 }
 
-// --- Reading what the engine sends ----------------------------------------------------------
-
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const num = (v: unknown, or = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : or)
 const str = (v: unknown, or = '') => (typeof v === 'string' ? v : or)
 
-function readWords(v: unknown): Word[] {
+function readWords(v: unknown, at: (ms: number) => number): Word[] {
   if (!Array.isArray(v)) return []
-  return v.filter(isObj).map((w) => ({ start_ms: num(w.start_ms ?? w.ms), end_ms: num(w.end_ms), text: str(w.text) }))
+  return v.filter(isObj).map((w) => ({ start_ms: at(num(w.start_ms ?? w.ms)), end_ms: at(num(w.end_ms)), text: str(w.text) }))
 }
 
-function readSecond(v: unknown): Second | null {
-  if (!isObj(v) || typeof v.text !== 'string') return null
-  return { text: v.text, words: readWords(v.words), lang: str(v.lang, 'und'), source: (v.source ?? 'Made') as SecondSource }
+function readSecond(v: unknown, at: (ms: number) => number): Second | null {
+  if (!isObj(v) || typeof v.text !== 'string' || !v.text) return null
+  return { text: v.text, words: readWords(v.words, at), lang: str(v.lang, 'und'), source: (v.source ?? { kind: 'made' }) as SecondSource }
 }
 
-/** The engine's answer as the model: an Option left out (skip_serializing_if) reads as none. */
+function readLines(lines: unknown[], at: (ms: number) => number): LyricLine[] {
+  return lines.filter(isObj).map((l) => ({
+    start_ms: at(num(l.start_ms ?? l.ms)),
+    end_ms: at(num(l.end_ms)),
+    text: str(l.text),
+    words: readWords(l.words, at),
+    script: str(l.script) || scriptOf(str(l.text)),
+    roman: readSecond(l.roman, at),
+    translation: readSecond(l.translation, at),
+  }))
+}
+
+/** The engine's lines as the model, every time moved by `offsetMs` (never before 0). */
+export function modelOf(found: FoundLine[], lang: string | null | undefined, offsetMs = 0, version = 1): LyricsModel {
+  const at = (ms: number) => Math.max(0, ms + offsetMs)
+  return { lines: readLines(found as unknown[], at), lang: lang || null, version }
+}
+
+/** A whole answer as the model (fixtures, tests): fields left out read as none. */
 export function readModel(v: unknown): LyricsModel {
   const o = isObj(v) ? v : {}
-  const lines = Array.isArray(o.lines) ? o.lines.filter(isObj) : []
-  return {
-    lines: lines.map((l) => ({
-      start_ms: num(l.start_ms ?? l.ms),
-      end_ms: num(l.end_ms),
-      text: str(l.text),
-      words: readWords(l.words),
-      script: str(l.script) || scriptOf(str(l.text)),
-      roman: readSecond(l.roman),
-      translation: readSecond(l.translation),
-    })),
-    lang: typeof o.lang === 'string' && o.lang ? o.lang : null,
-    version: num(o.version, 1),
-  }
+  return { lines: readLines(Array.isArray(o.lines) ? o.lines : [], (ms) => ms), lang: typeof o.lang === 'string' && o.lang ? o.lang : null, version: num(o.version, 1) }
 }
 
 // --- Where a second line came from ---------------------------------------------------------
@@ -93,15 +114,15 @@ export type SourceKind = 'Lyrics' | 'Paired' | 'Made' | 'Translated' | 'Correcte
 const KINDS: SourceKind[] = ['Lyrics', 'Paired', 'Made', 'Translated', 'Corrected']
 const kindOf = (s: string): SourceKind | undefined => KINDS.find((k) => k.toLowerCase() === s.toLowerCase())
 
-/** A source in one shape, however it was written: `"Made"`, `{ "Lyrics": "netease" }` (serde's
- *  own), or `{ kind, provider | engine }` (a tagged enum). Anything else is the lyrics'. */
+/** A source in one shape: the engine's `{ kind, by }`, and also serde's untagged `"Made"` or
+ *  `{ "Lyrics": "netease" }`. Anything else is the lyrics'. */
 export function sourceKind(source: SecondSource): { kind: SourceKind; by: string | null } {
   const s: unknown = source
   if (typeof s === 'string') return { kind: kindOf(s) ?? 'Lyrics', by: null }
   if (isObj(s)) {
     const tagged = typeof s.kind === 'string' ? kindOf(s.kind) : undefined
     if (tagged) {
-      const by = s.provider ?? s.engine ?? s.by ?? null
+      const by = s.by ?? s.provider ?? s.engine ?? null
       return { kind: tagged, by: typeof by === 'string' ? by : null }
     }
     const [key, value] = Object.entries(s)[0] ?? []
@@ -135,7 +156,8 @@ export function sourceWords(s: SecondSource, device = 'PC'): string {
 
 // --- Scripts and languages -----------------------------------------------------------------
 
-/** The scripts told apart, each with the language a song in it most likely is. */
+/** The scripts told apart (as the engine names them), each with the language a song in it most
+ *  likely is. */
 const SCRIPTS: [code: string, test: RegExp, lang: string | null][] = [
   ['Latn', /\p{Script=Latin}/u, null],
   ['Deva', /\p{Script=Devanagari}/u, 'hi'],
@@ -151,7 +173,7 @@ const SCRIPTS: [code: string, test: RegExp, lang: string | null][] = [
   ['Hebr', /\p{Script=Hebrew}/u, 'he'],
   ['Thai', /\p{Script=Thai}/u, 'th'],
   ['Hang', /\p{Script=Hangul}/u, 'ko'],
-  ['Hira', /[\p{Script=Hiragana}\p{Script=Katakana}]/u, 'ja'],
+  ['Jpan', /[\p{Script=Hiragana}\p{Script=Katakana}]/u, 'ja'],
   ['Hani', /\p{Script=Han}/u, 'zh'],
   ['Cyrl', /\p{Script=Cyrillic}/u, 'ru'],
   ['Grek', /\p{Script=Greek}/u, 'el'],
@@ -166,13 +188,14 @@ function countScripts(text: string, into: Map<string, number>) {
 
 function dominant(counts: Map<string, number>): string {
   // Kanji beside kana is Japanese.
-  if (counts.get('Hira') && counts.get('Hani')) {
-    counts.set('Hira', (counts.get('Hira') ?? 0) + (counts.get('Hani') ?? 0))
+  if (counts.get('Jpan') && counts.get('Hani')) {
+    counts.set('Jpan', (counts.get('Jpan') ?? 0) + (counts.get('Hani') ?? 0))
     counts.delete('Hani')
   }
   let best = 'Zyyy'
   let most = 0
-  for (const [code, n] of counts) if (n > most) [best, most] = [code, n]
+  // Latin loses a tie (as the engine reads it).
+  for (const [code, n] of counts) if (n > most || (n === most && best === 'Latn')) [best, most] = [code, n]
   return best
 }
 
@@ -186,18 +209,26 @@ export function scriptOf(text: string): string {
 /** A language tag's language: "hi-Latn" is "hi", "pt_BR" is "pt". */
 export const langBase = (tag: string | null | undefined) => (tag ?? '').split(/[-_]/)[0].toLowerCase()
 
+const OTHER_SCRIPTS: Record<string, string> = { mr: 'Deva', ne: 'Deva', sa: 'Deva', ar: 'Arab', fa: 'Arab', uk: 'Cyrl', bg: 'Cyrl', sr: 'Cyrl' }
+
+/** The script a language is read in (most are in Latin letters). */
+export function scriptOfLang(tag: string): string {
+  const base = langBase(tag)
+  return SCRIPTS.find(([, , lang]) => lang === base)?.[0] ?? OTHER_SCRIPTS[base] ?? 'Latn'
+}
+
 /** The song's language: as the lyrics say, else the likely one for its script (none for songs in
  *  Latin letters, which could be any). */
 export function songLang(m: LyricsModel | null): string | null {
   if (!m) return null
-  if (m.lang) return langBase(m.lang)
+  if (m.lang && langBase(m.lang) !== 'und') return langBase(m.lang)
   const counts = new Map<string, number>()
   for (const l of m.lines) countScripts(l.text, counts)
   const code = dominant(counts)
   return SCRIPTS.find(([c]) => c === code)?.[2] ?? null
 }
 
-// --- Today's lyrics in the contract's shape ------------------------------------------------
+// --- Lyrics without the model ---------------------------------------------------------------
 
 const INDIC = /[ऀ-ൿ]/
 /** How long the last line is held when nothing comes after it. */
@@ -206,10 +237,9 @@ const LAST_LINE_MS = 5000
 const once = new WeakMap<Lyrics, LyricsModel>()
 
 /**
- * Today's lyrics (parallel arrays: lines, words, translations) as the contract: Roman letters for
- * Indian-script lines made by rule (timed by their words, which the rule keeps one for one), a
- * source's translation with its language read from its letters. Worked out once per song; lyrics
- * that already carry the engine's model pass through as they are.
+ * The model of a song's lyrics: the engine's (`model`, as every reader now sends it), else read
+ * from the arrays (lines, words, translations, Roman letters), with Roman letters for
+ * Indian-script lines made by rule when nothing carried any. Worked out once per song.
  */
 export function fromLegacy(l: Lyrics): LyricsModel {
   if (l.model) return l.model
@@ -219,22 +249,25 @@ export function fromLegacy(l: Lyrics): LyricsModel {
   const lines: LyricLine[] = l.lines.map(([ms, text], i) => {
     const words = (l.words?.[i] ?? []).map(([s, e, t]) => ({ start_ms: s, end_ms: e, text: t }))
     const script = scriptOf(text)
-    const roman: Second | null =
-      text && INDIC.test(text)
+    const carried = l.romanized?.[i]
+    const roman: Second | null = carried
+      ? { text: carried, words: [], lang: 'und-Latn', source: { kind: 'lyrics', by: provider } }
+      : text && INDIC.test(text)
         ? {
             text: toLatin(text),
             words: words.map((w) => ({ ...w, text: toLatin(w.text) })),
             lang: `${SCRIPTS.find(([c]) => c === script)?.[2] ?? 'hi'}-Latn`,
-            source: 'Made',
+            source: { kind: 'made' },
           }
         : null
     const t = l.translations?.[i]
     const tScript = t ? scriptOf(t) : ''
-    const translation: Second | null = t ? { text: t, words: [], lang: SCRIPTS.find(([c]) => c === tScript)?.[2] ?? 'und', source: { Lyrics: provider } } : null
+    const tLang = SCRIPTS.find(([c]) => c === tScript)?.[2] ?? `und-${tScript}`
+    const translation: Second | null = t ? { text: t, words: [], lang: tLang, source: { kind: 'lyrics', by: provider } } : null
     return { start_ms: ms, end_ms: l.lines[i + 1]?.[0] ?? ms + LAST_LINE_MS, text, words, script, roman, translation }
   })
-  const model: LyricsModel = { lines, lang: null, version: 0 }
-  model.lang = songLang(model)
+  const model: LyricsModel = { lines, lang: l.lang ?? null, version: 0 }
+  model.lang = model.lang ?? songLang(model)
   once.set(l, model)
   return model
 }

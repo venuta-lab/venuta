@@ -6,7 +6,7 @@
 import { useEffect, useMemo } from 'react'
 import { applyCorrections, useCorrections } from './lyricCorrections'
 import { lyricsChanged, lyricsChoiceChanged, lyricsKey, type Lyrics } from './lyrics'
-import { fromLegacy, songLang, type LyricsModel } from './lyricModel'
+import { fromLegacy, songLang, type LyricsModel } from './lyricsModel'
 import type { QueueItem } from './player'
 import { choiceFor, readerLang, setSecondLine, systemLang, useSecondChoices } from './secondChoice'
 import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, type SecondKind, type SecondSwitches } from './secondLines'

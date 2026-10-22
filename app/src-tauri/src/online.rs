@@ -773,36 +773,30 @@ pub struct OnlineLyrics {
     pub text: String,
 }
 
+/// LRC read the way Venuta reads lyrics everywhere (`engine::lyrics`), and the words alone as
+/// text.
 fn parse_lrc(synced: &str) -> OnlineLyrics {
-    let mut lines = Vec::new();
-    let mut plain = Vec::new();
-    for line in synced.lines() {
-        let Some(rest) = line.strip_prefix('[') else {
-            if !line.trim().is_empty() {
-                plain.push(line.to_owned());
-            }
-            continue;
-        };
-        let Some((ts, words)) = rest.split_once(']') else {
-            continue;
-        };
-        let Some((m, sec)) = ts.split_once(':') else {
-            continue;
-        };
-        let (Ok(m), Ok(sec)) = (m.trim().parse::<f64>(), sec.trim().parse::<f64>()) else {
-            continue;
-        };
-        let ms = ((m * 60.0 + sec) * 1000.0).round() as u64;
-        let words = words.trim().to_owned();
-        if !words.is_empty() {
-            plain.push(words.clone());
-        }
-        lines.push((ms, words));
-    }
-    OnlineLyrics {
-        lines,
-        text: plain.join("\n"),
-    }
+    let lines: Vec<(u64, String)> = engine::lyrics::read_lrc(synced)
+        .lines
+        .into_iter()
+        .map(|l| (l.start_ms, l.text))
+        .collect();
+    let text = if lines.is_empty() {
+        synced
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        lines
+            .iter()
+            .map(|(_, l)| l.as_str())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    OnlineLyrics { lines, text }
 }
 
 #[cfg(test)]

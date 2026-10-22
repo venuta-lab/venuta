@@ -6,7 +6,7 @@
 // Indian languages it covered begin.
 
 import { useEffect, useState } from 'react'
-import { langBase } from './lyricModel.ts'
+import { langBase } from './lyricsModel.ts'
 import type { SecondKind, SecondSwitches } from './secondLines.ts'
 
 export interface SecondChoices {

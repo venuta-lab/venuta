@@ -4,6 +4,7 @@
       "start_ms": 1000,
       "end_ms": 5000,
       "text": "आज फिर से चाँद निकला है",
+      "script": "Deva",
       "words": [
         {
           "start_ms": 1000,
@@ -36,7 +37,6 @@
           "text": "है"
         }
       ],
-      "script": "Deva",
       "roman": {
         "text": "Aaj phir se chaand nikla hai",
         "words": [
@@ -73,15 +73,16 @@
         ],
         "lang": "hi-Latn",
         "source": {
-          "Paired": "lyricsplus"
+          "kind": "paired",
+          "by": "lyricsplus"
         }
       },
       "translation": {
         "text": "Tonight the moon has come out again",
-        "words": [],
         "lang": "en",
         "source": {
-          "Translated": "opus-mt"
+          "kind": "translated",
+          "by": "opus-mt"
         }
       }
     },
@@ -89,6 +90,7 @@
       "start_ms": 5000,
       "end_ms": 9000,
       "text": "तेरी बातों में खो गया दिल",
+      "script": "Deva",
       "words": [
         {
           "start_ms": 5000,
@@ -121,7 +123,6 @@
           "text": "दिल"
         }
       ],
-      "script": "Deva",
       "roman": {
         "text": "Teri baaton mein kho gaya dil",
         "words": [
@@ -158,15 +159,16 @@
         ],
         "lang": "hi-Latn",
         "source": {
-          "Paired": "lyricsplus"
+          "kind": "paired",
+          "by": "lyricsplus"
         }
       },
       "translation": {
         "text": "My heart got lost in your words",
-        "words": [],
         "lang": "en",
         "source": {
-          "Translated": "opus-mt"
+          "kind": "translated",
+          "by": "opus-mt"
         }
       }
     },
@@ -174,6 +176,7 @@
       "start_ms": 9000,
       "end_ms": 13000,
       "text": "सपनों की इस नगरी में हम दोनों साथ चलेंगे जब तक साँसें चलती रहेंगी",
+      "script": "Deva",
       "words": [
         {
           "start_ms": 9000,
@@ -246,7 +249,6 @@
           "text": "रहेंगी"
         }
       ],
-      "script": "Deva",
       "roman": {
         "text": "Sapnon ki is nagri mein hum dono saath chalenge jab tak saansein chalti rahengi",
         "words": [
@@ -323,15 +325,16 @@
         ],
         "lang": "hi-Latn",
         "source": {
-          "Paired": "lyricsplus"
+          "kind": "paired",
+          "by": "lyricsplus"
         }
       },
       "translation": {
         "text": "In this city of dreams the two of us will walk together for as long as we keep breathing",
-        "words": [],
         "lang": "en",
         "source": {
-          "Translated": "opus-mt"
+          "kind": "translated",
+          "by": "opus-mt"
         }
       }
     },
@@ -339,6 +342,7 @@
       "start_ms": 13000,
       "end_ms": 17000,
       "text": "हर रात तुझे याद करता हूँ",
+      "script": "Deva",
       "words": [
         {
           "start_ms": 13000,
@@ -371,7 +375,6 @@
           "text": "हूँ"
         }
       ],
-      "script": "Deva",
       "roman": {
         "text": "Har raat tujhe yaad karta hoon",
         "words": [
@@ -408,15 +411,16 @@
         ],
         "lang": "hi-Latn",
         "source": {
-          "Paired": "lyricsplus"
+          "kind": "paired",
+          "by": "lyricsplus"
         }
       },
       "translation": {
         "text": "Every night I think of you",
-        "words": [],
         "lang": "en",
         "source": {
-          "Translated": "opus-mt"
+          "kind": "translated",
+          "by": "opus-mt"
         }
       }
     },
@@ -424,6 +428,7 @@
       "start_ms": 17000,
       "end_ms": 21000,
       "text": "चल कहीं दूर चलें हम",
+      "script": "Deva",
       "words": [
         {
           "start_ms": 17000,
@@ -451,7 +456,6 @@
           "text": "हम"
         }
       ],
-      "script": "Deva",
       "roman": {
         "text": "Chal kahin door chalein hum",
         "words": [
@@ -483,15 +487,16 @@
         ],
         "lang": "hi-Latn",
         "source": {
-          "Paired": "lyricsplus"
+          "kind": "paired",
+          "by": "lyricsplus"
         }
       },
       "translation": {
         "text": "Come, let us go somewhere far away",
-        "words": [],
         "lang": "en",
         "source": {
-          "Translated": "opus-mt"
+          "kind": "translated",
+          "by": "opus-mt"
         }
       }
     },
@@ -499,10 +504,7 @@
       "start_ms": 21000,
       "end_ms": 25000,
       "text": "",
-      "words": [],
-      "script": "Zyyy",
-      "roman": null,
-      "translation": null
+      "script": "Zyyy"
     }
   ],
   "lang": "hi",

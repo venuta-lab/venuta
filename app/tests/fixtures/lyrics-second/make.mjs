@@ -8,20 +8,25 @@ function timed(start, end, words) {
   const step = (end - start - 400) / words.length
   return words.map((t, i) => w(Math.round(start + i * step), Math.round(start + (i + 1) * step), t))
 }
-const second = (text, words, lang, source) => ({ text, words, lang, source })
+const second = (text, words, lang, source) => (words.length ? { text, words, lang, source } : { text, lang, source })
 function line(start, end, text, script, opts = {}) {
   const ow = opts.words ? timed(start, end, opts.words) : []
   const roman = opts.roman
     ? second(opts.roman, opts.romanWords && ow.length ? opts.romanWords.map((t, i) => w(ow[i].start_ms, ow[i].end_ms, t)) : [], opts.romanLang, opts.romanSource)
     : null
   const translation = opts.tr ? second(opts.tr, [], opts.trLang, opts.trSource) : null
-  return { start_ms: start, end_ms: end, text, words: ow, script, roman, translation }
+  // As the engine writes it: empty words and missing second lines left out.
+  const out = { start_ms: start, end_ms: end, text, script }
+  if (ow.length) out.words = ow
+  if (roman) out.roman = roman
+  if (translation) out.translation = translation
+  return out
 }
 const song = (lang, lines) => ({ lines, lang, version: 1 })
 const save = (name, value) => writeFileSync(new URL(`./${name}.json`, import.meta.url), JSON.stringify(value, null, 2) + '\n')
 
 // Hindi: pronunciation paired from another copy of the lyrics, translated on this PC, timed word by word.
-const HI = { romanLang: 'hi-Latn', romanSource: { Paired: 'lyricsplus' }, trLang: 'en', trSource: { Translated: 'opus-mt' } }
+const HI = { romanLang: 'hi-Latn', romanSource: { kind: 'paired', by: 'lyricsplus' }, trLang: 'en', trSource: { kind: 'translated', by: 'opus-mt' } }
 const hiLine = (start, text, roman, tr) => {
   const words = text.split(' ')
   const romanWords = roman.split(' ')
@@ -45,9 +50,9 @@ save(
 )
 
 // Japanese: pronunciation from the lyrics (Netease), its translation in Chinese only.
-const JA = { romanLang: 'ja-Latn', romanSource: { Lyrics: 'netease' }, trLang: 'zh', trSource: { Lyrics: 'netease' } }
+const JA = { romanLang: 'ja-Latn', romanSource: { kind: 'lyrics', by: 'netease' }, trLang: 'zh-Hans', trSource: { kind: 'lyrics', by: 'netease' } }
 const jaLine = (start, words, romanWords, tr, join = '') =>
-  line(start, start + 4000, words.join(join), 'Hira', { ...JA, words, roman: romanWords.join(' ').replace(' ,', ','), romanWords, tr })
+  line(start, start + 4000, words.join(join), 'Jpan', { ...JA, words, roman: romanWords.join(' ').replace(' ,', ','), romanWords, tr })
 save(
   'japanese',
   song('ja', [
@@ -64,7 +69,7 @@ save(
 )
 
 // Spanish: in Latin letters already, so a translation only (made on this PC), no word timing.
-const ES = { trLang: 'en', trSource: { Translated: 'firefox-translations' } }
+const ES = { trLang: 'en', trSource: { kind: 'translated', by: 'firefox-translations' } }
 save(
   'spanish',
   song('es', [
@@ -79,7 +84,7 @@ save(
 )
 
 // Hindi and English mixed: English lines have nothing under them; one translation corrected by hand.
-const MIX = { romanLang: 'hi-Latn', romanSource: 'Made', trLang: 'en', trSource: { Translated: 'opus-mt' } }
+const MIX = { romanLang: 'hi-Latn', romanSource: { kind: 'made' }, trLang: 'en', trSource: { kind: 'translated', by: 'opus-mt' } }
 save(
   'mixed',
   song('hi', [
@@ -87,7 +92,7 @@ save(
     line(5000, 9000, 'Hold me close tonight', 'Latn'),
     line(9000, 13000, 'तू ही मेरी dream girl है', 'Deva', { ...MIX, roman: 'Tu hi meri dream girl hai', tr: 'You alone are my dream girl' }),
     line(13000, 17000, 'We can dance until the morning light', 'Latn'),
-    line(17000, 21000, 'धड़कन बोले बस तेरा नाम', 'Deva', { ...MIX, roman: 'Dhadkan bole bas tera naam', tr: 'My heartbeat says only your name', trSource: 'Corrected' }),
+    line(17000, 21000, 'धड़कन बोले बस तेरा नाम', 'Deva', { ...MIX, roman: 'Dhadkan bole bas tera naam', tr: 'My heartbeat says only your name', trSource: { kind: 'corrected' } }),
   ]),
 )
 

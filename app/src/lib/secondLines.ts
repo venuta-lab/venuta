@@ -1,10 +1,10 @@
-// What every lyrics view draws under a line, from the model (lib/lyricModel.ts) and the two
+// What every lyrics view draws under a line, from the model (lib/lyricsModel.ts) and the two
 // switches (lib/secondChoice.ts): one rule for every view. The original line, then pronunciation,
 // then translation, smaller and dimmer. The rows are kept for the song, not the line, so a song
 // keeps the same number of rows for every line (a line with nothing for a row keeps it empty) and
 // nothing changes size as the song moves. Pure, so tests run it as is.
 
-import { langBase, songLang, sourceKind, sourceWords, wordsProgress, type LyricLine, type LyricsModel, type Second } from './lyricModel.ts'
+import { langBase, scriptOfLang, songLang, sourceKind, sourceWords, wordsProgress, type LyricLine, type LyricsModel, type Second } from './lyricsModel.ts'
 
 export type SecondKind = 'roman' | 'translation'
 export interface SecondSwitches {
@@ -12,8 +12,15 @@ export interface SecondSwitches {
   translation: boolean
 }
 
-/** A translation shows only in the language you read. */
-const readable = (s: Second | null, reader: string): s is Second => !!s && !!s.text && langBase(s.lang) === langBase(reader)
+/** A translation shows only in the language you read. One whose language the lyrics didn't say
+ *  ("und-Latn": known only by its letters) shows when it is in the letters you read. */
+function readable(s: Second | null, reader: string): s is Second {
+  if (!s?.text) return false
+  const base = langBase(s.lang)
+  if (base === langBase(reader)) return true
+  const script = s.lang.split(/[-_]/)[1]
+  return base === 'und' && !!script && script === scriptOfLang(reader)
+}
 
 /**
  * The switches a song offers. Pronunciation: some line has one (songs in Latin letters have none).
@@ -93,7 +100,7 @@ export function sourcesOf(m: LyricsModel | null, rows: SecondSwitches, reader: s
       }
     }
     if (!counts.size && !corrected) return null
-    const words = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? sourceWords('Corrected')
+    const words = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? sourceWords({ kind: 'corrected' })
     return { words, corrected }
   }
   return {

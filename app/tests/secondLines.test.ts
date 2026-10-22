@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fromLegacy, langBase, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricModel.ts'
+import { fromLegacy, langBase, modelOf, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricsModel.ts'
 import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf } from '../src/lib/secondLines.ts'
 
 const fixture = (name: string): LyricsModel => readModel(JSON.parse(readFileSync(new URL(`./fixtures/lyrics-second/${name}.json`, import.meta.url), 'utf8')))
@@ -60,7 +60,8 @@ test('scripts, by the letters a line is written in', () => {
   assert.equal(scriptOf('आज फिर से चाँद निकला है'), 'Deva')
   assert.equal(scriptOf('ਤੇਰੇ ਬਿਨਾ'), 'Guru')
   assert.equal(scriptOf('கண்ணே கலைமானே'), 'Taml')
-  assert.equal(scriptOf('夜空に星が光る'), 'Hira', 'kana with kanji is Japanese')
+  assert.equal(scriptOf('夜空に星が光る'), 'Jpan', 'kana with kanji is Japanese (as the engine names it)')
+  assert.equal(scriptOf('ab अब'), 'Deva', 'Latin loses a tie')
   assert.equal(scriptOf('夜空中星星闪耀'), 'Hani')
   assert.equal(scriptOf('사랑해요'), 'Hang')
   assert.equal(scriptOf('Я тебя люблю'), 'Cyrl')
@@ -220,4 +221,30 @@ test("today's lyrics (parallel arrays) become the contract, Roman letters made o
 test('contract lines from the engine pass through as they are', () => {
   const legacy = { lines: [[0, 'x']] as [number, string][], text: '', model: hindi }
   assert.equal(fromLegacy(legacy), hindi)
+})
+
+test("the engine's sources, as it writes them", () => {
+  assert.equal(sourceWords({ kind: 'lyrics', by: 'netease' }), 'From the lyrics')
+  assert.equal(sourceWords({ kind: 'paired', by: 'lyricsplus' }), 'From another copy of the lyrics')
+  assert.equal(sourceWords({ kind: 'made' }), 'Made on this PC')
+  assert.equal(sourceWords({ kind: 'translated', by: 'opus-mt' }), 'Translated on this PC')
+  assert.equal(sourceWords({ kind: 'corrected' }), 'Corrected by you')
+})
+
+test("the engine's lines become the model, your offset moving every time", () => {
+  const raw = JSON.parse(readFileSync(new URL('./fixtures/lyrics-second/hindi.json', import.meta.url), 'utf8'))
+  const m = modelOf(raw.lines, raw.lang, -1500)
+  assert.equal(m.lang, 'hi')
+  assert.equal(m.lines[0].start_ms, 0, 'never before the start')
+  assert.equal(m.lines[1].start_ms, 3500)
+  assert.equal(m.lines[1].roman?.words[0].start_ms, 3500, 'the pronunciation is timed with the line')
+  assert.equal(m.lines[5].roman, null, 'a line with nothing under it')
+})
+
+test('a translation whose language the lyrics did not say shows when it is in the letters you read', () => {
+  const line = { ...plain.lines[0], translation: { text: 'Hello', words: [], lang: 'und-Latn', source: { kind: 'lyrics', by: 'file' } } } as const
+  const song = { lines: [line], lang: 'ja', version: 1 }
+  assert.deepEqual(reservedRows(song, ALL, 'en'), { roman: false, translation: true })
+  assert.deepEqual(reservedRows(song, ALL, 'hi'), { roman: false, translation: false })
+  assert.deepEqual(reservedRows(japanese, ALL, 'en'), { roman: true, translation: false }, 'zh-Hans is not English')
 })
