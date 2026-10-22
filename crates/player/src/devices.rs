@@ -161,12 +161,23 @@ fn full_name(e: &Endpoint) -> String {
     }
 }
 
+/// A device's name without the number Windows puts before a second device of one model
+/// ("2- SNOWSKY DISC", read on the owner's laptop).
+fn unnumbered(name: &str) -> &str {
+    let n = name.trim();
+    let digits = n.bytes().take_while(u8::is_ascii_digit).count();
+    match n[digits..].strip_prefix("- ") {
+        Some(rest) if digits > 0 && !rest.trim().is_empty() => rest.trim(),
+        _ => n,
+    }
+}
+
 /// A clear name for a device and a detail line under it.
 fn names(e: &Endpoint, c: Class) -> (String, String) {
     let or = |a: &str, b: &str| if a.trim().is_empty() { b } else { a }.trim().to_owned();
     match c.kind {
         Kind::Bluetooth => (or(base_name(&e.adapter), &e.description), String::new()),
-        Kind::Usb => (or(&e.adapter, &e.description), String::new()),
+        Kind::Usb => (or(unnumbered(&e.adapter), &e.description), String::new()),
         Kind::Wired => (or(&e.description, &e.adapter), e.adapter.trim().to_owned()),
         Kind::Hdmi => (or(&e.description, &e.adapter), e.adapter.trim().to_owned()),
         Kind::Virtual => (or(&e.adapter, &e.description), "Virtual device".into()),
@@ -1028,6 +1039,25 @@ mod tests {
             names,
             ["Speakers (Realtek(R) Audio)", "Speakers (Sound Blaster)"]
         );
+    }
+
+    #[test]
+    fn the_number_windows_puts_before_a_second_device_of_a_model_is_left_out() {
+        assert_eq!(unnumbered("2- SNOWSKY DISC"), "SNOWSKY DISC");
+        assert_eq!(unnumbered("12- USB Audio"), "USB Audio");
+        assert_eq!(unnumbered("SNOWSKY DISC"), "SNOWSKY DISC");
+        assert_eq!(unnumbered("2-in-1 DAC"), "2-in-1 DAC");
+        assert_eq!(unnumbered("3- "), "3-");
+        let e = Endpoint {
+            id: "d".into(),
+            description: "Headphones".into(),
+            adapter: "2- SNOWSKY DISC".into(),
+            enumerator: "USB".into(),
+            form_factor: form_factor::HEADPHONES,
+            container: None,
+            state: EndpointState::Active,
+        };
+        assert_eq!(entries(&[e], None, None)[0].name, "SNOWSKY DISC");
     }
 
     #[test]
