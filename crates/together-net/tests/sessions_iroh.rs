@@ -92,7 +92,7 @@ async fn a_guest_joins_over_iroh_learns_the_clock_and_plays_the_rooms_start() {
         },
     );
     let t0 = Instant::now();
-    let mut step = async |host: &mut HostSession<String>, guest: &mut GuestSession<String>| {
+    let step = async |host: &mut HostSession<String>, guest: &mut GuestSession<String>| {
         host.step();
         guest.step();
         tokio::time::sleep(Duration::from_millis(5)).await;

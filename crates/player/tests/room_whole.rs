@@ -37,8 +37,11 @@ use together::sim_net::{SimNet, SimTransport, Way};
 use together::time::{MonoClock, SimClock, Timebase};
 use together::view::CopyKind;
 
+/// A test's engine 2, lent to the conductor (taken back to quit it).
+type Lent = Arc<Mutex<Option<Player<PathBuf>>>>;
+
 /// The player a room takes: the test's engine 2, lent to the conductor.
-struct Seat(Arc<Mutex<Option<Player<PathBuf>>>>);
+struct Seat(Lent);
 
 impl RoomPlayer<PathBuf> for Seat {
     fn attach(
@@ -148,7 +151,7 @@ struct One {
     name: String,
     t: SimTransport,
     p: Person<PathBuf>,
-    seat: Arc<Mutex<Option<Player<PathBuf>>>>,
+    seat: Lent,
     side: Option<Side>,
     asleep: bool,
 }
@@ -258,7 +261,7 @@ impl Whole {
     }
 
     /// A player on its own simulated output, its sound card `ppm` off.
-    fn person(&self, ppm: f64) -> (Person<PathBuf>, Arc<Mutex<Option<Player<PathBuf>>>>) {
+    fn person(&self, ppm: f64) -> (Person<PathBuf>, Lent) {
         let mut p = Person::new(
             &self.clock,
             SimConfig {
