@@ -96,6 +96,11 @@ pub trait Output: Send {
     fn presentation(&self) -> Arc<Presentation>;
     /// Events from now on; each call gives a new receiver and the older one hears no more.
     fn events(&self) -> Receiver<OutputEvent>;
+    /// The latency the output learned while running (since its last start), beside the
+    /// driver's own figure in `OutputInfo::buffer_frames`. `None` before it knows.
+    fn latency(&self) -> Option<Latency> {
+        None
+    }
 }
 
 /// One reading of the device: device frame `frame` was at the DAC at mono time `time_ns`.
@@ -153,9 +158,155 @@ impl Presentation {
     }
 }
 
+/// The output's latency as it learned it while running (from its own presentation): how many
+/// frames handed over to the device were not yet at the DAC, right after each fill. The
+/// driver's own figure stays in `OutputInfo::buffer_frames`; many drivers say less than they
+/// hold (the owner's Realtek laptop: 50 ms said, 68 ms held in shared mode; 30 ms said, about
+/// 100 ms held in exclusive mode, a queue).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Latency {
+    /// The usual value: the median of the last `LATENCY_SAMPLES` fills, in frames.
+    pub frames: u32,
+    /// The most over those fills: the furthest the DAC is behind what was handed over.
+    pub most: u32,
+    /// Enough fills seen, and steady: the upper quartile of the older half of them and of the
+    /// newer half within 1 ms of each other (dips from a driver's late events don't count).
+    pub settled: bool,
+}
+
+/// Fills a learned latency is taken over.
+pub const LATENCY_SAMPLES: usize = 64;
+
+/// Learns the latency from one sample per fill (frames handed over less the DAC's frame
+/// then). Fixed storage: usable on a real-time thread.
+#[derive(Debug, Clone)]
+pub struct LatencyTracker {
+    rate: u32,
+    v: [u32; LATENCY_SAMPLES],
+    n: usize,
+}
+
+impl LatencyTracker {
+    pub fn new(rate: u32) -> LatencyTracker {
+        LatencyTracker {
+            rate: rate.max(1),
+            v: [0; LATENCY_SAMPLES],
+            n: 0,
+        }
+    }
+
+    /// A start: nothing known.
+    pub fn restart(&mut self) {
+        self.n = 0;
+    }
+
+    /// One fill's sample: the latency as it now stands.
+    pub fn push(&mut self, ahead: u64) -> Latency {
+        self.v[self.n % LATENCY_SAMPLES] = ahead.min(u64::from(LATENCY_MAX)) as u32;
+        self.n += 1;
+        let k = self.n.min(LATENCY_SAMPLES);
+        // In the order they came, oldest first.
+        let mut all = [0u32; LATENCY_SAMPLES];
+        for (i, slot) in all.iter_mut().take(k).enumerate() {
+            *slot = self.v[(self.n - k + i) % LATENCY_SAMPLES];
+        }
+        let median = |s: &mut [u32]| {
+            s.sort_unstable();
+            s[s.len() / 2]
+        };
+        let most = all[..k].iter().copied().max().unwrap_or(0);
+        // Steady: the upper quartile (the queue or buffer full, just after a fill) of the older
+        // half and of the newer half within 1 ms; a driver's late event now and then dips a few
+        // fills without moving it.
+        let upper = |s: &mut [u32]| {
+            s.sort_unstable();
+            s[s.len() * 3 / 4]
+        };
+        let settled = k == LATENCY_SAMPLES && {
+            let (old, new) = all.split_at_mut(LATENCY_SAMPLES / 2);
+            upper(old).abs_diff(upper(new)) <= self.rate / 1_000
+        };
+        let frames = median(&mut all[..k]);
+        Latency {
+            frames,
+            most,
+            settled,
+        }
+    }
+}
+
+const LATENCY_MAX: u32 = (1 << 30) - 1;
+const LATENCY_KNOWN: u64 = 1 << 63;
+const LATENCY_SETTLED: u64 = 1 << 62;
+
+/// The newest learned latency, written by the output and read by anyone, lock-free (one
+/// atomic word).
+#[derive(Debug, Default)]
+pub struct LatencyCell(AtomicU64);
+
+impl LatencyCell {
+    pub fn publish(&self, l: Latency) {
+        let w = LATENCY_KNOWN
+            | if l.settled { LATENCY_SETTLED } else { 0 }
+            | (u64::from(l.most.min(LATENCY_MAX)) << 31)
+            | u64::from(l.frames.min(LATENCY_MAX));
+        self.0.store(w, Ordering::Release);
+    }
+
+    /// Nothing learned (a new start).
+    pub fn clear(&self) {
+        self.0.store(0, Ordering::Release);
+    }
+
+    pub fn read(&self) -> Option<Latency> {
+        let w = self.0.load(Ordering::Acquire);
+        (w & LATENCY_KNOWN != 0).then(|| Latency {
+            frames: (w & u64::from(LATENCY_MAX)) as u32,
+            most: ((w >> 31) & u64::from(LATENCY_MAX)) as u32,
+            settled: w & LATENCY_SETTLED != 0,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_latency_is_learned_steady_from_its_fills_and_published_whole() {
+        let mut t = LatencyTracker::new(48_000);
+        // A ramp (a queue filling up): not steady.
+        let mut l = Latency::default();
+        for k in 0..64u64 {
+            l = t.push(500 + 40 * k);
+        }
+        assert!(!l.settled, "{l:?}");
+        // Then steady, a fill's sawtooth and a driver's hiccup now and then: settled once a
+        // whole window of it is in, the usual value the median, the most the largest.
+        for k in 0..64u64 {
+            l = t.push(if k % 16 == 5 {
+                1_100
+            } else {
+                4_850 + k % 3 * 20
+            });
+        }
+        assert_eq!(
+            l,
+            Latency {
+                frames: 4_870,
+                most: 4_890,
+                settled: true
+            }
+        );
+        t.restart();
+        assert!(!t.push(10).settled);
+        let c = LatencyCell::default();
+        assert_eq!(c.read(), None);
+        c.publish(l);
+        assert_eq!(c.read(), Some(l));
+        c.clear();
+        assert_eq!(c.read(), None);
+    }
 
     #[test]
     fn a_reader_never_sees_half_a_pair() {
