@@ -36,6 +36,40 @@ fn device() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// `VENUTA_HW_TRACE`: a path stem. A test that traces writes `<stem>-<mode>.csv` (one row per
+/// device event, the columns `output::TRACE_COLUMNS`) and `<stem>-<mode>.txt` (what the
+/// device said, the events, the leads, what the flags mean).
+fn trace_path() -> Option<String> {
+    std::env::var("VENUTA_HW_TRACE")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+fn write_trace(
+    t: &player::output::Trace,
+    mode: &str,
+    info: &player::output_api::OutputInfo,
+    notes: Option<player::output::DeviceNotes>,
+    events: &[OutputEvent],
+    lead_ms: (f64, f64),
+) {
+    let stem = trace_path().expect("a trace path");
+    let csv = format!("{stem}-{mode}.csv");
+    std::fs::write(&csv, t.csv()).expect("write the trace");
+    let about = format!(
+        "{info:?}\n{notes:?}\nrows {} (dropped {})\nevents {events:?}\nlead before the gap {:.2} ms, after {:.2} ms\n\
+         flags: near 1, passed 2, suspect 4, certain 8, settled 16, counted 32, dry 64, watching 128\n\
+         state: 1 running, 2 draining; value: exclusive lead / shared pipeline (or the shift when settled); \
+         delta: exclusive frames later than usual / shared lag behind time; -1: none\n",
+        t.rows().len(),
+        t.dropped(),
+        lead_ms.0,
+        lead_ms.1
+    );
+    std::fs::write(format!("{stem}-{mode}.txt"), about).expect("write the notes");
+    eprintln!("trace written to {csv}");
+}
+
 fn want() -> OpenRequest {
     OpenRequest {
         rate: 48_000,
@@ -204,6 +238,7 @@ fn median(mut v: Vec<f64>) -> f64 {
 fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
     for exclusive in [false, true] {
         let mut out = wasapi_output(device().as_deref(), exclusive);
+        let trace = trace_path().map(|_| out.trace(20_000));
         let info = out.open(&want()).expect("open");
         let rate = f64::from(info.format.rate);
         let events = out.events();
@@ -212,13 +247,14 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         out.start(Box::new(r)).expect("start");
         let t0 = Instant::now();
         let mut last = 0;
+        let mut went_back = false;
         let (mut early, mut late) = (Vec::new(), Vec::new());
         while t0.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
             let made_now = made.load(Ordering::SeqCst) as f64;
             let now = RealClock.now_ns();
             if let Some(p) = out.presentation().read() {
-                assert!(p.frame >= last, "the presentation went back");
+                went_back |= p.frame < last;
                 last = p.frame;
                 let at_dac = p.frame as f64 + now.saturating_sub(p.time_ns) as f64 * rate / 1e9;
                 let lead_ms = (made_now - at_dac) * 1000.0 / rate;
@@ -238,6 +274,11 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         eprintln!(
             "exclusive asked {exclusive}, ran {mode:?}: {seen:?}; lead {before:.2} ms before the gap, {after:.2} ms after"
         );
+        if let Some(t) = &trace {
+            let name = format!("{mode:?}").to_lowercase();
+            write_trace(t, &name, &info, out.notes(), &seen, (before, after));
+        }
+        assert!(!went_back, "the presentation went back");
         assert_eq!(
             seen.iter()
                 .filter(|e| matches!(e, OutputEvent::Xrun { .. }))

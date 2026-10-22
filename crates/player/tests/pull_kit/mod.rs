@@ -94,6 +94,9 @@ pub struct FakeCfg {
     pub prime: u32,
     /// Shared: the position counts the silence of a pass that found part of a period.
     pub counts_partial: bool,
+    /// Exclusive: a device that queues this many buffers (signals whenever it has room for
+    /// one), its position running on through silence, instead of a double buffer.
+    pub queue: Option<u32>,
     /// From this many device wakes on, the render thread's own work is watched.
     pub watch_from: Option<u64>,
 }
@@ -112,6 +115,7 @@ impl Default for FakeCfg {
             no_reading_every: 0,
             prime: 0,
             counts_partial: false,
+            queue: None,
             watch_from: None,
         }
     }
@@ -154,6 +158,8 @@ pub struct Fake {
     pub gaps: Vec<Range<u64>>,
     /// Shared: ticks the position does not count (silence).
     pub uncounted: Vec<Range<u64>>,
+    /// A queue: DAC ticks so far.
+    pub q_ticks: u64,
     /// Shared: frames the engine read at this start, before its first pass.
     pub prime: u32,
     /// Shared: what the device held at the first wake after the first start.
@@ -185,12 +191,18 @@ impl Fake {
 
     /// When our frame `f` of the current start was heard, if it was.
     pub fn heard_frame_ns(&self, f: u64) -> Option<f64> {
-        let &(first, _, tick) = self
+        if let Some(&(first, _, tick)) = self
             .spans
             .iter()
             .rev()
-            .find(|(first, n, _)| *first <= f && f < first + n)?;
-        Some(self.heard_ns(tick + (f - first)))
+            .find(|(first, n, _)| *first <= f && f < first + n)
+        {
+            return Some(self.heard_ns(tick + (f - first)));
+        }
+        // A queue: frames still queued play straight on from where the DAC is.
+        let &(first, n, tick) = self.spans.last()?;
+        (self.cfg.queue.is_some() && f >= first + n)
+            .then(|| self.heard_ns((tick + n).max(self.q_ticks) + (f - first - n)))
     }
 
     pub fn silent_from(&self) -> Option<u64> {
@@ -212,6 +224,10 @@ impl Fake {
 
     pub fn advance(&mut self, now: u64) {
         self.check_lost(now);
+        if self.cfg.queue.is_some() {
+            self.queue_advance(now);
+            return;
+        }
         while self.started && !self.lost {
             let t = self.pass_ns(self.passes);
             if t > now || self.silent_from().is_some_and(|s| t >= s) {
@@ -221,6 +237,36 @@ impl Fake {
             self.pass(k);
             self.passes += 1;
         }
+    }
+
+    /// A queue: the DAC takes our frames one per tick while there are any, and plays (and its
+    /// position counts) silence when there are none.
+    pub fn queue_advance(&mut self, now: u64) {
+        if !self.started || self.lost || (now as f64) < self.heard_ns(0) {
+            return;
+        }
+        let t = (now - self.start_ns) as f64 * self.tps() / 1e9 - f64::from(self.cfg.latency);
+        let due = t.floor() as u64 + 1;
+        if due <= self.q_ticks {
+            return;
+        }
+        let n = due - self.q_ticks;
+        let take = ((self.fifo.len() / 2) as u64).min(n);
+        let tick = self.q_ticks;
+        let mut played: Vec<i32> = Vec::new();
+        if take > 0 {
+            self.spans.push((self.taken, take, tick));
+            self.taken += take;
+            played.extend(self.fifo.drain(..take as usize * 2));
+        }
+        if take < n {
+            self.gap(tick + take..tick + n);
+            played.resize(n as usize * 2, 0);
+        }
+        if let Some(run) = self.runs.last_mut() {
+            run.samples.extend_from_slice(&played);
+        }
+        self.q_ticks = due;
     }
 
     pub fn pass(&mut self, k: u64) {
@@ -290,6 +336,9 @@ impl Fake {
     /// part of a period is counted as frames); exclusive, every frame the hardware played (it
     /// runs on over a stale buffer).
     pub fn raw(&self, now: u64) -> u64 {
+        if self.cfg.queue.is_some() {
+            return self.q_ticks;
+        }
         let ticks = self.ticks_heard(now);
         if self.cfg.exclusive {
             return ticks;
@@ -347,14 +396,28 @@ impl PullDevice for FakeDevice {
             let mut f = self.lock();
             f.advance(now);
             let k = f.seen;
-            let t = f.pass_ns(k);
             let late = f
                 .cfg
                 .late
                 .iter()
                 .find(|(e, _)| *e == k)
                 .map_or(0, |(_, l)| *l);
-            (f.started && !f.silent_from().is_some_and(|s| t >= s)).then_some(t + late)
+            if let Some(depth) = f.cfg.queue {
+                // An event as soon as there is room for a buffer (100 µs to signal), else when
+                // the DAC has made room.
+                let p = u64::from(f.cfg.period);
+                let queued = (f.fifo.len() / 2) as u64;
+                let full = u64::from(depth) * p;
+                let t = if queued + p <= full {
+                    now + 100_000
+                } else {
+                    (f.heard_ns(f.q_ticks + queued + p - full) as u64).max(now)
+                };
+                f.started.then_some(t + late)
+            } else {
+                let t = f.pass_ns(k);
+                (f.started && !f.silent_from().is_some_and(|s| t >= s)).then_some(t + late)
+            }
         };
         match target {
             Some(t) if t <= now + timeout_ns => {
@@ -363,7 +426,11 @@ impl PullDevice for FakeDevice {
                 let mut f = self.lock();
                 f.advance(now);
                 // The event fired once for every pass since the last wake (auto-reset).
-                f.seen = f.passes;
+                if f.cfg.queue.is_some() {
+                    f.seen += 1;
+                } else {
+                    f.seen = f.passes;
+                }
                 f.wrote_for_event = false;
                 f.wakes += 1;
                 if f.cfg.watch_from.is_some_and(|n| f.wakes >= n) {
@@ -413,7 +480,22 @@ impl PullDevice for FakeDevice {
             .map(|b| i32::from_le_bytes(*b))
             .collect();
         let mut f = self.lock();
-        if f.cfg.exclusive {
+        if let Some(depth) = f.cfg.queue {
+            // A queue: takes a buffer whenever it has room for one, once per event.
+            let queued = (f.fifo.len() / 2) as u64;
+            let ok = frames == f.cfg.period
+                && queued + u64::from(frames) <= u64::from(depth * f.cfg.period)
+                && !(f.started && f.wrote_for_event);
+            if !ok {
+                let e = format!("queue write of {frames} frames, {queued} queued");
+                f.errors.push(e.clone());
+                return Err(Fault::Other(e));
+            }
+            if f.started {
+                f.wrote_for_event = true;
+            }
+            f.fifo.extend(samples);
+        } else if f.cfg.exclusive {
             let ok = frames == f.cfg.period
                 && f.queue.len() < 2
                 && if f.started {
@@ -480,6 +562,7 @@ impl PullDevice for FakeDevice {
         f.spans.clear();
         f.gaps.clear();
         f.uncounted.clear();
+        f.q_ticks = 0;
         let tps = f.tps();
         let start = f.heard_ns(0).round() as u64;
         f.runs.push(Run {
@@ -608,7 +691,7 @@ impl PullOpener for FakeOpener {
         let (map, buffer_frames, latency) = if c.exclusive {
             (
                 PositionMap::exclusive(RATE, c.period),
-                2 * c.period + c.latency,
+                c.queue.unwrap_or(2) * c.period + c.latency,
                 c.latency,
             )
         } else {

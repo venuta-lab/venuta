@@ -18,7 +18,7 @@ use crate::output_api::{
 };
 use serde::Serialize;
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -613,6 +613,14 @@ pub struct Reading {
 /// frames `render` was given. The count can only come short (by a wake's usual delay), and a
 /// short count shows as a lead a buffer short at the next period, which adds it.
 ///
+/// Exclusive mode on a device that queues what it is given (three events in a row less than
+/// half a buffer apart: the owner's Realtek laptop takes ten buffers at a start, then signals
+/// unevenly, 0.1 to 75 ms apart, keeping about 100 ms queued): the lead says nothing of
+/// lateness, only of the queue. The DAC runs dry when it reaches what was handed over (the
+/// position at or past it is certain; within an eighth of a buffer, a suspect), and the
+/// position runs on through the silence, which the settle (as shared mode's, on the queue's
+/// depth by the device's count) measures as a slip.
+///
 /// Pairs: none while nothing is at the DAC yet (position 0), none going back, none at or past
 /// what was handed over before this fill, and after a gap none for frames up to it (the DAC
 /// may be in the gap, or in a stale buffer, then).
@@ -638,10 +646,41 @@ pub struct PositionMap {
     usual: Ring,
     /// Shared: a suspect being settled.
     watch: Option<Watch>,
+    /// Why the last reading decided as it did.
+    why: Why,
+    /// Exclusive mode: the device queues what it is given (see `note_wake`), and the wakes
+    /// that tell.
+    queued: bool,
+    short_wakes: u32,
+    last_wake_ns: Option<u64>,
 }
 
 /// Samples kept for a usual value.
 const SAMPLES: usize = 16;
+
+/// Why the last reading decided as it did (for traces): a value (exclusive: the lead; shared:
+/// the pipeline, or after a settle the shift), the usual one (`i64::MIN` when not known yet), a
+/// difference (exclusive: frames later than usual; shared: the position'"'"'s lag behind time),
+/// buffers counted as played again, flags (`WHY_*`) and the slip after it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Why {
+    pub value: i64,
+    pub usual: i64,
+    pub delta: i64,
+    pub replayed: i64,
+    pub flags: u32,
+    pub slip: i64,
+}
+
+pub const WHY_NEAR: u32 = 1;
+pub const WHY_PASSED: u32 = 2;
+pub const WHY_SUSPECT: u32 = 4;
+pub const WHY_CERTAIN: u32 = 8;
+pub const WHY_SETTLED: u32 = 16;
+pub const WHY_COUNTED: u32 = 32;
+pub const WHY_DRY: u32 = 64;
+pub const WHY_WATCHING: u32 = 128;
+pub const WHY_QUEUED: u32 = 256;
 /// Shared mode: the DAC moves this long before the pipeline counts as usual, and after a
 /// suspect the pipeline has this long to refill before it is judged.
 const SETTLE_NS: u64 = 100_000_000;
@@ -751,6 +790,7 @@ impl PositionMap {
     /// gaps are said by the readings that settle what this suspects.
     pub fn space(&mut self, held: Option<u32>, before: u64, now_ns: u64) {
         self.pending = None;
+        self.why.flags &= !WHY_SUSPECT;
         let Some(held) = held else {
             return;
         };
@@ -760,6 +800,7 @@ impl PositionMap {
         }
         if held < self.period {
             self.suspect(before, now_ns);
+            self.why.flags |= WHY_SUSPECT;
         } else {
             self.pending = Some((held, before, now_ns));
         }
@@ -772,12 +813,13 @@ impl PositionMap {
             let used = self.frames_of_ns(now_ns.saturating_sub(since));
             if used + f64::from(self.period) > f64::from(held) {
                 self.suspect(before, since);
+                self.why.flags |= WHY_SUSPECT;
             }
         }
     }
 
-    /// Exclusive mode: the buffers the hardware played again since the last reading, and
-    /// whether this wake was (nearly) too late.
+    /// Exclusive mode, a double buffer: the buffers the hardware played again since the last
+    /// reading, and whether this wake was (nearly) too late.
     fn replays(&mut self, raw: u64, before: u64) -> (i64, bool) {
         let p = i64::from(self.period);
         let lead = before as i64 - (raw as i64 - self.slip);
@@ -785,11 +827,135 @@ impl PositionMap {
         let passed = if lead <= 0 { (-lead) / p + 1 } else { 0 };
         let late = self.usual.median().map_or(0, |u| (u - lead).max(0));
         let replayed = (late / p).max(passed);
+        self.why = Why {
+            value: lead,
+            usual: self.usual.median().unwrap_or(i64::MIN),
+            delta: late,
+            replayed,
+            flags: if passed > 0 { WHY_PASSED } else { 0 }
+                | if late + p / 8 >= p { WHY_NEAR } else { 0 },
+            slip: 0,
+        };
         let near = late + p / 8 >= p;
         if replayed == 0 && !near {
             self.usual.push(lead);
         }
         (replayed, replayed > 0 || near)
+    }
+
+    /// Exclusive mode: a device whose events come three times in a row less than half a buffer
+    /// apart queues what it is given (a double buffer can't: each of its events is a buffer
+    /// played). From then on it is judged as a queue.
+    fn note_wake(&mut self, time_ns: u64) {
+        let half_ns = u64::from(self.period) * 500_000_000 / u64::from(self.rate);
+        if let Some(lt) = self.last_wake_ns {
+            if time_ns.saturating_sub(lt) < half_ns {
+                self.short_wakes += 1;
+            } else {
+                self.short_wakes = 0;
+            }
+        }
+        self.last_wake_ns = Some(time_ns);
+        if !self.queued && self.short_wakes >= 3 {
+            self.queued = true;
+            // The double buffer's usual lead means nothing for a queue.
+            self.usual = Ring::default();
+        }
+    }
+
+    /// A gap that is certain, beginning at `at`: said once per dry stretch, and watched until
+    /// the device's steady value (pipeline or queue) settles.
+    fn certain(&mut self, at: u64, time_ns: u64) -> Option<u64> {
+        self.why.flags |= WHY_CERTAIN;
+        let at = self.watch.map_or(at, |w| w.at);
+        let xrun = self.gap(at);
+        match &mut self.watch {
+            Some(w) => w.certain = true,
+            None => {
+                self.watch = Some(Watch {
+                    at,
+                    certain: true,
+                    from_ns: time_ns + SETTLE_NS,
+                    after: Ring::default(),
+                });
+            }
+        }
+        xrun
+    }
+
+    /// A sample of the steady value (shared mode: the pipeline; a queue: frames handed over
+    /// ahead of the DAC): kept as the usual, or, while a gap is watched, taken until it settles.
+    /// Settled, the difference from the usual is silence the position counted: a slip.
+    fn settle(&mut self, sample: i64, time_ns: u64) -> Option<u64> {
+        self.why.value = sample;
+        self.why.usual = self.usual.median().unwrap_or(i64::MIN);
+        let Some(w) = &mut self.watch else {
+            if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
+                self.usual.push(sample);
+            }
+            return None;
+        };
+        if time_ns >= w.from_ns {
+            w.after.push(sample);
+        }
+        if !w.after.full() {
+            return None;
+        }
+        let w = *w;
+        self.watch = None;
+        let shift = match (self.usual.median(), w.after.median()) {
+            (Some(u), Some(a)) if self.usual.full() => u - a,
+            _ => 0,
+        };
+        let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
+        self.why.flags |= WHY_SETTLED;
+        self.why.value = shift;
+        if counted {
+            self.why.flags |= WHY_COUNTED;
+            self.slip += shift;
+        }
+        let xrun = if counted || w.certain {
+            self.gap(w.at)
+        } else {
+            None
+        };
+        // Settled: the value from now on is the usual one; a new gap is new.
+        self.usual = w.after;
+        self.dry = false;
+        xrun
+    }
+
+    /// Exclusive mode, a queue: the DAC runs dry only when it reaches what was handed over
+    /// (the position at or past it: certain; within an eighth of a buffer of it: a suspect).
+    /// What it counts past that is silence: the settle measures it as a slip.
+    fn queue_reading(&mut self, raw: u64, time_ns: u64, before: u64) -> Option<u64> {
+        let mut xrun = None;
+        if raw > 0 && self.moving_since.is_none() {
+            self.moving_since = Some(time_ns);
+        }
+        if before == 0 {
+            return None;
+        }
+        let lead = before as i64 - (raw as i64 - self.slip);
+        self.why.delta = lead;
+        if lead <= 0 {
+            self.why.flags |= WHY_PASSED;
+            xrun = self.certain(before, time_ns);
+        } else if lead <= i64::from(self.period) / 8 {
+            self.why.flags |= WHY_NEAR;
+            if self.watch.is_none() {
+                self.watch = Some(Watch {
+                    at: before,
+                    certain: false,
+                    from_ns: time_ns + SETTLE_NS,
+                    after: Ring::default(),
+                });
+            }
+        }
+        // The queue's depth by the device's own count (the slip apart): steady, less the
+        // silence the position counts in a gap.
+        let settled = self.settle(before as i64 - raw as i64, time_ns);
+        xrun.or(settled)
     }
 
     /// Shared mode: what this reading says of gaps and the pipeline.
@@ -801,20 +967,9 @@ impl PositionMap {
             && time_ns > pt
         {
             let lag = pr as f64 + self.frames_of_ns(time_ns - pt) - raw as f64;
+            self.why.delta = lag.round() as i64;
             if lag > f64::from(self.rate) / 1_000.0 {
-                let at = self.watch.map_or(raw, |w| w.at);
-                xrun = self.gap(at);
-                match &mut self.watch {
-                    Some(w) => w.certain = true,
-                    None => {
-                        self.watch = Some(Watch {
-                            at,
-                            certain: true,
-                            from_ns: time_ns + SETTLE_NS,
-                            after: Ring::default(),
-                        });
-                    }
-                }
+                xrun = self.certain(raw, time_ns);
             }
         }
         if raw > 0 && self.moving_since.is_none() {
@@ -825,49 +980,25 @@ impl PositionMap {
         let Some(read) = self.read.take() else {
             return xrun;
         };
-        let pipeline = read as i64 - raw as i64;
-        match &mut self.watch {
-            None => {
-                if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
-                    self.usual.push(pipeline);
-                }
-            }
-            Some(w) => {
-                if time_ns >= w.from_ns {
-                    w.after.push(pipeline);
-                }
-                if w.after.full() {
-                    let w = *w;
-                    self.watch = None;
-                    let shift = match (self.usual.median(), w.after.median()) {
-                        (Some(u), Some(a)) if self.usual.full() => u - a,
-                        _ => 0,
-                    };
-                    let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
-                    if counted {
-                        self.slip += shift;
-                    }
-                    if (counted || w.certain)
-                        && let Some(at) = self.gap(w.at)
-                    {
-                        xrun = Some(at);
-                    }
-                    // Settled: the pipeline from now on is the usual one; a new gap is new.
-                    self.usual = w.after;
-                    self.dry = false;
-                }
-            }
-        }
-        xrun
+        let settled = self.settle(read as i64 - raw as i64, time_ns);
+        xrun.or(settled)
     }
 
     /// A reading after the fill: `raw` frames have reached the DAC (the device's count since the
     /// start) at mono time `time_ns`; `before` frames had been handed over before this period's
     /// fill, `after` after it.
     pub fn reading(&mut self, raw: u64, time_ns: u64, before: u64, after: u64) -> Reading {
+        self.why = Why {
+            flags: self.why.flags & WHY_SUSPECT,
+            ..Why::default()
+        };
         let mut xrun = None;
         if self.exclusive {
-            if before > 0 {
+            self.note_wake(time_ns);
+            if self.queued {
+                self.why.flags |= WHY_QUEUED;
+                xrun = self.queue_reading(raw, time_ns, before);
+            } else if before > 0 {
                 let (replayed, dry) = self.replays(raw, before);
                 if dry {
                     xrun = self.gap(before);
@@ -895,7 +1026,19 @@ impl PositionMap {
         if pair.is_some() {
             self.last = pair;
         }
+        if self.dry {
+            self.why.flags |= WHY_DRY;
+        }
+        if self.watch.is_some() {
+            self.why.flags |= WHY_WATCHING;
+        }
+        self.why.slip = self.slip;
         Reading { pair, xrun }
+    }
+
+    /// Why the last reading decided as it did (for traces).
+    pub fn why(&self) -> Why {
+        self.why
     }
 
     /// Frames the position counted that were never the stream's (exclusive mode's replayed
@@ -1025,6 +1168,115 @@ impl EventSink {
     }
 }
 
+// --- Output v2: traces ----------------------------------------------------------------------
+
+/// The columns of a trace row, in order (the CSV header).
+pub const TRACE_COLUMNS: [&str; TRACE_FIELDS] = [
+    "wake_ns",
+    "filled_ns",
+    "free",
+    "held",
+    "padding",
+    "before",
+    "after",
+    "made",
+    "pos_ok",
+    "raw",
+    "pos_units",
+    "freq",
+    "pos_ns",
+    "xrun_at",
+    "pair_frame",
+    "value",
+    "usual",
+    "delta",
+    "replayed",
+    "flags",
+    "slip",
+    "state",
+];
+pub const TRACE_FIELDS: usize = 22;
+const T_WAKE: usize = 0;
+const T_FILLED: usize = 1;
+const T_FREE: usize = 2;
+const T_HELD: usize = 3;
+const T_PADDING: usize = 4;
+const T_BEFORE: usize = 5;
+const T_AFTER: usize = 6;
+const T_MADE: usize = 7;
+const T_POS_OK: usize = 8;
+const T_RAW: usize = 9;
+const T_POS_UNITS: usize = 10;
+const T_FREQ: usize = 11;
+const T_POS_NS: usize = 12;
+const T_XRUN: usize = 13;
+const T_PAIR: usize = 14;
+const T_VALUE: usize = 15;
+const T_USUAL: usize = 16;
+const T_DELTA: usize = 17;
+const T_REPLAYED: usize = 18;
+const T_FLAGS: usize = 19;
+const T_SLIP: usize = 20;
+const T_STATE: usize = 21;
+
+/// A diagnostic trace of an output's render thread: one row per device event (what woke it,
+/// what the device held, what was handed over, the position as the device gave it, and what
+/// the position map decided and why, `Why` and its `WHY_*` flags). Every row is made before
+/// the run, so the render thread only stores into atomics; rows past the last are dropped.
+/// Times are mono ns; frame counts are device frames since the start; -1 is "none".
+pub struct Trace {
+    rows: Box<[[AtomicI64; TRACE_FIELDS]]>,
+    next: AtomicUsize,
+}
+
+impl Trace {
+    pub fn new(rows: usize) -> Trace {
+        Trace {
+            rows: (0..rows)
+                .map(|_| std::array::from_fn(|_| AtomicI64::new(0)))
+                .collect(),
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    fn push(&self, row: &[i64; TRACE_FIELDS]) {
+        let k = self.next.fetch_add(1, Ordering::Relaxed);
+        if let Some(slot) = self.rows.get(k) {
+            for (s, v) in slot.iter().zip(row) {
+                s.store(*v, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The rows so far (read once the output has stopped).
+    pub fn rows(&self) -> Vec<[i64; TRACE_FIELDS]> {
+        let n = self.next.load(Ordering::Acquire).min(self.rows.len());
+        self.rows[..n]
+            .iter()
+            .map(|r| std::array::from_fn(|i| r[i].load(Ordering::Relaxed)))
+            .collect()
+    }
+
+    /// Rows that didn't fit.
+    pub fn dropped(&self) -> usize {
+        self.next
+            .load(Ordering::Acquire)
+            .saturating_sub(self.rows.len())
+    }
+
+    /// The rows as CSV, with the header.
+    pub fn csv(&self) -> String {
+        let mut s = TRACE_COLUMNS.join(",");
+        s.push('\n');
+        for r in self.rows() {
+            let line: Vec<String> = r.iter().map(i64::to_string).collect();
+            s.push_str(&line.join(","));
+            s.push('\n');
+        }
+        s
+    }
+}
+
 // --- Output v2: the pull loop ---------------------------------------------------------------
 
 /// Why a pull device's wait ended.
@@ -1075,6 +1327,15 @@ pub trait PullDevice {
     fn start(&mut self) -> Result<(), Fault>;
     /// Stop, and let go of everything held (the position goes back to 0).
     fn halt(&mut self) -> Result<(), Fault>;
+    /// For traces: the last position in the device'"'"'s own units, and its clock'"'"'s frequency.
+    fn raw_clock(&self) -> (u64, u64) {
+        (0, 0)
+    }
+    /// For traces: what the device holds unread, where it can say (asked only when tracing,
+    /// so exclusive event mode, which doesn'"'"'t use it, can be asked too).
+    fn probe_padding(&mut self) -> Option<u32> {
+        None
+    }
 }
 
 /// What a device says about itself, beyond `OutputInfo`.
@@ -1170,6 +1431,7 @@ pub struct PullOutput<O: PullOpener> {
     started: bool,
     /// The last open's mode, name and notes.
     last: Option<(Mode, String, DeviceNotes)>,
+    trace: Option<Arc<Trace>>,
 }
 
 impl<O: PullOpener> PullOutput<O> {
@@ -1184,10 +1446,19 @@ impl<O: PullOpener> PullOutput<O> {
             open: None,
             started: false,
             last: None,
+            trace: None,
         }
     }
 
     /// What the device said about itself at the last open (kept after a close).
+    /// Trace every period of the opens from now on into `rows` rows made now (a diagnostic:
+    /// see `Trace`).
+    pub fn trace(&mut self, rows: usize) -> Arc<Trace> {
+        let t = Arc::new(Trace::new(rows));
+        self.trace = Some(t.clone());
+        t
+    }
+
     pub fn notes(&self) -> Option<DeviceNotes> {
         self.last.as_ref().map(|l| l.2.clone())
     }
@@ -1260,6 +1531,7 @@ impl<O: PullOpener> Output for PullOutput<O> {
             sink: self.sink.clone(),
             link: link.clone(),
             forwarder: forwarder.thread().clone(),
+            trace: self.trace.clone(),
         };
         let (opener, want2) = (self.opener.clone(), want.clone());
         // Made here, before the thread starts, so a simulated clock counts it from its start.
@@ -1406,6 +1678,8 @@ struct Ctx {
     sink: Arc<EventSink>,
     link: Arc<RtLink>,
     forwarder: std::thread::Thread,
+    /// Every period's row, when tracing.
+    trace: Option<Arc<Trace>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1562,13 +1836,15 @@ impl<D: PullDevice> Loop<D> {
 
     /// One device event.
     fn period(&mut self, sleeper: &Sleeper) {
+        let mut row = self.ctx.trace.as_ref().map(|_| [-1i64; TRACE_FIELDS]);
+        let wake_ns = sleeper.now_ns();
         let cell = &self.ctx.cell;
         if self.state == RtState::Running
             && (cell.is_empty() || cell.generation() != self.generation)
         {
             self.state = RtState::Draining;
             self.drain_until = self.pump.made();
-            self.drain_deadline = sleeper.now_ns() + self.buffer_ns + DRAIN_SLACK_NS;
+            self.drain_deadline = wake_ns + self.buffer_ns + DRAIN_SLACK_NS;
         }
         let draining = self.state == RtState::Draining;
         let space = match self.dev.space() {
@@ -1578,31 +1854,68 @@ impl<D: PullDevice> Loop<D> {
                 return;
             }
         };
+        let probe = if row.is_some() {
+            self.dev.probe_padding()
+        } else {
+            None
+        };
         let before = self.pump.written();
         if !draining {
-            self.map.space(space.held, before, sleeper.now_ns());
+            self.map.space(space.held, before, wake_ns);
         }
         if let Err(f) = self.fill(space.free, !draining) {
             self.fault(f);
             return;
         }
+        let filled_ns = sleeper.now_ns();
         if !draining {
-            self.map.filled(sleeper.now_ns());
+            self.map.filled(filled_ns);
         }
         let after = self.pump.written();
-        match self.dev.position() {
+        let mut done = false;
+        let position = self.dev.position();
+        if let Some(r) = row.as_mut() {
+            let (units, freq) = self.dev.raw_clock();
+            r[T_WAKE] = wake_ns as i64;
+            r[T_FILLED] = filled_ns as i64;
+            r[T_FREE] = i64::from(space.free);
+            r[T_HELD] = space.held.map_or(-1, i64::from);
+            r[T_PADDING] = probe.map_or(-1, i64::from);
+            r[T_BEFORE] = before as i64;
+            r[T_AFTER] = after as i64;
+            r[T_MADE] = self.pump.made() as i64;
+            r[T_POS_UNITS] = units as i64;
+            r[T_FREQ] = freq as i64;
+            r[T_STATE] = i64::from(draining) + 1;
+            r[T_POS_OK] = match &position {
+                Ok(Some(_)) => 1,
+                Ok(None) => 0,
+                Err(_) => -1,
+            };
+        }
+        match position {
             Ok(Some((raw, time_ns))) => {
                 let r = self.map.reading(raw, time_ns, before, after);
+                if let Some(t) = row.as_mut() {
+                    let why = self.map.why();
+                    t[T_RAW] = raw as i64;
+                    t[T_POS_NS] = time_ns as i64;
+                    t[T_XRUN] = r.xrun.map_or(-1, |a| a as i64);
+                    t[T_PAIR] = r.pair.map_or(-1, |p| p.frame as i64);
+                    t[T_VALUE] = why.value;
+                    t[T_USUAL] = why.usual;
+                    t[T_DELTA] = why.delta;
+                    t[T_REPLAYED] = why.replayed;
+                    t[T_FLAGS] = i64::from(why.flags);
+                    t[T_SLIP] = why.slip;
+                }
                 if let Some(p) = r.pair {
                     self.ctx.presentation.publish(p);
                 }
                 if !draining && let Some(at) = r.xrun {
                     self.xrun(at);
                 }
-                if draining && raw as i64 - self.map.slip() >= self.drain_until as i64 {
-                    self.drained();
-                    return;
-                }
+                done = draining && raw as i64 - self.map.slip() >= self.drain_until as i64;
             }
             Ok(None) => {}
             Err(f) => {
@@ -1610,7 +1923,10 @@ impl<D: PullDevice> Loop<D> {
                 return;
             }
         }
-        if draining && sleeper.now_ns() >= self.drain_deadline {
+        if let (Some(t), Some(r)) = (self.ctx.trace.as_ref(), row.as_ref()) {
+            t.push(r);
+        }
+        if done || (draining && sleeper.now_ns() >= self.drain_deadline) {
             self.drained();
         }
     }
@@ -1983,52 +2299,52 @@ mod tests {
             "nothing at the DAC yet"
         );
         for j in 1..=10 {
-            let r = m.reading(j * P - 48, j * 10_000, (j + 1) * P, (j + 2) * P);
+            let r = m.reading(j * P - 48, j * 10_000_000, (j + 1) * P, (j + 2) * P);
             assert_eq!(
                 (r.pair, r.xrun),
-                (pair(j * P - 48, j * 10_000), None),
+                (pair(j * P - 48, j * 10_000_000), None),
                 "pass {j}"
             );
         }
         // The wake for pass 11 comes 15 ms (720 frames) late: pass 12 played a stale buffer
         // and the buffer this fill writes plays at pass 13.
-        let r = m.reading(11 * P - 48 + 720, 115_000, 12 * P, 13 * P);
+        let r = m.reading(11 * P - 48 + 720, 115_000_000, 12 * P, 13 * P);
         assert_eq!(r.xrun, Some(12 * P));
         assert_eq!(m.slip() as u64, P, "one buffer played again");
         assert_eq!(r.pair, None, "the DAC is in the stale buffer");
         // Pass 13: the DAC is still in the stale buffer (our frames up to the gap are not at
         // the DAC): no pair. Pass 14: our frames again, a buffer later than they would be.
-        let r = m.reading(13 * P - 48, 130_000, 13 * P, 14 * P);
+        let r = m.reading(13 * P - 48, 130_000_000, 13 * P, 14 * P);
         assert_eq!((r.pair, r.xrun), (None, None));
-        let r = m.reading(14 * P - 48, 140_000, 14 * P, 15 * P);
-        assert_eq!((r.pair, r.xrun), (pair(13 * P - 48, 140_000), None));
+        let r = m.reading(14 * P - 48, 140_000_000, 14 * P, 15 * P);
+        assert_eq!((r.pair, r.xrun), (pair(13 * P - 48, 140_000_000), None));
         for j in 15..=19 {
-            m.reading(j * P - 48, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48, j * 10_000_000, j * P, (j + 1) * P);
         }
         // Pass 20, 446 frames late (within an eighth of a buffer of a replay): a near miss is
         // counted, but nothing slipped.
-        let r = m.reading(20 * P - 48 + 446, 209_300, 20 * P, 21 * P);
+        let r = m.reading(20 * P - 48 + 446, 209_300_000, 20 * P, 21 * P);
         assert_eq!(r.xrun, Some(20 * P));
         assert_eq!(m.slip() as u64, P);
-        let r = m.reading(21 * P - 48, 210_000, 21 * P, 22 * P);
+        let r = m.reading(21 * P - 48, 210_000_000, 21 * P, 22 * P);
         assert_eq!(r.xrun, None);
         assert_eq!(r.pair, None, "up to the near miss, not trusted");
-        let r = m.reading(22 * P - 48, 220_000, 22 * P, 23 * P);
-        assert_eq!(r.pair, pair(21 * P - 48, 220_000));
+        let r = m.reading(22 * P - 48, 220_000_000, 22 * P, 23 * P);
+        assert_eq!(r.pair, pair(21 * P - 48, 220_000_000));
         for j in 23..=29 {
-            m.reading(j * P - 48, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48, j * 10_000_000, j * P, (j + 1) * P);
         }
         // A replay that looked like a near miss (470 frames late): counted short, and the next
         // period's lead, a buffer short, adds the buffer without a second xrun.
-        let r = m.reading(30 * P - 48 + 470, 309_800, 30 * P, 31 * P);
+        let r = m.reading(30 * P - 48 + 470, 309_800_000, 30 * P, 31 * P);
         assert_eq!((r.xrun, m.slip() as u64), (Some(30 * P), P));
-        let r = m.reading(31 * P - 48 + P, 310_000, 31 * P, 32 * P);
+        let r = m.reading(31 * P - 48 + P, 310_000_000, 31 * P, 32 * P);
         assert_eq!((r.xrun, m.slip() as u64), (None, 2 * P));
         // Two buffers late at once: two slipped.
         for j in 32..=40 {
-            m.reading(j * P - 48 + P, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48 + P, j * 10_000_000, j * P, (j + 1) * P);
         }
-        let r = m.reading(41 * P - 48 + P + 1_200, 425_000, 41 * P, 42 * P);
+        let r = m.reading(41 * P - 48 + P + 1_200, 425_000_000, 41 * P, 42 * P);
         assert_eq!((r.xrun, m.slip() as u64), (Some(41 * P), 4 * P));
         m.restart();
         assert_eq!(m.slip() as u64, 0);
