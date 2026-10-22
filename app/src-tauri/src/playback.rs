@@ -1441,7 +1441,11 @@ fn parse_lrc(text: &str) -> Vec<(u64, String)> {
 
 /// The words of a song in the open folder.
 #[tauri::command]
-pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
+pub async fn song_lyrics(
+    app: tauri::AppHandle,
+    root: String,
+    path: String,
+) -> Result<Lyrics, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let file = PathBuf::from(&root).join(&path);
         let lrc = file.with_extension("lrc");
@@ -1460,7 +1464,9 @@ pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
         let Some(text) = text else {
             return Ok(Lyrics::default());
         };
-        Ok(lyrics_of(text))
+        let lyrics = lyrics_of(text);
+        crate::japanese_dictionary::fetch_if_waiting(&app, &lyrics.lines, None);
+        Ok(lyrics)
     })
     .await
     .map_err(|e| e.to_string())?

@@ -58,6 +58,25 @@ impl<'a> Pieces<'a> {
         });
     }
 
+    /// A space after the last piece, as part of it (a converter that puts spaces between
+    /// words written without them: the space goes with the word before, as a timed word's
+    /// trailing space does).
+    pub fn space(&mut self) {
+        self.text.push(' ');
+        let end = self.text.len() as u32;
+        if let Some(last) = self.spans.last_mut() {
+            last.out.end = end;
+        }
+    }
+
+    /// Whether the text written so far ends with a letter or digit.
+    pub fn ends_in_word(&self) -> bool {
+        self.text
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+    }
+
     /// The source bytes `src` as they are (Latin words, digits, spaces, punctuation).
     pub fn keep(&mut self, src: Range<usize>) {
         let line = self.line;

@@ -24,6 +24,7 @@ mod clear_screen;
 mod clipboard;
 mod desktop;
 mod hotkeys;
+mod japanese_dictionary;
 mod libcache;
 mod listening;
 mod lyric_windows;
