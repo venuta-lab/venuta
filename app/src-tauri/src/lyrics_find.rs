@@ -77,6 +77,7 @@ pub async fn lyrics_find(
     source: Option<String>,
     fresh: Option<bool>,
     pb: State<'_, Playback>,
+    app: tauri::AppHandle,
 ) -> Result<LyricsAnswer, String> {
     let access = pb.catalog();
     tauri::async_runtime::spawn_blocking(move || {
@@ -105,6 +106,13 @@ pub async fn lyrics_find(
                 }
             }
         };
+        if let Some(f) = &found {
+            crate::japanese_dictionary::fetch_if_waiting(
+                &app,
+                &f.lyrics.lines,
+                f.lyrics.lang.as_deref(),
+            );
+        }
         Ok(LyricsAnswer {
             label: found.as_ref().map(|f| lo::label(&f.source).to_owned()),
             found,
