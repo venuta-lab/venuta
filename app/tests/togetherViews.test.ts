@@ -33,7 +33,8 @@ test('each state reads as its plain line', () => {
   assert.equal(lineOf('opening'), 'Getting ready')
   assert.equal(lineOf('suspended:buffering'), 'Buffering')
   assert.equal(lineOf('suspended:output_lost'), 'Sound output unavailable')
-  assert.equal(lineOf('cannot_play'), 'Not available for you, back with the next song')
+  // Beside someone else's name; to the person it is about, it says "Not available for you".
+  assert.equal(lineOf('cannot_play'), "Can't play this one, back with the next song")
   assert.equal(lineOf('remote'), "Listening on Asha's speaker")
   assert.equal(lineOf('away'), 'Reconnecting')
   for (const m of members.filter((m) => m.sub_state?.state === 'in_step'))

@@ -201,6 +201,14 @@ pub struct WindowStatus {
     bands: Option<Vec<u8>>,
 }
 
+/// The output the music is on: its endpoint (the key of its delay), its name and kind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayingOn {
+    pub endpoint: String,
+    pub name: String,
+    pub kind: Option<player::devices::Kind>,
+}
+
 /// What the Windows media overlay, media keys and the tray show. A loaded song has a non-empty
 /// `title`; `file` is the local cover source (None for remote items, which use `artwork_url`).
 #[derive(Clone, Default)]
@@ -230,7 +238,7 @@ pub struct Playback {
     output: Mutex<(Option<String>, bool)>,
     /// The endpoint the music is on now (the chosen one, its stereo twin, the default or a
     /// fallback), as the player last said.
-    endpoint: Arc<Mutex<Option<String>>>,
+    endpoint: Arc<Mutex<Option<PlayingOn>>>,
     /// Told when the music moves to another endpoint (a room takes that output's delay).
     #[allow(clippy::type_complexity)]
     on_output: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
@@ -239,18 +247,31 @@ pub struct Playback {
     /// Local only (Settings, Listening): every catalog request is refused while it's on.
     local_only: Arc<std::sync::atomic::AtomicBool>,
     offline: Arc<dyn MediaAccess>,
-    /// Listening together: the room's follower hears every status here.
-    room_tap: Arc<Mutex<Option<std::sync::mpsc::Sender<RoomTick>>>>,
     /// Listening together: the room takes the player's buttons (the tray, media keys, every
     /// window), so no one plays on their own by accident.
     room_buttons: RoomButtons,
-    /// Which room's follower has the player now (0: none), so one winding down never undoes
-    /// what the next one set up.
-    room_owner: std::sync::atomic::AtomicU64,
-    /// Where you are in your own queue, kept current (a room sets it aside, and gives it back).
-    here: Arc<Mutex<Here>>,
-    /// How the player was last told to follow a room (`Some(None)`: on its own), for the log.
-    room_mode: Mutex<Option<Option<bool>>>,
+    /// Listening together: what the room plays now, shown in place of your own program (which
+    /// waits paused meanwhile) by every window, the media overlay and the tray.
+    room_now: Arc<Mutex<Option<RoomNow>>>,
+    /// Your own program's last status (what a room's now playing is laid over).
+    last: Arc<Mutex<Option<WindowStatus>>>,
+    /// The listening thread's queue (plays, where you were, the playback log).
+    keep: Arc<Mutex<Option<std::sync::mpsc::Sender<Keep>>>>,
+}
+
+/// What a room plays now, for the player's own bar while you are in one.
+#[derive(Debug, Clone, Default)]
+pub struct RoomNow {
+    /// The room's queue, as the windows show songs.
+    pub items: Vec<QueueItem>,
+    pub index: i64,
+    pub playing: bool,
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    /// The room is getting a song ready for you, or waits for its stream.
+    pub buffering: bool,
+    /// Whose room (the source line).
+    pub from: String,
 }
 
 /// Your place in the queue: the songs, the one playing and where, and how it plays.
@@ -266,8 +287,9 @@ struct Here {
     order: Option<Vec<usize>>,
 }
 
-/// Your own queue while a room has the player (in the data folder, so a Venuta closed in a room
-/// still gives it back when it opens again).
+/// Your own queue set aside by a room of Venuta 0.3 (in the data folder): given back once, so a
+/// Venuta closed in such a room still gets your own queue back after the update. Rooms now keep
+/// your own program in the player itself.
 fn aside_path() -> PathBuf {
     engine::paths::app_data_dir().join("together-yours.json")
 }
@@ -290,30 +312,6 @@ fn room_takes(buttons: &RoomButtons, b: Button) -> bool {
     // Out of the lock first: the room's answer may come back to the player.
     let f = buttons.lock().ok().and_then(|f| f.clone());
     f.map(|f| f(b)).is_some()
-}
-
-/// What the room's follower needs of each player status.
-#[derive(Debug, Clone)]
-pub struct RoomTick {
-    pub index: Option<usize>,
-    pub duration_ms: u64,
-    pub sync: Option<player::engine::SyncStatus>,
-    /// The player stopped on an error (the output refused to open, the song couldn't be read).
-    pub error: bool,
-    /// Not a status: time passing with none (the follower looks at the clock).
-    pub idle: bool,
-}
-
-impl RoomTick {
-    pub fn idle() -> Self {
-        RoomTick {
-            index: None,
-            duration_ms: 0,
-            sync: None,
-            error: false,
-            idle: true,
-        }
-    }
 }
 
 /// The catalog while Local only is on: it answers every request with "Local only is on", so
@@ -396,11 +394,10 @@ impl Default for Playback {
             catalog: media_access::default_media_access(),
             local_only: Arc::default(),
             offline: Arc::new(LocalOnlyAccess),
-            room_tap: Arc::default(),
             room_buttons: Arc::default(),
-            room_owner: std::sync::atomic::AtomicU64::new(0),
-            here: Arc::default(),
-            room_mode: Mutex::default(),
+            room_now: Arc::default(),
+            last: Arc::default(),
+            keep: Arc::default(),
         }
     }
 }
@@ -415,7 +412,7 @@ impl Playback {
         rx
     }
 
-    fn with<R>(&self, f: impl FnOnce(&Player<QueueItem>) -> R) -> Result<R, String> {
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&Player<QueueItem>) -> R) -> Result<R, String> {
         let mut slot = self.player.lock().map_err(|e| e.to_string())?;
         if slot.is_none() {
             let window = self.window.clone();
@@ -423,8 +420,8 @@ impl Playback {
             let root = self.root.clone();
             let catalog = self.catalog.clone();
             let local_only = self.local_only.clone();
-            let room_tap = self.room_tap.clone();
-            let here = self.here.clone();
+            let room_now = self.room_now.clone();
+            let last_status = self.last.clone();
             let endpoint = self.endpoint.clone();
             let on_output = self.on_output.clone();
             // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
@@ -432,6 +429,9 @@ impl Playback {
             // Plays and where you were are written to disk on a thread of their own: never on
             // the player's, where a slow disk or a busy database would starve the sound.
             let (keep, kept) = std::sync::mpsc::channel::<Keep>();
+            if let Ok(mut k) = self.keep.lock() {
+                *k = Some(keep.clone());
+            }
             let (reporting, offline) = (catalog.clone(), local_only.clone());
             std::thread::Builder::new()
                 .name("venuta-listening".into())
@@ -476,9 +476,19 @@ impl Playback {
                     if let Some(g) = s.signal.as_ref()
                         && let Some(e) = g.endpoint.clone()
                     {
+                        let now = PlayingOn {
+                            endpoint: e,
+                            name: g.device.clone(),
+                            kind: g.kind,
+                        };
                         let moved = endpoint
                             .lock()
-                            .map(|mut cur| cur.replace(e.clone()) != Some(e))
+                            .map(|mut cur| {
+                                let moved =
+                                    cur.as_ref().map(|c| &c.endpoint) != Some(&now.endpoint);
+                                *cur = Some(now);
+                                moved
+                            })
                             .unwrap_or(false);
                         if moved {
                             // In the playback log, for the guided test (docs/qa/devices-live.md).
@@ -503,32 +513,11 @@ impl Playback {
                             }
                         }
                     }
-                    if let Ok(tap) = room_tap.lock()
-                        && let Some(tx) = tap.as_ref()
-                    {
-                        let _ = tx.send(RoomTick {
-                            index: s.index,
-                            duration_ms: s.duration_ms,
-                            sync: s.sync,
-                            error: !s.error.is_empty(),
-                            idle: false,
-                        });
-                    }
+                    // In a room, the windows, the overlay and plays follow the room (`room_tick`);
+                    // where you were is still your own program's.
+                    let in_room = room_now.lock().is_ok_and(|r| r.is_some());
                     let folder = root.lock().map(|r| r.clone()).unwrap_or_default();
                     let index = s.index.map(|i| i as i64).unwrap_or(-1);
-                    if let Ok(mut h) = here.lock() {
-                        if s.queue.is_some() {
-                            h.items = queue.clone();
-                            h.order = order.clone();
-                        }
-                        if h.from != s.from {
-                            h.from = s.from.clone();
-                        }
-                        h.index = index;
-                        h.position_ms = s.position_ms;
-                        h.shuffle = s.shuffle;
-                        h.repeat = s.repeat;
-                    }
                     {
                         let song = s.index.and_then(|i| queue.get(i));
                         // An online song is counted by its id, with what it was.
@@ -541,21 +530,23 @@ impl Playback {
                                     album: q.album.clone(),
                                     art: q.artwork_url.clone(),
                                 });
-                        let _ = keep.send(Keep::Heard {
-                            folder: folder.clone(),
-                            song: song.map(|q| {
-                                if q.is_remote() {
-                                    (q.media_key(), String::new())
-                                } else {
-                                    (q.path.clone(), q.dir.clone())
-                                }
-                            }),
-                            online,
-                            playing: s.playing,
-                            position_ms: s.position_ms,
-                            duration_ms: s.duration_ms,
-                            from: s.from.clone(),
-                        });
+                        if !in_room {
+                            let _ = keep.send(Keep::Heard {
+                                folder: folder.clone(),
+                                song: song.map(|q| {
+                                    if q.is_remote() {
+                                        (q.media_key(), String::new())
+                                    } else {
+                                        (q.path.clone(), q.dir.clone())
+                                    }
+                                }),
+                                online,
+                                playing: s.playing,
+                                position_ms: s.position_ms,
+                                duration_ms: s.duration_ms,
+                                from: s.from.clone(),
+                            });
+                        }
                         // Where you were: when the queue, song or play state changes, and every
                         // ten seconds of playing.
                         let mark = (
@@ -584,7 +575,8 @@ impl Playback {
                     let item = s.index.and_then(|i| queue.get(i));
                     let key = item.map(|i| i.media_key());
                     let tick = s.position_ms / 5000;
-                    if (key.clone(), s.playing, tick) != last
+                    if !in_room
+                        && (key.clone(), s.playing, tick) != last
                         && let Ok(mut m) = media.lock()
                     {
                         let now = match item {
@@ -672,8 +664,6 @@ impl Playback {
                             })
                             .ok();
                     }
-                    if let Ok(mut w) = window.lock()
-                        && !w.is_empty()
                     {
                         let status = WindowStatus {
                             queue: s.queue,
@@ -696,8 +686,24 @@ impl Playback {
                             sleep_in_s: s.sleep_in_s,
                             bands: s.bands,
                         };
-                        // A window that has closed stops listening.
-                        w.retain(|_, ch| ch.send(status.clone()).is_ok());
+                        if let Ok(mut l) = last_status.lock() {
+                            // The queue is kept: a room's bar is laid over all of it.
+                            let queue = status
+                                .queue
+                                .clone()
+                                .or_else(|| l.as_ref().and_then(|x| x.queue.clone()));
+                            *l = Some(WindowStatus {
+                                queue,
+                                ..status.clone()
+                            });
+                        }
+                        if !in_room
+                            && let Ok(mut w) = window.lock()
+                            && !w.is_empty()
+                        {
+                            // A window that has closed stops listening.
+                            w.retain(|_, ch| ch.send(status.clone()).is_ok());
+                        }
                     }
                 },
             ));
@@ -761,35 +767,6 @@ impl Playback {
         })
     }
 
-    /// Listening together: a room's follower takes the player (its id, to let go of it later).
-    pub fn claim_room(&self) -> u64 {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.room_owner
-            .store(id, std::sync::atomic::Ordering::SeqCst);
-        id
-    }
-
-    /// Listening together: the room takes the player, so your own queue as it is now is set
-    /// aside (once: a room right after another keeps the queue from before the first).
-    pub fn set_aside(&self) {
-        let path = aside_path();
-        if path.exists() {
-            return;
-        }
-        let Ok(mut h) = self.here.lock().map(|h| h.clone()) else {
-            return;
-        };
-        if h.items.is_empty() || h.index < 0 {
-            return;
-        }
-        h.root = self.root.lock().map(|r| r.clone()).unwrap_or_default();
-        if let Ok(json) = serde_json::to_vec(&h) {
-            let _ = std::fs::create_dir_all(engine::paths::app_data_dir());
-            let _ = std::fs::write(&path, json);
-        }
-    }
-
     /// Your own queue back where it was set aside, paused. True when there was one.
     pub fn give_back(&self) -> bool {
         let path = aside_path();
@@ -825,25 +802,22 @@ impl Playback {
         true
     }
 
-    /// Listening together: that follower lets go of the player, unless another room's has it
-    /// already. True when it was still its own.
-    pub fn release_room(&self, id: u64) -> bool {
-        self.room_owner
-            .compare_exchange(
-                id,
-                0,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            )
-            .is_ok()
-    }
-
     /// Listening together: the room takes the buttons (`None`: the player has them again).
     pub fn set_room_buttons(&self, f: Option<Arc<dyn Fn(Button) + Send + Sync>>) {
         if let Ok(mut b) = self.room_buttons.lock() {
             *b = f;
         }
     }
+}
+
+/// The library folder the player plays from now (empty before one is opened).
+pub fn current_root(app: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    app.state::<Playback>()
+        .root
+        .lock()
+        .map(|r| r.clone())
+        .unwrap_or_default()
 }
 
 /// What asked to play, kept in `<data>/logs/playback.log` (newest last, trimmed as it grows), so a
@@ -1005,7 +979,7 @@ impl Playback {
     /// item to the catalog handle that resolves its stream at open time. Also fills the
     /// UI-facing availability (`Local` | `Online`, or `LocalPreferred` for a playlist's online
     /// song playing from your file). No stream URL is ever stored here.
-    fn resolve(&self, root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
+    pub(crate) fn resolve(&self, root: &str, items: Vec<QueueItem>) -> Vec<QueueItem> {
         let root = PathBuf::from(root);
         items
             .into_iter()
@@ -1046,19 +1020,33 @@ impl Playback {
         self.output.lock().ok().and_then(|o| o.0.clone())
     }
 
-    /// The endpoint the music is on (as the player last said), else the one the choice would
-    /// play on now: the key of the output's delay.
-    pub fn current_endpoint(&self) -> Option<String> {
-        if let Some(e) = self.endpoint.lock().ok().and_then(|e| e.clone()) {
-            return Some(e);
+    /// The output the music is on (as the player last said), else the one the choice would
+    /// play on now.
+    pub fn current_output(&self) -> Option<PlayingOn> {
+        if let Some(p) = self.endpoint.lock().ok().and_then(|e| e.clone()) {
+            return Some(p);
         }
         let chosen = self.output_id();
         #[cfg(windows)]
         if let Ok((eps, default)) = player::wasapi_devices::list_endpoints() {
-            return player::devices::resolve(chosen.as_deref(), &eps, default.as_deref(), &[])
-                .map(|r| r.id);
+            return player::devices::resolve(chosen.as_deref(), &eps, default.as_deref(), &[]).map(
+                |r| PlayingOn {
+                    endpoint: r.id,
+                    name: r.entry.name,
+                    kind: Some(r.entry.kind),
+                },
+            );
         }
-        chosen
+        chosen.map(|endpoint| PlayingOn {
+            name: endpoint.clone(),
+            endpoint,
+            kind: None,
+        })
+    }
+
+    /// The endpoint the music is on, or would be on: the key of the output's delay.
+    pub fn current_endpoint(&self) -> Option<String> {
+        self.current_output().map(|p| p.endpoint)
     }
 
     /// Call `f` whenever the music moves to another endpoint.
@@ -1088,86 +1076,137 @@ impl Playback {
         Ok(())
     }
 
-    /// Listening together: every player status goes to `tap` too (`None`: no more).
-    pub fn set_room_tap(&self, tap: Option<std::sync::mpsc::Sender<RoomTick>>) {
-        if let Ok(mut t) = self.room_tap.lock() {
-            *t = tap;
+    /// Listening together: what the room plays now (`None`: your own program shows again),
+    /// told to every window at once.
+    pub fn set_room_now(&self, now: Option<RoomNow>) {
+        let gone = now.is_none();
+        if let Ok(mut r) = self.room_now.lock() {
+            *r = now;
+        }
+        if gone {
+            // Your own program's last status, the queue with it.
+            let last = self.last.lock().ok().and_then(|l| l.clone());
+            if let (Some(st), Ok(mut w)) = (last, self.window.lock()) {
+                w.retain(|_, ch| ch.send(st.clone()).is_ok());
+            }
+            if let Ok(mut m) = self.media.lock() {
+                m.retain(|tx| tx.send(NowPlaying::default()).is_ok());
+            }
+        } else {
+            self.room_tick(true);
         }
     }
 
-    /// Listening together: this song alone in the player, ready at `start_ms` (the room's plan
-    /// then says when it plays). A remote item may bring its own way to its stream.
-    pub fn room_load(
-        &self,
-        root: &str,
-        item: QueueItem,
-        start_ms: u64,
-        own: Option<Arc<dyn MediaAccess>>,
-    ) -> Result<(), String> {
-        if let Ok(mut r) = self.root.lock() {
-            *r = root.to_owned();
+    /// Listening together: the room's now playing to every window, the media overlay and the
+    /// plays (ten times a second while in a room; `queue`: with the room's queue).
+    pub fn room_tick(&self, queue: bool) {
+        let Some(now) = self.room_now.lock().ok().and_then(|r| r.clone()) else {
+            return;
+        };
+        let base = self.last.lock().ok().and_then(|l| l.clone());
+        let item = usize::try_from(now.index)
+            .ok()
+            .and_then(|i| now.items.get(i));
+        let st = WindowStatus {
+            queue: queue.then(|| now.items.clone()),
+            unshuffled: None,
+            root: base.as_ref().map(|b| b.root.clone()).unwrap_or_default(),
+            index: now.index,
+            playing: now.playing,
+            buffering: now.buffering,
+            stalled: false,
+            position_ms: now.position_ms,
+            duration_ms: now.duration_ms,
+            shuffle: false,
+            repeat: Repeat::Off,
+            volume: base.as_ref().map_or(1.0, |b| b.volume),
+            signal: base.as_ref().and_then(|b| b.signal.clone()),
+            from: now.from.clone(),
+            error: String::new(),
+            sound: base.as_ref().map(|b| b.sound.clone()).unwrap_or_default(),
+            stop_after_current: false,
+            sleep_in_s: base.as_ref().and_then(|b| b.sleep_in_s),
+            bands: base.as_ref().and_then(|b| b.bands.clone()),
+        };
+        if let Ok(mut w) = self.window.lock() {
+            w.retain(|_, ch| ch.send(st.clone()).is_ok());
         }
-        let mut items = self.resolve(root, vec![item]);
-        if let Some(access) = own {
-            for it in &mut items {
-                it.media = MediaRef::new(access.clone());
+        if let Some(item) = item {
+            if let Ok(mut m) = self.media.lock() {
+                let np = NowPlaying {
+                    title: item.title.clone(),
+                    artist: item.artists.join(", "),
+                    album: item.album.clone(),
+                    file: None,
+                    artwork_url: item.artwork_url.clone(),
+                    duration_ms: now.duration_ms,
+                    playing: now.playing,
+                    position_ms: now.position_ms,
+                };
+                m.retain(|tx| tx.send(np.clone()).is_ok());
+            }
+            // Room songs count as heard (J4), marked as from the room.
+            if let Ok(k) = self.keep.lock()
+                && let Some(k) = k.as_ref()
+            {
+                let folder = self.root.lock().map(|r| r.clone()).unwrap_or_default();
+                let catalog = matches!(&item.online, Some(PlayableId::Online { provider, .. })
+                    if provider == crate::together::CATALOG_PROVIDER);
+                // An online song by its id; one of your own files by its path; a song only the
+                // host has isn't yours to count.
+                let (song, online) = if catalog {
+                    let key = item.media_key();
+                    (
+                        Some((key.clone(), String::new())),
+                        Some(crate::listening::OnlineSong {
+                            file: key,
+                            title: item.title.clone(),
+                            artists: item.artists.clone(),
+                            album: item.album.clone(),
+                            art: item.artwork_url.clone(),
+                        }),
+                    )
+                } else if !item.path.is_empty() {
+                    (Some((item.path.clone(), item.dir.clone())), None)
+                } else {
+                    (None, None)
+                };
+                let _ = k.send(Keep::Heard {
+                    folder,
+                    song,
+                    online,
+                    playing: now.playing,
+                    position_ms: now.position_ms,
+                    duration_ms: now.duration_ms,
+                    from: now.from.clone(),
+                });
             }
         }
-        self.send(Cmd::Set {
-            items,
-            index: 0,
-            start_ms,
-            play: false,
-            // No source of its own: the room line says whose room it is.
-            from: String::new(),
-        })
     }
 
-    /// Listening together: add a song after the last one readied (ready ahead, to follow it
-    /// without a gap).
-    pub fn room_queue_next(
-        &self,
-        root: &str,
-        item: QueueItem,
-        own: Option<Arc<dyn MediaAccess>>,
-    ) -> Result<(), String> {
-        let mut items = self.resolve(root, vec![item]);
-        if let Some(access) = own {
-            for it in &mut items {
-                it.media = MediaRef::new(access.clone());
-            }
+    /// What the room plays now, set without telling the windows (`room_tick` does).
+    pub fn set_room_now_quiet(&self, now: Option<RoomNow>) {
+        if let Ok(mut r) = self.room_now.lock() {
+            *r = now;
         }
-        self.send(Cmd::Insert { items, next: false })
     }
 
-    /// Listening together: quiet (this person can't play the room's song, or stepped out).
-    pub fn room_pause(&self) -> Result<(), String> {
-        self.send(Cmd::Pause)
+    /// A room's now playing is shown (you're in a room).
+    pub fn in_room(&self) -> bool {
+        self.room_now.lock().is_ok_and(|r| r.is_some())
     }
 
-    /// Listening together: on to the readied next song now (this copy ran longer than the room's).
-    pub fn room_next(&self) -> Result<(), String> {
-        self.send(Cmd::Next)
+    /// Your volume, 0 to 100 (the host's speaker's, in a room).
+    pub fn volume_percent(&self) -> Option<u8> {
+        let l = self.last.lock().ok()?;
+        l.as_ref()
+            .map(|s| (s.volume.clamp(0.0, 1.0) * 100.0).round() as u8)
     }
 
-    /// Listening together: the room's plan for the player (`None`: on its own again).
-    pub fn room_sync(&self, plan: Option<player::sync::SyncPlan>) -> Result<(), String> {
-        // In the log when the player starts or stops following a room, or changes how.
-        let mode = plan.map(|p| p.same_room);
-        if let Ok(mut was) = self.room_mode.lock()
-            && *was != Some(mode)
-        {
-            *was = Some(mode);
-            note_play(
-                match mode {
-                    Some(true) => "player: follows the room (one room: kept within a few ms)",
-                    Some(false) => "player: follows the room (apart)",
-                    None => "player: on its own again (no room plan, no correction)",
-                },
-                "listening together",
-            );
-        }
-        self.send(Cmd::Sync(plan))
+    /// Whether the player plays with engine 2 (rooms play only through it).
+    pub fn engine_two(&self) -> bool {
+        self.with(|p| p.engine() == EngineKind::Two)
+            .unwrap_or(false)
     }
 
     /// Local only on or off (Settings, Listening).
@@ -1593,7 +1632,11 @@ fn device_views(chosen: Option<&str>) -> Result<Vec<DeviceView>, String> {
 #[tauri::command]
 pub async fn player_devices(pb: State<'_, Playback>) -> Result<OutputChoices, String> {
     let (device, exclusive) = pb.output.lock().map_err(|e| e.to_string())?.clone();
-    let playing = pb.endpoint.lock().ok().and_then(|e| e.clone());
+    let playing = pb
+        .endpoint
+        .lock()
+        .ok()
+        .and_then(|e| e.as_ref().map(|p| p.endpoint.clone()));
     let chosen = device.clone();
     let devices = tauri::async_runtime::spawn_blocking(move || device_views(chosen.as_deref()))
         .await

@@ -32,10 +32,13 @@ The installer isn't code-signed yet, so SmartScreen doesn't know it. Choose **Mo
 
 In your library folder (a hidden `.venuta` folder beside your music), so it moves with your
 library. Nothing leaves your PC except what you ask for: lookups for lyrics and covers, the online
-catalog, rooms you start or join, and the daily check for updates. [PRIVACY.md](../PRIVACY.md) has
+catalog, rooms you start or join, and the check for updates. [PRIVACY.md](../PRIVACY.md) has
 the details.
 
 ## How do updates arrive?
 
-Venuta checks once a day and tells you when there's something new; **Settings › About** shows
-what's new and installs it in one click.
+Venuta checks soon after it starts and every few hours while it runs. When there's something
+new, **Update to x.y.z** shows in the title bar until it is installed: one click downloads it,
+checks its signature, installs it and starts Venuta again. **Settings › System › Updates** shows
+what's new, when Venuta last checked, and if something went wrong, why, with a link to download
+the installer by hand.

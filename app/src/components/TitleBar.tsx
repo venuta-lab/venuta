@@ -8,12 +8,14 @@ import { askOpenLink } from '../lib/openLink'
 import { IconSearch } from './Icons'
 import { RoomChip } from './together/RoomChip'
 import { YtmProfileButton } from './YtmProfile'
+import { installUpdate, useUpdates } from '../lib/updates'
+import { titleButton } from '../lib/updateModel'
 
 /** Where a screen may put its own search in the title bar, in place of Jump to. */
 export const TITLE_SEARCH = 'title-search'
 
 // Frameless window: this strip is the drag handle and holds the window controls.
-export function TitleBar(props: { onSearch: () => void; onActivity: () => void }) {
+export function TitleBar(props: { onSearch: () => void; onActivity: () => void; onUpdates: () => void }) {
   const win = inApp() ? getCurrentWindow() : null
   // A copy for testing, beside the one in use: never mistaken for it.
   const [test, setTest] = useState(false)
@@ -49,6 +51,7 @@ export function TitleBar(props: { onSearch: () => void; onActivity: () => void }
         </button>
       </div>
       <div data-tauri-drag-region className="flex h-full min-w-max flex-1 basis-0 items-center justify-end">
+        <UpdateButton onUpdates={props.onUpdates} />
         <RoomChip />
         <button
           onClick={askOpenLink}
@@ -74,6 +77,28 @@ export function TitleBar(props: { onSearch: () => void; onActivity: () => void }
         </WinButton>
       </div>
     </div>
+  )
+}
+
+/** A new version, from the moment it is found until it is installed: one click updates. A failed
+    update opens Settings › System, which says why and offers the installer. */
+function UpdateButton(props: { onUpdates: () => void }) {
+  const b = titleButton(useUpdates())
+  if (!b) return null
+  return (
+    <button
+      onClick={b.failed ? props.onUpdates : () => void installUpdate()}
+      disabled={b.busy}
+      title={b.failed ? 'The update did not finish. See why in Settings.' : b.busy ? 'Venuta restarts when the update is installed.' : 'Download and install it now. Venuta restarts.'}
+      className={`mr-1.5 flex shrink-0 items-center gap-1.5 rounded-full px-3 py-[3px] text-[12px] font-semibold transition-colors ${
+        b.failed ? 'bg-problem/15 text-problem hover:bg-problem/25' : 'accent-fill text-on-accent hover:brightness-110 disabled:opacity-90'
+      }`}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" />
+      </svg>
+      {b.label}
+    </button>
   )
 }
 

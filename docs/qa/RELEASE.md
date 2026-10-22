@@ -68,3 +68,21 @@ identity). The maintainer signs and publishes.
 To try the real installer first, `node scripts/release.mjs <x.y.z> --local` builds the same signed
 installer into `target/release/bundle/nsis` and stops: nothing committed, tagged, pushed or
 released.
+
+## 6. Every installed version can update to it
+
+Every version ever released asks
+`https://github.com/venuta-lab/venuta/releases/latest/download/latest.json`, looks for
+`windows-x86_64-nsis` then `windows-x86_64`, and installs only an installer signed by the update
+key (see [decision 0009](../decisions/0009-updates-that-arrive.md)). So:
+
+- `release.mjs` (and the release workflow) refuse to go on unless
+  `node scripts/update-feed.mjs check` passes: each released tag's endpoint, platform and key,
+  against the new `latest.json` and the installer's bytes. It needs the tags (`git fetch --tags`).
+- A stable release is published as **the latest release** (keep "Set as the latest release"
+  ticked), with both `latest.json` and the installer. A pre-release is made with `--prerelease`
+  (workflow: **prerelease**), is never the latest, and only copies with Pre-releases on see it.
+- Never upload a `latest.json` by hand, and never mark a stable release as a pre-release (v0.1.0
+  was, and until v0.2.0 was published every update check failed).
+- Once published: `node scripts/update-feed.mjs live`. It reads what GitHub serves, as each
+  released version asks it, and the installer's address; every version must say "ok".

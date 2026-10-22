@@ -4,7 +4,7 @@
 // smallest size is it broken inside a word.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MIN_FIT, nextFit, shrinkFor } from '../src/lib/lyricFit.ts'
+import { MIN_FIT, nextFit, shrinkFor, stageRoom } from '../src/lib/lyricFit.ts'
 
 const row = (scroll: number, client: number) => ({ scroll, client })
 
@@ -54,4 +54,20 @@ test('the desktop strip: a line with nowhere to wrap shrinks across before it is
   fit = 1
   for (let i = 0; i < 10; i++) fit = nextFit(fit, shrinkFor({ rows: [row(4 * strip * fit, strip)], height: 60 * fit, room: 248 }))
   assert.equal(fit, MIN_FIT)
+})
+
+test("the big screen's lines have the room above the song bar, however tall the bar grows", () => {
+  // No song bar (Clear, or nothing playing): the whole screen, with a margin top and bottom.
+  assert.deepEqual(stageRoom(720, null), { top: 36, bottom: 36, room: 648 })
+  // The song bar's top 580 px down a 720 px screen: the lines end a gap above it, and keep a
+  // margin under the window's buttons at the top.
+  const r = stageRoom(720, 580)
+  assert.ok(Math.abs(r.top + r.room - (580 - 720 * 0.03)) < 1e-9, 'they end a gap above the bar')
+  assert.equal(r.bottom, 720 - 580 + 720 * 0.03)
+  assert.equal(r.top + r.room + r.bottom, 720)
+  // The bar grows (where the rows came from, the translation note with its button): less room.
+  const taller = stageRoom(720, 540)
+  assert.equal(r.room - taller.room, 40)
+  // A bar reaching the top of the screen leaves no room, never less.
+  assert.equal(stageRoom(720, 30).room, 0)
 })

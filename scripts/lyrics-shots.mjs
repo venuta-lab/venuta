@@ -3,7 +3,7 @@
 // window on screen), checked for clipping and overlap, and the lyrics clock measured.
 //
 //   pnpm --dir app exec vite --port 5199 --strictPort      (in another shell)
-//   node scripts/lyrics-shots.mjs [--url http://localhost:5199] [--out docs/screenshots/lyrics-second-line]
+//   node scripts/lyrics-shots.mjs [--url http://localhost:5199] [--out docs/screenshots/lyrics-second-line] [--only bigscreen-]
 //
 // Chrome runs headless with a profile of its own in the temp folder, deleted at the end, and is
 // driven over a pipe (no port opened). CHROME may name its exe.
@@ -19,11 +19,14 @@ const arg = (name, or) => {
 }
 const BASE = arg('url', 'http://localhost:5199')
 const OUT = resolve(arg('out', 'docs/screenshots/lyrics-second-line'))
+// Only the shots whose name has this in it (the clock is measured on a full run only).
+const ONLY = arg('only', '')
 const CHROME = [process.env.CHROME, 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe', '/usr/bin/google-chrome'].find((p) => p && existsSync(p))
 if (!CHROME) throw new Error('Chrome not found: set CHROME')
 
 // --- The shots ------------------------------------------------------------------------------
-// [name, query, width, height]. All rows on unless said; the big screen and the strip at Huge.
+// [name, query, width, height, { awake }]. All rows on unless said; the big screen and the strip
+// at Huge. `awake`: the mouse has just moved (the big screen's song bar shows its buttons).
 const SHOTS = []
 for (const theme of ['dark', 'light']) {
   const t = `theme=${theme}`
@@ -62,6 +65,45 @@ SHOTS.push(
   ['desktop-unbroken-large-light', 'view=overlay&song=unbroken&theme=light&line=0&size=xl&look=theme', 1400, 296],
   ['bigscreen-unbroken-small-dark', 'view=stage&song=unbroken&theme=dark&line=0&size=xl', 960, 540],
   ['bigscreen-unbroken-joined-small-dark', 'view=stage&song=unbroken&theme=dark&line=1&size=xl', 960, 540],
+)
+
+// The big screen from 1280 x 720 up, with every row a song can have under its lines (a Japanese
+// song translated by Google: pronunciation, translation, and the attribution beside it) and every
+// line the song bar can have under the song (where the rows came from, the dictionary on its way;
+// for the song not yet translated, the translation note with its button): the lines keep clear
+// of the song bar at every size, in both grounds and every theme's fonts.
+const SCREENS = [[1280, 720], [1366, 768], [1440, 900], [1600, 900], [1920, 1080], [2560, 1440], [3840, 2160]]
+const FULL_BAR = 'view=stage&song=japanese-google&line=2&size=xl&dict=downloading&engine=google&key=1'
+const ASK_BAR = 'view=stage&song=japanese&line=2&size=xl&dict=downloading&engine=google&key=1'
+for (const theme of ['dark', 'light'])
+  for (const [w, h] of SCREENS)
+    SHOTS.push(
+      [`bigscreen-japanese-google-${w}x${h}-${theme}`, `${FULL_BAR}&theme=${theme}`, w, h],
+      [`bigscreen-japanese-ask-${w}x${h}-${theme}`, `${ASK_BAR}&theme=${theme}`, w, h],
+    )
+for (const style of ['venuta', 'green-room', 'orchard', 'redline', 'glasshouse', 'neo-tokyo', 'thermoptic', 'sync-ratio', 'layer-zero', 'bounty', 'skin99'])
+  SHOTS.push([`bigscreen-japanese-google-theme-${style}-1280x720-dark`, `${FULL_BAR}&theme=dark&look=theme&style=${style}`, 1280, 720])
+for (const look of ['karaoke', 'clean', 'glow', 'outline', 'serif'])
+  SHOTS.push([`bigscreen-japanese-google-${look}-1280x720-light`, `${FULL_BAR}&theme=light&look=${look}`, 1280, 720])
+SHOTS.push(
+  ['bigscreen-japanese-google-awake-1280x720-dark', `${FULL_BAR}&theme=dark`, 1280, 720, { awake: true }],
+  ['bigscreen-japanese-ask-awake-1280x720-dark', `${ASK_BAR}&theme=dark`, 1280, 720, { awake: true }],
+  ['bigscreen-japanese-note-1280x720-light', 'view=stage&song=japanese&line=3&size=xl&theme=light', 1280, 720],
+  ['bigscreen-hindi-1280x720-dark', 'view=stage&song=hindi&line=2&size=xl&theme=dark', 1280, 720],
+  ['bigscreen-mixed-1280x720-light', 'view=stage&song=mixed&line=1&size=xl&theme=light&look=outline', 1280, 720],
+)
+// Lines translated by Google, in every view: "Powered by Google Translate" beside each, fitting as
+// the rest does; and Settings with Google chosen (its attribution, disclaimer and page).
+SHOTS.push(
+  ['nowplaying-japanese-google-small-dark', 'view=nowplaying&song=japanese-google&theme=dark&line=2', 1100, 700],
+  ['nowplaying-japanese-google-large-light', 'view=nowplaying&song=japanese-google&theme=light&line=2', 1920, 1080],
+  ['desktop-japanese-google-small-dark', 'view=overlay&song=japanese-google&theme=dark&line=2&size=m', 520, 296],
+  ['desktop-japanese-google-large-light', 'view=overlay&song=japanese-google&theme=light&line=3&size=xl', 1400, 296],
+  ['desktop-japanese-google-smallest-dark', 'view=overlay&song=japanese-google&theme=dark&line=3&size=xl', 360, 130],
+  ['mini-bar-japanese-google-dark', 'view=mini&song=japanese-google&theme=dark&line=2', 380, 132],
+  ['mini-card-japanese-google-light', 'view=mini&song=japanese-google&theme=light&line=3', 300, 400],
+  ['settings-lyrics-google-dark', 'view=settings&song=hindi&theme=dark&engine=google&key=1', 900, 1000],
+  ['settings-lyrics-google-light', 'view=settings&song=hindi&theme=light&engine=google', 900, 1000],
 )
 
 // --- Chrome over a pipe ---------------------------------------------------------------------
@@ -133,18 +175,29 @@ const CHECK = `(() => {
     const br = b.getBoundingClientRect(), ir = i.getBoundingClientRect()
     if (ir.top < br.top - 1 || ir.bottom > br.bottom + 1 || i.scrollWidth > b.clientWidth + 1) bad.push('cut off in its box: "' + i.textContent.slice(0, 40) + '"')
   }
+  // Nothing the lines draw (a line, its rows, the words of either) over the song bar: every box in
+  // the stack, not only the stack's own, which what is in it can overflow.
   const stack = document.querySelector('[data-stack]'), bar = document.querySelector('[data-song-bar]')
-  if (stack && bar && stack.getBoundingClientRect().bottom > bar.getBoundingClientRect().top + 1) bad.push('the lines run into the song bar')
+  if (stack && bar) {
+    const b = bar.getBoundingClientRect()
+    const hits = (r) => r.width > 0 && r.height > 0 && r.bottom > b.top + 1 && r.top < b.bottom - 1 && r.right > b.left + 1 && r.left < b.right - 1
+    if (hits(stack.getBoundingClientRect())) bad.push('the lines run into the song bar')
+    const into = [...stack.querySelectorAll('*')].find((e) => hits(e.getBoundingClientRect()))
+    if (into) bad.push('runs into the song bar: ' + name(into))
+  }
   // Each row under its line, in order: pronunciation, then translation, below the line.
   for (const r of document.querySelectorAll('[data-second]')) {
     const prev = r.previousElementSibling
     if (prev && r.getBoundingClientRect().top < prev.getBoundingClientRect().bottom - 1) bad.push('overlaps the line above: ' + name(r))
   }
+  // Google's attribution sits inside a translation row, beside the line it translated.
+  const marks = [...document.querySelectorAll('[data-attribution]')]
+  for (const m of marks) if (!m.closest('[data-second="translation"]')) bad.push('attribution away from its translation: "' + m.textContent + '"')
   const order = [...document.querySelectorAll('[data-second]')].map((e) => e.dataset.second)
-  return { bad, rows: order.length }
+  return { bad, rows: order.length, attributions: marks.length }
 })()`
 
-async function shoot(session, [name, query, w, h]) {
+async function shoot(session, [name, query, w, h, opts = {}]) {
   await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }, session)
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] }, session)
   await send('Page.navigate', { url: `${BASE}/lyrics-preview.html?${query}` }, session)
@@ -153,11 +206,18 @@ async function shoot(session, [name, query, w, h]) {
     if (r.result.value) break
     await sleep(100)
   }
+  // The mouse moving over the big screen wakes its buttons.
+  if (opts.awake) for (const [x, y] of [[w / 2, h / 2], [w / 2 + 20, h / 2 + 10]]) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, session)
   // The lines' entrances and the fit settle.
   await sleep(1400)
   const { result } = await send('Runtime.evaluate', { expression: CHECK, returnByValue: true }, session)
   const shot = await send('Page.captureScreenshot', { format: 'png' }, session)
   writeFileSync(join(OUT, `${name}.png`), Buffer.from(shot.data, 'base64'))
+  // "Powered by Google Translate" beside the lines Google translated, and nowhere else.
+  const google = /song=japanese-google/.test(query) && !/view=settings/.test(query) && /translation|all/.test(new URLSearchParams(query).get('rows') ?? 'all')
+  const { bad, attributions } = result.value
+  if (google && !attributions) bad.push("no attribution beside Google's translations")
+  if (!google && attributions) bad.push(`${attributions} attributions on lines Google didn't translate`)
   return { name, size: `${w}x${h}`, ...result.value }
 }
 
@@ -199,17 +259,26 @@ try {
   await send('Page.enable', {}, sessionId)
   await send('Page.addScriptToEvaluateOnNewDocument', { source: COUNT_FRAMES }, sessionId)
   const results = []
-  for (const s of SHOTS) {
+  for (const s of SHOTS.filter(([name]) => name.includes(ONLY))) {
     const r = await shoot(sessionId, s)
     results.push(r)
     console.log(`${r.bad.length ? 'FAIL' : 'ok  '} ${r.name} (${r.size}, ${r.rows} rows)${r.bad.length ? '\n     ' + r.bad.join('\n     ') : ''}`)
   }
-  const frame = await clock(sessionId)
-  console.log('lyrics clock, big screen playing:', JSON.stringify(frame))
-  writeFileSync(join(OUT, 'checks.json'), JSON.stringify({ shots: results, clock: frame }, null, 2) + '\n')
+  if (!ONLY) {
+    const frame = await clock(sessionId)
+    console.log('lyrics clock, big screen playing:', JSON.stringify(frame))
+    writeFileSync(join(OUT, 'checks.json'), JSON.stringify({ shots: results, clock: frame }, null, 2) + '\n')
+  }
   process.exitCode = results.some((r) => r.bad.length) ? 1 : 0
 } finally {
+  // Chrome lets go of its profile only once it (and its helpers) have exited.
+  const exited = new Promise((r) => (chrome.exitCode !== null ? r() : chrome.once('exit', r)))
   chrome.kill()
+  await exited
   await sleep(500)
-  rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  try {
+    rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+  } catch (e) {
+    console.warn(`Chrome's profile was left in ${profile} (${e.code}): delete it by hand`)
+  }
 }

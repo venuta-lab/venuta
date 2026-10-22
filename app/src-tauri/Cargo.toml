@@ -36,6 +36,9 @@ souvlaki = "0.8"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
+# Reading the update manifest before the updater does: its version, its key and its platforms.
+semver = "1"
+base64.workspace = true
 tauri-plugin-opener = "2"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 tauri-plugin-global-shortcut = "2"
@@ -54,3 +57,6 @@ windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com"
 
 [dev-dependencies]
 tempfile.workspace = true
+# The update tests: the real updater plugin on a mock window runtime, and a throwaway signing key.
+tauri = { version = "2.12.3", features = ["test"] }
+ed25519-dalek = "3"

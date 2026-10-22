@@ -15,6 +15,10 @@ on:
         description: 'Open a draft GitHub release with the installer'
         type: boolean
         default: false
+      prerelease:
+        description: 'A pre-release: offered only to copies with Pre-releases on, never the latest'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,8 +36,12 @@ jobs:
     runs-on: windows-latest
     env:
       VERSION: ${{ inputs.version }}
+      PRERELEASE: ${{ inputs.prerelease && '--prerelease' || '' }}
     steps:
+      # Every tag too: the update check reads each released version's updater settings from git.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
@@ -67,7 +75,7 @@ jobs:
       - name: Build the installer
         env:
           VENUTA_SIGNING_KEY: ${{ runner.temp }}/updater.key
-        run: node scripts/release.mjs ${{ env.VERSION }} --local --notes "${{ runner.temp }}/notes.md"
+        run: node scripts/release.mjs ${{ env.VERSION }} --local --notes "${{ runner.temp }}/notes.md" ${{ env.PRERELEASE }}
 
       - name: Keep the unsigned installer
         id: unsigned
@@ -98,6 +106,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: node scripts/ci-release.mjs resign ${{ env.VERSION }} "${{ runner.temp }}/signed"
 
+      # The release stops here unless every released version (each tag's endpoint, platform and
+      # key) would find this latest.json, accept it and verify the installer it names.
+      - name: Every released version can update to it
+        run: >-
+          node scripts/update-feed.mjs check
+          --manifest target/release/bundle/nsis/latest.json
+          --installer target/release/bundle/nsis/Venuta_${{ env.VERSION }}_x64-setup.exe
+          --assets "Venuta_${{ env.VERSION }}_x64-setup.exe,Venuta_${{ env.VERSION }}_x64-setup.exe.sha256,latest.json"
+          ${{ env.PRERELEASE }}
+
       - name: Build provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -125,4 +143,6 @@ jobs:
         shell: pwsh
         run: |
           $d = "target/release/bundle/nsis"
-          gh release create "v$env:VERSION" --target $env:GITHUB_SHA --draft --title "Venuta $env:VERSION" --notes-file "$env:RUNNER_TEMP/notes.md" "$d/Venuta_$($env:VERSION)_x64-setup.exe" "$d/Venuta_$($env:VERSION)_x64-setup.exe.sha256" "$d/latest.json"
+          # A stable release becomes the latest, the one every installed copy reads; a pre-release never does.
+          $latest = if ($env:PRERELEASE) { @('--prerelease', '--latest=false') } else { @('--latest') }
+          gh release create "v$env:VERSION" --target $env:GITHUB_SHA --draft @latest --title "Venuta $env:VERSION" --notes-file "$env:RUNNER_TEMP/notes.md" "$d/Venuta_$($env:VERSION)_x64-setup.exe" "$d/Venuta_$($env:VERSION)_x64-setup.exe.sha256" "$d/latest.json"

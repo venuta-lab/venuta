@@ -1788,10 +1788,10 @@ pub fn automatic(
         let Ok(Some(found)) = pick else {
             return pick;
         };
-        if wants_pairing(&found) {
-            // A copy of the song in Latin letters may be among the other answers. Every source
-            // was asked at once and the scope waits for each anyway, so waiting for them here
-            // costs no time.
+        if waits_for_others(&found) {
+            // A copy of the song in Latin letters (or, for a pick in Latin letters, one in its
+            // own script) may be among the other answers. Every source was asked at once and the
+            // scope waits for each anyway, so waiting for them here costs no time.
             while answers.iter().any(Option::is_none) {
                 let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
                 match rx.recv_timeout(left) {
@@ -1805,17 +1805,72 @@ pub fn automatic(
 }
 
 /// Automatic's pick, its lines in another script paired with a copy of the song in Latin
-/// letters among the other answers, in your order, when it wants one ([`pair_from`]).
+/// letters among the other answers, in your order, when it wants one ([`pair_from`]); a pick
+/// in Latin letters takes its language from a copy of the song in its own script among them
+/// ([`lang_from`]).
 fn paired_pick(mut found: Found, answers: &[Option<Result<Option<Found>, AskError>>]) -> Found {
-    if wants_pairing(&found) {
+    if waits_for_others(&found) {
         let others: Vec<&Found> = answers
             .iter()
             .flatten()
             .filter_map(|a| a.as_ref().ok()?.as_ref())
             .collect();
-        pair_from(&mut found, &others);
+        if wants_pairing(&found) {
+            pair_from(&mut found, &others);
+        } else {
+            lang_from(&mut found, &others);
+        }
     }
     found
+}
+
+/// Whether Automatic waits for every source before its pick is final: the pick wants a
+/// pronunciation from another copy ([`wants_pairing`]), or it is in Latin letters, which can't
+/// tell the song's language, and a copy in the song's own script may ([`lang_from`]).
+fn waits_for_others(f: &Found) -> bool {
+    wants_pairing(f) || (f.synced() && crate::lyrics::main_script(&f.lyrics.lines) == Some("Latn"))
+}
+
+/// The song's language for an answer in Latin letters, from another source's copy of the same
+/// song in its own script (the first, in the order given, that pairs with it line by line, so
+/// a translation or another song never counts): romanized Hindi labelled "en" becomes "hi"
+/// ([`crate::lyrics::lang_from_copy`]; a right label stands). The copy's source, when one was
+/// found.
+pub fn lang_from(found: &mut Found, others: &[&Found]) -> Option<String> {
+    let copy = others
+        .iter()
+        .filter(|o| o.source != found.source && o.synced())
+        .filter(|o| {
+            !matches!(
+                crate::lyrics::main_script(&o.lyrics.lines),
+                None | Some("Latn")
+            )
+        })
+        .find(|o| {
+            // Compared with the pronunciation Venuta makes of each of the copy's lines.
+            let mut lines = o.lyrics.lines.clone();
+            for l in &mut lines {
+                l.roman = None;
+            }
+            crate::lyrics::pair::pair_roman(
+                &mut lines,
+                o.lyrics.lang.as_deref(),
+                &found.lyrics.lines,
+                &found.source,
+            )
+            .is_some()
+        })?;
+    let lang = crate::lyrics::lang_from_copy(
+        found.lyrics.lang.as_deref(),
+        copy.lyrics.lang.as_deref(),
+        &copy.lyrics.lines,
+    );
+    if let Some(lang) = lang
+        && found.lyrics.lang.as_deref() != Some(lang.as_str())
+    {
+        crate::lyrics::set_song_lang(&mut found.lyrics, lang);
+    }
+    Some(copy.source.clone())
 }
 
 /// Whether an answer has lines in another script still wanting a pronunciation from the
@@ -2871,6 +2926,67 @@ mod tests {
         let answers = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(Some(lrclib)))];
         let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
         assert!(!wants_pairing(&pick));
+        assert_eq!(paired_pick(pick, &answers), lyricsplus);
+    }
+
+    #[test]
+    fn a_pick_in_latin_letters_takes_its_language_from_a_copy_in_its_own_script() {
+        // LyricsPlus labels Apna Bana Le "en" and Chaleya "id", and sends Apple's romanized
+        // Hindi; LRCLIB has both songs in Devanagari. LyricsPlus first in your order: its Latin
+        // lines are the pick, and LRCLIB's copy (answered later) says the song is Hindi.
+        for (song, label) in [("apna-bana-le", "en"), ("chaleya", "id")] {
+            let (lrclib, lyricsplus) = pairing_answers(song);
+            assert_eq!(lyricsplus.lyrics.lang.as_deref(), Some(label), "{song}");
+            let answers = vec![
+                Some(Ok(Some(lyricsplus.clone()))),
+                Some(Ok(None)),
+                Some(Ok(Some(lrclib.clone()))),
+            ];
+            let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+            assert_eq!(pick.source, "lyricsplus");
+            assert!(!wants_pairing(&pick));
+            assert!(
+                waits_for_others(&pick),
+                "{song}: the other answers are waited for"
+            );
+            let f = paired_pick(pick, &answers);
+            assert_eq!(f.lyrics.lang.as_deref(), Some("hi"), "{song}");
+            assert_eq!(
+                f.lyrics.lines, lyricsplus.lyrics.lines,
+                "{song}: still LyricsPlus's"
+            );
+
+            // No other copy: the label stands.
+            let alone = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(None))];
+            let pick = outcome(&alone, true).unwrap().unwrap().unwrap();
+            assert_eq!(paired_pick(pick, &alone), lyricsplus, "{song}");
+            // Another song in Devanagari is not this song's copy: the label stands.
+            let (other_song, _) = pairing_answers("kesariya");
+            let mixed = vec![
+                Some(Ok(Some(lyricsplus.clone()))),
+                Some(Ok(Some(other_song))),
+            ];
+            let pick = outcome(&mixed, true).unwrap().unwrap().unwrap();
+            assert_eq!(paired_pick(pick, &mixed), lyricsplus, "{song}");
+        }
+        // Heeriye: labelled "en", and LRCLIB has it in Gurmukhi: Punjabi.
+        let (lrclib, lyricsplus) = pairing_answers("heeriye");
+        let answers = vec![Some(Ok(Some(lyricsplus))), Some(Ok(Some(lrclib)))];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        let f = paired_pick(pick, &answers);
+        assert_eq!(f.lyrics.lang.as_deref(), Some("pa"));
+        // A right label is never overruled: Kesariya is labelled "hi"; labelled Marathi (also
+        // written in Devanagari), it stays Marathi.
+        let (lrclib, mut lyricsplus) = pairing_answers("kesariya");
+        assert_eq!(lyricsplus.lyrics.lang.as_deref(), Some("hi"));
+        lyricsplus.lyrics.lang = Some("mr".into());
+        let answers = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(Some(lrclib)))];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        assert_eq!(paired_pick(pick, &answers), lyricsplus);
+        // Both copies in Latin letters: nothing to tell, the label stands.
+        let (lrclib, lyricsplus) = pairing_answers("tum-hi-ho");
+        let answers = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(Some(lrclib)))];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
         assert_eq!(paired_pick(pick, &answers), lyricsplus);
     }
 

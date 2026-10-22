@@ -30,3 +30,19 @@ export function nextFit(fit: number, need: number): number {
   if (need >= 1) return fit
   return Math.max(MIN_FIT, fit * need * 0.98)
 }
+
+/** The big screen's room for its lines (px): `top` and `bottom`, where the lines' area starts and
+ *  how far from the bottom it ends, and `room`, how tall the lines may be. The lines are centred in
+ *  that area, so lines no taller than `room` never reach past it. With the song bar (its top
+ *  `barTop` px down the screen, as measured: it grows with the lines under the song), the area
+ *  ends a gap above the bar and keeps a margin under the window's buttons at the top; without it
+ *  (Clear, nothing playing), the whole screen with a margin top and bottom. */
+export function stageRoom(height: number, barTop: number | null): { top: number; bottom: number; room: number } {
+  if (barTop === null) {
+    const margin = height * 0.05
+    return { top: margin, bottom: margin, room: height - 2 * margin }
+  }
+  const top = height * 0.08
+  const bottom = height - barTop + height * 0.03
+  return { top, bottom, room: Math.max(0, height - top - bottom) }
+}

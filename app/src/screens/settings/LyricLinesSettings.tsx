@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Switch } from '../../components/ui'
 import { langBase } from '../../lib/lyricsModel'
 import { readerLang, secondChoices, setSecondChoices, systemLang, useSecondChoices } from '../../lib/secondChoice'
-import { downloadModel, forgetKey, languageName, removeModel, saveKey, sizeWords, testKey, useTranslationKeys, useTranslationModels, type KeyState } from '../../lib/translation'
+import { downloadModel, forgetKey, languageName, openEnginePage, removeModel, saveKey, sizeWords, testKey, useTranslationKeys, useTranslationModels, type KeyState } from '../../lib/translation'
 import { DEFAULT_MODEL, ENGINE_IDS, ENGINES, engineChoice, isKeyed, setEngineChoice, useEngineChoice, type EngineChoice, type EngineId, type KeyedId } from '../../lib/translationEngine'
 import { Group, Row } from './parts'
 
@@ -87,6 +87,26 @@ function TranslationEngine({ into }: { into: string }) {
           ))}
         </select>
       </Row>
+      {info.attribution && (
+        // What the service asks of apps that show its translations (Google: say they are
+        // automatic translations by Google Translate, mark each line, link to its page, and make
+        // its disclaimer available).
+        <Row
+          title={info.attribution}
+          hint={
+            <>
+              Lines translated by {info.vendor} are automatic translations by Google Translate, marked "{info.attribution}" beside each one. A line you correct by hand is yours and is not marked.
+              {info.notice && <span className="mt-1.5 block text-[11px] leading-snug text-ink/45">{info.notice}</span>}
+            </>
+          }
+        >
+          {info.page && (
+            <button onClick={() => void openEnginePage(e).catch(() => {})} title={info.page} className="btn btn-sm">
+              About Cloud Translation
+            </button>
+          )}
+        </Row>
+      )}
       {isKeyed(e) && <KeyRows key={e} engine={e} kept={keys.find((k) => k.engine === e)} model={choice.model} into={into} setModel={(model) => set({ model })} />}
       {isKeyed(e) && (
         <Row

@@ -36,7 +36,7 @@ mod playback;
 mod theme_packs;
 mod together;
 mod translation;
-mod updates;
+pub mod updates;
 mod ytm_account;
 mod ytm_accounts;
 /// YouTube's security check, run in a hidden window (public for the dev probe in examples/).
@@ -3011,6 +3011,7 @@ pub fn run() {
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
+        .manage(updates::Pending::default())
         // Invite links (venuta://join/…): registered by the installer, so a test copy never
         // takes them over.
         .plugin(tauri_plugin_deep_link::init())
@@ -3034,6 +3035,8 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .setup(|app| {
             allow_data_assets(app.handle());
+            // The installers earlier updates left behind (50 MB each).
+            std::thread::spawn(updates::clean_old_installers);
             together::watch_invite_links(app.handle());
             // The music moving to another output (or its delay changing): a room takes that
             // output's delay.
@@ -3058,8 +3061,11 @@ pub fn run() {
                 eprintln!("shortcut {} ({}): {}", p.action, p.keys, p.reason);
             }
             // Started with Windows: stay in the tray. Otherwise show the window (it starts
-            // hidden so it never flashes before this choice).
-            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG) {
+            // hidden so it never flashes before this choice). Just updated, show it anyway: an
+            // older version's updater passes on its own --in-tray.
+            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG)
+                || updates::just_installed(&app.package_info().version.to_string())
+            {
                 desktop::show_main(app.handle());
             }
             #[cfg(windows)]
@@ -3230,6 +3236,21 @@ pub fn run() {
             together::together_step_out,
             together::together_set_name,
             together::together_set_delay,
+            together::together_end,
+            together::together_request,
+            together::together_transition,
+            together::together_guests_volume,
+            together::together_visible,
+            together::together_mode,
+            together::together_start_with_next,
+            together::together_use_host_copy,
+            together::together_lighter,
+            together::together_next_song_for,
+            together::together_hand_over,
+            together::together_line_up,
+            together::together_join_nearby,
+            together::together_resume,
+            together::together_save_queue,
             ytm_account::ytm_bring_in_likes,
             ytm_library::ytm_status,
             ytm_choices::ytm_choices,
@@ -3288,6 +3309,7 @@ pub fn run() {
             accounts::spotify_playlists,
             accounts::spotify_read,
             updates::update_install,
+            updates::update_download_page,
             playlist_shelf,
             wanted_export,
             player_test_write,
@@ -3338,6 +3360,7 @@ pub fn run() {
             translation::translation_keys,
             translation::translation_key_save,
             translation::translation_key_forget,
+            translation::translation_engine_page,
             translation::translation_key_test,
             online::online_collection,
             online::online_artist,

@@ -7,7 +7,7 @@ import { useEffect, useMemo } from 'react'
 import { dictionaryWords, useJapaneseDictionary } from './japaneseDictionary'
 import { applyCorrections, useCorrections } from './lyricCorrections'
 import { lyricsChanged, lyricsChoiceChanged, lyricsKey, type Lyrics } from './lyrics'
-import { fromLegacy, songLang, type LyricsModel } from './lyricsModel'
+import { attributionOf, fromLegacy, songLang, type LyricsModel } from './lyricsModel'
 import type { QueueItem } from './player'
 import { choiceFor, readerLang, setSecondLine, systemLang, useSecondChoices } from './secondChoice'
 import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, type SecondKind, type SecondSwitches } from './secondLines'
@@ -114,6 +114,7 @@ export function rowViewsAt(v: SecondLinesView, i: number, fill?: { position: num
     kind: r.kind,
     text: r.text,
     lang: r.second?.lang,
+    attribution: attributionOf(r.second?.source) ?? undefined,
     progress: fill && line && r.kind === 'roman' && r.second ? secondProgress(line, r.second, fill.position, fill.progress) : undefined,
   }))
 }
