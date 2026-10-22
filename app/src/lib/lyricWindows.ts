@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { inApp } from './engine'
 import type { Ground, LyricWindow } from './lyricLook'
 import { keyOf, readWindow, type LyricBackground, type LyricTheme, type LyricWindowSettings } from './lyricWindowSettings'
+import { oneAtATime } from './oneAtATime'
 import { usePacks } from './packs'
 import { resolvedTheme, themeInfo, usePrefs, venutaPrefs } from './prefs'
 import { STYLES, type Style } from './themes'
@@ -103,9 +104,18 @@ const told = <T,>(p: Promise<T>) => p.finally(() => window.dispatchEvent(new Eve
 // The big screen fills a screen; the desktop lyrics are a window of their own.
 const placeOf = (w: LyricWindow, s: LyricWindowSettings) => ({ px: s.px, full: w === 'stage', onTop: s.onTop, locked: s.locked, monitor: s.monitor })
 
+// A press again while the last one is still being carried out (a window takes a moment to make,
+// longer while the app is busy) is the same press, not another: one press, one window. The engine
+// makes them one at a time too, and never two of a kind (lyric_windows.rs).
+const once = oneAtATime<string>()
+
 /** Show a lyrics window as it was left (or bring it forward). */
-export const openLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: true, place: placeOf(w, current[w]) }))
-export const closeLyricWindow = (w: LyricWindow) => told(invoke<void>('lyrics_window', { kind: w, open: false, place: null }))
+export const openLyricWindow = (w: LyricWindow) =>
+  once(`open:${w}`, () => told(invoke<void>('lyrics_window', { kind: w, open: true, place: placeOf(w, current[w]) })))
+export const closeLyricWindow = (w: LyricWindow) => once(`close:${w}`, () => told(invoke<void>('lyrics_window', { kind: w, open: false, place: null })))
+/** Hide a lyrics window if it shows, else show it, in one step of the engine's: whether it shows now. */
+export const toggleLyricWindow = (w: LyricWindow) =>
+  once(`toggle:${w}`, () => told(invoke<boolean>('lyrics_window_toggle', { kind: w, place: placeOf(w, current[w]) })))
 export const lyricWindowOpen = (w: LyricWindow) => (inApp() ? invoke<boolean>('lyrics_window_open', { kind: w }) : Promise.resolve(false))
 
 /** Change a window's settings and, when it's showing, the window: on top or not, locked or not
@@ -134,9 +144,10 @@ export const closeDesktopLyrics = () => closeLyricWindow('overlay')
 export const desktopLyricsOpen = () => lyricWindowOpen('overlay')
 
 /**
- * Whether a lyrics window is showing: asked when this mounts, after a change here and when the
- * window comes back to the front, and told by the engine whenever one comes or goes (the tray,
- * the shortcut and the windows' own Close change it too).
+ * Whether a lyrics window is showing, as the engine has it: told by the engine whenever one comes
+ * or goes (the tray, the shortcut and the windows' own Close change it too), and asked when this
+ * mounts, after a change here and when the window comes back to the front. The engine knows each
+ * window it has made, so what it says is what is on screen.
  */
 export function useLyricWindowShown(w: LyricWindow): boolean {
   const [shown, setShown] = useState(false)
@@ -161,10 +172,7 @@ export function useLyricWindowShown(w: LyricWindow): boolean {
 
 export const useDesktopLyricsShown = () => useLyricWindowShown('overlay')
 
-export async function toggleDesktopLyrics() {
-  if (await desktopLyricsOpen()) await closeDesktopLyrics()
-  else await openDesktopLyrics()
-}
+export const toggleDesktopLyrics = () => toggleLyricWindow('overlay')
 
 /** Locked: clicks pass through to the windows under it (all but its lock button). Unlocked:
  *  drag it, size it, change it. */

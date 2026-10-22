@@ -11,6 +11,12 @@ import { getPlayerState, positionNow, seek, setStopAfter, toggle, usePlayerValue
 interface Row {
   text: string
   ms: number | null
+  /** When it began before (a line from the lyrics being re-timed), so its words move with it. */
+  from?: number | null
+  /** Its words' times [start, end, word], from the lyrics being re-timed. */
+  words?: [number, number, string][]
+  /** Its translation, from the lyrics being re-timed. */
+  translation?: string | null
 }
 
 /** How much a nudge moves a line (Shift: more). */
@@ -30,7 +36,7 @@ function stamp(ms: number | null): string {
 
 const rowsFrom = (lyrics: Lyrics | null): Row[] =>
   lyrics?.lines.length
-    ? lyrics.lines.map(([ms, text]) => ({ text, ms }))
+    ? lyrics.lines.map(([ms, text], i) => ({ text, ms, from: ms, words: lyrics.words?.[i], translation: lyrics.translations?.[i] ?? null }))
     : (lyrics?.text ?? '')
         .split(/\r?\n/)
         .map((l) => l.trim())
@@ -224,7 +230,14 @@ export function SyncMaker(props: {
     setSaving(true)
     setError('')
     try {
-      const lines = rows.map((r) => [r.ms ?? 0, r.text] as [number, string])
+      // Word times and translations go too: the engine moves the words with their line.
+      const lines = rows.map((r) => ({
+        ms: r.ms ?? 0,
+        text: r.text,
+        from_ms: r.from ?? null,
+        words: (r.words ?? []).map(([start_ms, end_ms, text]) => ({ start_ms, end_ms, text })),
+        translation: r.translation ?? null,
+      }))
       const journal = await invoke<string>('save_synced_lyrics', { root: props.root, path: props.path, lines })
       lyricsChanged(props.root, props.path)
       notify('Lyrics timed. They follow the song now.', {

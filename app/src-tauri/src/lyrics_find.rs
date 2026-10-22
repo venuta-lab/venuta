@@ -38,20 +38,27 @@ fn catalog_lyrics(
     let found = access
         .lyrics(id, &CancellationToken::default())
         .map_err(|e| e.to_string())?;
-    Ok(found.map(|l| Found {
-        source: "youtube".into(),
-        lines: l
+    Ok(found.map(|l| {
+        let mut lines: Vec<lo::LyricLine> = l
             .lines
             .into_iter()
-            .map(|(ms, text)| lo::Line {
-                ms,
+            .map(|(start_ms, text)| lo::LyricLine {
+                start_ms,
                 text,
                 ..Default::default()
             })
-            .collect(),
-        text: l.text,
-        instrumental: false,
-        credit: l.credit,
+            .collect();
+        engine::lyrics::finish(&mut lines);
+        Found {
+            source: "youtube".into(),
+            lyrics: lo::Lyrics {
+                lines,
+                ..Default::default()
+            },
+            text: l.text,
+            credit: l.credit,
+            ..Default::default()
+        }
     }))
 }
 
@@ -85,14 +92,17 @@ pub async fn lyrics_find(
         let found = match cached {
             Some(f) => f,
             None => {
-                let f = match from.as_deref() {
-                    Some(s) => lo::ask(s, &req, &catalog).ok().flatten(),
+                // Found before in an older answer format: asked for again, kept to fall back on.
+                let stale = kept.as_ref().and_then(|k| k.stale(&ask.key, &slot));
+                let answer = match from.as_deref() {
+                    Some(s) => lo::ask(s, &req, &catalog),
                     None => lo::automatic(&req, &sources_on(), &catalog),
                 };
-                if let Some(k) = &kept {
-                    k.put(&ask.key, &slot, f.as_ref());
+                // A source that turned Venuta away or didn't answer isn't kept as "none".
+                match &kept {
+                    Some(k) => lo::renewed(k, &ask.key, &slot, answer, stale),
+                    None => answer.ok().flatten().or(stale),
                 }
-                f
             }
         };
         Ok(LyricsAnswer {
@@ -166,4 +176,11 @@ pub fn lyrics_forget_all() -> Result<usize, String> {
 #[tauri::command]
 pub fn lyrics_offset(key: String, offset_ms: i64) -> Result<Choice, String> {
     lo::set_choice(&key, |c| c.offset_ms = offset_ms.clamp(-15_000, 15_000))
+}
+
+/// How each lyrics source has answered since Venuta started (Settings > Lyrics): answering,
+/// turned Venuta away (not asked again until it restarts), not answering, or not asked yet.
+#[tauri::command]
+pub fn lyrics_sources_health() -> Vec<lo::SourceHealth> {
+    lo::health()
 }

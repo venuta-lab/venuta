@@ -3,9 +3,10 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { inApp, lyricsFind, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
+import { inApp, lyricsFind, type FoundLine, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
+import { shownLines } from './lyricsModel'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -16,6 +17,10 @@ export interface Lyrics {
   words?: [number, number, string][][]
   /** Each line's translation, when the source has one. */
   translations?: (string | null)[]
+  /** Each line in Roman letters, when the source has them. */
+  romanized?: (string | null)[]
+  /** The song's language (BCP 47), when the source says. */
+  lang?: string | null
   /** Found online: the source's id and name, who wrote them down, and what you chose. */
   found?: { key: string; source: string; label: string; credit: string | null; choice: LyricsChoice; instrumental: boolean }
 }
@@ -60,15 +65,11 @@ export function lyricsAsk(song: QueueItem): LyricsAsk {
 /** A source's answer as lyrics to show: your offset applied to every time. */
 export function lyricsOf(key: string, a: LyricsAnswer): Lyrics {
   const f = a.found
-  const off = a.choice.offset_ms ?? 0
-  const at = (ms: number) => Math.max(0, ms + off)
   if (!f) return { lines: [], text: '' }
-  const timedWords = f.lines.some((l) => l.words?.length)
   return {
-    lines: f.lines.map((l) => [at(l.ms), l.text] as [number, string]),
+    ...shownLines(f.lines, a.choice.offset_ms ?? 0),
     text: f.text,
-    words: timedWords ? f.lines.map((l) => (l.words ?? []).map((w) => [at(w.ms), at(w.end_ms), w.text] as [number, number, string])) : undefined,
-    translations: f.lines.some((l) => l.translation) ? f.lines.map((l) => l.translation ?? null) : undefined,
+    lang: f.lang ?? null,
     found: { key, source: f.source, label: a.label ?? f.source, credit: f.credit, choice: a.choice, instrumental: f.instrumental },
   }
 }
@@ -136,8 +137,10 @@ export function useLyrics(root: string, path: string | undefined): Lyrics | null
       return
     }
     let live = true
-    invoke<Lyrics>('song_lyrics', { root, path })
-      .then((value) => {
+    // Your file's lines come in the engine's shape, word times and translations and all.
+    invoke<{ lines: FoundLine[]; text: string }>('song_lyrics', { root, path })
+      .then((read) => {
+        const value: Lyrics = { ...shownLines(read.lines ?? []), text: read.text ?? '' }
         kept.set(`${root}|${path}`, value)
         if (live) setLyrics({ path, value })
       })
