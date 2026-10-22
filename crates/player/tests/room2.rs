@@ -654,7 +654,11 @@ fn a_shorter_copy_waits_in_silence_and_the_next_starts_on_the_boundary() {
     assert_music_clean("shorter", &heard);
     let s = started(&heard.notes);
     let (at, content, fade) = *s.last().unwrap();
-    assert_eq!((content, fade), (0, 0), "B from its start, no fade");
+    assert_eq!(
+        (content, fade as u64),
+        (0, ms(15)),
+        "B from its start, rising over 15 ms (D4: a join not sample-exact is a fade)"
+    );
     let e = errors(
         &heard,
         &tl,
@@ -663,7 +667,9 @@ fn a_shorter_copy_waits_in_silence_and_the_next_starts_on_the_boundary() {
         b as f64 * 1e3 + 3e9,
     );
     assert!(!e.is_empty() && worst(&e) < 0.1, "B in step: {}", worst(&e));
-    assert_eq!(heard.count(at as usize), BASES[1] + 1);
+    // Past its 15 ms rise, B is where its first frame put it.
+    let k = at as usize + ms(15) as usize;
+    assert_eq!(heard.count(k), BASES[1] + 1 + ms(15) as i32);
 }
 
 #[test]

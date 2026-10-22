@@ -1799,17 +1799,26 @@ impl<T: Item + Serialize> RoomProgram<T> {
             (Transition::Gapless, Some(e)) if exact && start == 0 && e.abs_diff(f_b) <= w => {
                 Some(Splice::Gapless)
             }
-            (_, Some(e)) if e + w < f_b || e <= f_b => None,
-            _ => Some(Splice::EndFade {
-                frames: deck.ms(END_FADE_MS) as u32,
-            }),
+            _ => None,
         };
         let n = self.armed.as_mut().expect("armed");
-        let ok = match (how, self.playing.as_ref()) {
+        let ok = match (how, self.playing.as_mut()) {
             (Some(how), Some(p)) => deck.switch(p.vid(), &mut n.rs.song.lane, f_b, how),
-            _ => {
-                let fade = if start > 0 { deck.ms(PARTWAY_MS) } else { 0 };
-                deck.start(&mut n.rs.song.lane, f_b, fade as u32)
+            (_, playing) => {
+                // Not a sample-exact join (D4: the joins are fades, not cuts, whatever the
+                // copies' own ends and starts hold: a gapless album's tracks end and begin
+                // mid-music). The song playing fades out over 150 ms ending at its own end or
+                // the boundary, whichever is first; the next rises from silence over 15 ms on
+                // the boundary, from its first frame too.
+                if let Some(p) = playing.filter(|p| p.song.state == State::Sounding) {
+                    let until = end.map_or(f_b, |e| e.min(f_b));
+                    let fade = deck.ms(END_FADE_MS);
+                    let at = until.saturating_sub(fade).max(deck.soon());
+                    deck.stop_at(p.vid(), at, END_FADE_MS);
+                    p.song.state = State::Stopping(at);
+                    self.fading = Some(Fading::Out);
+                }
+                deck.start(&mut n.rs.song.lane, f_b, deck.ms(PARTWAY_MS) as u32)
             }
         };
         if ok {

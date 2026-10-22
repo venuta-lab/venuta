@@ -412,8 +412,8 @@ What each player does at the boundary, by how its own copies compare with the re
 | My copy of the playing song, at the boundary | My next copy | What I do |
 |---|---|---|
 | Ends within 5 ms of the boundary, both copies exact | Exact | Sample-exact join at my copy's end; the few ms are taken up by rate afterwards |
-| Has ended already (shorter copy, or offset) | any | Silence until the boundary, then N starts (from its start, or with a 15 ms fade-in if my offset puts me mid-waveform) |
-| Still sounding (longer copy) | any | A fades out over 150 ms ending at the boundary; N starts at the boundary |
+| Has ended already (shorter copy, or offset) | any | A fades out over 150 ms ending at its own end, silence until the boundary, then N starts with a 15 ms rise (its first frame may be mid-music: a gapless album, WP9) |
+| Still sounding (longer copy) | any | A fades out over 150 ms ending at the boundary; N starts at the boundary with a 15 ms rise |
 | any | any, transition is a crossfade | Equal-power crossfade over the room's crossfade length, starting at the boundary |
 
 - **The room's transition, not yours.** In a room, the host sets "Between songs: gapless, or crossfade 2, 4, 6 or 8 s, never within an album". Your own crossfade setting is set aside while you are in a room (it would put your next song at another moment than everyone else's) and comes back with your own queue.
@@ -1739,8 +1739,7 @@ A commit that moves the room (not a no-op) and every hold withdraw the armed nex
 |---|---|
 | Crossfade transition, the old one still sounding at `F` | `SwitchAt Crossfade` (the room's length) at `F` |
 | Gapless, both copies exact, `|E - F|` within 5 ms | `SwitchAt Gapless` (at the old one's own end; the few ms are taken up by rate) |
-| `E` before `F` by more than 5 ms (a shorter copy, an offset), or the old one gone | `StartAt` the next at `F` (no fade from its first frame, 15 ms partway) |
-| `E` after `F` by more than 5 ms (a longer copy, or its length unknown), and `Cut` | `SwitchAt EndFade 150 ms` ending at `F` |
+| Any other (not both exact, ends apart by more than 5 ms, a `Cut`, a crossfade the old one won't reach, or the old one gone) | the old one, if it still sounds, `StopAt` 150 ms ending at its own end or `F`, whichever is first; the next `StartAt` `F` with a 15 ms rise, from its first frame too (WP9: D4's "the joins are fades, not cuts": a gapless album's tracks end and begin mid-music, and on copies that aren't joined sample-exactly the first table's rows clicked in the whole-room gates) |
 
 The next not ready by `F` less two periods: the old one fades out 150 ms ending at `F` (when it is longer) and the next joins late, alone, as a re-entry (300 ms). When the next takes over (`Joined` or `Started`), it is the song playing, its anchor `{next, content 0, boundary}` (the commit that follows is a no-op), and the controller settles. `disarm` drops the next unless it is already given (inside the last second; Room v2 never disarms inside 3 s of the boundary).
 
