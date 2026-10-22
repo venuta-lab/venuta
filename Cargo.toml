@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/lyrics-text", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/lyrics-text", "crates/lyrics-translate", "app/src-tauri"]
 
 [workspace.package]
 version = "0.3.0"
@@ -13,6 +13,7 @@ repository = "https://github.com/venuta-lab/venuta"
 engine = { path = "crates/engine" }
 media-access = { path = "crates/media-access" }
 lyrics-text = { path = "crates/lyrics-text" }
+lyrics-translate = { path = "crates/lyrics-translate", default-features = false }
 lofty = "=0.25.4"  # pinned: re-run spike S1 before upgrading (docs/decisions/0001)
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 blake3 = "1.8.7"

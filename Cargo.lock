@@ -172,6 +172,7 @@ dependencies = [
  "iroh",
  "iroh-tickets",
  "lyrics-text",
+ "lyrics-translate",
  "media-access",
  "notify",
  "phone-server",
@@ -2031,6 +2032,7 @@ dependencies = [
  "keyring",
  "lofty",
  "lyrics-text",
+ "lyrics-translate",
  "media-access",
  "rayon",
  "realfft",
@@ -2456,6 +2458,16 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "fxtranslate"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dfa6e74911486c9d59495e595163d4965dec37aa92b08545782b696b3eec2eb"
+dependencies = [
+ "cc",
+ "memmap2",
 ]
 
 [[package]]
@@ -4144,6 +4156,21 @@ dependencies = [
  "unicode-normalization",
  "ureq",
  "zip",
+]
+
+[[package]]
+name = "lyrics-translate"
+version = "0.3.0"
+dependencies = [
+ "flate2",
+ "fxtranslate",
+ "lyrics-text",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "ureq",
 ]
 
 [[package]]
