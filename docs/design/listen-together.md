@@ -237,6 +237,17 @@ One iroh QUIC connection per guest, guest to host (a star). The ALPN stays `venu
 
 **Where it lives.** A new crate `crates/together-net` (iroh, tokio, no Tauri, no app types): endpoint and reach settings (from today's `net.rs`), the host's accept loop and per-person serving, the guest's connect and reconnect, the 127.0.0.1 proxy for host files, the datagram clock tasks, pacing. It exposes a `Transport` trait so sessions run against a simulated network in tests. This matches the Android plan, which moves these files out of the Tauri crate anyway.
 
+**The iroh transport (`together_net::transport::IrohTransport`).** The real `Transport` (5.6), one per session, made on an endpoint and a `MonoClock`:
+
+- *Peers.* The guest's one peer is the host. The host gives each remote key a `PeerId` and keeps it for the session, so a guest that reconnects with its per-room key is the same peer (and the same member).
+- *Control.* The guest opens the first bidirectional stream and writes the session's first line on it (the `Hello`: no transport preface, so a host of another version still reads the hello and refuses by name). The host tells `Joined` when that stream arrives. Lines are read with today's `Lines` (over `MAX_MESSAGE` closes the connection); each `Message` is stamped with the `MonoClock` as the line is read. Priority 100 both ways.
+- *Clock datagrams.* `send_datagram` and `Datagram` events, stamped as `read_datagram` returns. The host passes on at most 50 pings a second from one peer (a token bucket; the rest are dropped). When the connection has no datagrams (`max_datagram_size()` is `None`), the same 29-byte frames go on a clock stream of their own, opened by the guest with the line `{"get":"clock:","from":0}`; nothing else changes for the session.
+- *Media.* `open_media` opens a stream per request with today's `Get` line (on the wire `to` stays inclusive; the contract's is exclusive). The host's built-in serving asks its `MediaServer` (`describe` for a file on disk, its type and the song's length; `open` for bytes in memory), cuts the range, sends a `{"size","mime"}` header, then the bytes at the stream's priority (files 0, covers -10, envelopes 50), a song's file paced as above. A request the server doesn't know gets `{"error"}`, which the guest's `open_media` gives back as `Gone`. `MediaStream::total` is the length of the range.
+- *Lost and back.* The QUIC idle timeout is 15 s: then both sides tell `Lost`. The guest's transport dials again after 2 s, 2 s, 2 s, then 3, 4 and 5 s apart, for 2 minutes from the loss, with the same key; on success it tells `Joined` again (the session sends its hello again). The host tells `Joined` for the new connection; an older connection of the same peer closing later is not told `Lost`.
+- *Path changes.* Each connection's `paths_stream()` is watched; when the selected path is another (another address, relay to direct or back), `PathChanged` is told with the new `PathInfo`. The session then calls the clock's `path_changed` and sends a burst.
+
+**What the live sessions take from WP8 now (protocol 2).** Rooms still speak protocol 2 until WP7 and WP9 land protocol 3 (R2), and a 0.3 host answers pings only on the control stream, so today's sessions keep their pings there and only take: priorities, pacing, the 15 s idle timeout, the 2-minute reconnect above with the host keeping an away member as long, held presses only while fresh (D10), the clock told of reconnects and path changes, and the burst of 20 pings 50 ms apart on connect, reconnect and path change, then one a second. Datagram pings come with the move of the sessions onto `IrohTransport` (WP9).
+
 ### 4.2 Clock service
 
 Each guest estimates the host's clock. The host's own map is the identity.
@@ -917,6 +928,7 @@ pub trait Transport: Send + Sync {
 ```
 
 `SimTransport` grows from `room_check.rs`'s `Link`: delay, jitter, asymmetry, loss, bufferbloat episodes, a path change (a step in delay and asymmetry), and cuts.
+The host's transport serves media through a `MediaServer`: `open` gives bytes in memory (the simulation, small things), and `describe` (by default nothing) a `MediaInfo { file, mime, duration_ms }`, so a song's file is read from disk as it goes (never whole in memory, gate 7.5) and paced by its length. A `MediaStream` carries the `mime` the host gave, for the guest's player (WP8 added both).
 
 Settled in WP0:
 
