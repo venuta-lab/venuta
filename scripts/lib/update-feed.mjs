@@ -189,6 +189,6 @@ export function clientsFromGit(root) {
 export function report(r) {
   const out = [`Manifest ${r.version}: ${r.ok ? 'every released version can update to it' : 'NOT every released version can update to it'}`]
   for (const p of r.problems) out.push(`  problem: ${p}`)
-  for (const row of r.rows) out.push(`  ${row.ok ? 'ok  ' : 'FAIL'} ${row.client.padEnd(8)} ${row.skipped ? 'skipped' : row.platform ?? '-'}${row.why.length ? `: ${row.why.join('; ')}` : ''}`)
+  for (const row of r.rows) out.push(`  ${row.ok ? 'ok  ' : 'FAIL'} ${row.client.padEnd(8)} ${row.skipped ? 'skipped' : row.platform ?? '-'}${row.why.length ? `: ${row.why.join('; ')}` : row.ok ? '' : ': the problem above'}`)
   return out.join('\n')
 }
