@@ -16,6 +16,8 @@
 pub mod chinese;
 pub mod cyrillic;
 pub mod greek;
+#[cfg(feature = "japanese")]
+pub mod japanese;
 pub mod korean;
 pub mod pieces;
 
