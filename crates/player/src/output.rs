@@ -1603,15 +1603,99 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    /// A renderer whose every call says it has begun, waits to be let go, and counts itself
+    /// ended before it returns.
+    struct Held {
+        begun: std::sync::mpsc::Sender<()>,
+        go: std::sync::mpsc::Receiver<()>,
+        ended: Arc<AtomicU64>,
+    }
+
+    impl Render for Held {
+        fn render(&mut self, _out: &mut [u8], _frames: u32, _at: u64) {
+            let _ = self.begun.send(());
+            let _ = self.go.recv();
+            self.ended.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Only against a deadlock: nothing here is timed.
+    const STUCK: std::time::Duration = std::time::Duration::from_secs(60);
+
     #[test]
     fn take_waits_only_for_the_call_running_and_render_never_follows_it() {
+        use std::sync::mpsc::{TryRecvError, channel};
+        // A call held inside the renderer: a take made meanwhile comes back only once that
+        // call has ended (never with the renderer in use), and then without the render thread
+        // doing anything more (it waits to be told to try again).
+        let cell = Arc::new(RenderCell::new());
+        let (begun_tx, begun) = channel();
+        let (go, go_rx) = channel();
+        let ended = Arc::new(AtomicU64::new(0));
+        let generation = cell
+            .install(Box::new(Held {
+                begun: begun_tx,
+                go: go_rx,
+                ended: ended.clone(),
+            }))
+            .ok()
+            .unwrap();
+        let (again, again_rx) = channel::<()>();
+        let (tried_tx, tried) = channel::<bool>();
+        let c = cell.clone();
+        let rt = std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            assert!(c.render(generation, &mut buf, 8, 0), "the first call");
+            while again_rx.recv().is_ok() {
+                let _ = tried_tx.send(c.render(generation, &mut buf, 8, 8));
+            }
+        });
+        begun.recv_timeout(STUCK).expect("the call began");
+        let (about_tx, about) = channel();
+        let (taken_tx, taken) = channel();
+        let (c, e) = (cell.clone(), ended.clone());
+        let taker = std::thread::spawn(move || {
+            let _ = about_tx.send(());
+            let r = c.take();
+            let _ = taken_tx.send((r.is_some(), e.load(Ordering::SeqCst)));
+        });
+        about.recv_timeout(STUCK).expect("the taker runs");
+        // Give the taker every chance to come back early (it must not, whatever the load).
+        for _ in 0..10_000 {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            taken.try_recv(),
+            Err(TryRecvError::Empty),
+            "take came back while the call ran"
+        );
+        go.send(()).unwrap();
+        let (got, ended_then) = taken.recv_timeout(STUCK).expect("take came back");
+        assert!(got, "with the renderer");
+        assert_eq!(ended_then, 1, "only once the call running had ended");
+        taker.join().unwrap();
+        // Once taken, the render thread's tries call nothing.
+        for _ in 0..100 {
+            again.send(()).unwrap();
+            assert!(!tried.recv_timeout(STUCK).unwrap(), "called after take");
+        }
+        assert_eq!(ended.load(Ordering::SeqCst), 1);
+        // And with no call running, a take needs nothing of the render thread (it is waiting).
+        assert!(cell.install(ones(0).0).is_ok());
+        assert!(cell.take().is_some());
+        drop(again);
+        rt.join().unwrap();
+
+        // A render thread calling over and over: a take still gets in between two calls, and
+        // after it nothing is called, over as many tries as the thread makes.
         for _ in 0..20 {
             let cell = Arc::new(RenderCell::new());
             let (r, calls, _) = ones(2);
             let generation = cell.install(r).ok().unwrap();
             let c = cell.clone();
             let stop = Arc::new(AtomicBool::new(false));
-            let s = stop.clone();
+            let tries = Arc::new(AtomicU64::new(0));
+            let (s, t) = (stop.clone(), tries.clone());
             let rt = std::thread::spawn(move || {
                 let mut buf = [0u8; 64];
                 let mut at = 0;
@@ -1619,14 +1703,23 @@ mod tests {
                     if c.render(generation, &mut buf, 8, at) {
                         at += 8;
                     }
+                    t.fetch_add(1, Ordering::SeqCst);
                 }
             });
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            let t = std::time::Instant::now();
-            assert!(cell.take().is_some());
+            while calls.load(Ordering::SeqCst) == 0 {
+                std::thread::yield_now();
+            }
+            let (taken_tx, taken) = channel();
+            let c = cell.clone();
+            std::thread::spawn(move || {
+                let _ = taken_tx.send(c.take().is_some());
+            });
+            assert!(taken.recv_timeout(STUCK).expect("take came back"));
             let after = calls.load(Ordering::SeqCst);
-            assert!(t.elapsed() < std::time::Duration::from_millis(200));
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            let from = tries.load(Ordering::SeqCst);
+            while tries.load(Ordering::SeqCst) < from + 1_000 {
+                std::thread::yield_now();
+            }
             assert_eq!(calls.load(Ordering::SeqCst), after, "called after take");
             stop.store(true, Ordering::SeqCst);
             rt.join().unwrap();
