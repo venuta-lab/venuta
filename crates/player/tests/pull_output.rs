@@ -792,3 +792,78 @@ fn a_queue_is_made_anew_at_every_start() {
         "every start after the first"
     );
 }
+
+/// Two runs of the late-period hardware test in exclusive mode on the owner's laptop (WP1e,
+/// `tests/fixtures`), one the hardware test failed ("lead 96.01 ms before the gap, 91.42 after")
+/// and one it passed. After the 150 ms render call the driver's events came more unevenly than
+/// before (30 to 78 ms apart, against 10 to 50), so its usual depth sank while what it refilled
+/// to stayed: the slip is bounded by the overrun (at least what the position counted past all
+/// that was handed over) and by that refill (at most the most of the depth before the gap less
+/// the most after), and lands inside the bounds; one xrun each, at 96000; no pair ever claims a
+/// frame not handed over, and none goes back.
+#[test]
+fn a_queues_slip_lies_between_its_overrun_and_its_refill() {
+    use player::output::{PositionMap, TRACE_COLUMNS};
+    for name in [
+        "realtek-exclusive-late-period-a.csv",
+        "realtek-exclusive-late-period-b.csv",
+    ] {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap();
+        let col = |c: &str| TRACE_COLUMNS.iter().position(|x| *x == c).unwrap();
+        let rows: Vec<Vec<i64>> = text
+            .lines()
+            .skip(1)
+            .map(|l| l.split(',').map(|v| v.parse().unwrap()).collect())
+            .filter(|r: &Vec<i64>| r[col("state")] == 1)
+            .collect();
+        let lead = |r: &Vec<i64>| r[col("before")] - r[col("raw")];
+        let in_range = |r: &Vec<i64>, a: i64, b: i64| (a..b).contains(&r[col("before")]);
+        let low = rows.iter().map(|r| -lead(r)).max().unwrap();
+        let most_before = rows
+            .iter()
+            .filter(|r| in_range(r, 48_000, 95_520))
+            .map(lead)
+            .max()
+            .unwrap();
+        let most_after = rows
+            .iter()
+            .filter(|r| in_range(r, 104_000, 200_000))
+            .map(lead)
+            .max()
+            .unwrap();
+        let high = most_before - most_after;
+        let mut m = PositionMap::exclusive(RATE, 480);
+        let (mut xruns, mut last) = (Vec::new(), 0u64);
+        for r in &rows {
+            let before = r[col("before")] as u64;
+            m.space(None, before, r[col("wake_ns")] as u64);
+            let rd = m.reading(
+                r[col("raw")] as u64,
+                r[col("pos_ns")] as u64,
+                before,
+                r[col("after")] as u64,
+            );
+            xruns.extend(rd.xrun);
+            if let Some(p) = rd.pair {
+                assert!(p.frame < before, "{name}: a pair past what was handed over");
+                assert!(p.frame >= last, "{name}: a pair went back");
+                last = p.frame;
+            }
+        }
+        eprintln!("{name}: slip {} within {low}..={high}", m.slip());
+        assert_eq!(xruns, [96_000], "{name}");
+        assert!(low <= high, "{name}: {low} > {high}");
+        // Within the bounds, to a millisecond (the refill is read off the readings, which fall at
+        // any point of a fill).
+        assert!(
+            (low..=high + i64::from(RATE) / 1_000).contains(&m.slip()),
+            "{name}: slip {} not in {low}..={high}",
+            m.slip()
+        );
+    }
+}
