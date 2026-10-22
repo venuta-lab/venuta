@@ -85,18 +85,23 @@ pub fn my_name() -> String {
         .collect()
 }
 
-/// This output's delay setting.
+/// The delay set for the output the music is on (the store in Settings, by endpoint id).
 pub fn my_delay(app: &AppHandle) -> i32 {
-    let out = app
-        .state::<Playback>()
-        .output_id()
-        .unwrap_or_else(|| "default".into());
-    engine::settings::load()
-        .listening
-        .together_delay
-        .get(&out)
-        .copied()
+    app.state::<Playback>()
+        .current_endpoint()
+        .and_then(|e| engine::settings::load().output_delays().get(&e).copied())
         .unwrap_or(0)
+}
+
+/// The music moved to another output, or its delay changed: the room hears with that one's.
+pub fn output_changed(app: &AppHandle) {
+    let ms = my_delay(app);
+    match current(&app.state::<Together>()).as_ref() {
+        Some(Session::Host(h)) => h.to_follower(follow::In::Delay(ms)),
+        Some(Session::Guest(g)) => g.to_follower(follow::In::Delay(ms)),
+        None => return,
+    }
+    emit(app);
 }
 
 /// The music folder songs are under: a Venuta home's Music folder when it has one with a library
@@ -570,19 +575,16 @@ pub fn together_set_name(app: AppHandle, name: String) -> Result<(), String> {
 /// Your output's delay (Bluetooth): how much later than the device says you hear it.
 #[tauri::command]
 pub fn together_set_delay(app: AppHandle, t: State<'_, Together>, ms: i32) -> Result<(), String> {
-    let ms = ms.clamp(-500, 1_000);
-    let out = app
-        .state::<Playback>()
-        .output_id()
-        .unwrap_or_else(|| "default".into());
-    let mut s = engine::settings::load();
-    s.listening.together_delay.insert(out, ms);
-    engine::settings::save(&s)?;
-    match current(&t).as_ref() {
-        Some(Session::Host(h)) => h.to_follower(follow::In::Delay(ms)),
-        Some(Session::Guest(g)) => g.to_follower(follow::In::Delay(ms)),
-        None => {}
+    let ms = ms.clamp(-500, 500);
+    let pb = app.state::<Playback>();
+    let out = pb
+        .current_endpoint()
+        .ok_or("No sound output is connected.")?;
+    // The one store (docs/design/devices.md): the player, and so lyrics, take it too, and the
+    // room is told by the output hook (`output_changed`).
+    pb.set_output_delay(&out, Some(ms))?;
+    if current(&t).is_none() {
+        emit(&app);
     }
-    emit(&app);
     Ok(())
 }

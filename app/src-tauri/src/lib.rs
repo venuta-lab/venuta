@@ -3035,6 +3035,13 @@ pub fn run() {
         .setup(|app| {
             allow_data_assets(app.handle());
             together::watch_invite_links(app.handle());
+            // The music moving to another output (or its delay changing): a room takes that
+            // output's delay.
+            {
+                let h = app.handle().clone();
+                app.state::<playback::Playback>()
+                    .on_output_change(move || together::output_changed(&h));
+            }
             if test_copy()
                 && let Some(w) = app.get_webview_window("main")
             {
@@ -3110,6 +3117,7 @@ pub fn run() {
             playback::player_jump,
             playback::player_devices,
             playback::player_output,
+            playback::player_set_output_delay,
             playback::song_lyrics,
             playback::all_lyrics,
             playback::player_resume,
