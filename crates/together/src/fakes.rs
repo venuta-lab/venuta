@@ -471,7 +471,13 @@ mod tests {
         let clock = SimClock::new(0);
         let (player, log) = FakeRoomPlayer::<u32>::new(Arc::new(clock.clone()), Script::default());
         let h = player.attach(clock_map::handle(), SyncMode::Apart);
-        h.arm_next(EntryId(5), 5, S as i64, Transition::Gapless, Alignment::EXACT);
+        h.arm_next(
+            EntryId(5),
+            5,
+            S as i64,
+            Transition::Gapless,
+            Alignment::EXACT,
+        );
         assert_eq!(h.status().next_ready, Some(EntryId(5)));
         h.disarm();
         assert_eq!(h.status().next_ready, None);
