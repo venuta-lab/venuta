@@ -906,6 +906,8 @@ pub(crate) enum RoomMsg<T> {
         clock: ClockMapHandle,
         mode: SyncMode,
         status: Arc<Mutex<RoomPlayStatus>>,
+        /// The host's room made from its own music in place: what sounds goes on as this entry.
+        adopt: Option<EntryId>,
     },
     Prepare {
         prep: PrepId,
@@ -945,11 +947,31 @@ pub(super) fn attach<T: Send + 'static>(
     clock: ClockMapHandle,
     mode: SyncMode,
 ) -> Box<dyn RoomHandle<T>> {
+    link(tx, clock, mode, None)
+}
+
+/// The host's room from its own music in place (A1).
+pub(super) fn adopt<T: Send + 'static>(
+    tx: Sender<Msg<T>>,
+    clock: ClockMapHandle,
+    mode: SyncMode,
+    entry: EntryId,
+) -> Box<dyn RoomHandle<T>> {
+    link(tx, clock, mode, Some(entry))
+}
+
+fn link<T: Send + 'static>(
+    tx: Sender<Msg<T>>,
+    clock: ClockMapHandle,
+    mode: SyncMode,
+    adopt: Option<EntryId>,
+) -> Box<dyn RoomHandle<T>> {
     let status = Arc::new(Mutex::new(RoomPlayStatus::default()));
     let _ = tx.send(Msg::Room(RoomMsg::Attach {
         clock,
         mode,
         status: status.clone(),
+        adopt,
     }));
     Box::new(RoomLink { tx, status })
 }
@@ -1430,6 +1452,7 @@ impl<T: Item + Serialize> Program<T> {
                 clock,
                 mode,
                 status,
+                adopt: _,
             } => {
                 let mut own = match std::mem::replace(self, Program::new()) {
                     Program::Own(o) => o,
