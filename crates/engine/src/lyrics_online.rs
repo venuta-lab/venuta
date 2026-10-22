@@ -1766,20 +1766,88 @@ pub fn automatic(
         drop(tx);
         let started = Instant::now();
         let mut answers: Vec<Option<Answer>> = vec![None; sources.len()];
-        loop {
+        let pick = loop {
             if let Some(pick) = outcome(&answers, false) {
-                return pick;
+                break pick;
             }
             let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
             match rx.recv_timeout(left) {
                 Ok((i, f)) => answers[i] = Some(f),
                 Err(_) => {
-                    return outcome(&answers, true)
+                    break outcome(&answers, true)
                         .unwrap_or_else(|| Err(AskError::Down("No source answered".into())));
                 }
             }
+        };
+        let Ok(Some(found)) = pick else {
+            return pick;
+        };
+        if wants_pairing(&found) {
+            // A copy of the song in Latin letters may be among the other answers. Every source
+            // was asked at once and the scope waits for each anyway, so waiting for them here
+            // costs no time.
+            while answers.iter().any(Option::is_none) {
+                let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
+                match rx.recv_timeout(left) {
+                    Ok((i, f)) => answers[i] = Some(f),
+                    Err(_) => break,
+                }
+            }
         }
+        Ok(Some(paired_pick(found, &answers)))
     })
+}
+
+/// Automatic's pick, its lines in another script paired with a copy of the song in Latin
+/// letters among the other answers, in your order, when it wants one ([`pair_from`]).
+fn paired_pick(mut found: Found, answers: &[Option<Result<Option<Found>, AskError>>]) -> Found {
+    if wants_pairing(&found) {
+        let others: Vec<&Found> = answers
+            .iter()
+            .flatten()
+            .filter_map(|a| a.as_ref().ok()?.as_ref())
+            .collect();
+        pair_from(&mut found, &others);
+    }
+    found
+}
+
+/// Whether an answer has lines in another script still wanting a pronunciation from the
+/// lyrics (none yet, or only one made on the device): then a copy in Latin letters is looked
+/// for among the other answers.
+fn wants_pairing(f: &Found) -> bool {
+    f.synced()
+        && f.lyrics
+            .lines
+            .iter()
+            .filter(|l| {
+                !matches!(l.script.as_str(), "Latn" | "Zyyy" | "")
+                    && l.roman
+                        .as_ref()
+                        .is_none_or(|r| r.source == SecondSource::Made)
+            })
+            .count()
+            >= 3
+}
+
+/// The answer's lines in another script paired with a copy of the song in Latin letters from
+/// another source's answer (the first that pairs, in the order given): that copy's lines
+/// become their pronunciation, `Paired(source)` (see [`crate::lyrics::pair`]). The source,
+/// when one paired.
+pub fn pair_from(found: &mut Found, others: &[&Found]) -> Option<String> {
+    others
+        .iter()
+        .filter(|o| o.source != found.source && o.synced())
+        .find(|o| {
+            crate::lyrics::pair::pair_roman(
+                &mut found.lyrics.lines,
+                found.lyrics.lang.as_deref(),
+                &o.lyrics.lines,
+                &o.source,
+            )
+            .is_some()
+        })
+        .map(|o| o.source.clone())
 }
 
 /// The answer to show after asking again about a song whose kept answer was in an older
@@ -2604,6 +2672,204 @@ mod tests {
 
     fn idol_req() -> LyricsRequest {
         req("アイドル", &["YOASOBI"], 213)
+    }
+
+    /// A song's LRCLIB and LyricsPlus answers as captured on 2026-10-22, each as `ask` gives
+    /// it (with its made pronunciation).
+    fn pairing_answers(song: &str) -> (Found, Found) {
+        let lr = fixture(&format!("pairing/{song}.lrclib.json"));
+        let mut lrclib = found_from_text("lrclib", lr["syncedLyrics"].as_str().unwrap()).unwrap();
+        let lp = fixture(&format!("pairing/{song}.lyricsplus.json"));
+        let mut lyricsplus = lyricsplus_found(&LyricsRequest::default(), &lp).unwrap();
+        crate::lyrics::add_pronunciation(&mut lrclib.lyrics);
+        crate::lyrics::add_pronunciation(&mut lyricsplus.lyrics);
+        (lrclib, lyricsplus)
+    }
+
+    fn paired(f: &Found) -> Vec<(&str, &str)> {
+        f.lyrics
+            .lines
+            .iter()
+            .filter_map(|l| {
+                let r = l.roman.as_ref()?;
+                matches!(r.source, SecondSource::Paired(_))
+                    .then_some((l.text.as_str(), r.text.as_str()))
+            })
+            .collect()
+    }
+
+    fn not_latin(f: &Found) -> usize {
+        f.lyrics
+            .lines
+            .iter()
+            .filter(|l| !matches!(l.script.as_str(), "Latn" | "Zyyy"))
+            .count()
+    }
+
+    #[test]
+    fn a_romanized_copy_of_the_song_is_paired_with_the_original_by_time() {
+        // Hindi and Punjabi songs whose LRCLIB lyrics are in Devanagari or Gurmukhi, and whose
+        // LyricsPlus lyrics are Apple's, in Latin letters.
+        for song in ["kesariya", "apna-bana-le", "chaleya", "heeriye"] {
+            let (mut lrclib, lyricsplus) = pairing_answers(song);
+            let made = lrclib.clone();
+            assert_eq!(
+                pair_from(&mut lrclib, &[&lyricsplus]).as_deref(),
+                Some("lyricsplus"),
+                "{song}"
+            );
+            let (n, of) = (paired(&lrclib).len(), not_latin(&lrclib));
+            eprintln!("{song}: {n} of {of} lines paired");
+            assert!(n * 10 >= of * 8, "{song}: {n} of {of}");
+            // Lines it couldn't pair keep the pronunciation made on the device.
+            for (l, m) in lrclib.lyrics.lines.iter().zip(&made.lyrics.lines) {
+                if l.roman
+                    .as_ref()
+                    .is_some_and(|r| r.source == SecondSource::Made)
+                {
+                    assert_eq!(l.roman, m.roman);
+                }
+            }
+        }
+        let (mut lrclib, lyricsplus) = pairing_answers("kesariya");
+        pair_from(&mut lrclib, &[&lyricsplus]);
+        let first = &lrclib.lyrics.lines[0];
+        assert_eq!(first.text, "मुझको इतना बताए कोई");
+        let r = first.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Mujhko itna bataye koyi");
+        assert_eq!(r.source, SecondSource::Paired("lyricsplus".into()));
+        assert_eq!(r.lang, "hi-Latn");
+        // Apple's word timing, moved to where this copy starts the line (9 440 ms; Apple's
+        // starts at 9 615).
+        assert_eq!(r.words[0].start_ms, first.start_ms);
+        assert_eq!(
+            r.words.iter().map(|w| w.text.as_str()).collect::<String>(),
+            r.text
+        );
+        assert!(
+            r.words
+                .iter()
+                .all(|w| w.end_ms <= first.end_ms.max(w.start_ms))
+        );
+
+        // Apple splits a line LRCLIB keeps whole: both halves are its pronunciation.
+        let (mut lrclib, lyricsplus) = pairing_answers("heeriye");
+        pair_from(&mut lrclib, &[&lyricsplus]);
+        let whole = lrclib
+            .lyrics
+            .lines
+            .iter()
+            .find(|l| l.text == "ਤੇਰੀ ਹੋਕੇ ਮਰਾਂ, ਜਿੰਦ-ਜਾਨ ਕਰਾਂ")
+            .unwrap();
+        let r = whole.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Teri hoke maraan Jind jaan karaan");
+        assert_eq!(r.lang, "pa-Latn");
+    }
+
+    #[test]
+    fn another_song_or_a_translation_at_the_same_times_is_never_paired() {
+        let (kesariya, _) = pairing_answers("kesariya");
+        let (_, apna) = pairing_answers("apna-bana-le");
+        // Another song in Latin letters.
+        let mut f = kesariya.clone();
+        assert_eq!(pair_from(&mut f, &[&apna]), None);
+        assert_eq!(f, kesariya, "left as it was");
+        // Another song's words at exactly this song's times.
+        let mut retimed = apna.clone();
+        retimed.lyrics.lines = kesariya
+            .lyrics
+            .lines
+            .iter()
+            .zip(apna.lyrics.lines.iter().cycle())
+            .map(|(k, a)| LyricLine {
+                start_ms: k.start_ms,
+                end_ms: k.end_ms,
+                text: a.text.clone(),
+                script: a.script.clone(),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(pair_from(&mut f, &[&retimed]), None);
+        // English at exactly this song's times: what a translation looks like.
+        let english = [
+            "The morning train was late again",
+            "We waited by the window for an hour",
+            "Somebody left a coat upon the bench",
+            "The rain stopped just before the evening",
+        ];
+        let mut translated = retimed.clone();
+        for (l, e) in translated
+            .lyrics
+            .lines
+            .iter_mut()
+            .zip(english.iter().cycle())
+        {
+            l.text = (*e).to_owned();
+        }
+        assert_eq!(pair_from(&mut f, &[&translated]), None);
+        assert_eq!(f, kesariya);
+        // Both copies already in Latin letters: nothing to pair.
+        let (mut tum, tum_lp) = pairing_answers("tum-hi-ho");
+        assert_eq!(pair_from(&mut tum, &[&tum_lp]), None);
+        // The first copy that pairs is the one used.
+        let (mut f, lp) = pairing_answers("kesariya");
+        assert_eq!(
+            pair_from(&mut f, &[&translated, &apna, &lp]).as_deref(),
+            Some("lyricsplus")
+        );
+    }
+
+    #[test]
+    fn automatic_pairs_its_pick_with_another_sources_copy() {
+        // LRCLIB first in your order: its Devanagari copy is the pick, and LyricsPlus's Latin
+        // one (answered later) its pronunciation.
+        let (lrclib, lyricsplus) = pairing_answers("kesariya");
+        let answers = vec![
+            Some(Ok(Some(lrclib.clone()))),
+            Some(Ok(None)),
+            Some(Err(AskError::Refused("no".into()))),
+            Some(Ok(Some(lyricsplus.clone()))),
+        ];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        assert_eq!(pick.source, "lrclib");
+        assert!(wants_pairing(&pick));
+        let f = paired_pick(pick, &answers);
+        assert!(paired(&f).len() > 30);
+        assert_eq!(
+            f.lyrics.lines[0].text, lrclib.lyrics.lines[0].text,
+            "still LRCLIB's"
+        );
+        // LyricsPlus first: its Latin lines are the pick and want nothing.
+        let answers = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(Some(lrclib)))];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        assert!(!wants_pairing(&pick));
+        assert_eq!(paired_pick(pick, &answers), lyricsplus);
+    }
+
+    #[test]
+    fn pairing_measured_on_every_captured_song() {
+        // Both ways round: LRCLIB's copy as the original, then LyricsPlus's.
+        for song in [
+            "kesariya",
+            "apna-bana-le",
+            "chaleya",
+            "heeriye",
+            "tum-hi-ho",
+            "channa-mereya",
+        ] {
+            let (lrclib, lyricsplus) = pairing_answers(song);
+            for (name, mut original, other) in [
+                ("LRCLIB", lrclib.clone(), &lyricsplus),
+                ("LyricsPlus", lyricsplus.clone(), &lrclib),
+            ] {
+                let by = pair_from(&mut original, &[other]);
+                eprintln!(
+                    "{song}, {name} first: {} of {} lines not in Latin letters paired ({by:?})",
+                    paired(&original).len(),
+                    not_latin(&original)
+                );
+            }
+        }
     }
 
     #[test]

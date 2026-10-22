@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+pub mod pair;
 pub mod romaji;
 pub mod ttml;
 
@@ -25,7 +26,10 @@ pub mod ttml;
 /// 1: lines with `ms`, words and a translation as plain text (before October 2026).
 /// 2: this contract (start and end, script, pronunciation and translation with their language
 ///    and source, the song's language, credit lines kept apart).
-pub const VERSION: u32 = 2;
+/// 3: the second lines the sources carry (Apple-style TTML's, LyricsPlus's, NetEase's
+///    word-timed lyrics from its newer call) and Automatic's pick paired with another source's
+///    copy in Latin letters.
+pub const VERSION: u32 = 3;
 
 /// One word of a line, when its time is known.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1091,6 +1095,58 @@ mod tests {
         };
         finish(std::slice::from_mut(&mut l));
         l
+    }
+
+    #[test]
+    fn a_ready_made_pronunciation_always_beats_one_made_on_the_device() {
+        let ready = |text: &str, source: SecondSource| Second {
+            text: text.into(),
+            words: Vec::new(),
+            lang: "hi-Latn".into(),
+            source,
+        };
+        let mut lyrics = Lyrics {
+            lines: vec![
+                LyricLine {
+                    roman: Some(ready(
+                        "Mujhko itna bataye koyi",
+                        SecondSource::Paired("lyricsplus".into()),
+                    )),
+                    ..line_of("मुझको इतना बताए कोई")
+                },
+                LyricLine {
+                    roman: Some(ready("Kaise tujhse", SecondSource::Lyrics("amll".into()))),
+                    ..line_of("कैसे तुझसे")
+                },
+                LyricLine {
+                    roman: Some(ready("Stale guess", SecondSource::Made)),
+                    ..line_of("रब्बा ने")
+                },
+                LyricLine {
+                    roman: Some(ready("Rang jaun", SecondSource::Corrected)),
+                    ..line_of("रंग जाऊँ")
+                },
+            ],
+            lang: Some("hi".into()),
+            version: VERSION,
+        };
+        add_pronunciation(&mut lyrics);
+        let romans: Vec<(&str, &SecondSource)> = lyrics
+            .lines
+            .iter()
+            .map(|l| {
+                let r = l.roman.as_ref().unwrap();
+                (r.text.as_str(), &r.source)
+            })
+            .collect();
+        assert_eq!(romans[0].0, "Mujhko itna bataye koyi", "paired: kept");
+        assert_eq!(romans[1].0, "Kaise tujhse", "from the lyrics: kept");
+        assert_eq!(romans[3].0, "Rang jaun", "corrected by hand: kept");
+        assert_eq!(
+            romans[2],
+            ("Rabba ne", &SecondSource::Made),
+            "one made before is made again"
+        );
     }
 
     #[test]
