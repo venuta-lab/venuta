@@ -108,19 +108,33 @@ pub struct SimChoice {
 /// `player.engine`, until it passes every gate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EngineKind {
-    #[default]
     One,
+    #[default]
     Two,
 }
 
 impl EngineKind {
-    /// From the setting's number: 2 is engine 2, anything else engine 1.
+    /// From the setting's number: engine 2 passed every gate and is the default (release R1);
+    /// 1 still chooses engine 1, until it is removed.
     pub fn from_setting(n: u32) -> EngineKind {
-        if n == 2 {
-            EngineKind::Two
-        } else {
+        if n == 1 {
             EngineKind::One
+        } else {
+            EngineKind::Two
         }
+    }
+}
+
+#[cfg(test)]
+mod engine_kind_tests {
+    use super::EngineKind;
+
+    #[test]
+    fn engine_two_is_the_default_and_one_still_chooses_engine_one() {
+        assert_eq!(EngineKind::from_setting(0), EngineKind::Two);
+        assert_eq!(EngineKind::from_setting(2), EngineKind::Two);
+        assert_eq!(EngineKind::from_setting(1), EngineKind::One);
+        assert_eq!(EngineKind::default(), EngineKind::Two);
     }
 }
 

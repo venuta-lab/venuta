@@ -68,8 +68,9 @@ pub struct Settings {
     pub player: PlayerSettings,
 }
 
-/// The player's settings: `engine` 2 plays with engine 2 (built beside engine 1 until it passes
-/// every gate, section 9.1 of the Listen together design); anything else, engine 1.
+/// The player's settings: `engine` 1 plays with engine 1, kept as a fallback until it is removed;
+/// anything else (and no setting) plays with engine 2, the default since it passed every gate
+/// (release R1 of the Listen together design).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerSettings {
     #[serde(default)]
