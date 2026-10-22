@@ -113,6 +113,40 @@ pub async fn endpoint(
     host: bool,
     key: Option<iroh::SecretKey>,
 ) -> Result<Endpoint, String> {
+    endpoint_on(reach, host, key, None).await
+}
+
+/// `endpoint`, on this UDP port (IPv4) when it is free, else on any: a reopened room on the
+/// port it had, so guests still reconnecting to the addresses they know find it (Local only
+/// has no address lookup; WP15).
+pub async fn endpoint_on(
+    reach: &Reach,
+    host: bool,
+    key: Option<iroh::SecretKey>,
+    port: Option<u16>,
+) -> Result<Endpoint, String> {
+    if let Some(p) = port.filter(|p| *p != 0 && !reach.hide_ip)
+        && let Ok(ep) = bind(reach, host, key.clone(), Some(p)).await
+    {
+        return Ok(ep);
+    }
+    bind(reach, host, key, None).await
+}
+
+/// The UDP port (IPv4) an endpoint is on.
+pub fn port_of(ep: &Endpoint) -> Option<u16> {
+    ep.bound_sockets()
+        .iter()
+        .find(|a| a.is_ipv4())
+        .map(|a| a.port())
+}
+
+async fn bind(
+    reach: &Reach,
+    host: bool,
+    key: Option<iroh::SecretKey>,
+    port: Option<u16>,
+) -> Result<Endpoint, String> {
     let mut b = if reach.local_only {
         Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
     } else {
@@ -135,6 +169,14 @@ pub async fn endpoint(
     }
     if let Some(k) = key {
         b = b.secret_key(k);
+    }
+    if let Some(p) = port {
+        b = b
+            .bind_addr(std::net::SocketAddr::from((
+                std::net::Ipv4Addr::UNSPECIFIED,
+                p,
+            )))
+            .map_err(|e| format!("Couldn't start listening together: {e}"))?;
     }
     b = b.transport_config(transport_config(IDLE_TIMEOUT, true));
     b.bind()

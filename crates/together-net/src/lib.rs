@@ -10,6 +10,7 @@
 //!
 //! - [`clock_link`]: the clock's pings on any `Transport`: the guest's pinger, the host's answer.
 //! - [`proxy`]: the guest's player onto the host's files, on any `Transport`.
+//! - [`nearby`]: rooms nearby: the beacon a room sends on the local network, and the rooms heard.
 //! - [`transport`]: the real `Transport` of the Listen together contracts, for the sessions
 //!   to come (control lines, clock datagrams, media, peers kept by key, path changes).
 //!
@@ -22,6 +23,7 @@ pub mod clock_link {
 }
 pub mod guest;
 pub mod host;
+pub mod nearby;
 pub mod net;
 pub mod pace;
 pub mod proxy;
