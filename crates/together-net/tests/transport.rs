@@ -5,9 +5,12 @@
 mod common;
 use common::*;
 
-/// How fast each guest takes the host's file in the load test (bytes a second): far more than
-/// any song needs (hi-res FLAC is about 1 MB/s), as a guest on a quick network would.
-const PULL_RATE: f64 = 20e6;
+/// How fast each guest takes the host's file in the load test (bytes a second): five times what
+/// hi-res FLAC needs (about 1 MB/s), and over twice what the host's pacing lets a song go at.
+/// (At 20 MB/s each, three pulls of a debug build's QUIC kept every core of a busy machine
+/// encrypting, and the pings then waited for a thread, not behind the file bytes: the CPU, not
+/// the priorities this test is about.)
+const PULL_RATE: f64 = 5e6;
 
 /// The `p` quantile of some durations.
 fn quantile(mut v: Vec<Duration>, p: f64) -> Duration {
@@ -72,7 +75,7 @@ async fn control_messages_stay_quick_while_the_host_streams_to_three_guests() {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             bytes.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
-                            // As fast as a guest on a quick network takes it, 20 MB/s.
+                            // As fast as a guest on a quick network takes it, 5 MB/s.
                             got += n as u64;
                             let due = Duration::from_secs_f64(got as f64 / PULL_RATE);
                             if let Some(wait) = due.checked_sub(start.elapsed()) {
