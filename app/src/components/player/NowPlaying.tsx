@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCovers } from '../../lib/covers'
 import { lineAt, useLyrics, useSongLyrics, type Lyrics } from '../../lib/lyrics'
 import { LyricsSource } from '../lyrics/LyricsSource'
+import { SecondRowsList, SecondSwitches } from '../lyrics/SecondLines'
+import { keyAction } from '../../lib/secondChoice'
+import { useSecondLines, type SecondLinesView } from '../../lib/useSecondLines'
 import { SyncMaker } from '../lyrics/SyncMaker'
 import { confirmAsk } from '../Confirm'
 import { ensureCatalog, trackAt } from '../../lib/catalog'
@@ -26,9 +29,10 @@ import { RoomQueue } from '../together/RoomQueue'
 
 const spring = { type: 'spring', stiffness: 300, damping: 32 } as const
 
-/** Synced lyrics follow the song: the line being sung is bright, a click jumps to a line. */
-function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: () => void }) {
-  const { lyrics, position } = props
+/** Synced lyrics follow the song: the line being sung is bright, a click jumps to a line. Under
+ *  each line, its pronunciation and translation when switched on (T, Shift+T). */
+function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: () => void; seconds: SecondLinesView }) {
+  const { lyrics, position, seconds } = props
   const box = useRef<HTMLDivElement>(null)
   const userScrolled = useRef(0)
   const at = useMemo(() => lineAt(lyrics, position), [lyrics, position])
@@ -40,6 +44,21 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: ()
       box.current.scrollTo({ top: el.offsetTop - box.current.clientHeight / 2 + el.offsetHeight / 2, behavior: 'smooth' })
     }
   }, [at])
+  // T and Shift+T, while the words show (not while typing).
+  const toggleRow = useRef(seconds.toggle)
+  useEffect(() => {
+    toggleRow.current = (kind) => seconds.offered[kind] && seconds.toggle(kind)
+  }, [seconds])
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const t = e.target
+      if (t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      const row = keyAction(e)
+      if (row) toggleRow.current(row)
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [])
 
   if (!lyrics) return <p className="py-10 text-center text-[13px] text-ink/55">Finding the words…</p>
   if (!lyrics.lines.length && !lyrics.text)
@@ -66,27 +85,32 @@ function LyricsView(props: { lyrics: Lyrics | null; position: number; onTime: ()
       </div>
     )
   return (
-    <div
-      ref={box}
-      // Up and down only: a sideways wheel doesn't move the lyrics, so they keep following.
-      onWheel={(e) => {
-        if (e.deltaY) userScrolled.current = Date.now()
-      }}
-      className="no-scrollbar relative h-full overflow-y-auto py-[30vh]"
-      style={{ maskImage: 'linear-gradient(transparent, black 18%, black 82%, transparent)' }}
-    >
-      {lyrics.lines.map(([ms, line], i) => (
-        <button
-          key={i}
-          data-line={i}
-          onClick={() => void seek(ms)}
-          className={`block w-full origin-left py-1.5 text-left text-[22px] font-semibold leading-snug tracking-[-0.01em] transition-[color,transform,opacity] duration-300 ${
-            i === at ? 'scale-[1.02] text-ink' : i < at ? 'text-ink/35 hover:text-ink/60' : 'text-ink/45 hover:text-ink/70'
-          }`}
-        >
-          {line || '♪'}
-        </button>
-      ))}
+    <div className="flex h-full flex-col">
+      <SecondSwitches seconds={seconds} className="shrink-0 pb-1" />
+      <div
+        ref={box}
+        // Up and down only: a sideways wheel doesn't move the lyrics, so they keep following.
+        onWheel={(e) => {
+          if (e.deltaY) userScrolled.current = Date.now()
+        }}
+        className="no-scrollbar relative min-h-0 flex-1 overflow-y-auto py-[30vh]"
+        style={{ maskImage: 'linear-gradient(transparent, black 18%, black 82%, transparent)' }}
+      >
+        {lyrics.lines.map(([ms, line], i) => (
+          <div key={i} data-line={i} className="py-1.5">
+            <button
+              onClick={() => void seek(ms)}
+              lang={seconds.lang ?? undefined}
+              className={`block w-full origin-left text-left text-[22px] font-semibold leading-snug tracking-[-0.01em] transition-[color,transform,opacity] duration-300 ${
+                i === at ? 'scale-[1.02] text-ink' : i < at ? 'text-ink/35 hover:text-ink/60' : 'text-ink/45 hover:text-ink/70'
+              }`}
+            >
+              {line || '♪'}
+            </button>
+            <SecondRowsList seconds={seconds} line={seconds.model?.lines[i]} active={i === at} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -146,6 +170,7 @@ export function NowPlaying(props: {
   // Your file's words when it has them, else the lyrics services' (online songs, and files
   // without lyrics: shown, never written to the file).
   const lyrics = useSongLyrics(props.root, song, props.open)
+  const seconds = useSecondLines(song, lyrics)
   const foundOnline = !!lyrics?.found
   // The song whose lyrics are being timed. It stays its song if another one starts: the
   // maker keeps its taps and offers the way back.
@@ -286,7 +311,7 @@ export function NowPlaying(props: {
                     />
                   ) : remote || foundOnline ? (
                     lyrics && (lyrics.lines.length > 0 || lyrics.text) ? (
-                      <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => {}} />
+                      <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => {}} seconds={seconds} />
                     ) : lyrics === null ? (
                       <p className="py-10 text-center text-[13px] text-ink/55">Looking up lyrics…</p>
                     ) : (
@@ -295,7 +320,7 @@ export function NowPlaying(props: {
                       </p>
                     )
                   ) : (
-                    <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} />
+                    <LyricsView lyrics={lyrics} position={s.position_ms} onTime={() => setTiming(song.path)} seconds={seconds} />
                   ))}
                 {props.panel === 'next' && <UpNext onLeave={props.onClose} />}
                 {props.panel === 'related' && (
