@@ -331,6 +331,18 @@ pub enum ToGuest {
         next: Option<Next>,
         line: ClockLine,
     },
+    /// The host suggests something to this person (G7, for someone who missed three starts).
+    Advise { advice: Advice },
+}
+
+/// What the host can suggest to one person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Advice {
+    /// Play a lighter copy from now on (the catalog's stream before the host's file).
+    LighterCopy,
+    /// Stop catching up and start cleanly with the next song (A17).
+    StartWithNext,
 }
 
 fn name_ok(s: &str) -> bool {
@@ -712,6 +724,16 @@ mod tests {
         assert_eq!(
             l(&ToGuest::Disarm { seq: 5 }),
             "{\"t\":\"disarm\",\"seq\":5}\n"
+        );
+        assert_eq!(
+            l(&ToGuest::Advise {
+                advice: Advice::StartWithNext
+            }),
+            "{\"t\":\"advise\",\"advice\":\"start_with_next\"}\n"
+        );
+        assert!(
+            read::<ToGuest>(b"{\"t\":\"advise\",\"advice\":\"louder\"}").is_err(),
+            "only the advice there is"
         );
         let a = String::from_utf8(line(&ToHost::Ask {
             action: Action::Jump { entry: EntryId(9) },
