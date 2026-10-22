@@ -772,22 +772,43 @@ fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>,
     let Some(v) = get_json(agent, &url, None)? else {
         return Ok(None);
     };
-    // Its length is in its metadata: another recording's lyrics are not these.
-    if let Some(total) = v.pointer("/metadata/totalDuration").and_then(Value::as_f64)
-        && req.duration_ms > 0
-        && (total / 1000.0 - req.duration_ms as f64 / 1000.0).abs() > SAME_LENGTH_S
-    {
-        return Ok(None);
+    Ok(lyricsplus_found(req, &v))
+}
+
+/// A length as LyricsPlus sends it: ms as a number, or text ("3:33.234", "1:02:03.5", "45.25").
+fn total_ms(v: &Value) -> Option<u64> {
+    if let Some(ms) = v.as_f64() {
+        return (ms >= 0.0).then(|| ms.round() as u64);
     }
-    let lines = parse_kpoe(&v);
-    Ok((!lines.is_empty()).then(|| Found {
+    let mut secs = 0.0;
+    for part in v.as_str()?.trim().split(':') {
+        let part = part.trim();
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+            return None;
+        }
+        secs = secs * 60.0 + part.parse::<f64>().ok()?;
+    }
+    Some((secs * 1000.0).round() as u64)
+}
+
+/// LyricsPlus's answer, when it is the song asked about.
+fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
+    // Its length is in its metadata: another recording's lyrics are not these.
+    if let Some(total) = v.pointer("/metadata/totalDuration").and_then(total_ms)
+        && req.duration_ms > 0
+        && (total as f64 - req.duration_ms as f64).abs() / 1000.0 > SAME_LENGTH_S
+    {
+        return None;
+    }
+    let lines = parse_kpoe(v);
+    (!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
         lyrics: Lyrics {
             lines,
             ..Default::default()
         },
         ..Default::default()
-    }))
+    })
 }
 
 fn boidu(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
@@ -1738,5 +1759,35 @@ mod tests {
         );
         remember(&kept, "s", "auto", &Ok(None));
         assert_eq!(kept.get("s", "auto"), Some(None), "a real miss is");
+    }
+
+    fn fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/lyrics")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn lyricsplus_turns_away_another_recording_by_its_length() {
+        // Idol (YOASOBI) as LyricsPlus answered on 2026-10-21: "totalDuration": "3:33.234".
+        let v = fixture("lyricsplus-idol.json");
+        let idol = |secs| req("アイドル", &["YOASOBI"], secs);
+        assert!(
+            lyricsplus_found(&idol(213), &v).is_some(),
+            "the same length"
+        );
+        assert!(
+            lyricsplus_found(&idol(260), &v).is_none(),
+            "47 s longer is another recording"
+        );
+        assert!(lyricsplus_found(&idol(0), &v).is_some(), "length unknown");
+        // The length as a number of ms, as it was sent before.
+        let mut n = v.clone();
+        n["metadata"]["totalDuration"] = serde_json::json!(213_234);
+        assert!(lyricsplus_found(&idol(260), &n).is_none());
+        assert_eq!(total_ms(&serde_json::json!("1:02:03.5")), Some(3_723_500));
+        assert_eq!(total_ms(&serde_json::json!("45.25")), Some(45_250));
+        assert_eq!(total_ms(&serde_json::json!("soon")), None);
     }
 }
