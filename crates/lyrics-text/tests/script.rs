@@ -75,5 +75,9 @@ fn a_line_has_one_script() {
     assert_eq!(line_script("君の名は"), Script::Jpan);
     assert_eq!(line_script("사랑해"), Script::Hang);
     assert_eq!(line_script("123 ..."), Script::Zyyy);
+    assert_eq!(line_script("天才的なアイドル様"), Script::Jpan);
+    assert_eq!(line_script("露出无敌笑容"), Script::Hani);
+    assert_eq!(line_script("तेरा मेरा, Kesariya!"), Script::Deva);
+    assert_eq!(line_script("ab कख"), Script::Deva, "Latin loses a tie");
     assert_eq!(Script::Jpan.code(), "Jpan");
 }

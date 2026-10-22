@@ -1944,6 +1944,7 @@ dependencies = [
  "image",
  "keyring",
  "lofty",
+ "lyrics-text",
  "media-access",
  "rayon",
  "realfft",

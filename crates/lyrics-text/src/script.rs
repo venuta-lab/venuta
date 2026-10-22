@@ -212,37 +212,47 @@ impl Iterator for Runs<'_> {
     }
 }
 
-/// The script a line is written in: the script with the most letters, not counting Latin
-/// when another script is there (a Hindi line with one English word is a Devanagari line).
-/// Han with any kana is Japanese (`Jpan`). `Zyyy` when the line has no letters.
+/// The script a line is written in (the lyrics model's `script`): the one most of its
+/// letters are in, Latin losing a tie (a Latin word in a Hindi line leaves it Hindi). Japanese
+/// (kana, with or without kanji) is `Jpan` when kana and kanji outnumber the rest; `Zyyy`
+/// when the line has no letters.
 pub fn line_script(text: &str) -> Script {
     // Small counts per script, kept without allocating.
     let mut counts: [(Script, u32); 8] = [(Script::Zyyy, 0); 8];
-    let mut kana = false;
-    let mut han = false;
     for ch in text.chars() {
         let s = Script::of(ch);
         if !s.is_letters() {
             continue;
         }
-        kana |= matches!(s, Script::Hira | Script::Kana);
-        han |= s == Script::Hani;
         if let Some(slot) = counts.iter_mut().find(|(k, n)| *k == s || *n == 0) {
             slot.0 = s;
             slot.1 += 1;
         }
     }
-    if kana && han {
-        return Script::Jpan;
-    }
-    let best = |latin: bool| {
+    let count = |s: Script| {
         counts
             .iter()
-            .filter(|(s, n)| *n > 0 && ((*s == Script::Latn) == latin))
-            .max_by_key(|(_, n)| *n)
-            .map(|(s, _)| *s)
+            .find(|(k, n)| *k == s && *n > 0)
+            .map_or(0, |(_, n)| *n)
     };
-    best(false).or_else(|| best(true)).unwrap_or(Script::Zyyy)
+    let kana = count(Script::Hira) + count(Script::Kana);
+    if kana > 0 {
+        let japanese = kana + count(Script::Hani);
+        let other = counts
+            .iter()
+            .filter(|(k, n)| *n > 0 && !matches!(k, Script::Hira | Script::Kana | Script::Hani))
+            .map(|(_, n)| *n)
+            .max()
+            .unwrap_or(0);
+        if other <= japanese {
+            return Script::Jpan;
+        }
+    }
+    counts
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .max_by_key(|(s, n)| (*n, *s != Script::Latn))
+        .map_or(Script::Zyyy, |(s, _)| *s)
 }
 
 #[cfg(test)]
