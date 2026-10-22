@@ -124,7 +124,11 @@ impl Sim {
         let net = SimNet::new(tb, 11);
         let base: Arc<dyn MonoClock> = Arc::new(clock.clone());
         // The host's clock: booted long before, a little fast.
-        let host_t = net.peer(Arc::new(SkewedClock::new(base.clone(), 500_000 * 1_000_000_000, 30.0)));
+        let host_t = net.peer(Arc::new(SkewedClock::new(
+            base.clone(),
+            500_000 * 1_000_000_000,
+            30.0,
+        )));
         let host_rx = host_t.events();
         let mut room = Room::new("Asha", SECRET, songs, opening);
         room.set_let_in_without_asking(true);
@@ -196,7 +200,11 @@ impl Sim {
     /// until they're in.
     pub fn join(&mut self, name: &str, up: Way, down: Way, player: Player) -> usize {
         let base: Arc<dyn MonoClock> = Arc::new(self.clock.clone());
-        let t = self.net.peer(Arc::new(SkewedClock::new(base, 9_000 * 1_000_000_000, 12.0)));
+        let t = self.net.peer(Arc::new(SkewedClock::new(
+            base,
+            9_000 * 1_000_000_000,
+            12.0,
+        )));
         let rx = t.events();
         self.people.push(Person {
             name: name.into(),
@@ -212,7 +220,10 @@ impl Sim {
         });
         let i = self.people.len() - 1;
         self.connect(i);
-        assert!(self.run_until(|s| s.people[i].id.is_some(), 5_000), "{name} in");
+        assert!(
+            self.run_until(|s| s.people[i].id.is_some(), 5_000),
+            "{name} in"
+        );
         i
     }
 
@@ -296,7 +307,7 @@ impl Sim {
         // The host's own conductor answers locally.
         let due = take_due(&mut self.people[0].due, now);
         for m in due {
-            self.from_host_conductor(m, now);
+            self.host_conductor_says(m, now);
         }
         // The guests.
         for i in 1..self.people.len() {
@@ -337,7 +348,9 @@ impl Sim {
                     let (k, c) = self.room.knock(&key, &h.name, &h.proof, now);
                     match k {
                         Knock::Refused(why) => {
-                            let _ = self.host_t.send(from, ControlMsg::of(&ToGuest::Refused { why }));
+                            let _ = self
+                                .host_t
+                                .send(from, ControlMsg::of(&ToGuest::Refused { why }));
                         }
                         Knock::In(id) | Knock::Waiting(id) => {
                             self.peer_of.insert(id, from);
@@ -346,10 +359,11 @@ impl Sim {
                     }
                     self.apply(c);
                 }
-                Err(Some(answer)) => {
-                    let _ = self.host_t.send(from, ControlMsg::of(&answer));
+                Err(why) => {
+                    if let Some(answer) = why.answer() {
+                        let _ = self.host_t.send(from, ControlMsg::of(&answer));
+                    }
                 }
-                Err(None) => {}
             }
             return;
         };
@@ -369,7 +383,7 @@ impl Sim {
         }
     }
 
-    fn from_host_conductor(&mut self, m: ToHost, now: i64) {
+    fn host_conductor_says(&mut self, m: ToHost, now: i64) {
         match self.room.handle(HOST, m, now) {
             Ok(c) => self.apply(c),
             Err(why) => self.refused.push((HOST, why)),
@@ -391,7 +405,11 @@ impl Sim {
                         proof: proof(SECRET, &key),
                         app: "Venuta test".into(),
                     };
-                    let _ = self.people[i].t.as_ref().unwrap().send(peer, ControlMsg::of(&hello));
+                    let _ = self.people[i]
+                        .t
+                        .as_ref()
+                        .unwrap()
+                        .send(peer, ControlMsg::of(&hello));
                 }
                 TransportEvent::Message { msg, .. } => {
                     let m: ToGuest = msg.read().expect("the host's line reads");
@@ -409,7 +427,10 @@ impl Sim {
         if p.player.pings && now >= p.next_ping {
             p.next_ping = now + S;
             let t = p.t.as_ref().unwrap();
-            let _ = t.send_datagram(self.host_t.id(), ClockDatagram::Ping { id: 1, t1: 0 }.encode());
+            let _ = t.send_datagram(
+                self.host_t.id(),
+                ClockDatagram::Ping { id: 1, t1: 0 }.encode(),
+            );
         }
     }
 
@@ -472,7 +493,7 @@ impl Sim {
     fn send_from(&mut self, i: usize, m: &ToHost) {
         if i == 0 {
             let now = self.now();
-            self.from_host_conductor(m.clone(), now);
+            self.host_conductor_says(m.clone(), now);
         } else {
             let t = self.people[i].t.as_ref().unwrap();
             let _ = t.send(self.host_t.id(), ControlMsg::of(m));
@@ -505,7 +526,7 @@ impl Sim {
         let m = ToHost::Ask { action };
         if i == 0 {
             let now = self.now();
-            self.from_host_conductor(m, now);
+            self.host_conductor_says(m, now);
         } else {
             self.send_from(i, &m);
         }
@@ -515,7 +536,7 @@ impl Sim {
     pub fn say(&mut self, i: usize, m: ToHost) {
         if i == 0 {
             let now = self.now();
-            self.from_host_conductor(m, now);
+            self.host_conductor_says(m, now);
         } else {
             self.send_from(i, &m);
         }

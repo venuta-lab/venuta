@@ -147,7 +147,10 @@ fn blocked_people_stay_out_and_rooms_fill_up() {
     let ravi = join(&mut r, "k1", "Ravi");
     let c = r.remove(ravi, true, 0);
     assert_eq!(c.gone, vec![ravi]);
-    assert!(matches!(r.knock("k1", "Ravi", &proof(SECRET, "k1"), 0).0, Knock::Refused(_)));
+    assert!(matches!(
+        r.knock("k1", "Ravi", &proof(SECRET, "k1"), 0).0,
+        Knock::Refused(_)
+    ));
     for i in 2..crate::MAX_PEOPLE + 1 {
         join(&mut r, &format!("k{i}"), "Friend");
     }
@@ -167,7 +170,10 @@ fn a_song_starts_for_everyone_once_all_are_ready() {
     assert_eq!((e, content, purpose), (entry(&r, 0), 0, Purpose::Start));
     assert_eq!(c.to(ravi).len(), c.to(HOST).len(), "everyone is told");
     assert!(r.anchor().is_none(), "not until ready");
-    assert!(commit(&r.ready(HOST, p, e, 100_000)).is_none(), "still waiting for Ravi");
+    assert!(
+        commit(&r.ready(HOST, p, e, 100_000)).is_none(),
+        "still waiting for Ravi"
+    );
     let a = commit(&r.ready(ravi, p, e, 300_000)).unwrap();
     assert!(a.playing);
     assert_eq!(
@@ -197,13 +203,7 @@ fn a_seek_while_a_song_starts_moves_its_start() {
     start(&mut r, &[HOST], 0);
     r.ask(HOST, Action::Next, 5 * S).unwrap();
     let c = r
-        .ask(
-            HOST,
-            Action::Seek {
-                content_us: 30 * S,
-            },
-            5 * S + 100_000,
-        )
+        .ask(HOST, Action::Seek { content_us: 30 * S }, 5 * S + 100_000)
         .unwrap();
     let (_, e, content, purpose) = prep(&c).unwrap();
     assert_eq!(
@@ -230,16 +230,14 @@ fn a_seek_while_a_resume_gets_ready_moves_where_it_will_start() {
     let c = r.ask(HOST, Action::Play, at + S).unwrap();
     let (_, _, content, purpose) = prep(&c).unwrap();
     assert_eq!((content, purpose), (held.content_us, Purpose::Resume));
-    assert_eq!(r.anchor(), Some(held), "held exactly as it paused meanwhile");
+    assert_eq!(
+        r.anchor(),
+        Some(held),
+        "held exactly as it paused meanwhile"
+    );
     // A seek before it starts: ready there instead.
     let c = r
-        .ask(
-            HOST,
-            Action::Seek {
-                content_us: 30 * S,
-            },
-            at + S + 100_000,
-        )
+        .ask(HOST, Action::Seek { content_us: 30 * S }, at + S + 100_000)
         .unwrap();
     let (p, e, content, purpose) = prep(&c).unwrap();
     assert_eq!((content, purpose), (30 * S, Purpose::Resume));
@@ -260,13 +258,7 @@ fn a_seek_while_the_next_song_gets_ready_leaves_the_last_one_playing() {
         "the song before plays on until the commit (D7)"
     );
     let c = r
-        .ask(
-            HOST,
-            Action::Seek {
-                content_us: 30 * S,
-            },
-            10 * S + 200_000,
-        )
+        .ask(HOST, Action::Seek { content_us: 30 * S }, 10 * S + 200_000)
         .unwrap();
     assert_eq!(prep(&c).map(|p| (p.1, p.2)), Some((entry(&r, 1), 30 * S)));
     assert!(hold(&c).is_none() && commit(&c).is_none());
@@ -331,7 +323,10 @@ fn ready_still_counts_after_the_queue_changes_mid_start() {
     )
     .unwrap();
     r.ready(HOST, p, e, 200_000);
-    assert!(commit(&r.ready(ravi, p, e, 300_000)).is_some(), "started at once");
+    assert!(
+        commit(&r.ready(ravi, p, e, 300_000)).is_some(),
+        "started at once"
+    );
 }
 
 #[test]
@@ -353,7 +348,11 @@ fn one_slow_round_trip_doesnt_slow_every_start_after() {
     }
     r.path(ravi, path(900_000), 15 * S);
     let a = start(&mut r, &[HOST, ravi], 16 * S);
-    assert_eq!(a.host_us - 16 * S, 500_000, "one spike in 31: the p95 is 40 ms");
+    assert_eq!(
+        a.host_us - 16 * S,
+        500_000,
+        "one spike in 31: the p95 is 40 ms"
+    );
     // Slow for real (many samples): starts are set further ahead.
     for i in 0..10 {
         r.path(ravi, path(400_000), 17 * S + i * S / 10);
@@ -384,7 +383,10 @@ fn a_slow_guest_is_not_waited_for_forever() {
     r.ready(HOST, p, e, 0);
     assert!(commit(&r.tick(READY_WAIT_US - 1)).is_none());
     assert!(r.anchor().is_none());
-    assert!(commit(&r.tick(READY_WAIT_US)).is_some(), "it goes on; Ravi catches up");
+    assert!(
+        commit(&r.tick(READY_WAIT_US)).is_some(),
+        "it goes on; Ravi catches up"
+    );
 }
 
 #[test]
@@ -461,7 +463,10 @@ fn added_songs_carry_who_added_them_and_keep_the_playing_one() {
     )
     .unwrap();
     let v = r.view_for(ravi);
-    assert_eq!(v.queue[2].song.title, "Song 7", "next: right after the playing one");
+    assert_eq!(
+        v.queue[2].song.title, "Song 7",
+        "next: right after the playing one"
+    );
     assert_eq!(v.queue[2].song.added_by, Some(ravi));
     assert_eq!(v.anchor.unwrap().entry, two, "still playing Song 2");
     assert_eq!(v.activity.last().unwrap().what, "added 2 songs");
@@ -472,7 +477,8 @@ fn added_songs_carry_who_added_them_and_keep_the_playing_one() {
     assert!(r.ask(HOST, Action::Remove { entry: two }, 3_000).is_err());
     // Moving the playing song keeps it playing.
     let a = r.anchor();
-    r.ask(HOST, Action::Move { entry: two, to: 3 }, 4_000).unwrap();
+    r.ask(HOST, Action::Move { entry: two, to: 3 }, 4_000)
+        .unwrap();
     assert_eq!(r.anchor(), a);
     assert_eq!(r.queue()[3].id, two);
 }
@@ -507,9 +513,7 @@ fn pausing_seeking_and_the_end_of_the_queue() {
     let c = r
         .ask(
             HOST,
-            Action::Seek {
-                content_us: 50 * S,
-            },
+            Action::Seek { content_us: 50 * S },
             a.host_us + 11 * S,
         )
         .unwrap();
@@ -528,7 +532,11 @@ fn pausing_seeking_and_the_end_of_the_queue() {
         "the end, a pause lead ahead"
     );
     r.tick(ends);
-    assert_eq!(r.phase(), Phase::QueueEnded, "nothing after: the room rests");
+    assert_eq!(
+        r.phase(),
+        Phase::QueueEnded,
+        "nothing after: the room rests"
+    );
     assert!(r.anchor().is_none());
     assert!(r.ask(HOST, Action::Next, ends).unwrap().is_empty());
 }
@@ -564,14 +572,18 @@ fn pausing_a_song_getting_ready_keeps_it_paused_there() {
     let mut r = room();
     let two = entry(&r, 1);
     r.ask(HOST, Action::Jump { entry: two }, 1_000).unwrap();
-    let held = hold(&r.ask(HOST, Action::Pause, 2_000).unwrap()).expect("held where it was to start");
+    let held =
+        hold(&r.ask(HOST, Action::Pause, 2_000).unwrap()).expect("held where it was to start");
     assert_eq!((held.entry, held.content_us, held.playing), (two, 0, false));
     assert!(r.preparing().is_none());
     r.tick(3_000 + READY_WAIT_US * 2);
     assert_eq!(r.phase(), Phase::Held, "still paused after the wait");
     // Playing it gets everyone ready again, then starts.
     let c = r.ask(HOST, Action::Play, 50 * S).unwrap();
-    assert_eq!(prep(&c).map(|p| (p.1, p.2, p.3)), Some((two, 0, Purpose::Resume)));
+    assert_eq!(
+        prep(&c).map(|p| (p.1, p.2, p.3)),
+        Some((two, 0, Purpose::Resume))
+    );
 }
 
 #[test]
@@ -579,7 +591,10 @@ fn pausing_near_the_end_pauses_this_song_not_the_next() {
     let mut r = room();
     let a = start(&mut r, &[HOST], 0);
     let ends = a.host_us + 200 * S;
-    assert!(arm(&r.tick(ends - 20 * S)).is_some(), "the next is armed ahead");
+    assert!(
+        arm(&r.tick(ends - 20 * S)).is_some(),
+        "the next is armed ahead"
+    );
     let c = r.ask(HOST, Action::Pause, ends - 5 * S).unwrap();
     let p = hold(&c).unwrap();
     assert_eq!((p.entry, p.playing), (a.entry, false), "this song, paused");
@@ -595,7 +610,11 @@ fn pausing_near_the_end_pauses_this_song_not_the_next() {
         "the armed next withdrawn"
     );
     r.tick(ends + READY_WAIT_US);
-    assert_eq!(r.anchor().map(|a| a.entry), Some(a.entry), "the next never starts by itself");
+    assert_eq!(
+        r.anchor().map(|a| a.entry),
+        Some(a.entry),
+        "the next never starts by itself"
+    );
 }
 
 #[test]
@@ -629,5 +648,48 @@ fn a_room_opened_while_the_host_plays_takes_its_place_untouched() {
         (a.entry, a.content_us, a.host_us, a.playing),
         (r.queue()[1].id, 42 * S, 1_000 * S, true)
     );
-    assert!(r.preparing().is_none(), "nothing prepared: the host's audio isn't touched");
+    assert!(
+        r.preparing().is_none(),
+        "nothing prepared: the host's audio isn't touched"
+    );
+}
+
+#[test]
+fn an_entry_asked_about_again_asks_everyone_again() {
+    let mut r = room();
+    let ravi = join(&mut r, "k1", "Ravi");
+    start(&mut r, &[HOST, ravi], 0);
+    let two = entry(&r, 1);
+    // Ravi couldn't play song 2 once (his stream failed): not waited for it then.
+    let (p, e, _, _) = prep(&r.ask(HOST, Action::Next, 5 * S).unwrap()).unwrap();
+    assert!(commit(&r.unable(ravi, p, e, 5 * S)).is_none());
+    r.ready(HOST, p, e, 5 * S);
+    // Later the room comes back to it: he's asked again, and waited for.
+    r.ask(HOST, Action::Previous, 20 * S).unwrap();
+    // (his pings keep coming)
+    r.heard(ravi, 24 * S);
+    r.tick(25 * S);
+    r.heard(ravi, 29 * S);
+    let c = r.ask(HOST, Action::Jump { entry: two }, 30 * S).unwrap();
+    assert!(prep(&c).is_some());
+    assert_eq!(
+        r.view_for(HOST).starting,
+        Some(vec!["Aakash".to_owned(), "Ravi".to_owned()])
+    );
+}
+
+#[test]
+fn every_view_the_room_makes_passes_a_guests_checks() {
+    let long = "A host with a name far longer than forty letters allows";
+    let mut r = Room::new(long, SECRET, vec![song(1)], Opening::Resting);
+    let ravi = join(&mut r, "k1", "Ravi");
+    let c = r.ask(HOST, Action::Play, 0).unwrap();
+    for o in &c.out {
+        assert!(
+            crate::proto::v3::check_to_guest(&o.msg).is_ok(),
+            "{:?}",
+            o.msg
+        );
+    }
+    assert!(r.view_for(ravi).check().is_ok());
 }

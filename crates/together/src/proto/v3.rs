@@ -450,27 +450,45 @@ pub struct Hello {
     pub app: String,
 }
 
-/// The first line from a guest: their hello, or what to answer instead. `Err(Some(m))`: send
-/// `m` (another version: "different versions"), then close; `Err(None)`: not a hello at all,
-/// close. The version is read before anything else, leniently, so a hello of any version (a
-/// later one with more fields too) is told in words.
-pub fn door(line: &[u8]) -> Result<Hello, Option<ToGuest>> {
+/// Why a first line didn't get someone to the door.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotIn {
+    /// A hello of another protocol: send `answer()` ("different versions"), then close.
+    OtherVersion,
+    /// Not a hello, or not a proper one: close without a word.
+    NotAHello,
+}
+
+impl NotIn {
+    /// What to send before closing, if anything.
+    pub fn answer(self) -> Option<ToGuest> {
+        match self {
+            NotIn::OtherVersion => Some(ToGuest::Refused {
+                why: DIFFERENT_VERSIONS.into(),
+            }),
+            NotIn::NotAHello => None,
+        }
+    }
+}
+
+/// The first line from a guest: their hello, checked, or why not. The version is read before
+/// anything else, leniently, so a hello of any version (a later one with more fields too) is
+/// told "different versions" in words.
+pub fn door(line: &[u8]) -> Result<Hello, NotIn> {
     #[derive(Deserialize)]
     struct AnyHello {
         t: String,
         protocol: u32,
     }
-    let any: AnyHello = read(line).map_err(|_| None)?;
+    let any: AnyHello = read(line).map_err(|_| NotIn::NotAHello)?;
     if any.t != "hello" {
-        return Err(None);
+        return Err(NotIn::NotAHello);
     }
     if any.protocol != PROTOCOL {
-        return Err(Some(ToGuest::Refused {
-            why: DIFFERENT_VERSIONS.into(),
-        }));
+        return Err(NotIn::OtherVersion);
     }
-    let m = read::<ToHost>(line).map_err(|_| None)?;
-    check_to_host(&m).map_err(|_| None)?;
+    let m = read::<ToHost>(line).map_err(|_| NotIn::NotAHello)?;
+    check_to_host(&m).map_err(|_| NotIn::NotAHello)?;
     match m {
         ToHost::Hello {
             name, proof, app, ..
@@ -479,7 +497,7 @@ pub fn door(line: &[u8]) -> Result<Hello, Option<ToGuest>> {
             proof,
             app,
         }),
-        _ => Err(None),
+        _ => Err(NotIn::NotAHello),
     }
 }
 
@@ -831,7 +849,10 @@ mod tests {
     fn a_hello_of_another_version_is_told_in_words_both_ways() {
         // A 0.3 guest (protocol 2) at a protocol 3 host: its hello, as 0.3 writes it.
         let v2_hello = br#"{"t":"hello","protocol":2,"name":"Ravi","proof":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","app":"Venuta 0.3.0"}"#;
-        let refusal = door(v2_hello).unwrap_err().expect("told, not just closed");
+        let refusal = door(v2_hello)
+            .unwrap_err()
+            .answer()
+            .expect("told, not just closed");
         assert_eq!(
             refusal,
             ToGuest::Refused {
@@ -866,20 +887,20 @@ mod tests {
         );
         // A later version, with fields this one doesn't know: told in words too.
         let v4 = br#"{"t":"hello","protocol":4,"name":"Ravi","proof":"x","app":"Venuta 0.9","caps":[1]}"#;
-        assert!(matches!(door(v4), Err(Some(ToGuest::Refused { .. }))));
+        assert_eq!(door(v4), Err(NotIn::OtherVersion));
         // Our own version: in, checked.
         let me = door(&v3_hello[..v3_hello.len() - 1]).unwrap();
         assert_eq!(me.name, "Ravi");
         // Not a hello, or a bad one: closed without a word.
-        assert_eq!(door(br#"{"t":"bye"}"#), Err(None));
-        assert_eq!(door(b"not json"), Err(None));
+        assert_eq!(door(br#"{"t":"bye"}"#), Err(NotIn::NotAHello));
+        assert_eq!(door(b"not json"), Err(NotIn::NotAHello));
         let bad = line(&ToHost::Hello {
             protocol: 3,
             name: "Ravi".into(),
             proof: "00".into(),
             app: "Venuta".into(),
         });
-        assert_eq!(door(&bad[..bad.len() - 1]), Err(None));
+        assert_eq!(door(&bad[..bad.len() - 1]), Err(NotIn::NotAHello));
     }
 
     #[test]

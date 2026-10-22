@@ -13,10 +13,10 @@
 mod room_sim;
 
 use room_sim::*;
+use together::align::CopyClass;
 use together::anchor::{Purpose, Transition};
 use together::proto::Song;
 use together::proto::v3::{Action, CopyReport, Phase, ToGuest, ToHost, UnableWhy};
-use together::align::CopyClass;
 use together::room::v2::{HOST, HostNote, Opening};
 use together::room_player::{ListenMode, SubState, Suspension};
 use together::sim_net::Way;
@@ -65,8 +65,15 @@ fn b1_play_waits_for_everyone_then_starts_them_on_one_moment() {
     );
     assert!(s.run_until(|s| !s.commits(0).is_empty(), 3_000));
     let (at_host, a) = s.commits(0)[0];
-    assert_eq!(a.host_us - at_host, 300 * MS, "one Wi-Fi: committed 300 ms ahead");
-    assert!(a.host_us - t0 >= 800 * MS + 300 * MS, "after Meera was ready");
+    assert_eq!(
+        a.host_us - at_host,
+        300 * MS,
+        "one Wi-Fi: committed 300 ms ahead"
+    );
+    assert!(
+        a.host_us - t0 >= 800 * MS + 300 * MS,
+        "after Meera was ready"
+    );
     assert_eq!((a.content_us, a.playing), (0, true));
     s.run_ms(400);
     for i in 0..3 {
@@ -87,13 +94,20 @@ fn b2_a_pause_is_scheduled_so_everyone_falls_silent_from_one_moment() {
     let (at_host, h) = s.holds(0)[0];
     assert_eq!(s.room.phase(), Phase::Held, "held from the press");
     assert_eq!(h.host_us - at_host, 150 * MS, "one Wi-Fi: 150 ms ahead");
-    assert_eq!(h.content_us, a.content_at(h.host_us), "where the room is then");
+    assert_eq!(
+        h.content_us,
+        a.content_at(h.host_us),
+        "where the room is then"
+    );
     assert!(!h.playing);
     s.run_ms(300);
     for i in 1..3 {
         let g = s.holds(i);
         assert_eq!(g[0].1, h);
-        assert!(g[0].0 < h.host_us, "before the moment, so the fades start together");
+        assert!(
+            g[0].0 < h.host_us,
+            "before the moment, so the fades start together"
+        );
     }
     assert!(s.activity().iter().any(|l| l == "Ravi paused"));
 
@@ -124,9 +138,15 @@ fn b3_resume_gets_everyone_ready_at_the_held_place_and_starts_together() {
     let p = s.prepares(0).last().copied().unwrap();
     assert_eq!((p.2, p.3, p.4), (h.entry, h.content_us, Purpose::Resume));
     let (at_host, a) = *s.commits(0).last().unwrap();
-    assert_eq!((a.entry, a.content_us, a.playing), (h.entry, h.content_us, true));
+    assert_eq!(
+        (a.entry, a.content_us, a.playing),
+        (h.entry, h.content_us, true)
+    );
     assert_eq!(a.host_us - at_host, 300 * MS);
-    assert!(a.host_us - t < 1_000 * MS, "heard within a second on one Wi-Fi");
+    assert!(
+        a.host_us - t < 1_000 * MS,
+        "heard within a second on one Wi-Fi"
+    );
 }
 
 #[test]
@@ -137,7 +157,11 @@ fn b4_a_seek_plays_on_until_the_commit_and_is_heard_within_a_second() {
     let t = s.now();
     s.press(1, Action::Seek { content_us: 95 * S });
     s.run_ms(100);
-    assert_eq!(s.room.anchor(), Some(a), "the music plays on meanwhile (D7)");
+    assert_eq!(
+        s.room.anchor(),
+        Some(a),
+        "the music plays on meanwhile (D7)"
+    );
     assert!(s.holds(0).is_empty(), "never held for a seek");
     let p = *s.prepares(0).last().unwrap();
     assert_eq!((p.2, p.3, p.4), (a.entry, 95 * S, Purpose::Seek));
@@ -173,9 +197,15 @@ fn b5_a_seek_while_paused_moves_the_held_place_in_silence() {
     s.press(1, Action::Seek { content_us: 30 * S });
     s.run_ms(1_000);
     let moved = s.holds(0).last().unwrap().1;
-    assert_eq!((moved.entry, moved.content_us, moved.playing), (h.entry, 30 * S, false));
+    assert_eq!(
+        (moved.entry, moved.content_us, moved.playing),
+        (h.entry, 30 * S, false)
+    );
     assert!(moved.seq > h.seq);
-    assert!(s.prepares(0).len() == 1 && s.commits(0).len() == 1, "nothing starts");
+    assert!(
+        s.prepares(0).len() == 1 && s.commits(0).len() == 1,
+        "nothing starts"
+    );
     assert_eq!(s.room.phase(), Phase::Held);
     assert_eq!(s.playback_since(2, t).len(), 1, "only the moved hold");
 }
@@ -206,19 +236,31 @@ fn b7_previous_restarts_late_in_a_song_and_goes_back_early_in_one() {
     s.press(1, Action::Previous);
     assert!(s.run_until(|s| s.commits(0).len() == 2, 3_000));
     let p = *s.prepares(0).last().unwrap();
-    assert_eq!((p.2, p.3, p.4), (s.entry(0), 0, Purpose::Seek), "the first song, from its start");
+    assert_eq!(
+        (p.2, p.3, p.4),
+        (s.entry(0), 0, Purpose::Seek),
+        "the first song, from its start"
+    );
     s.press(1, Action::Next);
     assert!(s.run_until(|s| s.commits(0).len() == 3, 3_000));
     s.run_ms(1_000);
     s.press(1, Action::Previous);
     assert!(s.run_until(|s| s.commits(0).len() == 4, 3_000));
     let p = *s.prepares(0).last().unwrap();
-    assert_eq!((p.2, p.3, p.4), (s.entry(0), 0, Purpose::Skip), "a second in: the song before");
+    assert_eq!(
+        (p.2, p.3, p.4),
+        (s.entry(0), 0, Purpose::Skip),
+        "a second in: the song before"
+    );
     s.run_ms(1_000);
     s.press(1, Action::Previous);
     assert!(s.run_until(|s| s.commits(0).len() == 5, 3_000));
     let p = *s.prepares(0).last().unwrap();
-    assert_eq!((p.2, p.3), (s.entry(0), 0), "the first song early: its start again");
+    assert_eq!(
+        (p.2, p.3),
+        (s.entry(0), 0),
+        "the first song early: its start again"
+    );
 }
 
 #[test]
@@ -232,11 +274,18 @@ fn b8_a_jump_is_a_skip_to_the_entry_chosen() {
     let p = *s.prepares(0).last().unwrap();
     assert_eq!((p.2, p.3, p.4), (four, 0, Purpose::Jump));
     assert_eq!(s.commits(0)[1].1.entry, four);
-    s.press(2, Action::Jump {
-        entry: together::anchor::EntryId(999),
-    });
+    s.press(
+        2,
+        Action::Jump {
+            entry: together::anchor::EntryId(999),
+        },
+    );
     s.run_ms(50);
-    assert!(s.refused.iter().any(|(_, w)| w.contains("isn't in the queue")));
+    assert!(
+        s.refused
+            .iter()
+            .any(|(_, w)| w.contains("isn't in the queue"))
+    );
 }
 
 #[test]
@@ -334,8 +383,16 @@ fn b13_a_press_without_the_role_is_a_request_whoever_controls_accepts() {
     s.run_ms(5_000);
     s.press(1, Action::Next);
     s.run_ms(50);
-    assert_eq!(s.refused.last().map(|r| r.1.as_str()), Some("The host is in control."));
-    s.say(1, ToHost::Request { action: Action::Next });
+    assert_eq!(
+        s.refused.last().map(|r| r.1.as_str()),
+        Some("The host is in control.")
+    );
+    s.say(
+        1,
+        ToHost::Request {
+            action: Action::Next,
+        },
+    );
     s.run_ms(50);
     let r = s.room.view_for(s.id(2)).requests;
     assert_eq!(r.len(), 1, "everyone sees the request");
@@ -349,10 +406,19 @@ fn b13_a_press_without_the_role_is_a_request_whoever_controls_accepts() {
     s.press(0, Action::Accept { request: r[0].id });
     assert!(s.run_until(|s| s.commits(0).len() == n + 1, 3_000));
     assert_eq!(s.commits(0).last().unwrap().1.entry, s.entry(1));
-    assert!(s.activity().iter().any(|l| l == "Ravi skipped (Asha said yes)"));
+    assert!(
+        s.activity()
+            .iter()
+            .any(|l| l == "Ravi skipped (Asha said yes)")
+    );
     assert!(s.room.view_for(HOST).requests.is_empty());
     // "Ask the room to wait": a request; declined, it's gone and nothing happened.
-    s.say(3, ToHost::Request { action: Action::Pause });
+    s.say(
+        3,
+        ToHost::Request {
+            action: Action::Pause,
+        },
+    );
     s.run_ms(50);
     let id = s.room.view_for(HOST).requests[0].id;
     s.press(0, Action::Decline { request: id });
@@ -360,7 +426,12 @@ fn b13_a_press_without_the_role_is_a_request_whoever_controls_accepts() {
     assert!(s.room.view_for(HOST).requests.is_empty());
     assert_eq!(s.room.phase(), Phase::Playing);
     // A request the room has moved past is out of date.
-    s.say(1, ToHost::Request { action: Action::Next });
+    s.say(
+        1,
+        ToHost::Request {
+            action: Action::Next,
+        },
+    );
     s.run_ms(50);
     let id = s.room.view_for(HOST).requests[0].id;
     let n = s.commits(0).len();
@@ -374,7 +445,8 @@ fn b13_a_press_without_the_role_is_a_request_whoever_controls_accepts() {
     );
     assert!(s.room.view_for(HOST).requests.is_empty());
     // Adding is never a request: someone who may add just adds; someone who may not is told.
-    s.room.set_role(s.id(4), Some(together::proto::Role::Listen), s.now());
+    s.room
+        .set_role(s.id(4), Some(together::proto::Role::Listen), s.now());
     s.say(
         4,
         ToHost::Request {
@@ -401,19 +473,28 @@ fn b14_the_host_undoes_a_skip_back_to_where_the_song_would_be_now() {
     s.run_ms(1_000);
     s.say(1, ToHost::Undo);
     s.run_ms(50);
-    assert_eq!(s.refused.last().map(|r| r.1.as_str()), Some("Only the host can undo."));
+    assert_eq!(
+        s.refused.last().map(|r| r.1.as_str()),
+        Some("Only the host can undo.")
+    );
     let t = s.now();
     s.say(0, ToHost::Undo);
     assert!(s.run_until(|s| s.commits(0).len() == 3, 3_000));
     let p = *s.prepares(0).last().unwrap();
     assert_eq!(p.2, a.entry, "back to song 1");
-    assert!((p.3 - a.content_at(t)).abs() < 50 * MS, "where it would be now");
+    assert!(
+        (p.3 - a.content_at(t)).abs() < 50 * MS,
+        "where it would be now"
+    );
     // Undoing an addition leaves the playing song alone.
     let n = s.prepares(0).len();
-    s.press(0, Action::Add {
-        songs: vec![song(9, 100)],
-        next: false,
-    });
+    s.press(
+        0,
+        Action::Add {
+            songs: vec![song(9, 100)],
+            next: false,
+        },
+    );
     s.run_ms(50);
     assert_eq!(s.room.queue().len(), 6);
     s.say(0, ToHost::Undo);
@@ -443,15 +524,26 @@ fn b16_pause_for_me_steps_out_alone_and_ask_to_wait_is_a_request() {
     s.report(1, SubState::SteppedOut);
     s.run_ms(5_000);
     assert_eq!(s.room.anchor(), Some(a), "the room goes on");
-    assert!(s.playback_since(2, t).is_empty(), "nobody else hears a thing");
+    assert!(
+        s.playback_since(2, t).is_empty(),
+        "nobody else hears a thing"
+    );
     // Not waited for at a prepare while stepped out.
     s.people[1].player.ready_ms = None;
     let t = s.now();
     s.press(2, Action::Seek { content_us: 60 * S });
     assert!(s.run_until(|s| s.commits(0).len() == 2, 3_000));
-    assert!(s.commits(0)[1].0 - t < 1_000 * MS, "only the others were waited for");
+    assert!(
+        s.commits(0)[1].0 - t < 1_000 * MS,
+        "only the others were waited for"
+    );
     // "Ask the room to wait": a request, never a pause.
-    s.say(1, ToHost::Request { action: Action::Pause });
+    s.say(
+        1,
+        ToHost::Request {
+            action: Action::Pause,
+        },
+    );
     s.run_ms(50);
     assert_eq!(s.room.view_for(HOST).requests.len(), 1);
     assert_eq!(s.room.phase(), Phase::Playing);
@@ -474,7 +566,11 @@ fn b17_only_a_remote_the_host_allows_changes_the_speakers_volume() {
     assert_eq!(s.volume, Some(40));
     s.press(2, Action::Volume { percent: 90 });
     s.run_ms(50);
-    assert_eq!(s.volume, Some(40), "Meera plays on her own device: not hers to change");
+    assert_eq!(
+        s.volume,
+        Some(40),
+        "Meera plays on her own device: not hers to change"
+    );
     s.press(0, Action::Volume { percent: 70 });
     assert_eq!(s.volume, Some(70), "the host's own");
 }
@@ -487,10 +583,13 @@ fn c1_added_songs_get_new_ids_and_nothing_playing_is_touched() {
     let a = s.start();
     s.run_ms(2_000);
     let t = s.now();
-    s.press(1, Action::Add {
-        songs: vec![song(7, 100), song(8, 100)],
-        next: false,
-    });
+    s.press(
+        1,
+        Action::Add {
+            songs: vec![song(7, 100), song(8, 100)],
+            next: false,
+        },
+    );
     s.run_ms(100);
     let q = s.room.queue();
     assert_eq!(q.len(), 7);
@@ -499,12 +598,19 @@ fn c1_added_songs_get_new_ids_and_nothing_playing_is_touched() {
     let mut ids: Vec<_> = q.iter().map(|e| e.id).collect();
     ids.dedup();
     assert_eq!(ids.len(), 7, "every entry its own id");
-    s.press(2, Action::Add {
-        songs: vec![song(9, 100)],
-        next: true,
-    });
+    s.press(
+        2,
+        Action::Add {
+            songs: vec![song(9, 100)],
+            next: true,
+        },
+    );
     s.run_ms(100);
-    assert_eq!(s.room.queue()[1].song.title, "Song 9", "right after the playing one");
+    assert_eq!(
+        s.room.queue()[1].song.title,
+        "Song 9",
+        "right after the playing one"
+    );
     assert_eq!(s.room.anchor(), Some(a));
     assert!(s.playback_since(1, t).is_empty());
     let v = s.people[1].view.clone().unwrap();
@@ -515,19 +621,25 @@ fn c1_added_songs_get_new_ids_and_nothing_playing_is_touched() {
 fn c2_adding_to_an_empty_or_resting_room_starts_it() {
     let mut s = Sim::lan(vec![], Opening::Resting, &["Ravi"]);
     assert_eq!(s.room.phase(), Phase::Resting);
-    s.press(1, Action::Add {
-        songs: vec![song(1, 10)],
-        next: false,
-    });
+    s.press(
+        1,
+        Action::Add {
+            songs: vec![song(1, 10)],
+            next: false,
+        },
+    );
     assert!(s.run_until(|s| !s.commits(0).is_empty(), 3_000));
     let p = s.prepares(0)[0];
     assert_eq!((p.2, p.4), (s.entry(0), Purpose::Start));
     // The queue ends; an addition starts again.
     assert!(s.run_until(|s| s.room.phase() == Phase::QueueEnded, 12_000));
-    s.press(1, Action::Add {
-        songs: vec![song(2, 10)],
-        next: false,
-    });
+    s.press(
+        1,
+        Action::Add {
+            songs: vec![song(2, 10)],
+            next: false,
+        },
+    );
     assert!(s.run_until(|s| s.commits(0).len() == 2, 3_000));
     assert_eq!(s.commits(0)[1].1.entry, s.entry_of(2));
 }
@@ -536,6 +648,7 @@ fn c2_adding_to_an_empty_or_resting_room_starts_it() {
 fn c3_a_song_not_playing_can_be_taken_out_the_playing_one_cant() {
     let mut s = two();
     let a = s.start();
+    s.run_ms(500);
     let t = s.now();
     let three = s.entry(2);
     s.press(1, Action::Remove { entry: three });
@@ -556,18 +669,26 @@ fn c3_a_song_not_playing_can_be_taken_out_the_playing_one_cant() {
     s.press(1, Action::Remove { entry: target });
     s.run_ms(50);
     assert!(s.room.queue().iter().any(|e| e.id == target));
-    assert!(s.playback_since(2, t).iter().all(|m| matches!(m, ToGuest::Prepare { .. })));
+    assert!(
+        s.playback_since(2, t)
+            .iter()
+            .all(|m| matches!(m, ToGuest::Prepare { .. }))
+    );
 }
 
 #[test]
 fn c4_moving_songs_the_playing_one_too_keeps_it_playing() {
     let mut s = two();
     let a = s.start();
+    s.run_ms(500);
     let t = s.now();
-    s.press(2, Action::Move {
-        entry: a.entry,
-        to: 4,
-    });
+    s.press(
+        2,
+        Action::Move {
+            entry: a.entry,
+            to: 4,
+        },
+    );
     s.run_ms(100);
     assert_eq!(s.room.queue()[4].id, a.entry);
     assert_eq!(s.room.anchor(), Some(a));
@@ -583,12 +704,21 @@ fn c5_a_change_that_makes_another_song_next_arms_it_or_withdraws_the_arm() {
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].2.entry, s.entry(1));
     let three = s.entry(2);
-    s.press(1, Action::Move { entry: three, to: 1 });
+    s.press(
+        1,
+        Action::Move {
+            entry: three,
+            to: 1,
+        },
+    );
     s.run_ms(100);
     let arms = s.arms(1);
     assert_eq!(arms.len(), 2);
     assert_eq!(arms[1].2.entry, three, "song 3 is next now");
-    assert!(arms[1].1 != arms[0].1 && arms[1].2.seq > arms[0].2.seq, "a new prep and seq");
+    assert!(
+        arms[1].1 != arms[0].1 && arms[1].2.seq > arms[0].2.seq,
+        "a new prep and seq"
+    );
     assert_eq!(arms[1].2.boundary_host_us, arms[0].2.boundary_host_us);
     s.press(1, Action::Remove { entry: three });
     s.run_ms(100);
@@ -618,26 +748,47 @@ fn c6_a_change_within_3_s_of_the_boundary_applies_to_the_one_after() {
     // The armed song can't be taken out or moved away now.
     s.press(2, Action::Remove { entry: two_id });
     s.run_ms(20);
-    assert!(s.refused.last().is_some_and(|r| r.1.contains("about to start")));
-    s.press(2, Action::Move { entry: two_id, to: 4 });
+    assert!(
+        s.refused
+            .last()
+            .is_some_and(|r| r.1.contains("about to start"))
+    );
+    s.press(
+        2,
+        Action::Move {
+            entry: two_id,
+            to: 4,
+        },
+    );
     s.run_ms(20);
-    assert!(s.refused.last().is_some_and(|r| r.1.contains("about to start")));
+    assert!(
+        s.refused
+            .last()
+            .is_some_and(|r| r.1.contains("about to start"))
+    );
     s.run_to(end + 100 * MS);
     assert_eq!(s.commits(0).last().unwrap().1.entry, two_id);
     s.run_to(end + 11 * S);
-    assert_eq!(s.arms(1).last().unwrap().2.entry, five, "the change, for the one after");
+    assert_eq!(
+        s.arms(1).last().unwrap().2.entry,
+        five,
+        "the change, for the one after"
+    );
 }
 
 #[test]
 fn c7_the_end_of_the_queue_rests_the_room() {
     let (mut s, a) = short_songs(1);
     let end = a.host_us + 30 * S;
-    s.run_to(end - 1 * S);
+    s.run_to(end - S);
     assert!(s.holds(1).is_empty());
     s.run_to(end + 50 * MS);
     let (got, h) = s.holds(1)[0];
     assert!(got < end, "said ahead of the end");
-    assert_eq!((h.entry, h.content_us, h.host_us, h.playing), (a.entry, 30 * S, end, false));
+    assert_eq!(
+        (h.entry, h.content_us, h.host_us, h.playing),
+        (a.entry, 30 * S, end, false)
+    );
     assert_eq!(s.room.phase(), Phase::QueueEnded);
     assert_eq!(s.people[1].view.as_ref().unwrap().phase, Phase::QueueEnded);
     assert!(s.room.anchor().is_none());
@@ -651,10 +802,13 @@ fn c8_songs_added_near_the_end_follow_on() {
     let (mut s, a) = short_songs(1);
     let end = a.host_us + 30 * S;
     s.run_to(end - 5 * S);
-    s.press(0, Action::Add {
-        songs: vec![song(2, 30)],
-        next: false,
-    });
+    s.press(
+        0,
+        Action::Add {
+            songs: vec![song(2, 30)],
+            next: false,
+        },
+    );
     s.run_ms(50);
     let arm = s.arms(1).last().unwrap().2;
     assert_eq!((arm.entry, arm.boundary_host_us), (s.entry(1), end));
@@ -666,10 +820,13 @@ fn c8_songs_added_near_the_end_follow_on() {
     let end = a.host_us + 30 * S;
     s.run_to(end - 100 * MS);
     assert_eq!(s.holds(0).len(), 1);
-    s.press(0, Action::Add {
-        songs: vec![song(2, 30)],
-        next: false,
-    });
+    s.press(
+        0,
+        Action::Add {
+            songs: vec![song(2, 30)],
+            next: false,
+        },
+    );
     assert!(s.run_until(|s| s.commits(0).len() == 2, 3_000));
     let p = *s.prepares(0).last().unwrap();
     assert_eq!((p.2, p.4), (s.entry(1), Purpose::Start));
@@ -689,7 +846,10 @@ fn d1_the_next_song_is_armed_20_s_ahead_and_joins_at_the_boundary() {
         "armed 20 s before the boundary (on the step after)"
     );
     let n = arm0.2;
-    assert_eq!((n.entry, n.boundary_host_us, n.transition), (s.entry(1), end, Transition::Gapless));
+    assert_eq!(
+        (n.entry, n.boundary_host_us, n.transition),
+        (s.entry(1), end, Transition::Gapless)
+    );
     for i in 1..3 {
         let g = s.arms(i)[0];
         assert_eq!(g.2, n, "the same for everyone");
@@ -697,7 +857,10 @@ fn d1_the_next_song_is_armed_20_s_ahead_and_joins_at_the_boundary() {
     }
     let (got, c) = *s.commits(0).last().unwrap();
     assert_eq!((c.entry, c.content_us, c.host_us), (n.entry, 0, end));
-    assert!(got >= end, "no message is needed at the moment: the commit only confirms");
+    assert!(
+        got >= end,
+        "no message is needed at the moment: the commit only confirms"
+    );
 }
 
 #[test]
@@ -726,11 +889,18 @@ fn d2_d3_d4_everyones_copy_follows_the_reference_boundary() {
     assert_eq!(s.commits(0).last().unwrap().1.host_us, end);
     let v = s.room.view_for(s.id(1));
     let me = v.members.iter().find(|m| m.id == s.id(1)).unwrap();
-    assert_eq!(me.copy.unwrap().length_diff_s, Some(12), "Ravi sees his own copy");
+    assert_eq!(
+        me.copy.unwrap().length_diff_s,
+        Some(12),
+        "Ravi sees his own copy"
+    );
     let other = v.members.iter().find(|m| m.id == s.id(2)).unwrap();
     assert_eq!(other.copy, None, "but not Meera's (D14)");
     let host_view = s.room.view_for(HOST);
-    assert!(host_view.members.iter().all(|m| m.host || m.copy.is_some()), "the host sees all");
+    assert!(
+        host_view.members.iter().all(|m| m.host || m.copy.is_some()),
+        "the host sees all"
+    );
 }
 
 #[test]
@@ -740,24 +910,41 @@ fn d5_d6_the_rooms_crossfade_is_one_moment_for_all_and_never_within_an_album() {
     list[2].album = Some("Brahmastra".into());
     let mut s = Sim::lan(list, Opening::Resting, &["Ravi", "Meera"]);
     let now = s.now();
-    assert!(s.room.set_transition(Transition::Crossfade { ms: 3_000 }, now).is_err());
-    let c = s.room.set_transition(Transition::Crossfade { ms: 4_000 }, now).unwrap();
+    assert!(
+        s.room
+            .set_transition(Transition::Crossfade { ms: 3_000 }, now)
+            .is_err()
+    );
+    let c = s
+        .room
+        .set_transition(Transition::Crossfade { ms: 4_000 }, now)
+        .unwrap();
     s.apply(c);
     let a = s.start();
     let end1 = a.host_us + 30 * S;
     s.run_to(end1 - 4 * S + 50 * MS);
     let n = s.arms(0)[0].2;
     assert_eq!(n.transition, Transition::Crossfade { ms: 4_000 });
-    assert_eq!(n.boundary_host_us, end1 - 4 * S, "the crossfade begins 4 s before the end");
+    assert_eq!(
+        n.boundary_host_us,
+        end1 - 4 * S,
+        "the crossfade begins 4 s before the end"
+    );
     for i in 1..3 {
         assert_eq!(s.arms(i)[0].2, n, "one transition for everyone");
     }
     let c = s.commits(0).last().unwrap().1;
-    assert_eq!((c.entry, c.host_us, c.content_us), (n.entry, n.boundary_host_us, 0));
+    assert_eq!(
+        (c.entry, c.host_us, c.content_us),
+        (n.entry, n.boundary_host_us, 0)
+    );
     // Songs 2 and 3 are on one album: gapless between them.
     s.run_to(c.host_us + 11 * S);
     assert_eq!(s.arms(0).last().unwrap().2.transition, Transition::Gapless);
-    assert_eq!(s.room.view_for(HOST).settings.transition, Transition::Crossfade { ms: 4_000 });
+    assert_eq!(
+        s.room.view_for(HOST).settings.transition,
+        Transition::Crossfade { ms: 4_000 }
+    );
 }
 
 #[test]
@@ -792,7 +979,11 @@ fn d9_d10_someone_not_ready_for_the_next_or_without_it_never_holds_the_boundary(
     s.people[2].player.unable.insert(two_key);
     let end = a.host_us + 30 * S;
     s.run_to(end + 50 * MS);
-    assert_eq!(s.commits(0).last().unwrap().1.host_us, end, "on time for those ready");
+    assert_eq!(
+        s.commits(0).last().unwrap().1.host_us,
+        end,
+        "on time for those ready"
+    );
     // Meera, without song 2, is asked about song 3 when it's armed.
     s.run_to(end + 11 * S);
     let arm = s.arms(2).last().unwrap().2;
@@ -800,7 +991,11 @@ fn d9_d10_someone_not_ready_for_the_next_or_without_it_never_holds_the_boundary(
     s.run_ms(1_000);
     let meera = s.id(2);
     assert!(
-        s.room.view_for(HOST).members.iter().any(|m| m.id == meera && !m.away),
+        s.room
+            .view_for(HOST)
+            .members
+            .iter()
+            .any(|m| m.id == meera && !m.away),
         "still in the room"
     );
 }
@@ -814,14 +1009,20 @@ fn d11_an_entry_nobody_can_play_is_skipped_after_5_s() {
     }
     let end = a.host_us + 30 * S;
     s.run_to(end + 50 * MS);
-    assert_eq!(s.commits(0).last().unwrap().1.entry, s.entry(1), "its boundary comes");
+    assert_eq!(
+        s.commits(0).last().unwrap().1.entry,
+        s.entry(1),
+        "its boundary comes"
+    );
     s.run_to(end + 4_900 * MS);
     assert_eq!(s.prepares(0).len(), 1, "not yet");
     s.run_to(end + 5_100 * MS + 600 * MS);
     let p = *s.prepares(0).last().unwrap();
     assert_eq!((p.2, p.4), (s.entry(2), Purpose::Skip));
     assert!(
-        s.activity().iter().any(|l| l == "Asha skipped “Song 2”: no one could play it"),
+        s.activity()
+            .iter()
+            .any(|l| l == "Asha skipped “Song 2”: no one could play it"),
         "{:?}",
         s.activity()
     );
@@ -893,7 +1094,10 @@ fn g3_when_everyone_stalls_for_3_s_the_room_holds_and_resumes_together() {
     let (got, h) = s.holds(0)[0];
     assert!(got - t >= 3 * S);
     assert_eq!(s.room.phase(), Phase::Held);
-    assert!((h.content_us - a.content_at(got)).abs() <= 5 * MS, "held where the room was");
+    assert!(
+        (h.content_us - a.content_at(got)).abs() <= 5 * MS,
+        "held where the room was"
+    );
     // Someone has the music again: ready at the held place, everyone together.
     s.report(2, SubState::Ready);
     assert!(s.run_until(|s| s.commits(0).len() == 2, 4_000));
@@ -912,12 +1116,21 @@ fn g4_g5_a_slow_guest_is_waited_for_2_5_s_at_most() {
     let prepared = s.prepares(0)[0].0;
     assert!(s.run_until(|s| !s.commits(0).is_empty(), 4_000));
     let (got, c) = s.commits(0)[0];
-    assert!((got - prepared - 2_500 * MS).abs() <= 10 * MS, "{} ms", (got - prepared) / MS);
+    assert!(
+        (got - prepared - 2_500 * MS).abs() <= 10 * MS,
+        "{} ms",
+        (got - prepared) / MS
+    );
     assert_eq!(c.host_us - got, 300 * MS);
     // A seek past what's downloaded: waited for while it comes within the 2.5 s...
     s.people[2].player.ready_ms = Some(2_000);
     s.run_ms(5_000);
-    s.press(1, Action::Seek { content_us: 120 * S });
+    s.press(
+        1,
+        Action::Seek {
+            content_us: 120 * S,
+        },
+    );
     s.run_ms(10);
     let prepared = s.prepares(0).last().unwrap().0;
     assert!(s.run_until(|s| s.commits(0).len() == 2, 4_000));
@@ -926,7 +1139,12 @@ fn g4_g5_a_slow_guest_is_waited_for_2_5_s_at_most() {
     // ... and not past them.
     s.people[2].player.ready_ms = Some(4_000);
     s.run_ms(1_000);
-    s.press(1, Action::Seek { content_us: 150 * S });
+    s.press(
+        1,
+        Action::Seek {
+            content_us: 150 * S,
+        },
+    );
     s.run_ms(10);
     let prepared = s.prepares(0).last().unwrap().0;
     assert!(s.run_until(|s| s.commits(0).len() == 3, 4_000));
@@ -942,7 +1160,10 @@ fn g6_a_stream_that_never_returns_is_moved_on_at_the_next_song() {
     s.people[1].player.ready_ms = Some(1_500);
     let t = s.now();
     s.start();
-    assert!(s.commits(0)[0].0 - t < 1_000 * MS, "not waited for on song 1");
+    assert!(
+        s.commits(0)[0].0 - t < 1_000 * MS,
+        "not waited for on song 1"
+    );
     let ravi = s.id(1);
     s.say(
         1,
@@ -970,9 +1191,18 @@ fn g7_three_prepares_missed_in_a_row_tell_the_host_once() {
     s.people[1].player.ready_ms = None;
     for k in 0..4 {
         s.run_ms(1_000);
-        s.press(0, Action::Seek { content_us: (20 + 10 * k) * S });
+        s.press(
+            0,
+            Action::Seek {
+                content_us: (20 + 10 * k) * S,
+            },
+        );
         assert!(s.run_until(|s| s.commits(0).len() == 2 + k as usize, 4_000));
-        let slow = s.notes.iter().filter(|n| **n == HostNote::Slow { id: s.id(1) }).count();
+        let slow = s
+            .notes
+            .iter()
+            .filter(|n| **n == HostNote::Slow { id: s.id(1) })
+            .count();
         assert_eq!(slow, usize::from(k >= 2), "after the third, once");
     }
     // Ready in time again: the count starts over.
@@ -983,10 +1213,19 @@ fn g7_three_prepares_missed_in_a_row_tell_the_host_once() {
     s.people[1].player.ready_ms = None;
     for k in 0..3 {
         s.run_ms(1_000);
-        s.press(0, Action::Seek { content_us: (100 + 10 * k) * S });
+        s.press(
+            0,
+            Action::Seek {
+                content_us: (100 + 10 * k) * S,
+            },
+        );
         assert!(s.run_until(|s| s.commits(0).len() == 7 + k as usize, 4_000));
     }
-    let slow = s.notes.iter().filter(|n| **n == HostNote::Slow { id: s.id(1) }).count();
+    let slow = s
+        .notes
+        .iter()
+        .filter(|n| **n == HostNote::Slow { id: s.id(1) })
+        .count();
     assert_eq!(slow, 2);
 }
 
@@ -1088,13 +1327,23 @@ fn guests_control_by_default_up_to_four_people() {
     let ravi = s.id(1);
     assert_eq!(s.room.role_of(ravi), Some(together::proto::Role::Control));
     let sam = s.join("Sam", Way::LAN, Way::LAN, Player::default());
-    assert_eq!(s.room.role_of(ravi), Some(together::proto::Role::Add), "five: add only");
+    assert_eq!(
+        s.room.role_of(ravi),
+        Some(together::proto::Role::Add),
+        "five: add only"
+    );
     assert_eq!(s.room.role_of(s.id(sam)), Some(together::proto::Role::Add));
     s.say(sam, ToHost::Bye);
     s.run_ms(50);
-    assert_eq!(s.room.role_of(ravi), Some(together::proto::Role::Control), "four again");
+    assert_eq!(
+        s.room.role_of(ravi),
+        Some(together::proto::Role::Control),
+        "four again"
+    );
     let now = s.now();
-    let c = s.room.set_new_role(Some(together::proto::Role::Listen), now);
+    let c = s
+        .room
+        .set_new_role(Some(together::proto::Role::Listen), now);
     s.apply(c);
     assert_eq!(s.room.role_of(ravi), Some(together::proto::Role::Listen));
     assert!(!s.room.view_for(HOST).settings.auto_roles);
@@ -1114,7 +1363,11 @@ fn every_device_needs_the_hosts_network_and_is_left_when_it_goes() {
     s.set_mode(2, ListenMode::EveryDevice);
     s.run_ms(100);
     assert_eq!(s.member(s.id(1)).mode, ListenMode::EveryDevice);
-    assert_eq!(s.member(s.id(2)).mode, ListenMode::Apart, "not on the host's network");
+    assert_eq!(
+        s.member(s.id(2)).mode,
+        ListenMode::Apart,
+        "not on the host's network"
+    );
     // Ravi's Wi-Fi turns slow (20 ms round trips) for 30 s: moved to apart, the host told.
     s.set_ways(1, Way::internet(10.0, 0.0), Way::internet(10.0, 0.0));
     s.set_step_ms(20);
@@ -1147,9 +1400,17 @@ fn leaving_and_being_removed_touch_nobody_else() {
     );
     s.apply(c);
     s.run_ms(100);
-    assert!(s.people[2].got.iter().any(|g| matches!(&g.1, ToGuest::Refused { .. })));
+    assert!(
+        s.people[2]
+            .got
+            .iter()
+            .any(|g| matches!(&g.1, ToGuest::Refused { .. }))
+    );
     assert_eq!(s.room.anchor(), Some(a));
-    assert!(s.playback_since(0, t).is_empty(), "the host hears nothing of it");
+    assert!(
+        s.playback_since(0, t).is_empty(),
+        "the host hears nothing of it"
+    );
 }
 
 #[test]
@@ -1164,10 +1425,10 @@ fn ending_for_everyone_tells_everyone_the_host_too() {
     assert!(s.ended);
     for i in 0..3 {
         assert!(
-            s.people[i]
-                .got
-                .iter()
-                .any(|g| g.1 == ToGuest::Ended { why: "Asha ended the room.".into() }),
+            s.people[i].got.iter().any(|g| g.1
+                == ToGuest::Ended {
+                    why: "Asha ended the room.".into()
+                }),
             "person {i}"
         );
     }
@@ -1189,8 +1450,18 @@ fn a_held_room_ends_itself_after_an_hour_without_an_action() {
     assert!(!s.ended, "an action starts the hour again");
     s.run_ms(2 * 60_000);
     assert!(s.ended);
-    assert!(s.people[1].got.iter().any(|g| matches!(&g.1, ToGuest::Ended { .. })));
-    assert!(s.people[0].got.iter().any(|g| matches!(&g.1, ToGuest::Ended { .. })));
+    assert!(
+        s.people[1]
+            .got
+            .iter()
+            .any(|g| matches!(&g.1, ToGuest::Ended { .. }))
+    );
+    assert!(
+        s.people[0]
+            .got
+            .iter()
+            .any(|g| matches!(&g.1, ToGuest::Ended { .. }))
+    );
 }
 
 #[test]
