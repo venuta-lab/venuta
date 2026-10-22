@@ -3264,6 +3264,7 @@ pub fn run() {
             restart_app,
             desktop::song_notification,
             lyrics_find::lyrics_forget_all,
+            lyrics_find::lyrics_sources_health,
             desktop::set_ui_zoom,
             updates::update_check,
             accounts::spotify_status,

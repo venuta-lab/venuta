@@ -1422,6 +1422,17 @@ export const lyricsChoose = (key: string, source: string | null, rename?: { titl
   invoke<LyricsChoice>('lyrics_choose', { key, source, title: rename?.title ?? null, artists: rename?.artists ?? null, rename: !!rename })
 /** How much later (positive) or earlier a song's lyrics run, in ms. */
 export const lyricsOffset = (key: string, offsetMs: number) => invoke<LyricsChoice>('lyrics_offset', { key, offsetMs })
+/** How a lyrics source has answered since Venuta started. */
+export interface LyricsSourceHealth {
+  source: string
+  label: string
+  /** 'refused': it turned Venuta away, not asked again until Venuta restarts. 'down': it didn't answer the last time. */
+  state: 'answering' | 'refused' | 'down' | 'unknown'
+  /** What the source said, when it said why. */
+  why: string | null
+}
+/** How each lyrics source has answered since Venuta started (Settings > Lyrics). */
+export const lyricsSourcesHealth = () => (inApp() ? invoke<LyricsSourceHealth[]>('lyrics_sources_health') : Promise.resolve<LyricsSourceHealth[]>([]))
 
 /** Who is signed in to YouTube Music. */
 export interface YtmAccountInfo {

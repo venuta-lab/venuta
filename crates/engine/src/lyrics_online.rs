@@ -11,6 +11,11 @@
 //! that order, else the first plain one. Answers are kept (a found answer for good, "none"
 //! for a day), so a song is asked about once.
 //!
+//! A source that turns Venuta away (401, 403: it wants a key, or answers only its own app) or
+//! can't be reached is not saying "no lyrics for this song": that is never kept as a miss. A
+//! source that turned Venuta away isn't asked again until Venuta restarts, and Settings says
+//! it isn't answering.
+//!
 //! The catalog's own lyrics (YouTube Music) come through the app's catalog client: the
 //! caller passes them in as a source like any other.
 
@@ -18,7 +23,7 @@ use base64::Engine as _;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The sources, in their default order, with the names shown for them.
@@ -126,6 +131,122 @@ pub fn order(setting: &[String]) -> Vec<(&'static str, bool)> {
         }
     }
     out
+}
+
+// --- When a source doesn't answer ------------------------------------------------------------
+
+/// Why a source gave no answer. Neither is "no lyrics for this song", so neither is kept as one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskError {
+    /// It turned Venuta away (401, 403: it wants a key, or answers only its own app).
+    Refused(String),
+    /// It couldn't be reached, was busy, or answered with something unreadable.
+    Down(String),
+}
+
+impl std::fmt::Display for AskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AskError::Refused(why) | AskError::Down(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<String> for AskError {
+    fn from(why: String) -> Self {
+        AskError::Down(why)
+    }
+}
+
+/// What an HTTP answer means: its body (200), "not there" (404), or why there is none. The
+/// reason a source gives for turning Venuta away is kept, to show.
+pub fn answer_of(status: u16, body: &str) -> Result<Option<String>, AskError> {
+    let why = || {
+        let v: Option<Value> = serde_json::from_str(body).ok();
+        ["/message", "/error/reason", "/reason", "/error"]
+            .iter()
+            .find_map(|k| {
+                v.as_ref()?
+                    .pointer(k)?
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("HTTP {status}"))
+    };
+    match status {
+        200 => Ok(Some(body.to_owned())),
+        404 => Ok(None),
+        401 | 403 => Err(AskError::Refused(why())),
+        429 => Err(AskError::Down(format!("Busy: {}", why()))),
+        s => Err(AskError::Down(format!("HTTP {s}"))),
+    }
+}
+
+/// How each source has answered since Venuta started.
+static HEALTH: Mutex<Vec<(String, Health)>> = Mutex::new(Vec::new());
+
+#[derive(Debug, Clone, PartialEq)]
+enum Health {
+    Answering,
+    Refused(String),
+    Down(String),
+}
+
+fn note(source: &str, answer: &Result<Option<Found>, AskError>) {
+    let h = match answer {
+        Ok(_) => Health::Answering,
+        Err(AskError::Refused(why)) => Health::Refused(why.clone()),
+        Err(AskError::Down(why)) => Health::Down(why.clone()),
+    };
+    if let Ok(mut all) = HEALTH.lock() {
+        all.retain(|(s, _)| s != source);
+        all.push((source.to_owned(), h));
+    }
+}
+
+/// Why a source turned Venuta away this session, when it did.
+fn refused(source: &str) -> Option<String> {
+    HEALTH.lock().ok()?.iter().find_map(|(s, h)| match h {
+        Health::Refused(why) if s == source => Some(why.clone()),
+        _ => None,
+    })
+}
+
+/// How a source has answered since Venuta started, for Settings.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceHealth {
+    pub source: String,
+    pub label: String,
+    /// "answering", "refused" (not asked again until Venuta restarts), "down" (didn't answer
+    /// the last time) or "unknown" (not asked yet).
+    pub state: String,
+    /// What the source said, when it said why.
+    pub why: Option<String>,
+}
+
+/// Every source's health, in the default order.
+pub fn health() -> Vec<SourceHealth> {
+    let all = HEALTH.lock().map(|h| h.clone()).unwrap_or_default();
+    SOURCES
+        .iter()
+        .map(|(id, label)| {
+            let h = all.iter().find(|(s, _)| s == id).map(|(_, h)| h);
+            let (state, why) = match h {
+                None => ("unknown", None),
+                Some(Health::Answering) => ("answering", None),
+                Some(Health::Refused(w)) => ("refused", Some(w.clone())),
+                Some(Health::Down(w)) => ("down", Some(w.clone())),
+            };
+            SourceHealth {
+                source: (*id).into(),
+                label: (*label).into(),
+                state: state.into(),
+                why,
+            }
+        })
+        .collect()
 }
 
 // --- Is it the same song? -------------------------------------------------------------------
@@ -437,33 +558,33 @@ fn enc(s: &str) -> String {
     urlencoding::encode(s).into_owned()
 }
 
-/// GET JSON; None for "not there" (404, 401), an error for trouble.
+/// An answer's body as JSON, read by [`answer_of`].
+fn json_of(mut resp: ureq::http::Response<ureq::Body>) -> Result<Option<Value>, AskError> {
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().unwrap_or_default();
+    match answer_of(status, &body)? {
+        Some(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| AskError::Down(e.to_string())),
+        None => Ok(None),
+    }
+}
+
+/// GET JSON; None for "not there" (404), an error when the source turned Venuta away or had
+/// trouble.
 fn get_json(
     agent: &ureq::Agent,
     url: &str,
     referer: Option<&str>,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, AskError> {
     if crate::net::is_offline() {
-        return Err("Local only is on".into());
+        return Err(AskError::Down("Local only is on".into()));
     }
     let mut req = agent.get(url);
     if let Some(r) = referer {
         req = req.header("Referer", r);
     }
-    let mut resp = req.call().map_err(|e| e.to_string())?;
-    match resp.status().as_u16() {
-        200 => {
-            let text = resp
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| e.to_string())?;
-            serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|e| e.to_string())
-        }
-        401 | 404 => Ok(None),
-        s => Err(format!("HTTP {s}")),
-    }
+    json_of(req.call().map_err(|e| e.to_string())?)
 }
 
 fn artists_line(req: &LyricsRequest) -> String {
@@ -474,7 +595,7 @@ fn duration_s(req: &LyricsRequest) -> Option<u64> {
     (req.duration_ms > 0).then(|| (req.duration_ms as f64 / 1000.0).round() as u64)
 }
 
-fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let base = "https://lrclib.net/api";
     let title = search_title(&req.title);
     let mut candidates: Vec<(Value, bool)> = Vec::new();
@@ -582,7 +703,7 @@ fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Str
     Ok(f.usable().then_some(f))
 }
 
-fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let Some(id) = req.video_id.as_deref().filter(|i| !i.is_empty()) else {
         return Ok(None);
     };
@@ -636,7 +757,7 @@ fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, 
         }))
 }
 
-fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let mut url = format!(
         "https://lyricsplus.binimum.org/v2/lyrics/get?title={}&artist={}",
         enc(&search_title(&req.title)),
@@ -669,7 +790,7 @@ fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>,
     }))
 }
 
-fn boidu(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn boidu(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let Some(d) = duration_s(req) else {
         return Ok(None);
     };
@@ -712,13 +833,16 @@ fn closest<'a>(
         .map(|(v, ..)| v)
 }
 
-fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
         req.artists.first().cloned().unwrap_or_default()
     );
-    let mut resp = agent
+    if crate::net::is_offline() {
+        return Err(AskError::Down("Local only is on".into()));
+    }
+    let resp = agent
         .post("https://music.163.com/api/search/get")
         .header("Referer", "https://music.163.com/")
         .send_form([
@@ -728,16 +852,9 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, St
             ("offset", "0"),
         ])
         .map_err(|e| e.to_string())?;
-    if resp.status().as_u16() != 200 {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
-    }
-    let v: Value = serde_json::from_str(
-        &resp
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let Some(v) = json_of(resp)? else {
+        return Ok(None);
+    };
     let songs: Vec<(Value, String, String, Option<f64>)> = v
         .pointer("/result/songs")
         .and_then(Value::as_array)
@@ -803,7 +920,7 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, St
     Ok(Some(f))
 }
 
-fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let referer = Some("https://y.qq.com/");
     let q = format!(
         "{} {}",
@@ -905,7 +1022,7 @@ fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String>
     Ok(found_from_text("qq", &text))
 }
 
-fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
@@ -1004,23 +1121,57 @@ fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Stri
 /// The catalog's own lyrics, asked of the app's catalog client (see the module notes).
 pub type CatalogAsk<'a> = &'a (dyn Fn(&LyricsRequest) -> Result<Option<Found>, String> + Sync);
 
-/// Ask one source.
+/// Ask one source. One that turned Venuta away this session isn't asked again.
 pub fn ask(
     source: &str,
     req: &LyricsRequest,
     catalog: CatalogAsk,
-) -> Result<Option<Found>, String> {
+) -> Result<Option<Found>, AskError> {
+    if let Some(why) = refused(source) {
+        return Err(AskError::Refused(why));
+    }
+    if crate::net::is_offline() && source != "youtube" {
+        return Err(AskError::Down("Local only is on".into()));
+    }
     let agent = agent();
-    match source {
+    let answer = match source {
         "lrclib" => lrclib(&agent, req),
-        "youtube" => catalog(req),
+        "youtube" => catalog(req).map_err(AskError::Down),
         "simpmusic" => simpmusic(&agent, req),
         "lyricsplus" => lyricsplus(&agent, req),
         "boidu" => boidu(&agent, req),
         "netease" => netease(&agent, req),
         "qq" => qq(&agent, req),
         "kugou" => kugou(&agent, req),
-        other => Err(format!("no lyrics source called {other}")),
+        other => return Err(AskError::Down(format!("no lyrics source called {other}"))),
+    };
+    if !crate::net::is_offline() {
+        note(source, &answer);
+    }
+    answer
+}
+
+/// Every source's answer so far (None: not in yet) as Automatic's: the first timed one in your
+/// order (see [`choose`]), else "no lyrics" only when every source said so. When one turned
+/// Venuta away, had trouble or never answered, there is no answer (and nothing to keep).
+pub fn outcome(
+    answers: &[Option<Result<Option<Found>, AskError>>],
+    all_in: bool,
+) -> Option<Result<Option<Found>, AskError>> {
+    let plain: Vec<Option<Option<Found>>> = answers
+        .iter()
+        .map(|a| a.as_ref().map(|r| r.as_ref().ok().cloned().flatten()))
+        .collect();
+    match choose(&plain, all_in)? {
+        Some(f) => Some(Ok(Some(f))),
+        None => {
+            let troubled = answers.iter().find_map(|a| match a {
+                None => Some(AskError::Down("Some sources didn't answer in time".into())),
+                Some(Err(e)) => Some(e.clone()),
+                Some(Ok(_)) => None,
+            });
+            Some(troubled.map_or(Ok(None), Err))
+        }
     }
 }
 
@@ -1047,35 +1198,59 @@ fn first_plain(answers: &[Option<Option<Found>>]) -> Option<Found> {
         .cloned()
 }
 
-/// Automatic: every source in \`sources\` asked at once (each a moment after the one before),
-/// the first timed answer in that order taken.
-pub fn automatic(req: &LyricsRequest, sources: &[&str], catalog: CatalogAsk) -> Option<Found> {
+/// Automatic: every source in `sources` asked at once (each a moment after the one before),
+/// the first timed answer in that order taken. Sources that turned Venuta away this session are
+/// left out. An error when nothing was found and a source didn't answer (so the miss isn't
+/// sure).
+pub fn automatic(
+    req: &LyricsRequest,
+    sources: &[&str],
+    catalog: CatalogAsk,
+) -> Result<Option<Found>, AskError> {
+    let sources: Vec<&str> = sources
+        .iter()
+        .copied()
+        .filter(|s| refused(s).is_none())
+        .collect();
     if sources.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let (tx, rx) = mpsc::channel::<(usize, Option<Found>)>();
+    type Answer = Result<Option<Found>, AskError>;
+    let (tx, rx) = mpsc::channel::<(usize, Answer)>();
     std::thread::scope(|scope| {
         for (i, s) in sources.iter().enumerate() {
             let tx = tx.clone();
             scope.spawn(move || {
                 std::thread::sleep(Duration::from_millis(150 * i as u64));
-                let _ = tx.send((i, ask(s, req, catalog).ok().flatten()));
+                let _ = tx.send((i, ask(s, req, catalog)));
             });
         }
         drop(tx);
         let started = Instant::now();
-        let mut answers: Vec<Option<Option<Found>>> = vec![None; sources.len()];
+        let mut answers: Vec<Option<Answer>> = vec![None; sources.len()];
         loop {
-            if let Some(pick) = choose(&answers, false) {
+            if let Some(pick) = outcome(&answers, false) {
                 return pick;
             }
             let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
             match rx.recv_timeout(left) {
                 Ok((i, f)) => answers[i] = Some(f),
-                Err(_) => return choose(&answers, true).flatten(),
+                Err(_) => {
+                    return outcome(&answers, true)
+                        .unwrap_or_else(|| Err(AskError::Down("No source answered".into())));
+                }
             }
         }
     })
+}
+
+/// Keep an answer for a song (`slot`: the source, or "auto"): what was found, or that there
+/// is none. A source that turned Venuta away or didn't answer is not saying "none": nothing is
+/// kept, so the song is asked about again.
+pub fn remember(kept: &Kept, song: &str, slot: &str, answer: &Result<Option<Found>, AskError>) {
+    if let Ok(found) = answer {
+        kept.put(song, slot, found.as_ref());
+    }
 }
 
 /// Every source's answer for the picker (switched-off ones too, marked so), at once.
@@ -1213,7 +1388,12 @@ impl Kept {
     pub fn open() -> Result<Self, String> {
         let dir = crate::paths::app_data_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let conn = Connection::open(dir.join("cache.sqlite")).map_err(|e| e.to_string())?;
+        Self::open_at(&dir.join("cache.sqlite"))
+    }
+
+    /// Kept answers in the given database file.
+    pub fn open_at(file: &std::path::Path) -> Result<Self, String> {
+        let conn = Connection::open(file).map_err(|e| e.to_string())?;
         conn.busy_timeout(Duration::from_secs(30))
             .map_err(|e| e.to_string())?;
         conn.execute_batch(
@@ -1279,10 +1459,11 @@ mod tests {
         crate::net::set_offline(true);
         let refused = get_json(&agent(), "http://127.0.0.1:9/lyrics", None);
         crate::net::set_offline(false);
-        assert_eq!(refused, Err("Local only is on".to_owned()));
+        let offline = Err(AskError::Down("Local only is on".to_owned()));
+        assert_eq!(refused, offline);
         assert_ne!(
             get_json(&agent(), "http://127.0.0.1:9/lyrics", None),
-            Err("Local only is on".to_owned())
+            offline
         );
     }
 
@@ -1461,5 +1642,101 @@ mod tests {
                 .map(|f| f.source),
             Some("a".into())
         );
+    }
+
+    #[test]
+    fn a_source_that_turns_venuta_away_is_not_a_song_without_lyrics() {
+        // SimpMusic and Better Lyrics as they answered on 2026-10-21.
+        assert_eq!(
+            answer_of(
+                403,
+                include_str!("../tests/fixtures/lyrics/simpmusic-403.json")
+            ),
+            Err(AskError::Refused(
+                "This API is only available to SimpMusic clients".into()
+            ))
+        );
+        assert_eq!(
+            answer_of(
+                401,
+                include_str!("../tests/fixtures/lyrics/betterlyrics-401.json")
+            ),
+            Err(AskError::Refused(
+                "Uncached queries require a valid API key via X-API-Key header".into()
+            ))
+        );
+        assert_eq!(answer_of(404, ""), Ok(None), "not there: no lyrics");
+        assert_eq!(answer_of(200, "{}"), Ok(Some("{}".into())));
+        assert!(matches!(answer_of(503, ""), Err(AskError::Down(_))));
+        assert!(matches!(answer_of(429, ""), Err(AskError::Down(_))));
+    }
+
+    #[test]
+    fn a_refusing_source_rests_for_the_session_and_says_so() {
+        // A made-up id, so other tests' sources are left alone.
+        note(
+            "test-refuses",
+            &Err(AskError::Refused("API key required".into())),
+        );
+        let r = ask("test-refuses", &req("Song", &["Someone"], 200), &|_| {
+            Ok(None)
+        });
+        assert_eq!(
+            r,
+            Err(AskError::Refused("API key required".into())),
+            "not asked again"
+        );
+        note("test-down", &Err(AskError::Down("HTTP 503".into())));
+        assert_eq!(refused("test-down"), None, "trouble isn't a refusal");
+        note("boidu", &Err(AskError::Refused("API key required".into())));
+        let h = health();
+        let b = h.iter().find(|h| h.source == "boidu").unwrap();
+        assert_eq!(
+            (b.state.as_str(), b.why.as_deref()),
+            ("refused", Some("API key required"))
+        );
+        assert_eq!(h.len(), SOURCES.len());
+    }
+
+    #[test]
+    fn automatic_keeps_a_miss_only_when_every_source_said_none() {
+        let none = || Some(Ok(None));
+        let refused = || Some(Err(AskError::Refused("no".into())));
+        assert_eq!(outcome(&[none(), none()], true), Some(Ok(None)));
+        assert!(matches!(outcome(&[none(), refused()], true), Some(Err(_))));
+        assert!(
+            matches!(outcome(&[none(), None], true), Some(Err(_))),
+            "one never answered"
+        );
+        assert_eq!(outcome(&[none(), None], false), None, "still waiting");
+        // A timed answer wins whatever the others did.
+        let found = || {
+            Some(Ok(Some(Found {
+                source: "b".into(),
+                lyrics: Lyrics {
+                    lines: vec![LyricLine {
+                        text: "x".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            })))
+        };
+        assert!(matches!(
+            outcome(&[refused(), found()], true),
+            Some(Ok(Some(_)))
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let kept = Kept::open_at(&dir.path().join("cache.sqlite")).unwrap();
+        remember(&kept, "s", "auto", &Err(AskError::Refused("no".into())));
+        assert_eq!(
+            kept.get("s", "auto"),
+            None,
+            "a refusal is never kept as a miss"
+        );
+        remember(&kept, "s", "auto", &Ok(None));
+        assert_eq!(kept.get("s", "auto"), Some(None), "a real miss is");
     }
 }
