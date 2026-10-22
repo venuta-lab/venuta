@@ -4,18 +4,34 @@
 //! and buffered) continues at the very next sample; if its format differs, the device is
 //! reopened for it. Status (position, what's playing, the signal path) goes out about ten
 //! times a second, and the queue whenever it changes.
+//!
+//! That is engine 1. Engine 2 (section 4 of the Listen together design, its WP4 notes in 9.2)
+//! is built beside it in the submodules (`control`, `program`, `status`, `memory`) and chosen
+//! with [`Player::spawn_with`]: a control thread that only sends render commands at device
+//! frames, decode threads per voice, the renderer on the output's own thread, and a status
+//! thread for the app's callback. Both take the same `Cmd`s and give the same `Status`.
 
-use crate::decode::{FileInfo, Source, SourceFormat};
+use crate::decode::{FileInfo, Source, SourceFormat, Streams};
 use crate::dsp::{Chain, Gain, Sound};
 use crate::output::{self, Device, DeviceFormat, Mode};
+use crate::output_api::{Output, Render};
 use crate::queue::{Queue, Repeat};
 use crate::sync::{Controller, Correction, Resampler, SyncNote, SyncPlan};
+use crate::voice_api::RenderNote;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use together::room_player::{RoomHandle, RoomPlayer, SyncMode};
+use together::time::{SimClock, Timebase};
+
+mod control;
+mod memory;
+mod program;
+mod status;
 
 /// Something the queue holds: a local file or an ephemeral resolved media source.
 pub trait Item: Clone + Send + 'static {
@@ -44,6 +60,18 @@ pub trait Item: Clone + Send + 'static {
     fn reopen_when_stopped(&self) -> bool {
         true
     }
+    /// Names an online song's download (engine 2), so it is kept while no voice reads it (a
+    /// pause, the moment between a voice and the next of the same song). `None`: nothing to
+    /// keep.
+    fn stream_key(&self) -> Option<String> {
+        None
+    }
+    /// Open on the player's shared downloads (engine 2: a seek in a stream is a new voice on
+    /// the same bytes, never a new download). By default as `open`.
+    fn open_on(&self, streams: &Streams) -> Result<Source, String> {
+        let _ = streams;
+        self.open()
+    }
 }
 
 impl Item for PathBuf {
@@ -62,6 +90,49 @@ pub enum OutputChoice {
     /// Memory taking sound at the pace a real device would (for checks that depend on time,
     /// like playing in step with a room).
     PacedMemory(std::sync::Arc<std::sync::Mutex<output::Captured>>),
+    /// Engine 2 only: an output a test makes, on the test's simulated clock (see [`SimChoice`]).
+    Sim(SimChoice),
+}
+
+/// An output on a simulated clock that the test moves (`pass`): engine 2 runs every thread of
+/// its own on that clock, so a run is the same every time. Dropping the player moves the clock
+/// until the engine has quit: drop it from the thread that runs the simulation.
+#[derive(Clone)]
+pub struct SimChoice {
+    pub clock: SimClock,
+    /// Makes the output (called on the control thread, each time an output is needed).
+    pub output: Arc<dyn Fn() -> Box<dyn Output> + Send + Sync>,
+}
+
+/// Which engine plays (section 9.1: engine 2 is built beside engine 1, chosen by the setting
+/// `player.engine`, until it passes every gate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EngineKind {
+    #[default]
+    One,
+    Two,
+}
+
+impl EngineKind {
+    /// From the setting's number: 2 is engine 2, anything else engine 1.
+    pub fn from_setting(n: u32) -> EngineKind {
+        if n == 2 {
+            EngineKind::Two
+        } else {
+            EngineKind::One
+        }
+    }
+}
+
+/// What a test may watch of engine 2 as it plays (engine 1 ignores it).
+#[derive(Default)]
+pub struct Watch {
+    /// Every note the renderer sends, with its frames counted from the first frame the player
+    /// ever rendered, every start of every output end to end (as a capture lays them).
+    pub notes: Option<Sender<RenderNote>>,
+    /// Wraps the render path handed to every output (a counting allocator's switch, say).
+    #[allow(clippy::type_complexity)]
+    pub wrap: Option<Box<dyn Fn(Box<dyn Render>) -> Box<dyn Render> + Send>>,
 }
 
 pub enum Cmd<T> {
@@ -230,39 +301,127 @@ impl Said {
 }
 
 pub struct Player<T> {
-    tx: Sender<Cmd<T>>,
+    /// Engine 1's commands.
+    tx: Option<Sender<Cmd<T>>>,
+    /// Engine 2's: commands and a room's calls, in one queue, in order.
+    msgs: Option<Sender<control::Msg<T>>>,
     thread: Option<JoinHandle<()>>,
+    kind: EngineKind,
+    /// An engine on a test's simulated clock: dropping the player moves that clock until the
+    /// engine has quit.
+    sim: Option<SimClock>,
 }
 
 impl<T: Item + Serialize> Player<T> {
-    /// Start the player thread. `on_status` is called from it.
+    /// Start engine 1's player thread. `on_status` is called from it.
     pub fn spawn(output: OutputChoice, on_status: impl FnMut(Status<T>) + Send + 'static) -> Self {
-        let (tx, rx) = channel();
-        let thread = std::thread::Builder::new()
-            .name("venuta-player".into())
-            .spawn(move || Engine::new(output, Box::new(on_status)).run(rx))
-            .expect("start the player thread");
-        Self {
-            tx,
-            thread: Some(thread),
+        Self::spawn_with(EngineKind::One, output, on_status)
+    }
+
+    /// Start the engine `kind`. Engine 1 calls `on_status` from its one thread; engine 2 from
+    /// its status thread.
+    pub fn spawn_with(
+        kind: EngineKind,
+        output: OutputChoice,
+        on_status: impl FnMut(Status<T>) + Send + 'static,
+    ) -> Self {
+        Self::spawn_watched(kind, output, on_status, Watch::default())
+    }
+
+    /// `spawn_with`, with what a test watches of engine 2 (see [`Watch`]).
+    pub fn spawn_watched(
+        kind: EngineKind,
+        output: OutputChoice,
+        on_status: impl FnMut(Status<T>) + Send + 'static,
+        watch: Watch,
+    ) -> Self {
+        match kind {
+            EngineKind::One => {
+                let (tx, rx) = channel();
+                let thread = std::thread::Builder::new()
+                    .name("venuta-player".into())
+                    .spawn(move || Engine::new(output, Box::new(on_status)).run(rx))
+                    .expect("start the player thread");
+                Self {
+                    tx: Some(tx),
+                    msgs: None,
+                    thread: Some(thread),
+                    kind,
+                    sim: None,
+                }
+            }
+            EngineKind::Two => {
+                let sim = match &output {
+                    OutputChoice::Sim(s) => Some(s.clock.clone()),
+                    _ => None,
+                };
+                let spawned = control::spawn(output, Box::new(on_status), watch);
+                Self {
+                    tx: None,
+                    msgs: Some(spawned.msgs),
+                    thread: Some(spawned.thread),
+                    kind,
+                    sim,
+                }
+            }
         }
     }
 
     pub fn send(&self, cmd: Cmd<T>) {
-        let _ = self.tx.send(cmd);
+        match (&self.tx, &self.msgs) {
+            (Some(tx), _) => {
+                let _ = tx.send(cmd);
+            }
+            (None, Some(m)) => {
+                let _ = m.send(control::Msg::Cmd(cmd));
+            }
+            (None, None) => {}
+        }
     }
 
     /// Whether the player thread is still running (it ends only on Quit, or a panic).
     pub fn is_alive(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
+
+    /// Which engine this is.
+    pub fn engine(&self) -> EngineKind {
+        self.kind
+    }
 }
 
 impl<T> Drop for Player<T> {
     fn drop(&mut self) {
-        let _ = self.tx.send(Cmd::Quit);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Cmd::Quit);
+        }
+        if let Some(m) = &self.msgs {
+            let _ = m.send(control::Msg::Cmd(Cmd::Quit));
+        }
         if let Some(t) = self.thread.take() {
+            // On a test's clock the engine quits only as that clock moves (its fade, its
+            // output's tail): moved here, on the thread that runs the simulation.
+            if let Some(clock) = &self.sim {
+                while !t.is_finished() {
+                    clock.pass(1_000_000);
+                }
+            }
             let _ = t.join();
+        }
+    }
+}
+
+/// Engine 2 is a player rooms can take (contract 5.4); engine 1's rooms go through
+/// `Cmd::Sync`, so its handle does nothing and says it can't play.
+impl<T: Item + Serialize> RoomPlayer<T> for Player<T> {
+    fn attach(
+        &self,
+        clock: together::clock_map::ClockMapHandle,
+        mode: SyncMode,
+    ) -> Box<dyn RoomHandle<T>> {
+        match &self.msgs {
+            Some(tx) => program::attach(tx.clone(), clock, mode),
+            None => Box::new(program::Inert),
         }
     }
 }
@@ -871,6 +1030,9 @@ impl<T: Item + Serialize> Engine<T> {
                 #[cfg(not(windows))]
                 OutputChoice::Device { .. } => {
                     return Err("Playing to a sound device needs Windows for now.".into());
+                }
+                OutputChoice::Sim(_) => {
+                    return Err("A simulated output plays only with engine 2.".into());
                 }
             });
             self.dev_fmt = None;
@@ -2081,6 +2243,11 @@ mod tests {
 
     /// A silent 16-bit stereo WAV of `frames` frames.
     fn wav(path: &Path, frames: usize) {
+        std::fs::write(path, wav_data(frames)).unwrap();
+    }
+
+    /// A silent 16-bit stereo WAV of `frames` frames, as bytes.
+    fn wav_data(frames: usize) -> Vec<u8> {
         let data_len = frames * 4;
         let mut v = Vec::with_capacity(44 + data_len);
         v.extend_from_slice(b"RIFF");
@@ -2096,7 +2263,7 @@ mod tests {
         v.extend_from_slice(b"data");
         v.extend_from_slice(&(data_len as u32).to_le_bytes());
         v.resize(44 + data_len, 0);
-        std::fs::write(path, v).unwrap();
+        v
     }
 
     fn songs(n: usize) -> (PathBuf, Vec<Counted>) {
@@ -2238,25 +2405,25 @@ mod tests {
     }
 
     /// A 16-bit stereo 44.1 kHz WAV of `secs` seconds, as bytes (a quiet ramp, never silent).
+    /// Made in memory: no folder for tests running at once to share (two of them making the
+    /// same one and one removing it under the other made them fail now and then).
     fn wav_bytes(secs: usize) -> Vec<u8> {
-        let frames = secs * 44_100;
-        let dir = std::env::temp_dir().join(format!("venuta-wav-{}-{secs}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("song.wav");
-        wav(&path, frames);
-        let mut v = std::fs::read(&path).unwrap();
-        std::fs::remove_dir_all(dir).ok();
+        let mut v = wav_data(secs * 44_100);
         for (i, s) in v[44..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
             *s = ((((i / 2) % 400) as i16 - 200) * 8).to_le_bytes();
         }
         v
     }
 
-    /// Plays `items` at a device's pace, and hands back each status as it comes.
-    fn play(items: Vec<Song>) -> (Player<Song>, std::sync::mpsc::Receiver<Status<Song>>) {
+    /// Plays `items` at a device's pace on the engine `kind`, and hands back each status as it
+    /// comes.
+    fn play(
+        kind: EngineKind,
+        items: Vec<Song>,
+    ) -> (Player<Song>, std::sync::mpsc::Receiver<Status<Song>>) {
         let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
         let (tx, rx) = channel::<Status<Song>>();
-        let player = Player::spawn(OutputChoice::PacedMemory(captured), move |s| {
+        let player = Player::spawn_with(kind, OutputChoice::PacedMemory(captured), move |s| {
             let _ = tx.send(s);
         });
         player.send(Cmd::Set {
@@ -2269,8 +2436,31 @@ mod tests {
         (player, rx)
     }
 
-    #[test]
-    fn a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come() {
+    /// Each stream test runs on both engines: `name::engine_1`, `name::engine_2`.
+    macro_rules! on_both {
+        ($($name:ident),*) => {
+            $(
+                mod $name {
+                    #[test]
+                    fn engine_1() {
+                        super::$name(super::EngineKind::One)
+                    }
+                    #[test]
+                    fn engine_2() {
+                        super::$name(super::EngineKind::Two)
+                    }
+                }
+            )*
+        };
+    }
+
+    on_both!(
+        a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come,
+        a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on,
+        a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts
+    );
+
+    fn a_stream_waiting_for_bytes_partway_says_so_and_plays_on_when_they_come(kind: EngineKind) {
         use crate::decode::mock_host::{Serve, host};
         let song = Arc::new(wav_bytes(3));
         // About 0.6 s arrives, then the host stalls; asked again, it sends the rest.
@@ -2281,11 +2471,14 @@ mod tests {
                 Serve::Full
             }
         });
-        let (_player, rx) = play(vec![Song::Streamed {
-            url: host.url.clone(),
-            len: song.len() as u64,
-            stall_ms: 1_500,
-        }]);
+        let (_player, rx) = play(
+            kind,
+            vec![Song::Streamed {
+                url: host.url.clone(),
+                len: song.len() as u64,
+                stall_ms: 1_500,
+            }],
+        );
         let started = Instant::now();
         let (mut waited_at, mut moved_on) = (None, false);
         while started.elapsed() < Duration::from_secs(15) {
@@ -2310,22 +2503,24 @@ mod tests {
         assert!(moved_on, "and played on once they came");
     }
 
-    #[test]
-    fn a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on() {
+    fn a_stream_that_cannot_be_picked_up_again_says_so_and_moves_on(kind: EngineKind) {
         use crate::decode::mock_host::{Serve, host};
         let song = Arc::new(wav_bytes(3));
         let host = host(song.clone(), |n, _| {
             Serve::ThenStall(if n == 0 { 100 * 1024 } else { 0 })
         });
         let (dir, files) = songs(1);
-        let (_player, rx) = play(vec![
-            Song::Streamed {
-                url: host.url.clone(),
-                len: song.len() as u64,
-                stall_ms: 600,
-            },
-            Song::File(files[0].path.clone()),
-        ]);
+        let (_player, rx) = play(
+            kind,
+            vec![
+                Song::Streamed {
+                    url: host.url.clone(),
+                    len: song.len() as u64,
+                    stall_ms: 600,
+                },
+                Song::File(files[0].path.clone()),
+            ],
+        );
         let started = Instant::now();
         let (mut said, mut moved_on) = (None, false);
         while started.elapsed() < Duration::from_secs(15) {
@@ -2347,8 +2542,7 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts() {
+    fn a_stream_that_cant_keep_up_fades_out_and_back_in_never_cuts(kind: EngineKind) {
         use crate::decode::mock_host::{Serve, host};
         // A 440 Hz sine (16-bit stereo, 44.1 kHz), served at about three quarters of the pace it
         // plays at: it runs out again and again.
@@ -2366,9 +2560,13 @@ mod tests {
         });
         let captured = Arc::new(std::sync::Mutex::new(output::Captured::default()));
         let (tx, rx) = channel::<Status<Song>>();
-        let player = Player::spawn(OutputChoice::PacedMemory(captured.clone()), move |s| {
-            let _ = tx.send(s);
-        });
+        let player = Player::spawn_with(
+            kind,
+            OutputChoice::PacedMemory(captured.clone()),
+            move |s| {
+                let _ = tx.send(s);
+            },
+        );
         player.send(Cmd::Set {
             items: vec![Song::Streamed {
                 url: host.url.clone(),

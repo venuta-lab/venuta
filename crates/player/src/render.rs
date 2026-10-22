@@ -1018,9 +1018,14 @@ impl Renderer {
                 }
                 RenderCmd::Chain { voice, chain } => match self.find(voice) {
                     Some(i) => {
-                        if let Some(old) = self.slots[i].chain.replace(chain) {
-                            self.back.push(Returned::Chain(old));
+                        // A chain made to glide takes over from the one there (kept inside it);
+                        // whatever it lets go of goes back.
+                        let mut chain = chain;
+                        let old = self.slots[i].chain.take();
+                        if let Some(back) = chain.take_over(old) {
+                            self.back.push(Returned::Chain(back));
                         }
+                        self.slots[i].chain = Some(chain);
                     }
                     None => {
                         self.out.note(RenderNote::Refused {
@@ -1564,7 +1569,7 @@ impl Renderer {
             mix_in(&mut slot.env, v, lch, &mut mix[off..], dch, s, m);
             slot.done = s + m as u64;
             slot.last = (slot.done, slot.lane.content());
-            let exact = slot.lane.conv.idle() && slot.chain.as_ref().is_none_or(|c| !c.active);
+            let exact = slot.lane.conv.idle() && slot.chain.as_ref().is_none_or(|c| !c.touches());
             if exact != slot.exact {
                 out.note(RenderNote::Resampling {
                     voice,

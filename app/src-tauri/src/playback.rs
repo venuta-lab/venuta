@@ -4,8 +4,8 @@
 //! and goes straight to the window over a channel; the queue travels only when it changes.
 
 use media_access::{Availability, MediaAccess, PlayableId};
-use player::decode::Source;
-use player::engine::{Cmd, Item, OutputChoice, Player, Signal, Status};
+use player::decode::{Source, Streams};
+use player::engine::{Cmd, EngineKind, Item, OutputChoice, Player, Signal, Status};
 use player::queue::Repeat;
 use player::remote::RemoteItem;
 use serde::{Deserialize, Serialize};
@@ -113,31 +113,51 @@ impl QueueItem {
     }
 }
 
+impl QueueItem {
+    /// An online song as the player's remote item (resolved when it opens, never stored).
+    fn remote(&self) -> Option<Result<RemoteItem, String>> {
+        match &self.online {
+            Some(PlayableId::Online { provider, track_id }) if self.is_remote() => {
+                let access = self.media.0.clone();
+                let album = (!self.album.is_empty()).then(|| self.album.clone());
+                Some(
+                    access
+                        .ok_or_else(|| "No catalog access for remote playback.".to_owned())
+                        .map(|access| {
+                            RemoteItem::deferred_with_duration(
+                                access,
+                                provider.clone(),
+                                track_id.clone(),
+                                &self.title,
+                                album,
+                                Some(self.duration_ms).filter(|d| *d > 0),
+                            )
+                        }),
+                )
+            }
+            _ => None,
+        }
+    }
+}
+
 impl Item for QueueItem {
     fn path(&self) -> Option<&Path> {
         (!self.is_remote()).then_some(self.file.as_path())
     }
     fn open(&self) -> Result<Source, String> {
-        match &self.online {
-            Some(PlayableId::Online { provider, track_id }) if self.is_remote() => {
-                // Resolve the ephemeral stream now, right before opening — never stored.
-                let access = self
-                    .media
-                    .0
-                    .clone()
-                    .ok_or_else(|| "No catalog access for remote playback.".to_owned())?;
-                let album = (!self.album.is_empty()).then(|| self.album.clone());
-                RemoteItem::deferred_with_duration(
-                    access,
-                    provider.clone(),
-                    track_id.clone(),
-                    &self.title,
-                    album,
-                    Some(self.duration_ms).filter(|d| *d > 0),
-                )
-                .open()
-            }
-            _ => Source::open(&self.file),
+        match self.remote() {
+            // Resolve the ephemeral stream now, right before opening: never stored.
+            Some(remote) => remote?.open(),
+            None => Source::open(&self.file),
+        }
+    }
+    fn stream_key(&self) -> Option<String> {
+        self.remote()?.ok()?.stream_key()
+    }
+    fn open_on(&self, streams: &Streams) -> Result<Source, String> {
+        match self.remote() {
+            Some(remote) => remote?.open_on(streams),
+            None => Source::open(&self.file),
         }
     }
     fn gain(&self) -> player::dsp::Gain {
@@ -425,7 +445,10 @@ impl Playback {
             // The device ran dry this many times so far (said in the log as it grows).
             let mut dry_said: u64 = 0;
             let mut queue: Vec<QueueItem> = Vec::new();
-            *slot = Some(Player::spawn(
+            // Engine 2 while it is built beside engine 1, when the setting `player.engine` says 2.
+            let kind = EngineKind::from_setting(engine::settings::load().player.engine);
+            *slot = Some(Player::spawn_with(
+                kind,
                 OutputChoice::Device { id, exclusive },
                 move |s: Status<QueueItem>| {
                     if let Some(q) = &s.queue {

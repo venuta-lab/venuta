@@ -197,7 +197,9 @@ pub enum RenderCmd {
     Drop { voice: VoiceId },
     /// The master gain (volume, the sleep timer), ramped per sample over 20 ms.
     Gain { target: f32 },
-    /// A voice's new sound tools (the old chain comes back on the return queue).
+    /// A voice's new sound tools (the old chain comes back on the return queue). A chain made
+    /// with `Chain::gliding` takes over from the old one over its glide instead, keeping it
+    /// inside, and what the old one itself glided from comes back.
     Chain { voice: VoiceId, chain: Box<Chain> },
 }
 

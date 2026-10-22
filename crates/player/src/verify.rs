@@ -2,7 +2,7 @@
 //! compare what comes out with the MD5 the encoder stored in the file (STREAMINFO), which is
 //! a fingerprint of the original samples.
 
-use crate::engine::{Cmd, OutputChoice, Player, Status};
+use crate::engine::{Cmd, EngineKind, OutputChoice, Player, Status};
 use crate::output::Captured;
 use md5::{Digest, Md5};
 use serde::Serialize;
@@ -52,10 +52,15 @@ fn hex(b: &[u8]) -> String {
 
 /// Play `path` into memory (as fast as it decodes) and compare with its fingerprint.
 pub fn verify_bit_perfect(path: &Path) -> Result<Verification, String> {
+    verify_bit_perfect_on(EngineKind::One, path)
+}
+
+/// `verify_bit_perfect` on the engine `engine`.
+pub fn verify_bit_perfect_on(engine: EngineKind, path: &Path) -> Result<Verification, String> {
     let (rate, channels, bits, frames, want) = streaminfo(path)?;
     let captured = Arc::new(Mutex::new(Captured::default()));
     let (tx, rx) = channel::<Status<PathBuf>>();
-    let player = Player::spawn(OutputChoice::Memory(captured.clone()), move |s| {
+    let player = Player::spawn_with(engine, OutputChoice::Memory(captured.clone()), move |s| {
         let _ = tx.send(s);
     });
     player.send(Cmd::Set {
