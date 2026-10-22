@@ -1418,6 +1418,7 @@ pub struct Lyrics {
 fn lyrics_of(text: String) -> Lyrics {
     let mut lines = engine::lyrics::read_lrc(&text).lines;
     engine::lyrics::mark_source(&mut lines, "file");
+    engine::lyrics::add_pronunciation_lines(&mut lines, None);
     if lines.is_empty() {
         Lyrics { lines, text }
     } else {

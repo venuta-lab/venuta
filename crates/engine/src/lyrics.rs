@@ -150,67 +150,11 @@ impl Lrc {
 
 // --- Scripts --------------------------------------------------------------------------------
 
-/// The writing system of one letter (ISO 15924), None for marks, digits and punctuation.
-fn script_of_char(c: char) -> Option<&'static str> {
-    let u = c as u32;
-    Some(match u {
-        _ if c.is_ascii_alphabetic() => "Latn",
-        0x00C0..=0x024F | 0x1E00..=0x1EFF => "Latn",
-        0x0370..=0x03FF | 0x1F00..=0x1FFF => "Grek",
-        0x0400..=0x052F => "Cyrl",
-        0x0590..=0x05FF => "Hebr",
-        0x0600..=0x06FF | 0x0750..=0x077F | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => "Arab",
-        0x0900..=0x097F => "Deva",
-        0x0980..=0x09FF => "Beng",
-        0x0A00..=0x0A7F => "Guru",
-        0x0A80..=0x0AFF => "Gujr",
-        0x0B00..=0x0B7F => "Orya",
-        0x0B80..=0x0BFF => "Taml",
-        0x0C00..=0x0C7F => "Telu",
-        0x0C80..=0x0CFF => "Knda",
-        0x0D00..=0x0D7F => "Mlym",
-        0x0E00..=0x0E7F => "Thai",
-        0x3041..=0x309F => "Hira",
-        0x30A1..=0x30FA | 0x30FC..=0x30FF | 0x31F0..=0x31FF => "Kana",
-        0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7A3 => "Hang",
-        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F | 0x3005 => "Hani",
-        _ => return None,
-    })
-}
-
-/// A line's writing system (ISO 15924): the one most of its letters are in. Japanese (kana,
-/// with or without kanji) is "Jpan"; a line with no letters is "Zyyy".
+/// A line's writing system (ISO 15924): the one most of its letters are in, Latin losing a
+/// tie. Japanese (kana, with or without kanji) is "Jpan"; a line with no letters is "Zyyy".
+/// (`lyrics_text::script`, shared with the pronunciation reader.)
 pub fn script_of(text: &str) -> String {
-    let mut counts: Vec<(&'static str, usize)> = Vec::new();
-    for c in text.chars() {
-        if let Some(s) = script_of_char(c) {
-            match counts.iter_mut().find(|(k, _)| *k == s) {
-                Some((_, n)) => *n += 1,
-                None => counts.push((s, 1)),
-            }
-        }
-    }
-    let has = |s: &str| counts.iter().any(|(k, _)| *k == s);
-    if has("Hira") || has("Kana") {
-        let jp: usize = counts
-            .iter()
-            .filter(|(k, _)| matches!(*k, "Hira" | "Kana" | "Hani"))
-            .map(|(_, n)| n)
-            .sum();
-        let other = counts
-            .iter()
-            .filter(|(k, _)| !matches!(*k, "Hira" | "Kana" | "Hani"))
-            .max_by_key(|(_, n)| *n);
-        if other.is_none_or(|(_, n)| *n <= jp) {
-            return "Jpan".into();
-        }
-    }
-    // On a tie the other script wins: a Latin word in a Hindi line leaves it Hindi.
-    counts
-        .iter()
-        .max_by_key(|(k, n)| (*n, *k != "Latn"))
-        .map_or("Zyyy", |(k, _)| k)
-        .to_owned()
+    lyrics_text::script::line_script(text).code().to_owned()
 }
 
 /// The language a script most likely means, for labelling a second line: only where the
@@ -271,6 +215,58 @@ pub fn finish(lines: &mut [LyricLine]) {
         }
         if l.script.is_empty() {
             l.script = script_of(&l.text);
+        }
+    }
+}
+
+/// A pronunciation in Roman letters, made on the device, for every line in another script
+/// that has none yet (one the lyrics carried, or paired from another copy, comes first). Each
+/// romanized word keeps the timing of the word it came from. Source `Made`, language like
+/// "hi-Latn"; scripts with no reader yet (Urdu, Arabic, Thai) get none. One made before is
+/// made again, so kept answers follow the reader as it improves (it takes well under a
+/// millisecond a song).
+pub fn add_pronunciation(lyrics: &mut Lyrics) {
+    add_pronunciation_lines(&mut lyrics.lines, lyrics.lang.as_deref());
+}
+
+/// [`add_pronunciation`] for lines whose song language is `song_lang` (BCP 47), if known.
+pub fn add_pronunciation_lines(lines: &mut [LyricLine], song_lang: Option<&str>) {
+    let mut words: Vec<lyrics_text::Word> = Vec::new();
+    for l in lines {
+        if l.roman
+            .as_ref()
+            .is_some_and(|r| r.source != SecondSource::Made)
+        {
+            continue;
+        }
+        l.roman = None;
+        if l.text.trim().is_empty() {
+            continue;
+        }
+        words.clear();
+        words.extend(l.words.iter().map(|w| lyrics_text::Word {
+            start_ms: w.start_ms,
+            end_ms: w.end_ms,
+            text: w.text.clone(),
+        }));
+        let line = lyrics_text::Line::new(&l.text)
+            .words(&words)
+            .lang(song_lang);
+        if let Some(r) = lyrics_text::romanize(&line) {
+            l.roman = Some(Second {
+                text: r.text,
+                words: r
+                    .words
+                    .into_iter()
+                    .map(|w| Word {
+                        start_ms: w.start_ms,
+                        end_ms: w.end_ms,
+                        text: w.text,
+                    })
+                    .collect(),
+                lang: r.lang,
+                source: SecondSource::Made,
+            });
         }
     }
 }
@@ -895,6 +891,78 @@ mod tests {
         assert_eq!(read_lrc(&out), l);
         assert_eq!(format_stamp(61_390), "01:01.39");
         assert_eq!(format_stamp(1_999), "00:02.00");
+    }
+
+    #[test]
+    fn a_pronunciation_is_made_for_lines_in_another_script() {
+        let mut lyrics = Lyrics {
+            lines: vec![
+                LyricLine {
+                    start_ms: 0,
+                    end_ms: 2_000,
+                    text: "जो वादे किये".into(),
+                    words: vec![
+                        Word {
+                            start_ms: 0,
+                            end_ms: 400,
+                            text: "जो ".into(),
+                        },
+                        Word {
+                            start_ms: 400,
+                            end_ms: 900,
+                            text: "वादे ".into(),
+                        },
+                        Word {
+                            start_ms: 900,
+                            end_ms: 2_000,
+                            text: "किये".into(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                LyricLine {
+                    start_ms: 2_000,
+                    text: "Kesariya tera".into(),
+                    ..Default::default()
+                },
+                LyricLine {
+                    start_ms: 4_000,
+                    text: "मन".into(),
+                    roman: Some(Second {
+                        text: "Mann".into(),
+                        words: Vec::new(),
+                        lang: "hi-Latn".into(),
+                        source: SecondSource::Lyrics("lyricsplus".into()),
+                    }),
+                    ..Default::default()
+                },
+            ],
+            lang: Some("hi".into()),
+            version: VERSION,
+        };
+        add_pronunciation(&mut lyrics);
+        let made = lyrics.lines[0].roman.as_ref().expect("made");
+        assert_eq!(made.text, "Jo waade kiye");
+        assert_eq!(made.lang, "hi-Latn");
+        assert_eq!(made.source, SecondSource::Made);
+        let timed: Vec<(u64, u64, &str)> = made
+            .words
+            .iter()
+            .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+            .collect();
+        assert_eq!(
+            timed,
+            [(0, 400, "Jo "), (400, 900, "waade "), (900, 2_000, "kiye")]
+        );
+        assert_eq!(lyrics.lines[1].roman, None, "a Latin line needs none");
+        assert_eq!(
+            lyrics.lines[2].roman.as_ref().map(|r| r.text.as_str()),
+            Some("Mann"),
+            "the lyrics' own is kept"
+        );
+        let once = lyrics.clone();
+        add_pronunciation(&mut lyrics);
+        assert_eq!(lyrics, once, "made again, the same");
     }
 
     #[test]
