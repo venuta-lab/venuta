@@ -14,6 +14,8 @@
 //! Nothing here reads the network except [`japanese::dictionary`], and only when asked.
 
 pub mod chinese;
+pub mod cyrillic;
+pub mod greek;
 pub mod korean;
 pub mod pieces;
 

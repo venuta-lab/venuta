@@ -248,6 +248,87 @@ impl Builder {
     }
 }
 
+/// Romanizes an alphabet written with spaces (Cyrillic, Greek) word by word. `convert` gets a
+/// word in lower case and returns its steps: how many letters each step reads and what it
+/// writes. Case comes back from the original: a capital letter capitalises its step, a word
+/// all in capitals stays in capitals. Anything that isn't a letter passes through (`other`
+/// may swap a mark: the Greek ";" is a question mark).
+pub(crate) fn by_letters(
+    line: &str,
+    is_letter: impl Fn(char) -> bool,
+    convert: impl Fn(&[char]) -> Vec<(usize, String)>,
+    other: impl Fn(char) -> Option<&'static str>,
+) -> Romanized {
+    let mut out = Romanized::default();
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (at, c) = chars[i];
+        if c.is_whitespace() {
+            out.text.push(c);
+            i += 1;
+            continue;
+        }
+        let start = out.text.len();
+        if !is_letter(c) {
+            let mut end = at;
+            while i < chars.len() && !chars[i].1.is_whitespace() && !is_letter(chars[i].1) {
+                let c = chars[i].1;
+                match other(c) {
+                    Some(s) => out.text.push_str(s),
+                    None => out.text.push(c),
+                }
+                end = chars[i].0 + c.len_utf8();
+                i += 1;
+            }
+            out.pieces.push(Piece {
+                out: start..out.text.len(),
+                src: at..end,
+            });
+            continue;
+        }
+        let from = i;
+        while i < chars.len() && is_letter(chars[i].1) {
+            i += 1;
+        }
+        let word = &chars[from..i];
+        let lower: Vec<char> = word
+            .iter()
+            .map(|&(_, c)| c.to_lowercase().next().unwrap_or(c))
+            .collect();
+        let all_upper = word.len() > 1 && word.iter().all(|&(_, c)| !c.is_lowercase());
+        let mut k = 0;
+        for (n, s) in convert(&lower) {
+            let n = n.max(1).min(word.len() - k);
+            let (src_at, first) = word[k];
+            let last = word[k + n - 1];
+            let at = out.text.len();
+            if all_upper {
+                out.text.push_str(&s.to_uppercase());
+            } else if first.is_uppercase() {
+                let mut cs = s.chars();
+                if let Some(f) = cs.next() {
+                    out.text.extend(f.to_uppercase());
+                    out.text.push_str(cs.as_str());
+                }
+            } else {
+                out.text.push_str(&s);
+            }
+            if out.text.len() > at {
+                out.pieces.push(Piece {
+                    out: at..out.text.len(),
+                    src: src_at..last.0 + last.1.len_utf8(),
+                });
+            }
+            k += n;
+            if k >= word.len() {
+                break;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
