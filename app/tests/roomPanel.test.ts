@@ -284,7 +284,7 @@ test('your output: the delay, its notes, the Bluetooth suggestion and Line up by
   assert.deepEqual(outputPanel(view('in, on Bluetooth with its delay set')).note, { text: 'Bluetooth: about 200 ms behind', warn: false })
   const unknown = outputPanel(view('in, on Bluetooth with its delay not known'))
   assert.deepEqual(unknown.note, { text: 'Bluetooth delay not measured: you may hear an echo', warn: true })
-  assert.deepEqual(unknown.suggest, { ms: 170, says: 'Most Bluetooth headphones are about 170 ms late' })
+  assert.deepEqual(unknown.suggest, { ms: 170, says: 'Bluetooth is usually about 170 ms late' })
   assert.equal(unknown.lineUp, true)
   const fx = view("in, every device, on the host's network")
   fx.output.delay_known = false
@@ -332,6 +332,8 @@ test('the people: mode, line, copy for whom it is shown, numbers, path and the h
 test('copies in words, as Rust says them', () => {
   assert.equal(copyWords({ kind: 'own_file', class: 'measured', length_diff_s: null }), 'own file, matched')
   assert.equal(copyWords({ kind: 'host_stream', class: 'exact', length_diff_s: null }), 'your file, streamed, matched')
+  // To a guest, the host's file is the host's.
+  assert.equal(copyWords({ kind: 'host_stream', class: 'exact', length_diff_s: null }, 'Asha'), "Asha's file, streamed, matched")
   assert.equal(copyWords({ kind: 'catalog', class: 'approximate', length_diff_s: 12 }), 'YouTube Music, another version (+12 s)')
   assert.equal(copyWords({ kind: 'catalog', class: 'approximate', length_diff_s: -3 }), 'YouTube Music, another version (-3 s)')
   assert.equal(copyWords({ kind: 'close_match', class: 'approximate', length_diff_s: null }), 'a close match, another version')

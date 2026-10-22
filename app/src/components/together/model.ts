@@ -18,6 +18,48 @@ import type {
   Transition,
 } from '../../lib/togetherView'
 
+/** What the room panel v2 can ask for (lib/together.ts's `liveActions` in the app; the preview's
+ *  are no-ops). */
+export interface RoomActions {
+  start: () => void
+  join: (code: string) => void
+  readInvite: (code: string) => Promise<InvitePreview>
+  joinNearby: (id: number) => void
+  resume: (yes: boolean) => void
+  saveQueue: () => void
+  setName: (name: string) => void
+  /** Stop joining, or stop waiting at the door. */
+  cancel: () => void
+  leave: () => void
+  end: () => void
+  handOver: (id: number) => void
+  toggle: () => void
+  next: () => void
+  previous: () => void
+  seek: (ms: number) => void
+  answer: (request: number, yes: boolean) => void
+  admit: (id: number) => void
+  deny: (id: number) => void
+  remove: (id: number, block: boolean) => void
+  setRole: (id: number, role: Role) => void
+  setNewRole: (role: Role | 'auto') => void
+  setTransition: (t: Transition) => void
+  setGuestsVolume: (on: boolean) => void
+  setLetIn: (on: boolean) => void
+  setVisible: (on: boolean) => void
+  setVolume: (percent: number) => void
+  setMode: (mode: ListenMode) => void
+  startWithNext: () => void
+  stepOut: (out: boolean) => void
+  setDelay: (ms: number) => void
+  lineUp: (on: boolean) => void
+  takeHostCopy: () => void
+  lighter: (id: number) => void
+  nextSongFor: (id: number) => void
+  copyInvite: () => void
+  undo: () => void
+}
+
 /** Today's view or v2: only v2 carries `output`. */
 export const isV2 = (v: unknown): v is TogetherViewV2 => typeof v === 'object' && v !== null && 'output' in v
 
@@ -257,16 +299,19 @@ export function outputPanel(v: TogetherViewV2): OutputPanel {
     bluetooth: o.bluetooth,
     delay: delayWords(o.delay_ms),
     note,
-    suggest: o.bluetooth && !o.delay_known && o.delay_ms === 0 ? { ms: BLUETOOTH_GUESS_MS, says: `Most Bluetooth headphones are about ${BLUETOOTH_GUESS_MS} ms late` } : null,
+    suggest: o.bluetooth && !o.delay_known && o.delay_ms === 0 ? { ms: BLUETOOTH_GUESS_MS, says: `Bluetooth is usually about ${BLUETOOTH_GUESS_MS} ms late` } : null,
     lineUp: show && !v.host && mode === 'every_device',
   }
 }
 
 // --- The people ------------------------------------------------------------------------------
 
-/** A copy in words, as Rust's `CopyView::words`. */
-export function copyWords(c: CopyView): string {
-  const kind = { own_file: 'own file', catalog: 'YouTube Music', host_stream: 'your file, streamed', close_match: 'a close match' }[c.kind]
+/**
+ * A copy in words, as Rust's `CopyView::words` says it to the host ("your file, streamed");
+ * to a guest, the host's file is the host's (`host`: the host's name, for a guest's view).
+ */
+export function copyWords(c: CopyView, host: string | null = null): string {
+  const kind = { own_file: 'own file', catalog: 'YouTube Music', host_stream: host ? `${possessive(host)} file, streamed` : 'your file, streamed', close_match: 'a close match' }[c.kind]
   const d = c.length_diff_s
   const how = c.class !== 'approximate' ? 'matched' : d ? `another version (${d > 0 ? '+' : ''}${d} s)` : 'another version'
   return `${kind}, ${how}`
@@ -312,7 +357,7 @@ export function rows(v: TogetherViewV2): Row[] {
       you,
       mode: modeWord(m.mode, room.host_name),
       line: you && v.you ? v.you.line : m.line,
-      copy: (v.host || you) && m.copy ? copyWords(m.copy) : null,
+      copy: (v.host || you) && m.copy ? copyWords(m.copy, v.host ? null : room.host_name) : null,
       numbers: numbersWords(m),
       path: you && !v.host ? pathWords(v.path) : null,
       slow: v.host && m.slow ? `${possessive(m.name)} connection is slow` : null,

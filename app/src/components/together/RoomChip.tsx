@@ -26,17 +26,23 @@ import {
   TOGETHER,
   undoRoom,
   useTogether,
+  useTogetherV2,
   type Hearing,
   type Member,
   type Role,
   type TogetherView,
 } from '../../lib/together'
 import { Switch } from '../ui'
+import { Initial } from './Initial'
+import { LiveRoomChipV2 } from './RoomChipV2'
 
 /*
   Listening together lives here, in the title bar, on every screen: one chip and the panel it
   opens. Out of a room: start one, or join with an invite. In a room: who's here and how each of
   them hears the song, who did what, and (for the host) who may do what.
+
+  Two panels while protocol 3 comes in (design, WP12 notes): the v2 chip and panel
+  (RoomChipV2.tsx) when the app sends View v2, today's below otherwise. WP13 removes today's.
 */
 
 const ROLES: [Role, string][] = [
@@ -45,21 +51,10 @@ const ROLES: [Role, string][] = [
   ['listen', 'Just listen'],
 ]
 
-// Each person's initial in the theme's own accent, a little stronger or softer per person so faces
-// side by side stay apart; never colours of their own that clash with the theme.
-const TINTS = [34, 22, 46, 28, 40, 18]
-
-function Initial({ m, size = 22 }: { m: { id: number; name: string }; size?: number }) {
-  const tint = TINTS[m.id % TINTS.length]
-  return (
-    <span
-      className="grid shrink-0 place-items-center rounded-full font-semibold text-accent-ink"
-      style={{ width: size, height: size, fontSize: size * 0.48, background: `color-mix(in oklab, var(--accent) ${tint}%, transparent)` }}
-      aria-hidden
-    >
-      {(m.name.trim()[0] ?? '?').toUpperCase()}
-    </span>
-  )
+/** The title bar's chip and its panel: v2 for a v2 view, today's otherwise. */
+export function RoomChip() {
+  const v2 = useTogetherV2()
+  return v2 ? <LiveRoomChipV2 v={v2} /> : <RoomChipV1 />
 }
 
 /** How someone hears the song now, in a word or two. */
@@ -85,8 +80,8 @@ function syncWords(m: Member): string {
   return e <= 60 ? `in sync ±${e} ms` : 'catching up…'
 }
 
-/** The title bar's chip and its panel. */
-export function RoomChip() {
+/** Today's chip and panel (protocol 2). */
+function RoomChipV1() {
   const v = useTogether()
   const [shut, setOpen] = useState(false)
   // An invite link Venuta was opened with opens the panel, ready to join.
