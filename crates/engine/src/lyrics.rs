@@ -29,7 +29,9 @@ pub mod ttml;
 /// 3: the second lines the sources carry (Apple-style TTML's, LyricsPlus's, NetEase's
 ///    word-timed lyrics from its newer call) and Automatic's pick paired with another source's
 ///    copy in Latin letters.
-pub const VERSION: u32 = 3;
+/// 4: Automatic's pick in Latin letters takes the song's language from another source's copy
+///    in the song's own script (romanized Hindi that LyricsPlus labels "en" or "id" is "hi").
+pub const VERSION: u32 = 4;
 
 /// One word of a line, when its time is known.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -246,6 +248,62 @@ fn written_in(script: &str) -> (&'static [&'static str], &'static str) {
 /// views read the letters themselves).
 pub fn song_lang(tag: Option<&str>, lines: &[LyricLine]) -> Option<String> {
     let tag = tag.map(str::trim).filter(|t| !t.is_empty())?;
+    let Some(script) = main_script(lines) else {
+        return Some(tag.to_owned());
+    };
+    let (langs, likely) = written_in(script);
+    if langs.is_empty() || langs.contains(&lang_base(tag).to_lowercase().as_str()) {
+        Some(tag.to_owned())
+    } else {
+        Some(likely.to_owned())
+    }
+}
+
+/// The song's language when another copy of it, in its own script, has been found (Automatic
+/// found the song in Devanagari at one source and in Latin letters at another, and the two are
+/// the same song: [`pair::pair_roman`] paired them). Lines in Latin letters can't tell their
+/// language, so the copy's script does: the label stands when that script writes it (Marathi
+/// stays Marathi in Devanagari), else the copy's own label when its script writes that, else the
+/// language the script most likely means ("hi" for Devanagari, "pa" for Gurmukhi). A copy not
+/// mostly in one script other than Latin letters tells nothing: the label stands.
+pub fn lang_from_copy(
+    tag: Option<&str>,
+    copy_tag: Option<&str>,
+    copy: &[LyricLine],
+) -> Option<String> {
+    let tag = tag.map(str::trim).filter(|t| !t.is_empty());
+    let (langs, likely) = main_script(copy).map_or((&[][..], ""), written_in);
+    if langs.is_empty() {
+        return tag.map(str::to_owned);
+    }
+    let written = |t: &&str| langs.contains(&lang_base(t).to_lowercase().as_str());
+    let copy_tag = copy_tag.map(str::trim).filter(|t| !t.is_empty());
+    Some(
+        tag.filter(written)
+            .or(copy_tag.filter(written))
+            .unwrap_or(likely)
+            .to_owned(),
+    )
+}
+
+/// The song's language set to `lang`: a pronunciation labelled from the old one ("en-Latn" under
+/// a Devanagari line of a song labelled "en") takes the new one's, and the pronunciations made
+/// on the device are made again with it.
+pub fn set_song_lang(lyrics: &mut Lyrics, lang: String) {
+    let old = lyrics.lang.replace(lang);
+    for l in &mut lyrics.lines {
+        if let Some(r) = &mut l.roman
+            && r.lang == roman_lang(old.as_deref(), &l.script)
+        {
+            r.lang = roman_lang(lyrics.lang.as_deref(), &l.script);
+        }
+    }
+    add_pronunciation(lyrics);
+}
+
+/// The script most of a song's lines with letters are in (more than half of them; Japanese
+/// kana, with lines of kanji alone beside them, counted as one), when there is one.
+pub(crate) fn main_script(lines: &[LyricLine]) -> Option<&str> {
     let mut counts: Vec<(&str, usize)> = Vec::new();
     let mut lettered = 0;
     for l in lines {
@@ -271,16 +329,11 @@ pub fn song_lang(tag: Option<&str>, lines: &[LyricLine]) -> Option<String> {
             *j += n;
         }
     }
-    let Some(&(script, n)) = counts.iter().max_by_key(|(_, n)| *n) else {
-        return Some(tag.to_owned());
-    };
-    let (langs, likely) = written_in(script);
-    let base = tag.split(['-', '_']).next().unwrap_or("").to_lowercase();
-    if n * 2 <= lettered || langs.is_empty() || langs.contains(&base.as_str()) {
-        Some(tag.to_owned())
-    } else {
-        Some(likely.to_owned())
-    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .filter(|(_, n)| n * 2 > lettered)
+        .map(|(script, _)| script)
 }
 
 /// The BCP 47 tag of a translation the lyrics carried, from its own letters. The Chinese
@@ -1682,5 +1735,79 @@ mod tests {
             song_lang(Some("en"), &lines_of(&["♪", "..."])).as_deref(),
             Some("en")
         );
+    }
+
+    #[test]
+    fn a_song_in_latin_letters_takes_its_language_from_a_copy_in_its_own_script() {
+        let hindi = lines_of(&["तू मेरा कोई ना होके भी कुछ लागे", "किया रे जो भी तूने", "♪"]);
+        // Romanized Hindi labelled English or Indonesian, as LyricsPlus labels some songs.
+        assert_eq!(
+            lang_from_copy(Some("en"), None, &hindi).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            lang_from_copy(Some("id"), None, &hindi).as_deref(),
+            Some("hi")
+        );
+        // A label of a language the copy's script is written in is never overruled.
+        assert_eq!(
+            lang_from_copy(Some("mr"), None, &hindi).as_deref(),
+            Some("mr")
+        );
+        assert_eq!(
+            lang_from_copy(Some("hi-IN"), None, &hindi).as_deref(),
+            Some("hi-IN")
+        );
+        // The copy's own label when its letters agree, else the script's likely language.
+        assert_eq!(
+            lang_from_copy(Some("en"), Some("mr"), &hindi).as_deref(),
+            Some("mr")
+        );
+        assert_eq!(
+            lang_from_copy(Some("en"), Some("en"), &hindi).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(lang_from_copy(None, None, &hindi).as_deref(), Some("hi"));
+        let punjabi = lines_of(&["ਤੇਰੀ ਹੋਕੇ ਮਰਾਂ", "ਹੀਰੀਏ-ਹੀਰੀਏ, ਆ"]);
+        assert_eq!(
+            lang_from_copy(Some("en"), None, &punjabi).as_deref(),
+            Some("pa")
+        );
+        // A copy in Latin letters (or with no letters) tells nothing: the label stands.
+        let latin = lines_of(&["Tu mera koi na hoke bhi kuchh laage", "Kiya re jo bhi tune"]);
+        assert_eq!(
+            lang_from_copy(Some("id"), None, &latin).as_deref(),
+            Some("id")
+        );
+        assert_eq!(lang_from_copy(None, Some("hi"), &latin), None);
+        assert_eq!(
+            lang_from_copy(Some("en"), None, &lines_of(&["♪"])).as_deref(),
+            Some("en")
+        );
+        // A copy only partly in another script tells nothing either.
+        let mostly_latin = lines_of(&["I want you to stay", "Every night and day", "तू मेरा कोई"]);
+        assert_eq!(
+            lang_from_copy(Some("en"), None, &mostly_latin).as_deref(),
+            Some("en")
+        );
+    }
+
+    #[test]
+    fn a_new_song_language_relabels_what_was_labelled_by_the_old_one() {
+        let mut lyrics = Lyrics {
+            lines: lines_of(&["Tu mera koi na hoke bhi", "किया रे जो भी तूने"]),
+            lang: Some("en".into()),
+            version: VERSION,
+        };
+        lyrics.lines[1].roman = Some(Second {
+            text: "Kiya re jo bhi tune".into(),
+            words: Vec::new(),
+            lang: "en-Latn".into(),
+            source: SecondSource::Lyrics("lyricsplus".into()),
+        });
+        set_song_lang(&mut lyrics, "hi".into());
+        assert_eq!(lyrics.lang.as_deref(), Some("hi"));
+        assert_eq!(lyrics.lines[1].roman.as_ref().unwrap().lang, "hi-Latn");
+        assert!(lyrics.lines[0].roman.is_none(), "Latin lines want none");
     }
 }
