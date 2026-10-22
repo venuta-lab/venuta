@@ -8,7 +8,7 @@ mod pull_kit;
 
 use player::conformance;
 use player::output::PullOutput;
-use player::output_api::{Output, OutputError, OutputEvent};
+use player::output_api::{Latency, Output, OutputError, OutputEvent};
 use pull_kit::*;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -623,6 +623,10 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             PositionMap::shared(RATE, 480)
         };
         let mut xruns = Vec::new();
+        let mut t = player::output_api::LatencyTracker::new(RATE);
+        let mut learned: Option<Latency> = None;
+        let mut most_ever = 0u32;
+        let mut worst_after_settle = i64::MIN;
         for line in text.lines().skip(1) {
             let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
             if r[col("state")] != 1 {
@@ -640,9 +644,32 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
                     r[col("after")] as u64,
                 );
                 xruns.extend(rd.xrun);
+                if let Some(p) = rd.pair {
+                    let after = r[col("after")] as u64;
+                    let now = t.push(after - p.frame);
+                    if let Some(prev) = learned.filter(|l: &Latency| l.settled) {
+                        let behind = before as i64 - p.frame as i64;
+                        worst_after_settle = worst_after_settle.max(behind - i64::from(prev.most));
+                    }
+                    most_ever = most_ever.max(now.most);
+                    learned = Some(now);
+                }
             }
         }
         assert_eq!(xruns, [96_000], "{name}");
+        let l = learned.expect("a latency learned");
+        eprintln!(
+            "{name}: learned {l:?}, most at any time {most_ever}, the driver says {}",
+            if exclusive { 1_440 } else { 2_400 }
+        );
+        assert!(l.settled, "{name}: steady by the end");
+        // More than the driver says (2400 shared, 1440 exclusive): what made the suite fail.
+        assert!(l.frames > if exclusive { 1_440 } else { 2_400 }, "{name}");
+        // Once steady, the DAC was never further behind than it said (the suite'"'"'s check).
+        assert!(
+            worst_after_settle <= i64::from(most_ever) + 48,
+            "{name}: {worst_after_settle} behind"
+        );
         if exclusive {
             let s = m.slip();
             eprintln!("{name}: slip {s} frames");
