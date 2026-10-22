@@ -168,6 +168,11 @@ pub(crate) fn cjk_punct(c: char) -> Option<(&'static str, Sits)> {
     })
 }
 
+/// Hiragana or katakana (with the long-vowel mark and the iteration marks).
+pub(crate) fn is_kana(c: char) -> bool {
+    matches!(c as u32, 0x3041..=0x309F | 0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F)
+}
+
 /// Full-width Latin letters and digits as plain ones ("Ａ" as "A").
 pub(crate) fn narrow(c: char) -> char {
     match c as u32 {
@@ -184,12 +189,14 @@ pub(crate) struct Builder {
     pieces: Vec<Piece>,
     /// A space goes before the next text.
     space: bool,
+    /// Right after an opening mark: the next word joins it.
+    glue: bool,
 }
 
 impl Builder {
     /// The next text starts a new word.
     pub fn split(&mut self) {
-        if !self.text.is_empty() {
+        if !self.text.is_empty() && !self.glue {
             self.space = true;
         }
     }
@@ -203,6 +210,7 @@ impl Builder {
             self.text.push(' ');
             self.space = false;
         }
+        self.glue = false;
         let at = self.text.len();
         self.text.push_str(s);
         match self.pieces.last_mut() {
@@ -226,6 +234,7 @@ impl Builder {
             Sits::Open => {
                 self.split();
                 self.push(s, src);
+                self.glue = true;
             }
             Sits::Break => self.split(),
         }
