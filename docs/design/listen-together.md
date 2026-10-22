@@ -892,6 +892,12 @@ Settled in WP0:
 - `render_link(commands, markers) -> (RenderLink, RenderEnds)`: the bounded queues for commands, markers and returned things.
 - `Splice::Crossfade` starts at the switch frame; `FadeOutThenIn` and `EndFade` end the old voice's fade at it.
 
+Settled in WP3 (a contract change, its own `contract:` commit; nothing used these yet):
+
+- `StartAt` and `SwitchAt` carry the new voice's source `rate` (the renderer needs the ratio before the first block, and a `Block` has no rate); `StartAt`'s `fade_in` is a length in device frames instead of a flag (a join fades in over 300 ms, a resume over 15 ms); `StopAt` carries its `fade` length (a stop is 30 ms, leaving a room 1 s). The renderer makes every fade at least the table's least (15 ms in partway, 30 ms out), so no command can ask for a hard edge.
+- `render_link(commands, markers, notes)`: a third bounded queue carries `RenderNote`s (3.2's "notes (SPSC)"): `Started`, `Joined`, `Faded { from, to, kind: FadeKind }`, `Gain`, `Resampling { on }`, `Starved`, `Resumed`, `Ended`, `Silent`, `Late`, `Refused { why: Refusal }`, `Dropped`. They are `Copy`; the renderer only tries to send them and counts what a full queue loses.
+- `Drop` of a voice still sounding fades it out over 30 ms before its tap comes back.
+
 ### 5.4 The room's hold on the player
 
 ```rust

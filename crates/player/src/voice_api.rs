@@ -163,33 +163,117 @@ pub enum Splice {
     EndFade { frames: u32 },
 }
 
-/// What the control thread tells the renderer, each at an exact device frame.
+/// What the control thread tells the renderer, each at an exact device frame. Frame counts
+/// (`fade_in`, `fade`, the `Splice` lengths) are device frames.
 pub enum RenderCmd {
-    /// Start `voice` (from silence) so its content frame `content` is at device frame `at`.
+    /// Start `voice` (from silence) so its content frame `content` is at device frame `at`. Its
+    /// source runs at `rate` Hz. It fades in over `fade_in` frames (raised cosine); a start
+    /// partway into the song (content above 0, or late) fades in over at least 15 ms whatever
+    /// this says.
     StartAt {
         voice: VoiceId,
         tap: VoiceTap,
         at: u64,
         content: u64,
-        fade_in: bool,
+        rate: u32,
+        fade_in: u32,
     },
-    /// Move from `from` to `to` at device frame `at`, shaped as `how`.
+    /// Move from `from` to `to` at device frame `at`, shaped as `how`; `to`'s source runs at
+    /// `rate` Hz.
     SwitchAt {
         from: VoiceId,
         to: VoiceId,
         tap: VoiceTap,
         at: u64,
         to_content: u64,
+        rate: u32,
         how: Splice,
     },
-    /// Fade out and fall silent, starting at device frame `at`.
-    StopAt { voice: VoiceId, at: u64 },
-    /// Let go of a voice (its tap comes back on the return queue, to drop off this thread).
+    /// Fade out over `fade` frames (at least 30 ms) starting at device frame `at`, and fall
+    /// silent.
+    StopAt { voice: VoiceId, at: u64, fade: u32 },
+    /// Let go of a voice (its tap comes back on the return queue, to drop off this thread). A
+    /// voice still sounding fades out over 30 ms first.
     Drop { voice: VoiceId },
     /// The master gain (volume, the sleep timer), ramped per sample over 20 ms.
     Gain { target: f32 },
     /// A voice's new sound tools (the old chain comes back on the return queue).
     Chain { voice: VoiceId, chain: Box<Chain> },
+}
+
+/// What a shaped span did to a voice's sound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeKind {
+    /// Up from silence (raised cosine).
+    In,
+    /// Down to silence (raised cosine): a stop, a skip, a longer copy's end.
+    Out,
+    /// The incoming side of an equal-power crossfade.
+    CrossIn,
+    /// The outgoing side of an equal-power crossfade.
+    CrossOut,
+    /// Down to silence over the frames still in hand: the guard (a stream running dry, or a
+    /// break in its blocks).
+    Dry,
+}
+
+/// Why a command was not followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Every voice slot is taken.
+    NoSlot,
+    /// No such voice (never started, or already let go).
+    NoVoice,
+    /// The source's rate is too far above the device's for the resampler (over 8.7 times).
+    Rate,
+}
+
+/// What the renderer did, at which device frames: every shaped event, for the playback log, the
+/// status, and the checks (the detectors' declared spans are the `Faded`, `Gain` and
+/// `Resampling` spans). Small and `Copy`: nothing is allocated to send one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RenderNote {
+    /// `voice` began sounding at device frame `at` with its content frame `content`, fading in
+    /// over `fade` frames (0: the song's own start).
+    Started {
+        voice: VoiceId,
+        at: u64,
+        content: u64,
+        fade: u32,
+    },
+    /// `to` followed `from` sample-exact: `to`'s first frame at device frame `at`.
+    Joined { from: VoiceId, to: VoiceId, at: u64 },
+    /// Device frames `from..to` of `voice` were shaped as `kind`.
+    Faded {
+        voice: VoiceId,
+        from: u64,
+        to: u64,
+        kind: FadeKind,
+    },
+    /// The master gain ramped toward `target` over device frames `from..to`.
+    Gain { from: u64, to: u64, target: f32 },
+    /// From device frame `at`, `voice` is resampled (`on`: not its source bit for bit), or back
+    /// on whole frames of its source at its own rate (`!on`).
+    Resampling { voice: VoiceId, at: u64, on: bool },
+    /// `voice` ran short of frames: the guard's fade begins at device frame `at`.
+    Starved { voice: VoiceId, at: u64 },
+    /// `voice` came back after running dry, fading in from device frame `at` at its content
+    /// frame `content`.
+    Resumed {
+        voice: VoiceId,
+        at: u64,
+        content: u64,
+    },
+    /// `voice`'s source ended: its last frame was at device frame `at - 1`.
+    Ended { voice: VoiceId, at: u64 },
+    /// `voice` fell silent at device frame `at` (after a stop's or the guard's fade).
+    Silent { voice: VoiceId, at: u64 },
+    /// A command for `voice` came `by` frames after its frame; done from device frame `at`.
+    Late { voice: VoiceId, at: u64, by: u64 },
+    /// A command for `voice` was not followed.
+    Refused { voice: VoiceId, why: Refusal },
+    /// Notes or markers lost to a full queue since the last note that got through.
+    Dropped { notes: u32, markers: u32 },
 }
 
 /// What the renderer hands back to the control thread to drop (nothing is freed on the render
@@ -228,6 +312,7 @@ impl RateTarget {
 pub struct RenderLink {
     pub commands: SyncSender<RenderCmd>,
     pub markers: Receiver<Marker>,
+    pub notes: Receiver<RenderNote>,
     pub returned: Receiver<Returned>,
 }
 
@@ -235,24 +320,28 @@ pub struct RenderLink {
 pub struct RenderEnds {
     pub commands: Receiver<RenderCmd>,
     pub markers: SyncSender<Marker>,
+    pub notes: SyncSender<RenderNote>,
     pub returned: SyncSender<Returned>,
 }
 
-/// The queues, with room for `commands` commands and `markers` markers (one per period: a
-/// second of 10 ms periods is 100).
-pub fn render_link(commands: usize, markers: usize) -> (RenderLink, RenderEnds) {
+/// The queues, with room for `commands` commands, `markers` markers (one per sounding voice per
+/// period: a second of 10 ms periods is 100 for each) and `notes` notes.
+pub fn render_link(commands: usize, markers: usize, notes: usize) -> (RenderLink, RenderEnds) {
     let (ct, cr) = sync_channel(commands.max(1));
     let (mt, mr) = sync_channel(markers.max(1));
+    let (nt, nr) = sync_channel(notes.max(1));
     let (rt, rr) = sync_channel(commands.max(1) * 2);
     (
         RenderLink {
             commands: ct,
             markers: mr,
+            notes: nr,
             returned: rr,
         },
         RenderEnds {
             commands: cr,
             markers: mt,
+            notes: nt,
             returned: rt,
         },
     )
