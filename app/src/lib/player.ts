@@ -18,6 +18,7 @@ import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 import { canSeekNow } from './streamWait'
+import { oneAtATime } from './oneAtATime'
 import { songMenus, type TrackMenu } from './ytmSongMenu'
 import { learnLength } from './upNext'
 
@@ -801,10 +802,15 @@ export function useSpectrum(): number[] | null {
   return usePlayerValue((s) => s.bands ?? null)
 }
 
+// A press again while the last one is still being carried out (the window takes a moment to make,
+// longer while the app is busy) is the same press, not another. The engine makes it one at a time
+// too, and never two (playback.rs, one_window.rs).
+const once = oneAtATime<string>()
 /** The mini player: open it (the main window steps aside) or close it and come back. */
-export const miniPlayer = (open: boolean) => call('mini_player', { open })
-/** The mini player button, Ctrl+M, the palette: open it, or back to the main window when it is open. */
-export const toggleMiniPlayer = () => call('mini_player_toggle')
+export const miniPlayer = (open: boolean) => once(open ? 'open' : 'close', () => call('mini_player', { open }))
+/** The mini player button, Ctrl+M, the palette: open it, or back to the main window when it is open,
+ *  in one step of the engine's. */
+export const toggleMiniPlayer = () => once('toggle', () => call('mini_player_toggle'))
 
 export const setStopAfter = (on: boolean) => call('player_stop_after', { on })
 /** Pause after `minutes` (null cancels). */

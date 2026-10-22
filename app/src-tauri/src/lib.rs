@@ -29,6 +29,7 @@ mod libcache;
 mod listening;
 mod lyric_windows;
 mod lyrics_find;
+mod one_window;
 mod online;
 mod phone;
 mod playback;
@@ -3006,6 +3007,7 @@ pub fn run() {
         .manage(together::Together::default())
         .manage(lyric_windows::Locks::default())
         .manage(lyric_windows::Shelf::default())
+        .manage(playback::MiniShelf::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())

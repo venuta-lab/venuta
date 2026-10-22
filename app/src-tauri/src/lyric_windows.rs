@@ -11,11 +11,12 @@
 //! One window of each kind, whatever asks for it (the buttons, the tray, the shortcut, Settings),
 //! however quickly: see [`Shelf`].
 
+use crate::one_window::{self, Host, WindowKind};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{
     AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -65,7 +66,7 @@ pub fn monitors(app: AppHandle) -> Vec<MonitorInfo> {
 
 /// Which lyrics window: its label, page and first size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Kind {
+pub(crate) enum Kind {
     Stage,
     Overlay,
 }
@@ -76,29 +77,6 @@ impl Kind {
             "stage" => Ok(Kind::Stage),
             "overlay" => Ok(Kind::Overlay),
             _ => Err(format!("no lyrics window called {s}")),
-        }
-    }
-    /// Its name: what the pages ask by, and the start of each of its windows' labels.
-    fn label(self) -> &'static str {
-        match self {
-            Kind::Stage => "stage",
-            Kind::Overlay => "overlay",
-        }
-    }
-    /// The kind of a lyrics window, from its label (`overlay-3`; plain `overlay` too).
-    fn of_label(label: &str) -> Option<Kind> {
-        [Kind::Stage, Kind::Overlay].into_iter().find(|k| {
-            label == k.label()
-                || label
-                    .strip_prefix(k.label())
-                    .and_then(|r| r.strip_prefix('-'))
-                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        })
-    }
-    fn title(self) -> &'static str {
-        match self {
-            Kind::Stage => "Venuta lyrics",
-            Kind::Overlay => "Venuta desktop lyrics",
         }
     }
     /// The smallest it can be made (logical pixels).
@@ -125,6 +103,28 @@ impl Kind {
         }
     }
 }
+
+impl WindowKind for Kind {
+    const ALL: &'static [Kind] = &[Kind::Stage, Kind::Overlay];
+    const WHOSE: &'static str = "the lyrics windows";
+    /// Its name: what the pages ask by, and the start of each of its windows' labels.
+    fn label(self) -> &'static str {
+        match self {
+            Kind::Stage => "stage",
+            Kind::Overlay => "overlay",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Kind::Stage => "Venuta lyrics",
+            Kind::Overlay => "Venuta desktop lyrics",
+        }
+    }
+}
+
+/// The lyrics windows: at most one of each kind, whoever asks and however quickly (see
+/// [`one_window`]).
+pub(crate) type Shelf = one_window::Shelf<Kind>;
 
 /// A window's place in screen pixels (x, y, width, height), the same across every screen
 /// whatever each one's scale: the one way a place means the same thing everywhere.
@@ -264,192 +264,24 @@ pub fn closed(app: &AppHandle, label: &str) {
     }
 }
 
-// --- One window of each kind ------------------------------------------------------------------
-//
-// Tauri knows its windows by label, and it checks a label is free before it makes the window and
-// takes the window in only once it is made; and a window's end makes it forget whichever window
-// has that label by then. So a second ask while the first window was being made (a button pressed
-// again, about a tenth of a second) made a second window of the same label, and the end of either
-// left the other unknown: alive on screen, see-through with nothing in it, its every call to the
-// app failing ("failed to acquire webview reference"), and the button reading it as closed and
-// making another at each press. Measured 2026-10-21: ten such windows in a test copy.
-//
-// So here: each opening and closing of a kind waits its turn; a closing is done only once the
-// window is gone; each window has a label never used before (the kind and a number), so the end
-// of an old one can never be taken for the new one's; and before a window is made, anything of
-// its kind still about (Tauri's, or one only Windows still knows) is cleared away.
-
-/// Which window is each kind's now.
-#[derive(Debug, Default)]
-struct Book {
-    current: HashMap<Kind, String>,
-    made: u64,
-}
-
-impl Book {
-    fn current(&self, kind: Kind) -> Option<String> {
-        self.current.get(&kind).cloned()
-    }
-    /// A label for a new window of `kind`, never used before; that kind's window from now.
-    fn name(&mut self, kind: Kind) -> String {
-        self.made += 1;
-        let label = format!("{}-{}", kind.label(), self.made);
-        self.current.insert(kind, label.clone());
-        label
-    }
-    /// The window `label` is gone: its kind, if it was that kind's window now.
-    fn gone(&mut self, label: &str) -> Option<Kind> {
-        let kind = Kind::of_label(label)?;
-        if self.current.get(&kind).is_some_and(|l| l == label) {
-            self.current.remove(&kind);
-            Some(kind)
-        } else {
-            None
-        }
-    }
-}
-
-/// What the shelf needs of the windows themselves: Tauri's ([`Tauri`]), or a test's.
-trait Host {
-    /// Whether the window `label` is there.
-    fn has(&self, label: &str) -> bool;
-    /// Every window there is, by label.
-    fn labels(&self) -> Vec<String>;
-    /// Make the window `label` for `kind`, placed as `place` says, and show it.
-    async fn make(&self, kind: Kind, label: &str, place: &Place) -> Result<(), String>;
-    /// Bring the window `label` forward, to `place`'s ways.
-    fn bring(&self, kind: Kind, label: &str, place: &Place);
-    /// End the window `label`: gone once `has` says so.
-    fn end(&self, label: &str);
-    /// End any window of `kind` only the system still knows (one the app lost), and wait until
-    /// they are gone. How many there were.
-    async fn end_lost(&self, kind: Kind) -> usize;
-}
-
-/// How long a window may take to end before it is left to itself.
-const ENDING: Duration = Duration::from_secs(3);
-
-/// The lyrics windows: at most one of each kind, whoever asks and however quickly.
-#[derive(Default)]
-pub struct Shelf {
-    stage: tokio::sync::Mutex<()>,
-    overlay: tokio::sync::Mutex<()>,
-    book: Mutex<Book>,
-}
-
-impl Shelf {
-    /// Each kind's openings and closings, one at a time (the two kinds apart).
-    fn turn(&self, kind: Kind) -> &tokio::sync::Mutex<()> {
-        match kind {
-            Kind::Stage => &self.stage,
-            Kind::Overlay => &self.overlay,
-        }
-    }
-    fn book(&self) -> MutexGuard<'_, Book> {
-        self.book.lock().unwrap_or_else(|e| e.into_inner())
-    }
-    /// The label of `kind`'s window, if it is there.
-    fn live(&self, host: &impl Host, kind: Kind) -> Option<String> {
-        let label = self.book().current(kind)?;
-        host.has(&label).then_some(label)
-    }
-    /// A window gone: its kind, if it was that kind's window now.
-    fn gone(&self, label: &str) -> Option<Kind> {
-        self.book().gone(label)
-    }
-
-    async fn open(&self, host: &impl Host, kind: Kind, place: &Place) -> Result<(), String> {
-        let _turn = self.turn(kind).lock().await;
-        self.open_now(host, kind, place).await
-    }
-
-    async fn close(&self, host: &impl Host, kind: Kind) {
-        let _turn = self.turn(kind).lock().await;
-        self.close_now(host, kind).await;
-    }
-
-    /// Closed if it is showing, else opened: whether it shows now.
-    async fn toggle(&self, host: &impl Host, kind: Kind, place: &Place) -> Result<bool, String> {
-        let _turn = self.turn(kind).lock().await;
-        if self.live(host, kind).is_some() {
-            self.close_now(host, kind).await;
-            Ok(false)
-        } else {
-            self.open_now(host, kind, place).await.map(|()| true)
-        }
-    }
-
-    async fn open_now(&self, host: &impl Host, kind: Kind, place: &Place) -> Result<(), String> {
-        if let Some(label) = self.live(host, kind) {
-            host.bring(kind, &label, place);
-            return Ok(());
-        }
-        // Never two of a kind: whatever of it is still about goes first.
-        for label in host
-            .labels()
-            .into_iter()
-            .filter(|l| Kind::of_label(l) == Some(kind))
-        {
-            self.end_now(host, &label).await;
-        }
-        let lost = host.end_lost(kind).await;
-        if lost > 0 {
-            crate::playback::note_play(
-                &format!(
-                    "cleared away {lost} {} window(s) the app had lost",
-                    kind.label()
-                ),
-                "the lyrics windows",
-            );
-        }
-        let label = self.book().name(kind);
-        let made = host.make(kind, &label, place).await;
-        if made.is_err() {
-            self.book().gone(&label);
-        }
-        made
-    }
-
-    async fn close_now(&self, host: &impl Host, kind: Kind) {
-        if let Some(label) = self.live(host, kind) {
-            self.end_now(host, &label).await;
-        }
-    }
-
-    /// End a window and wait until it is gone (or has taken too long: then it is left, still
-    /// known, so a press can try again).
-    async fn end_now(&self, host: &impl Host, label: &str) {
-        host.end(label);
-        let until = Instant::now() + ENDING;
-        while host.has(label) {
-            if Instant::now() >= until {
-                crate::playback::note_play(
-                    &format!("{label} didn't close in {} s", ENDING.as_secs()),
-                    "the lyrics windows",
-                );
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(15)).await;
-        }
-    }
-}
-
 /// The window that is `kind`'s now, if it is there.
 fn window(app: &AppHandle, kind: Kind) -> Option<WebviewWindow> {
-    let label = app.state::<Shelf>().book().current(kind)?;
+    let label = app.state::<Shelf>().current(kind)?;
     app.get_webview_window(&label)
 }
 
 /// The lyrics windows as Tauri has them.
 struct Tauri<'a>(&'a AppHandle);
 
-impl Host for Tauri<'_> {
+impl Host<Kind> for Tauri<'_> {
+    type Place = Place;
+
     fn has(&self, label: &str) -> bool {
-        self.0.get_webview_window(label).is_some()
+        one_window::has(self.0, label)
     }
 
     fn labels(&self) -> Vec<String> {
-        self.0.webview_windows().into_keys().collect()
+        one_window::labels(self.0)
     }
 
     fn bring(&self, kind: Kind, label: &str, place: &Place) {
@@ -545,117 +377,11 @@ impl Host for Tauri<'_> {
     }
 
     fn end(&self, label: &str) {
-        // Destroyed, not asked to close: nothing on its page can hold it open, and a page that
-        // can no longer reach the app (as a lost one couldn't) goes all the same.
-        if let Some(w) = self.0.get_webview_window(label) {
-            let _ = w.destroy();
-        }
+        one_window::end(self.0, label);
     }
 
     async fn end_lost(&self, kind: Kind) -> usize {
-        #[cfg(windows)]
-        {
-            let known: Vec<isize> = self
-                .0
-                .webview_windows()
-                .values()
-                .filter_map(|w| w.hwnd().ok())
-                .map(|h| h.0 as isize)
-                .collect();
-            let title = kind.title();
-            let lost = tokio::task::spawn_blocking(move || lost::find(title, &known))
-                .await
-                .unwrap_or_default();
-            for &h in &lost {
-                lost::end(h);
-            }
-            let until = Instant::now() + ENDING;
-            while lost.iter().any(|&h| lost::there(h)) && Instant::now() < until {
-                tokio::time::sleep(Duration::from_millis(15)).await;
-            }
-            lost.len()
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = kind;
-            0
-        }
-    }
-}
-
-/// Windows of Venuta's that Windows has and the app doesn't know (anything of a lyrics window's
-/// title not among the app's own): found, and ended the way the app ends its own (asked of the
-/// window's own thread).
-#[cfg(windows)]
-mod lost {
-    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-        PostMessageW, RegisterWindowMessageA,
-    };
-    use windows::core::{BOOL, s};
-
-    /// The window class of every window the app makes.
-    const CLASS: &str = "Tauri Window";
-
-    fn text(h: HWND, class: bool) -> String {
-        let mut buf = [0u16; 128];
-        let n = unsafe {
-            if class {
-                GetClassNameW(h, &mut buf)
-            } else {
-                GetWindowTextW(h, &mut buf)
-            }
-        };
-        String::from_utf16_lossy(&buf[..n.max(0) as usize])
-    }
-
-    /// This process's windows titled `title` that are none of `known`.
-    pub fn find(title: &str, known: &[isize]) -> Vec<isize> {
-        struct Walk<'a> {
-            pid: u32,
-            title: &'a str,
-            known: &'a [isize],
-            found: Vec<isize>,
-        }
-        unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
-            let walk = unsafe { &mut *(l.0 as *mut Walk) };
-            let mut pid = 0u32;
-            unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
-            if pid == walk.pid
-                && !walk.known.contains(&(h.0 as isize))
-                && text(h, true) == CLASS
-                && text(h, false) == walk.title
-            {
-                walk.found.push(h.0 as isize);
-            }
-            BOOL(1)
-        }
-        let mut walk = Walk {
-            pid: std::process::id(),
-            title,
-            known,
-            found: Vec::new(),
-        };
-        let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut walk as *mut Walk as isize)) };
-        walk.found
-    }
-
-    /// End it as the app ends its windows: the window's own thread destroys it.
-    pub fn end(h: isize) {
-        unsafe {
-            let destroy = RegisterWindowMessageA(s!("Tao::DestroyMsg"));
-            let _ = PostMessageW(
-                Some(HWND(h as *mut core::ffi::c_void)),
-                destroy,
-                WPARAM(0),
-                LPARAM(0),
-            );
-        }
-    }
-
-    pub fn there(h: isize) -> bool {
-        unsafe { IsWindow(Some(HWND(h as *mut core::ffi::c_void))) }.as_bool()
+        one_window::end_lost(self.0, kind.title()).await
     }
 }
 
@@ -1182,85 +908,15 @@ mod one_of_each {
     //! unknown, deaf to the app, and every press after made another. These hold a host that works
     //! as Tauri does: a window takes a while to make, its end comes a little after it is asked,
     //! and its end is told by label.
-    use super::{Book, Host, Kind, Place, Shelf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    #[derive(Default)]
-    struct Fake {
-        shelf: Arc<Shelf>,
-        /// The windows there are, by label.
-        windows: Mutex<Vec<String>>,
-        /// Windows only the system still knows (lost by the app before).
-        lost: AtomicUsize,
-        /// The most of one kind there ever were at once.
-        most: AtomicUsize,
-        made: AtomicUsize,
-    }
-
-    impl Fake {
-        fn with(shelf: Arc<Shelf>) -> Arc<Fake> {
-            Arc::new(Fake {
-                shelf,
-                ..Default::default()
-            })
-        }
-        fn of(&self, kind: Kind) -> usize {
-            self.windows
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|l| Kind::of_label(l) == Some(kind))
-                .count()
-                + self.lost.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Host for Arc<Fake> {
-        fn has(&self, label: &str) -> bool {
-            self.windows.lock().unwrap().iter().any(|l| l == label)
-        }
-        fn labels(&self) -> Vec<String> {
-            self.windows.lock().unwrap().clone()
-        }
-        async fn make(&self, kind: Kind, label: &str, _place: &Place) -> Result<(), String> {
-            // A window and its page take a while to make.
-            tokio::time::sleep(Duration::from_millis(40)).await;
-            self.windows.lock().unwrap().push(label.to_owned());
-            self.made.fetch_add(1, Ordering::SeqCst);
-            self.most.fetch_max(self.of(kind), Ordering::SeqCst);
-            Ok(())
-        }
-        fn bring(&self, _kind: Kind, _label: &str, _place: &Place) {}
-        fn end(&self, label: &str) {
-            // Gone a little later, and told by its label, as Tauri tells it.
-            let me = self.clone();
-            let label = label.to_owned();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                me.windows.lock().unwrap().retain(|l| *l != label);
-                me.shelf.gone(&label);
-            });
-        }
-        async fn end_lost(&self, _kind: Kind) -> usize {
-            self.lost.swap(0, Ordering::SeqCst)
-        }
-    }
-
-    fn place() -> Place {
-        Place {
-            px: None,
-            full: false,
-            on_top: true,
-            locked: true,
-            monitor: None,
-        }
-    }
+    use super::{Kind, Shelf};
+    use crate::one_window::fake::Fake;
+    use crate::one_window::{Book, Host, WindowKind};
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn every_window_has_a_label_of_its_own() {
-        let mut book = Book::default();
+        let mut book = Book::<Kind>::default();
         let a = book.name(Kind::Overlay);
         let b = book.name(Kind::Overlay);
         let c = book.name(Kind::Stage);
@@ -1272,7 +928,7 @@ mod one_of_each {
 
     #[test]
     fn an_old_windows_end_never_forgets_the_new_one() {
-        let mut book = Book::default();
+        let mut book = Book::<Kind>::default();
         let old = book.name(Kind::Overlay);
         let new = book.name(Kind::Overlay);
         assert_eq!(book.gone(&old), None, "the old one's end changes nothing");
@@ -1303,7 +959,7 @@ mod one_of_each {
     async fn two_asks_at_once_make_one_window() {
         let shelf = Arc::new(Shelf::default());
         let host = Fake::with(shelf.clone());
-        let p = place();
+        let p = ();
         let (a, b) = tokio::join!(
             shelf.open(&host, Kind::Overlay, &p),
             shelf.open(&host, Kind::Overlay, &p)
@@ -1322,7 +978,7 @@ mod one_of_each {
     async fn presses_in_quick_succession_open_close_and_open_with_never_two() {
         let shelf = Arc::new(Shelf::default());
         let host = Fake::with(shelf.clone());
-        let p = place();
+        let p = ();
         let (a, b, c) = tokio::join!(
             shelf.toggle(&host, Kind::Overlay, &p),
             shelf.toggle(&host, Kind::Overlay, &p),
@@ -1344,11 +1000,11 @@ mod one_of_each {
     async fn a_close_is_done_only_once_the_window_is_gone() {
         let shelf = Arc::new(Shelf::default());
         let host = Fake::with(shelf.clone());
-        shelf.open(&host, Kind::Stage, &place()).await.unwrap();
+        shelf.open(&host, Kind::Stage, &()).await.unwrap();
         shelf.close(&host, Kind::Stage).await;
         assert_eq!(host.of(Kind::Stage), 0);
         // Opened again at once: a window of its own, never one still ending.
-        shelf.open(&host, Kind::Stage, &place()).await.unwrap();
+        shelf.open(&host, Kind::Stage, &()).await.unwrap();
         assert_eq!(host.of(Kind::Stage), 1);
         assert_eq!(host.most.load(Ordering::SeqCst), 1);
     }
@@ -1361,7 +1017,7 @@ mod one_of_each {
         host.windows.lock().unwrap().push("overlay-90".into());
         host.windows.lock().unwrap().push("stage-91".into());
         host.lost.store(1, Ordering::SeqCst);
-        shelf.open(&host, Kind::Overlay, &place()).await.unwrap();
+        shelf.open(&host, Kind::Overlay, &()).await.unwrap();
         assert_eq!(host.of(Kind::Overlay), 1, "only the new one");
         let live = shelf.live(&host, Kind::Overlay).unwrap();
         assert_ne!(live, "overlay-90");
@@ -1372,7 +1028,7 @@ mod one_of_each {
     async fn the_kinds_wait_only_for_their_own() {
         let shelf = Arc::new(Shelf::default());
         let host = Fake::with(shelf.clone());
-        let p = place();
+        let p = ();
         let (a, b) = tokio::join!(
             shelf.open(&host, Kind::Stage, &p),
             shelf.open(&host, Kind::Overlay, &p)

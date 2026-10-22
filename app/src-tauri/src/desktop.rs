@@ -227,9 +227,10 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
 /// window asks (and remembers); until then it stays open.
 pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     // A lyrics window gone (its own Close, the tray, the shortcut, a button here): every window
-    // is told, instead of each asking every few seconds.
+    // is told, instead of each asking every few seconds. The mini player gone: forgotten.
     if matches!(event, WindowEvent::Destroyed) {
         crate::lyric_windows::closed(window.app_handle(), window.label());
+        crate::playback::mini_closed(window.app_handle(), window.label());
     }
     if window.label() != "main" {
         return;

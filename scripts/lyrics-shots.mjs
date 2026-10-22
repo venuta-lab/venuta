@@ -49,6 +49,20 @@ SHOTS.push(
   ['mini-card-mixed-light', 'view=mini&song=mixed&theme=light&line=0', 300, 400],
   ['bigscreen-hindi-outline-large-light', 'view=stage&song=hindi&theme=light&line=2&size=xl&look=outline', 1920, 1080],
 )
+// Lines with nowhere to wrap (fixture song unbroken: one long word, words joined by no-break
+// spaces, a Thai line): the desktop strip makes them smaller until they fit across, in every look
+// and every theme's fonts, and breaks inside a word only at its smallest size.
+for (const look of ['karaoke', 'clean', 'glow', 'outline', 'serif', 'theme'])
+  for (const line of [0, 1, 2]) SHOTS.push([`desktop-unbroken-${look}-line${line}-dark`, `view=overlay&song=unbroken&theme=dark&line=${line}&size=xl&look=${look}`, 520, 296])
+for (const style of ['venuta', 'green-room', 'orchard', 'redline', 'glasshouse', 'neo-tokyo', 'thermoptic', 'sync-ratio', 'layer-zero', 'bounty', 'skin99'])
+  SHOTS.push([`desktop-unbroken-theme-${style}-dark`, `view=overlay&song=unbroken&theme=dark&line=0&size=xl&look=theme&style=${style}`, 520, 296])
+SHOTS.push(
+  ['desktop-unbroken-smallest-dark', 'view=overlay&song=unbroken&theme=dark&line=0&size=xl', 360, 130],
+  ['desktop-unbroken-joined-smallest-light', 'view=overlay&song=unbroken&theme=light&line=1&size=xl', 360, 130],
+  ['desktop-unbroken-large-light', 'view=overlay&song=unbroken&theme=light&line=0&size=xl&look=theme', 1400, 296],
+  ['bigscreen-unbroken-small-dark', 'view=stage&song=unbroken&theme=dark&line=0&size=xl', 960, 540],
+  ['bigscreen-unbroken-joined-small-dark', 'view=stage&song=unbroken&theme=dark&line=1&size=xl', 960, 540],
+)
 
 // --- Chrome over a pipe ---------------------------------------------------------------------
 const profile = mkdtempSync(join(tmpdir(), 'venuta-shots-'))
@@ -103,6 +117,8 @@ const COUNT_FRAMES = `{
 const CHECK = `(() => {
   const W = innerWidth, H = innerHeight, bad = []
   const nowPlaying = !!document.querySelector('[aria-label="Now Playing"]')
+  // A view that failed to draw has nothing to clip: that is a failure of its own.
+  if (!document.getElementById('root')?.textContent?.trim()) bad.push('nothing drawn')
   const name = (e) => (e.dataset.second ? 'row:' + e.dataset.second : e.className.toString().slice(0, 40)) + ' "' + e.textContent.slice(0, 30) + '"'
   for (const e of document.querySelectorAll('[data-second], [data-row], [data-stack]')) {
     const r = e.getBoundingClientRect()

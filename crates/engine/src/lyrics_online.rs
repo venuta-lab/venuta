@@ -993,14 +993,20 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
     {
         return None;
     }
-    // The song's language, as LyricsPlus labels it ("ja", "hi").
-    let lang = v
+    // The song's language, as LyricsPlus labels it ("ja", "hi"), unless the lines' letters
+    // disprove it: it labels some Hindi songs "en" or "id". The lines are read again with the
+    // language their letters say, so what is labelled by it (a pronunciation's tag) follows.
+    let tag = v
         .pointer("/metadata/language")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_owned);
-    let lines = parse_kpoe(v, lang.as_deref());
+    let mut lines = parse_kpoe(v, tag.as_deref());
+    let lang = crate::lyrics::song_lang(tag.as_deref(), &lines);
+    if lang != tag {
+        lines = parse_kpoe(v, lang.as_deref());
+    }
     (!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
         lyrics: Lyrics {
@@ -2566,6 +2572,28 @@ mod tests {
             "{:?}",
             f.credits
         );
+        // The copyright and production lines it sends after the words are credits too.
+        for credit in [
+            "词版权管理方：北京梦织音传媒有限公司",
+            "曲版权管理方：索尼音乐版权代理（北京）有限公司",
+            "录音作品及MV版权：EAS MUSIC LTD",
+            "联合出品：拳头游戏/腾讯游戏/腾讯视频",
+            "出品监制：霍锦 卢泓宇",
+        ] {
+            assert!(
+                f.credits.iter().any(|c| c == credit),
+                "{credit}: {:?}",
+                f.credits
+            );
+        }
+        assert!(
+            f.lyrics
+                .lines
+                .iter()
+                .all(|l| !l.text.contains("版权") && !l.text.contains("出品")),
+            "{:?}",
+            texts(&f)
+        );
         assert!(
             f.lyrics
                 .lines
@@ -2970,6 +2998,55 @@ mod tests {
         );
         // A sung line with a dash further in is still sung.
         assert!(kg.lyrics.lines.len() > 80);
+    }
+
+    #[test]
+    fn a_language_the_lines_letters_disprove_gives_way_to_theirs() {
+        // LyricsPlus's answers as captured on 2026-10-22, labelled as sent or as given here.
+        let lang = |file: &str, tag: Option<&str>| {
+            let mut v = fixture(file);
+            if let Some(t) = tag {
+                v["metadata"]["language"] = Value::String(t.into());
+            }
+            lyricsplus_found(&LyricsRequest::default(), &v)
+                .unwrap()
+                .lyrics
+                .lang
+        };
+        // As sent: every label the letters agree with stands. Lines in Latin letters can be in
+        // any language, so the letters can't say Apple's "en" for Apna Bana Le or "id" for
+        // Chaleya (both Hindi, written in Latin letters) is wrong.
+        for (song, sent) in [
+            ("channa-mereya", "hi"),
+            ("kesariya", "hi"),
+            ("apna-bana-le", "en"),
+            ("chaleya", "id"),
+            ("heeriye", "en"),
+            ("tum-hi-ho", "en"),
+        ] {
+            let file = format!("pairing/{song}.lyricsplus.json");
+            assert_eq!(lang(&file, None).as_deref(), Some(sent), "{song}");
+        }
+        assert_eq!(lang("lyricsplus-idol.json", None).as_deref(), Some("ja"));
+
+        // Channa Mereya's Devanagari lines labelled as Apna Bana Le and Chaleya were, or in a
+        // language of another script: Hindi, as their letters say.
+        let channa = "pairing/channa-mereya.lyricsplus.json";
+        for wrong in ["en", "id", "ta", "ur", "ja"] {
+            assert_eq!(lang(channa, Some(wrong)).as_deref(), Some("hi"), "{wrong}");
+        }
+        // A language written in Devanagari stands, as labelled.
+        for right in ["mr", "ne", "hi-IN"] {
+            assert_eq!(lang(channa, Some(right)).as_deref(), Some(right));
+        }
+        // Idol's kana and kanji, labelled English or Chinese: Japanese.
+        for wrong in ["en", "zh", "ko"] {
+            assert_eq!(
+                lang("lyricsplus-idol.json", Some(wrong)).as_deref(),
+                Some("ja"),
+                "{wrong}"
+            );
+        }
     }
 
     #[test]

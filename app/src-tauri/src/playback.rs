@@ -3,6 +3,7 @@
 //! The engine (`player` crate) runs on its own thread. Status arrives about ten times a second
 //! and goes straight to the window over a channel; the queue travels only when it changes.
 
+use crate::one_window::{self, Host, WindowKind};
 use media_access::{Availability, MediaAccess, PlayableId};
 use player::decode::{Source, Streams};
 use player::engine::{Cmd, EngineKind, Item, OutputChoice, Player, Signal, Status};
@@ -1853,78 +1854,158 @@ pub async fn song_waveform(root: String, path: String) -> Result<Vec<u8>, String
     .map_err(|e| e.to_string())?
 }
 
+// --- The mini player ---------------------------------------------------------------------------
+//
+// One window, whatever asks for it (its button, Ctrl+M in either window, the tray, the command
+// palette) and however quickly, kept as the lyrics windows are (one_window): each opening and
+// closing waits its turn, each window has a label of its own ("mini-3"), and anything of it still
+// about is cleared away before another is made. The main window steps aside in the same turn as
+// the mini player shows, and comes back in the same turn as it goes, so presses in quick
+// succession can never leave the two the wrong way round.
+
+/// The mini player's window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Mini;
+
+impl WindowKind for Mini {
+    const ALL: &'static [Mini] = &[Mini];
+    const WHOSE: &'static str = "the mini player";
+    fn label(self) -> &'static str {
+        "mini"
+    }
+    fn title(self) -> &'static str {
+        "Venuta"
+    }
+}
+
+/// The mini player's window: one at a time, whoever asks and however quickly.
+pub(crate) type MiniShelf = one_window::Shelf<Mini>;
+
+/// The mini player as Tauri has it.
+struct MiniHost<'a>(&'a tauri::AppHandle);
+
+impl MiniHost<'_> {
+    /// The main window steps aside while the mini player shows.
+    fn step_aside(&self) {
+        use tauri::Manager;
+        if let Some(m) = self.0.get_webview_window("main") {
+            let _ = m.minimize();
+        }
+    }
+}
+
+impl Host<Mini> for MiniHost<'_> {
+    type Place = ();
+
+    fn has(&self, label: &str) -> bool {
+        one_window::has(self.0, label)
+    }
+
+    fn labels(&self) -> Vec<String> {
+        one_window::labels(self.0)
+    }
+
+    async fn make(&self, kind: Mini, label: &str, _place: &()) -> Result<(), String> {
+        use tauri::Manager;
+        let app = self.0;
+        let (w, h) = (380.0, 132.0);
+        // Bottom right of the screen the main window is on, clear of the taskbar.
+        let place = app
+            .get_webview_window("main")
+            .and_then(|m| m.current_monitor().ok().flatten())
+            .map(|mon| {
+                let area = mon.work_area();
+                let scale = mon.scale_factor();
+                let right = (area.position.x as f64 + area.size.width as f64) / scale;
+                let bottom = (area.position.y as f64 + area.size.height as f64) / scale;
+                (right - w - 24.0, bottom - h - 24.0)
+            });
+        let mut b = tauri::WebviewWindowBuilder::new(
+            app,
+            label,
+            tauri::WebviewUrl::App("index.html#mini".into()),
+        )
+        .title(kind.title())
+        .inner_size(w, h)
+        .min_inner_size(220.0, 56.0)
+        .decorations(false)
+        .transparent(true)
+        .shadow(true)
+        .always_on_top(true)
+        .resizable(true)
+        .effects(tauri::utils::config::WindowEffectsConfig {
+            effects: vec![tauri::window::Effect::Acrylic],
+            ..Default::default()
+        });
+        if let Some((x, y)) = place {
+            b = b.position(x, y);
+        }
+        b.build().map_err(|e| e.to_string())?;
+        crate::app_icon::apply(app);
+        self.step_aside();
+        Ok(())
+    }
+
+    fn bring(&self, _kind: Mini, label: &str, _place: &()) {
+        use tauri::Manager;
+        if let Some(w) = self.0.get_webview_window(label) {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        self.step_aside();
+    }
+
+    fn end(&self, label: &str) {
+        one_window::end(self.0, label);
+    }
+
+    async fn end_lost(&self, kind: Mini) -> usize {
+        one_window::end_lost(self.0, kind.title()).await
+    }
+
+    /// The mini player gone (or asked to go when it wasn't there): the main window comes back.
+    fn closed(&self, _kind: Mini) {
+        use tauri::Manager;
+        if let Some(m) = self.0.get_webview_window("main") {
+            let _ = m.unminimize();
+            let _ = m.show();
+            let _ = m.set_focus();
+        }
+    }
+}
+
+/// A window gone, however: when it was the mini player's window now, it is forgotten (an older
+/// one's end changes nothing).
+pub fn mini_closed(app: &tauri::AppHandle, label: &str) {
+    use tauri::Manager;
+    app.state::<MiniShelf>().gone(label);
+}
+
 /// Open the mini player (a small window that stays on top; the main window steps aside), or
 /// close it and bring the main window back. Async: making a window from a synchronous command
 /// deadlocks on Windows.
 #[tauri::command]
 pub async fn mini_player(open: bool, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
-    let main = app.get_webview_window("main");
+    let shelf = app.state::<MiniShelf>();
     if open {
-        if let Some(w) = app.get_webview_window("mini") {
-            let _ = w.show();
-            let _ = w.set_focus();
-        } else {
-            let (w, h) = (380.0, 132.0);
-            // Bottom right of the screen the main window is on, clear of the taskbar.
-            let place = main
-                .as_ref()
-                .and_then(|m| m.current_monitor().ok().flatten())
-                .map(|mon| {
-                    let area = mon.work_area();
-                    let scale = mon.scale_factor();
-                    let right = (area.position.x as f64 + area.size.width as f64) / scale;
-                    let bottom = (area.position.y as f64 + area.size.height as f64) / scale;
-                    (right - w - 24.0, bottom - h - 24.0)
-                });
-            let mut b = tauri::WebviewWindowBuilder::new(
-                &app,
-                "mini",
-                tauri::WebviewUrl::App("index.html#mini".into()),
-            )
-            .title("Venuta")
-            .inner_size(w, h)
-            .min_inner_size(220.0, 56.0)
-            .decorations(false)
-            .transparent(true)
-            .shadow(true)
-            .always_on_top(true)
-            .resizable(true)
-            .effects(tauri::utils::config::WindowEffectsConfig {
-                effects: vec![tauri::window::Effect::Acrylic],
-                ..Default::default()
-            });
-            if let Some((x, y)) = place {
-                b = b.position(x, y);
-            }
-            b.build().map_err(|e| e.to_string())?;
-            crate::app_icon::apply(&app);
-        }
-        if let Some(m) = main {
-            let _ = m.minimize();
-        }
+        shelf.open(&MiniHost(&app), Mini, &()).await
     } else {
-        if let Some(w) = app.get_webview_window("mini") {
-            let _ = w.close();
-        }
-        if let Some(m) = main {
-            let _ = m.unminimize();
-            let _ = m.show();
-            let _ = m.set_focus();
-        }
+        shelf.close(&MiniHost(&app), Mini).await;
+        Ok(())
     }
-    Ok(())
 }
 
 /// The mini player button, Ctrl+M and the tray: open the mini player, or, while it is showing,
-/// close it and bring the main window back.
+/// close it and bring the main window back, in one step (asking first and acting after could act
+/// on what was already changing).
 #[tauri::command]
 pub async fn mini_player_toggle(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
-    let showing = app
-        .get_webview_window("mini")
-        .is_some_and(|w| w.is_visible().unwrap_or(false));
-    mini_player(!showing, app).await
+    app.state::<MiniShelf>()
+        .toggle(&MiniHost(&app), Mini, &())
+        .await
+        .map(|_| ())
 }
 
 /// A window starts or stops showing a spectrum display; the engine measures band levels while
@@ -1945,4 +2026,92 @@ pub fn player_spectrum(
         !set.is_empty()
     };
     pb.send(Cmd::Spectrum(any))
+}
+
+#[cfg(test)]
+mod mini_one_window {
+    //! The mini player made as the lyrics windows were before 2026-10-21: asked whether it was
+    //! showing, then opened or closed, under the one label "mini". Ctrl+M or the button pressed
+    //! again while it was being made made a second window of that label, and the end of either
+    //! left the other unknown: alive on screen, deaf to the app, and the main window left
+    //! minimized or brought back out of turn. These hold the host every one-of-a-kind window is
+    //! tested against (one_window::fake).
+    use super::{Mini, MiniShelf};
+    use crate::one_window::fake::Fake;
+    use crate::one_window::{Host, WindowKind};
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn its_windows_are_known_by_their_labels() {
+        for mine in ["mini", "mini-1", "mini-42"] {
+            assert_eq!(Mini::of_label(mine), Some(Mini), "{mine}");
+        }
+        for other in ["main", "minimal", "mini-", "mini-x", "overlay-3", "stage-1"] {
+            assert_eq!(Mini::of_label(other), None, "{other}");
+        }
+    }
+
+    #[tokio::test]
+    async fn two_asks_at_once_make_one_mini_player() {
+        let shelf = Arc::new(MiniShelf::default());
+        let host = Fake::with(shelf.clone());
+        let (a, b) = tokio::join!(shelf.open(&host, Mini, &()), shelf.open(&host, Mini, &()));
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(
+            host.made.load(Ordering::SeqCst),
+            1,
+            "the second brings it forward"
+        );
+        assert_eq!(host.most.load(Ordering::SeqCst), 1);
+        assert_eq!(host.shown(Mini), Some(true));
+    }
+
+    #[tokio::test]
+    async fn presses_in_quick_succession_never_make_two_and_leave_the_main_window_right() {
+        let shelf = Arc::new(MiniShelf::default());
+        let host = Fake::with(shelf.clone());
+        let (a, b, c) = tokio::join!(
+            shelf.toggle(&host, Mini, &()),
+            shelf.toggle(&host, Mini, &()),
+            shelf.toggle(&host, Mini, &())
+        );
+        assert_eq!((a, b, c), (Ok(true), Ok(false), Ok(true)));
+        assert_eq!(host.most.load(Ordering::SeqCst), 1);
+        assert_eq!(host.of(Mini), 1);
+        // The one there is the one the app knows, and the main window stepped aside for it last.
+        let live = shelf.live(&host, Mini).expect("known");
+        assert!(host.has(&live) && live.starts_with("mini-"), "{live}");
+        assert_eq!(host.shown(Mini), Some(true));
+        // One more press closes it: nothing left behind, and the main window back.
+        assert_eq!(shelf.toggle(&host, Mini, &()).await, Ok(false));
+        assert_eq!(host.of(Mini), 0);
+        assert!(shelf.live(&host, Mini).is_none());
+        assert_eq!(host.shown(Mini), Some(false));
+    }
+
+    #[tokio::test]
+    async fn back_to_venuta_brings_the_main_window_back_even_with_no_mini_player() {
+        let shelf = Arc::new(MiniShelf::default());
+        let host = Fake::with(shelf.clone());
+        shelf.close(&host, Mini).await;
+        assert_eq!(host.shown(Mini), Some(false));
+    }
+
+    #[tokio::test]
+    async fn an_old_or_lost_mini_player_goes_before_another_is_made() {
+        let shelf = Arc::new(MiniShelf::default());
+        let host = Fake::with(shelf.clone());
+        // One under the old fixed label, one under a numbered label the app no longer counts as
+        // its own, and one only the system knows.
+        host.windows.lock().unwrap().push("mini".into());
+        host.windows.lock().unwrap().push("mini-90".into());
+        host.windows.lock().unwrap().push("main".into());
+        host.lost.store(1, Ordering::SeqCst);
+        shelf.open(&host, Mini, &()).await.unwrap();
+        assert_eq!(host.of(Mini), 1, "only the new one");
+        let live = shelf.live(&host, Mini).unwrap();
+        assert!(live != "mini" && live != "mini-90", "{live}");
+        assert!(host.has("main"), "the main window is never taken for one");
+    }
 }

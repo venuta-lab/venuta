@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window and the mini player",
+  "description": "Permissions for the main window and the mini player (a new window at each opening: mini-3)",
   "windows": [
     "main",
-    "mini"
+    "mini",
+    "mini-*"
   ],
   "permissions": [
     "core:default",
