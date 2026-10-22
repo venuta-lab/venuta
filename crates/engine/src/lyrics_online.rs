@@ -72,7 +72,7 @@ pub struct LyricsRequest {
 }
 
 pub use crate::lyrics::{LyricLine, Lyrics, Second, SecondSource, Word};
-use crate::lyrics::{carried_translation, finish, mark_source, read_lrc};
+use crate::lyrics::{carried_translation, finish, mark_source, read_lrc, romaji, roman_lang};
 
 /// Lyrics one source gave.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -547,6 +547,193 @@ fn with_translation(mut lines: Vec<LyricLine>, translated: &str, provider: &str)
     lines
 }
 
+/// Roman letters from a second LRC (NetEase's `romalrc`, sent syllable by syllable), joined
+/// into words and put on the lines that start at the same time.
+fn with_roman(
+    mut lines: Vec<LyricLine>,
+    spaced: &str,
+    provider: &str,
+    lang: Option<&str>,
+) -> Vec<LyricLine> {
+    let r = read_lrc(spaced).lines;
+    for l in &mut lines {
+        if let Some(x) = r
+            .iter()
+            .find(|x| x.start_ms == l.start_ms && !x.text.trim().is_empty() && x.text != l.text)
+        {
+            let text = romaji::join_syllables(&l.text, &x.text)
+                .unwrap_or_else(|| x.text.split_whitespace().collect::<Vec<_>>().join(" "));
+            l.roman = Some(Second {
+                text,
+                words: Vec::new(),
+                lang: roman_lang(lang, &l.script),
+                source: SecondSource::Lyrics(provider.to_owned()),
+            });
+        }
+    }
+    lines
+}
+
+/// A language as Kugou names it ("日语"), as BCP 47.
+fn kugou_language(name: &str) -> Option<String> {
+    Some(
+        match name.trim() {
+            "日语" => "ja",
+            "韩语" => "ko",
+            "英语" => "en",
+            "国语" | "普通话" | "华语" => "zh",
+            "粤语" => "yue",
+            "泰语" => "th",
+            _ => return None,
+        }
+        .to_owned(),
+    )
+}
+
+/// Kugou's KRC key (the format is XOR'd with it, after a "krc1" mark, then zlib-compressed).
+const KRC_KEY: [u8; 16] = [
+    64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105,
+];
+
+/// A KRC download's text.
+fn krc_text(content: &str) -> Option<String> {
+    use std::io::Read as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content.trim())
+        .ok()?;
+    let body = bytes.strip_prefix(b"krc1")?;
+    let plain: Vec<u8> = body
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ KRC_KEY[i % KRC_KEY.len()])
+        .collect();
+    let mut text = String::new();
+    flate2::read::ZlibDecoder::new(&plain[..])
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
+}
+
+/// KRC: `[start,length]` lines of `<offset,length,0>word` words, and a `[language:]` block
+/// (base64 JSON) holding each line's Roman letters word by word (type 0) and its translation
+/// (type 1).
+fn parse_krc(text: &str, lang: Option<&str>) -> Vec<LyricLine> {
+    let mut lines: Vec<LyricLine> = Vec::new();
+    let mut romans: Vec<Vec<String>> = Vec::new();
+    let mut translations: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let raw = raw.trim().trim_start_matches('﻿');
+        let Some(r) = raw.strip_prefix('[') else {
+            continue;
+        };
+        let Some((head, body)) = r.split_once(']') else {
+            continue;
+        };
+        if let Some(block) = head.strip_prefix("language:") {
+            let json: Option<Value> = base64::engine::general_purpose::STANDARD
+                .decode(block.trim())
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
+            for part in json
+                .as_ref()
+                .and_then(|j| j.get("content"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let rows: Vec<Vec<String>> = part
+                    .get("lyricContent")
+                    .and_then(Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| {
+                                row.as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|x| x.as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match part.get("type").and_then(Value::as_u64) {
+                    Some(0) => romans = rows,
+                    Some(1) => translations = rows.into_iter().map(|r| r.concat()).collect(),
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        let Some((start, length)) = head.split_once(',') else {
+            continue;
+        };
+        let (Ok(start), Ok(length)) = (start.trim().parse::<u64>(), length.trim().parse::<u64>())
+        else {
+            continue;
+        };
+        let mut words = Vec::new();
+        for seg in body.split('<').skip(1) {
+            let Some((stamp, word)) = seg.split_once('>') else {
+                continue;
+            };
+            let mut n = stamp.split(',').map(|x| x.trim().parse::<u64>());
+            let (Some(Ok(off)), Some(Ok(len))) = (n.next(), n.next()) else {
+                continue;
+            };
+            words.push(Word {
+                start_ms: start + off,
+                end_ms: start + off + len,
+                text: word.to_owned(),
+            });
+        }
+        let text = words.iter().map(|w| w.text.as_str()).collect::<String>();
+        lines.push(LyricLine {
+            start_ms: start,
+            end_ms: start + length,
+            text: text.split_whitespace().collect::<Vec<_>>().join(" "),
+            words,
+            ..Default::default()
+        });
+    }
+    finish(&mut lines);
+    for (i, l) in lines.iter_mut().enumerate() {
+        // Roman letters word by word, timed by the original's words.
+        if let Some(row) = romans.get(i).filter(|r| r.len() == l.words.len()) {
+            let parts: Vec<(&str, &str)> = l
+                .words
+                .iter()
+                .zip(row)
+                .map(|(w, r)| (w.text.as_str(), r.as_str()))
+                .collect();
+            let joined = romaji::join_parts(&parts);
+            let text = joined
+                .iter()
+                .map(|j| j.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.trim().is_empty() && text != l.text {
+                l.roman = Some(Second {
+                    words: joined
+                        .iter()
+                        .map(|j| Word {
+                            start_ms: l.words[j.first].start_ms,
+                            end_ms: l.words[j.last].end_ms,
+                            text: j.text.clone(),
+                        })
+                        .collect(),
+                    text,
+                    lang: roman_lang(lang, &l.script),
+                    source: SecondSource::Lyrics("kugou".into()),
+                });
+            }
+        }
+        if let Some(t) = translations.get(i).filter(|t| !t.trim().is_empty()) {
+            l.translation = Some(carried_translation(t, "kugou"));
+        }
+    }
+    lines
+}
+
 // --- The sources ----------------------------------------------------------------------------
 
 fn agent() -> ureq::Agent {
@@ -805,10 +992,18 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
         return None;
     }
     let lines = parse_kpoe(v);
+    // The song's language, as LyricsPlus labels it ("ja", "hi").
+    let lang = v
+        .pointer("/metadata/language")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned);
     (!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
         lyrics: Lyrics {
             lines,
+            lang,
             ..Default::default()
         },
         ..Default::default()
@@ -919,7 +1114,7 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
     };
     let Some(l) = get_json(
         agent,
-        &format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1"),
+        &format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1&rv=-1"),
         Some("https://music.163.com/"),
     )?
     else {
@@ -928,7 +1123,8 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
     Ok(netease_found(req, &l))
 }
 
-/// NetEase's lyrics answer (`song/lyric`): the lyrics, with their translations.
+/// NetEase's lyrics answer (`song/lyric`): the lyrics, with their translations (`tlyric`,
+/// Chinese) and Roman letters (`romalrc`, asked for with `rv=-1`).
 fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
     let lrc = l
         .pointer("/lrc/lyric")
@@ -941,6 +1137,13 @@ fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
         .filter(|t| !t.trim().is_empty())
     {
         f.lyrics.lines = with_translation(f.lyrics.lines, t, "netease");
+    }
+    if let Some(r) = l
+        .pointer("/romalrc/lyric")
+        .and_then(Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+    {
+        f.lyrics.lines = with_roman(f.lyrics.lines, r, "netease", None);
     }
     credits_out(f, req)
 }
@@ -1050,7 +1253,11 @@ fn qq_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
                 .unwrap_or_else(|| unescape(raw)),
         )
     };
-    let f = found_from_text("qq", &text("lyric")?)?;
+    let mut f = found_from_text("qq", &text("lyric")?)?;
+    // Its translation, when it has one, is a second LRC at the same times.
+    if let Some(tr) = text("trans") {
+        f.lyrics.lines = with_translation(f.lyrics.lines, &tr, "qq");
+    }
     credits_out(f, req)
 }
 
@@ -1125,19 +1332,54 @@ fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskE
     ) else {
         return Ok(None);
     };
-    let Some(d) = get_json(
-        agent,
-        &format!(
-            "https://lyrics.kugou.com/download?ver=1&client=pc&id={}&accesskey={}&fmt=lrc",
-            enc(&id),
-            enc(key)
-        ),
-        None,
-    )?
-    else {
+    let lang = first
+        .get("language")
+        .and_then(Value::as_str)
+        .and_then(kugou_language);
+    let download = |fmt: &str| {
+        get_json(
+            agent,
+            &format!(
+                "https://lyrics.kugou.com/download?ver=1&client=pc&id={}&accesskey={}&fmt={fmt}",
+                enc(&id),
+                enc(key)
+            ),
+            None,
+        )
+    };
+    // KRC times every word and carries Roman letters and translations; LRC when it can't be read.
+    if let Some(d) = download("krc")?
+        && let Some(f) = kugou_krc_found(req, &d, lang.as_deref())
+    {
+        return Ok(Some(f));
+    }
+    let Some(d) = download("lrc")? else {
         return Ok(None);
     };
-    Ok(kugou_found(req, &d))
+    Ok(kugou_found(req, &d).map(|mut f| {
+        f.lyrics.lang = lang;
+        f
+    }))
+}
+
+/// Kugou's KRC download (`fmt=krc`): every word timed, with Roman letters and translations
+/// when it has them.
+fn kugou_krc_found(req: &LyricsRequest, d: &Value, lang: Option<&str>) -> Option<Found> {
+    let text = krc_text(d.get("content").and_then(Value::as_str)?)?;
+    let lines = parse_krc(&text, lang);
+    if lines.is_empty() {
+        return None;
+    }
+    let f = Found {
+        source: "kugou".into(),
+        lyrics: Lyrics {
+            lines,
+            lang: lang.map(str::to_owned),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    credits_out(f, req)
 }
 
 /// Kugou's lyrics download (`fmt=lrc`).
@@ -1887,5 +2129,93 @@ mod tests {
         );
         // A sung line with a dash further in is still sung.
         assert!(kg.lyrics.lines.len() > 80);
+    }
+
+    #[test]
+    fn what_the_sources_send_beside_the_lines_is_kept() {
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        // LyricsPlus labels the song's language.
+        let lp = lyricsplus_found(&idol, &fixture("lyricsplus-idol.json")).unwrap();
+        assert_eq!(lp.lyrics.lang.as_deref(), Some("ja"));
+
+        // NetEase: Roman letters (romalrc, syllable by syllable) joined into words, at the
+        // line's own time, and its Chinese translation.
+        let ne = netease_found(&idol, &fixture("netease-idol.json")).unwrap();
+        let first = &ne.lyrics.lines[0];
+        assert_eq!(first.text, "無敵の笑顔で荒らすメディア");
+        let roman = first.roman.as_ref().unwrap();
+        assert_eq!(roman.text, "muteki no egao de arasu media");
+        assert_eq!(roman.lang, "ja-Latn");
+        assert_eq!(roman.source, SecondSource::Lyrics("netease".into()));
+        let tr = first.translation.as_ref().unwrap();
+        assert_eq!(
+            (tr.text.as_str(), tr.lang.as_str()),
+            ("露出无敌笑容来摧毁媒体", "zh-Hans")
+        );
+        let english = ne
+            .lyrics
+            .lines
+            .iter()
+            .find(|l| l.text == "You're my savior")
+            .unwrap();
+        assert!(english.roman.is_none(), "nothing to romanize");
+        assert!(
+            ne.lyrics.lines.iter().filter(|l| l.roman.is_some()).count() > 70,
+            "every Japanese line"
+        );
+
+        // QQ Music's translation (empty in the captured answer; one added here).
+        let mut qq = fixture("qq-idol.json");
+        qq["trans"] = Value::String("[00:00.74]露出无敌笑容\n".into());
+        let qq = qq_found(&idol, &qq).unwrap();
+        let tr = qq.lyrics.lines[0].translation.as_ref().unwrap();
+        assert_eq!(
+            (tr.text.as_str(), tr.lang.as_str()),
+            ("露出无敌笑容", "zh-Hans")
+        );
+        assert_eq!(tr.source, SecondSource::Lyrics("qq".into()));
+
+        // Kugou's KRC: every word timed, Roman letters timed by the words, translations.
+        let gunjou = req("群青", &["YOASOBI"], 248);
+        let kg = kugou_krc_found(&gunjou, &fixture("kugou-gunjou-krc.json"), Some("ja")).unwrap();
+        assert_eq!(kg.lyrics.lang.as_deref(), Some("ja"));
+        assert_eq!(
+            kg.credits,
+            [
+                "YOASOBI - 群青 - THE FIRST TAKE",
+                "作词：Ayase",
+                "作曲：Ayase"
+            ]
+        );
+        let l = &kg.lyrics.lines[0];
+        assert_eq!(l.text, "嗚呼 いつもの様に");
+        assert_eq!((l.start_ms, l.end_ms), (4493, 6727));
+        assert_eq!(l.words[0].start_ms, 4493);
+        let roman = l.roman.as_ref().unwrap();
+        assert_eq!(roman.text, "aa itsumono you ni");
+        assert_eq!(
+            roman
+                .words
+                .iter()
+                .map(|w| (w.start_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (4493, "aa"),
+                (5148, "itsumono"),
+                (5807, "you"),
+                (6203, "ni")
+            ]
+        );
+        assert_eq!(
+            l.translation
+                .as_ref()
+                .map(|t| (t.text.as_str(), t.lang.as_str())),
+            Some(("啊啊 一如既往般", "zh-Hans"))
+        );
+        // The same lines as its LRC, as many and at the same times.
+        let lrc = kugou_found(&gunjou, &fixture("kugou-gunjou-lrc.json")).unwrap();
+        assert_eq!(kg.lyrics.lines.len(), lrc.lyrics.lines.len());
+        assert_eq!(kugou_language("日语").as_deref(), Some("ja"));
+        assert_eq!(krc_text("not krc"), None);
     }
 }

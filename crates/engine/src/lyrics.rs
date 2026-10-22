@@ -16,6 +16,8 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+pub mod romaji;
+
 /// The answer format: bumped when lyrics are read in a new way, so answers kept from before
 /// are asked for again (and pick up what the new reading keeps).
 ///
