@@ -532,6 +532,43 @@ fn stepping_out_and_back_in_catches_up_at_the_rooms_place() {
     assert!(!e.is_empty() && worst(&e) < 0.1, "in step: {}", worst(&e));
 }
 
+#[test]
+fn a_sleep_or_lost_focus_suspends_alone_and_comes_back_in_at_the_rooms_place() {
+    use together::room_player::Suspension;
+    let a = song(0.0, 30.0, BASES[0], true, true);
+    let mut r = Room::new(SyncMode::Apart);
+    r.start(1, &a, BASES[0], 0, 400);
+    r.pass(2_000);
+    assert_eq!(
+        r.h().status().length_us,
+        Some(30_000_000),
+        "the entry's length as decoded"
+    );
+    r.h().suspend(Suspension::Sleeping);
+    r.pass(1_000);
+    assert_eq!(
+        r.h().status().sub_state,
+        SubState::Suspended(Suspension::Sleeping)
+    );
+    r.pass(2_000);
+    r.h().resume();
+    r.pass(2_000);
+    let t1 = r.now_ns();
+    assert_eq!(r.h().status().sub_state, SubState::InStep);
+    r.pass(2_000);
+    let (tl, host) = (r.tl.clone(), r.host);
+    let heard = r.finish();
+    assert_music_clean("suspended for a sleep", &heard);
+    let s = started(&heard.notes);
+    assert_eq!(
+        s.last().unwrap().2 as u64,
+        ms(300),
+        "back with a 300 ms entrance"
+    );
+    let e = Room::errors(&heard, &tl, &host, t1, t1 + 2e9);
+    assert!(!e.is_empty() && worst(&e) < 0.1, "in step: {}", worst(&e));
+}
+
 // --- Songs changing at the armed boundary ------------------------------------------------------
 
 /// The room plays A from its start, its reference `ref_s` long, then B, armed with `how`;
@@ -617,7 +654,11 @@ fn a_shorter_copy_waits_in_silence_and_the_next_starts_on_the_boundary() {
     assert_music_clean("shorter", &heard);
     let s = started(&heard.notes);
     let (at, content, fade) = *s.last().unwrap();
-    assert_eq!((content, fade), (0, 0), "B from its start, no fade");
+    assert_eq!(
+        (content, fade as u64),
+        (0, ms(15)),
+        "B from its start, rising over 15 ms (D4: a join not sample-exact is a fade)"
+    );
     let e = errors(
         &heard,
         &tl,
@@ -626,7 +667,9 @@ fn a_shorter_copy_waits_in_silence_and_the_next_starts_on_the_boundary() {
         b as f64 * 1e3 + 3e9,
     );
     assert!(!e.is_empty() && worst(&e) < 0.1, "B in step: {}", worst(&e));
-    assert_eq!(heard.count(at as usize), BASES[1] + 1);
+    // Past its 15 ms rise, B is where its first frame put it.
+    let k = at as usize + ms(15) as usize;
+    assert_eq!(heard.count(k), BASES[1] + 1 + ms(15) as i32);
 }
 
 #[test]

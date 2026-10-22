@@ -110,6 +110,9 @@ pub struct RoomPlayStatus {
     /// Every device mode: this output could not keep within 5 ms for 30 s, so it faded out;
     /// it plays again once the mode is set to apart (or the person listens as a remote).
     pub cant_hold: bool,
+    /// How long the entry heard is, in µs of my copy, as the player decodes it (its frames over
+    /// its rate; the stated length until it knows). The host's is the room's reference length.
+    pub length_us: Option<i64>,
 }
 
 impl Default for RoomPlayStatus {
@@ -125,6 +128,7 @@ impl Default for RoomPlayStatus {
             ppm: 0.0,
             heard: None,
             cant_hold: false,
+            length_us: None,
         }
     }
 }
@@ -189,6 +193,17 @@ pub trait RoomHandle<I>: Send {
     fn step_out(&self);
     /// Catch up at the room's place (300 ms fade-in).
     fn rejoin(&self);
+    /// Faded out locally for a reason of the platform's (Interrupted: another app took audio
+    /// focus; Sleeping: the computer slept or is going to): what sounds fades out, buffered
+    /// samples are dropped, and the room goes on. A player that can't tell steps out.
+    fn suspend(&self, why: Suspension) {
+        let _ = why;
+        self.step_out();
+    }
+    /// The reason is over: back in at the room's place (300 ms fade-in).
+    fn resume(&self) {
+        self.rejoin();
+    }
     fn status(&self) -> RoomPlayStatus;
     /// The room lets go: the room program is dropped, your own program comes back paused.
     fn detach(self: Box<Self>);

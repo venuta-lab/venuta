@@ -310,6 +310,23 @@ pub fn line(
     }
 }
 
+/// Someone else's line, as beside their name: as line, except that a person with no copy of
+/// the song reads "Can't play this one, back with the next song" ("Not available for you" is
+/// said to the person it is about).
+pub fn others_line(
+    sub_state: Option<SubState>,
+    mode: ListenMode,
+    away: bool,
+    error_ms: Option<f32>,
+    bound_ms: Option<f32>,
+    host_name: &str,
+) -> String {
+    if !away && sub_state == Some(SubState::CannotPlay) {
+        return "Can't play this one, back with the next song".into();
+    }
+    line(sub_state, mode, away, error_ms, bound_ms, host_name)
+}
+
 /// Your line while stepped out (others read "Stepped out").
 pub fn stepped_out_line(why: StepOut) -> String {
     match why {
@@ -411,6 +428,28 @@ mod tests {
             "Reconnecting"
         );
         assert_eq!(joining_line(60), "Joining... buffering 60%");
+        assert_eq!(
+            others_line(
+                Some(SubState::CannotPlay),
+                ListenMode::Apart,
+                false,
+                None,
+                None,
+                "Asha"
+            ),
+            "Can't play this one, back with the next song"
+        );
+        assert_eq!(
+            others_line(
+                Some(SubState::Ready),
+                ListenMode::Apart,
+                false,
+                None,
+                None,
+                "Asha"
+            ),
+            "Ready"
+        );
         assert_eq!(pressing(Press::Seek { to_ms: 95_400 }), "Moving to 1:35...");
         assert_eq!(stepped_out_line(StepOut::Chosen), "Stepped out");
         assert_eq!(
@@ -503,7 +542,12 @@ mod tests {
             mode,
             sub_state: if away { None } else { s },
             away,
-            line: line(if away { None } else { s }, mode, away, e, b, "Asha"),
+            // Asha (the host) and Meera (the guest) are "you" in the views here; the rest are others.
+            line: if id == 0 || id == 2 {
+                line(if away { None } else { s }, mode, away, e, b, "Asha")
+            } else {
+                others_line(if away { None } else { s }, mode, away, e, b, "Asha")
+            },
             copy: (mode != ListenMode::OneSpeaker).then(|| copy_of(id)),
             error_ms: e,
             bound_ms: b,

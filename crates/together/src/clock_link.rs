@@ -11,9 +11,9 @@
 //!   was read. The host's `t2` is the transport's stamp as the ping was read, `t3` its clock
 //!   as it answers.
 
-use together::clock::{Clock, Sample};
-use together::time::MonoClock;
-use together::transport::{ClockDatagram, PeerId, Transport, TransportEvent};
+use crate::clock::{Clock, Sample};
+use crate::time::MonoClock;
+use crate::transport::{ClockDatagram, PeerId, Transport, TransportEvent};
 
 /// Pings in a burst, and how far apart (ns).
 pub const BURST: u32 = 20;
@@ -118,6 +118,14 @@ impl Pinger {
         }
     }
 
+    /// This computer woke from a sleep: what the clock had describes another world, so a new
+    /// epoch, and a burst to fill it again (design 4.2: a clock that counts sleep shows no
+    /// jump of its own).
+    pub fn woke(&mut self, clock: &mut Clock, now_ns: u64) {
+        clock.new_epoch();
+        self.start_burst(now_ns);
+    }
+
     fn start_burst(&mut self, now_ns: u64) {
         self.burst = BURST;
         self.next_ns = now_ns;
@@ -131,9 +139,9 @@ fn us(ns: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::{BoxFuture, ControlMsg, DATAGRAM_LEN, Get, Gone, MediaStream};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use together::transport::{BoxFuture, ControlMsg, DATAGRAM_LEN, Get, Gone, MediaStream};
 
     struct At(AtomicU64);
     impl MonoClock for At {
@@ -194,7 +202,7 @@ mod tests {
         t.1.lock().unwrap().clear();
         let change = TransportEvent::PathChanged {
             peer: PeerId(0),
-            path: together::transport::PathInfo {
+            path: crate::transport::PathInfo {
                 direct: true,
                 relay: false,
                 rtt_us: Some(1_000),
