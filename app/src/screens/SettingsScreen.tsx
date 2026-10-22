@@ -1097,7 +1097,8 @@ function SystemPage(props: { onShortcuts: () => void }) {
         </p>
         <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
           Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
-          with fxtranslate (MPL-2.0). Nothing you play or read is sent anywhere.
+          with fxtranslate (MPL-2.0); nothing you play or read is sent anywhere. Translation with your own key sends a
+          song's lyrics to the service you chose (DeepL, Microsoft, Google or Anthropic) only when you translate.
         </p>
       </div>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
