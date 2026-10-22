@@ -1002,6 +1002,82 @@ Streams:  Get{get: "<key>" | "cover:<key>" | "env:<key>", from, to?}
 
 `Action` gains entry ids (`Jump { entry }`, `Remove { entry }`, `Move { entry, to }`). `RoomView` gains `transition`, per-member `mode`, and the anchor and next. All strings and lists stay bounded and checked as today.
 
+#### Settled in WP7 (protocol 3 and Room v2)
+
+**Where it lives, and protocol 2 alongside.** The live sessions (`together-net`'s `host.rs` and `guest.rs`, the app's `together/*`) speak protocol 2 until WP9 moves them (R2), so protocol 2 and today's room stay exactly as they are (`proto`, `room::Room`, `timeline::Timeline`, `together::PROTOCOL = 2`), and the new ones sit beside them: `together::proto::v3` (`proto/v3.rs`, `v3::PROTOCOL = 3`), `together::room::v2` (`room/v2.rs`, Room v2, pure), and the anchor arithmetic in `timeline.rs` beside `Timeline`. WP13 deletes the old ones after R2. Today's room gains one method WP8 asked for, `Room::back(id)`: a member marked away because their pings stopped is back when one arrives (no knock needed, the connection never closed).
+
+**Versioning.** `Hello { protocol, name, proof, app }` and `Refused { why }` keep protocol 2's exact shape, so each side can read the other's first exchange:
+
+| Guest | Host | What happens |
+|---|---|---|
+| 3 | 3 | the room |
+| 2 (0.3) | 3 | the host reads the hello leniently (`v3::door`: only `t` and `protocol` are looked at first, so a later version's hello with more fields is read too) and answers `Refused { why: v3::DIFFERENT_VERSIONS }`, today's words; the 0.3 guest shows them |
+| 3 | 2 (0.3) | the 0.3 host reads the hello (same fields), sees 3 and refuses with the same words; the guest reads protocol 2's `Refused` as its own |
+
+Tests feed literal protocol 2 lines both ways. Nothing else of protocol 2 is ever read by a protocol 3 side.
+
+**The message set** (`proto::v3`, every message checked as today: unknown fields refused, strings and lists bounded, songs checked, `MAX_MESSAGE` per line):
+
+```
+ToHost:  Hello{protocol, name, proof, app}            as protocol 2
+         Ready{prep, entry}                           a prepare's or an armed next's prep
+         Unable{prep, entry, why: no_copy | failed}
+         State{entry?, sub_state, error_us?, bound_us?, copy?{kind, class, length_diff_s?}}
+         Mode{mode: one_speaker | every_device | apart}
+         Ask{action} | Request{action} | Undo | Bye
+ToGuest: Waiting | Welcome{you, room} | Refused{why} | Ended{why}
+         Room{room}                                   this person's view (see below)
+         Prepare{prep, entry, content_us, purpose}
+         Commit{anchor} | Hold{anchor}
+         ArmNext{prep, next} | Disarm{seq}
+         HandOver{to, ticket, anchor?, next?, line{from_ref_us, to_ref_us, rate}}   (shape only; WP20)
+Action:  play | pause | seek{content_us} | next | previous | jump{entry} | add{songs, next}
+         | remove{entry} | move{entry, to} | volume{percent} | accept{request} | decline{request}
+```
+
+- No pings on the control stream: protocol 3 pings are the 29-byte datagrams (or WP8's clock stream when datagrams can't go).
+- The host learns each guest's round trip and path from its transport (`IrohTransport::path`, `PathChanged`), not from the guest: the session passes them to `Room::path`.
+- `State` is sent on a change, at most every 2 s (the guest's rule); the host passes the view on only when a line anyone sees changes (`view::line`), the copy or the entry.
+- `Disarm` is new: a queue change can leave the playing entry with nothing after it, and an armed next must then be withdrawn. Anchors, nexts and disarms share one sequence number: a guest applies only what is newer than what it holds. `RoomHandle` gains `disarm()` for it (its own `contract:` commit).
+- `RoomView` (the wire's): `host_name`, `members` (`id, name, host, role, mode, sub_state` (none while away), `away, copy` (only in the view of that person and of the host, D14), `error_us, bound_us`), `waiting` (names for the host only), `queue` of `{id, song}`, `phase` (`resting`: nothing has played; `queue_ended`; `playing`; `held`), `anchor`, `next`, `starting` (names a prepare still waits for), `activity`, `settings` (`transition, new_role, auto_roles, guests_volume`), `requests` (`id, from, action`). Each person gets their own view.
+- `check_to_guest` is new: a guest checks what the host sends as the host checks guests (songs, sizes, names).
+
+**Room v2's outputs.** Every call takes the host's time and returns `Changes { out, notes, volume, gone, ended }`: `out` is the messages to send, each addressed to one member (the host's own, id 0, go to the host's own conductor and window), already in the order to send; a view goes out ahead of any message that refers to what it shows (an added entry before its `Prepare`), and a member gets views only after their `Welcome`. `notes` are for the host's window alone (`Slow { id }`: three prepares missed in a row; `SameRoomOff { id }`). `volume` is a change the host's player makes (B17). `gone` is who is out of the room now (left, removed, or away for 2 minutes), for the session to close and forget. `ended` says the room ended (End for everyone, or idle).
+
+**The room's state.**
+
+```
+          Opening::Playing (A1: the host's live place, nothing touched)
+                                  |
+Resting{after} --press--> Resting + Prep(Start) --ready or 2.5 s--> Playing(anchor)
+Playing --pause--> Held(anchor at now + pause lead)     Held --play--> Held + Prep(Resume) --> Playing
+Playing --seek/next/previous/jump--> Playing + Prep(Seek|Skip|Jump)   (the anchor plays until the commit)
+Playing --boundary, next armed--> Playing(next, content 0 at the boundary), Commit
+Playing --boundary of the last entry--> Resting{after: last} (phase queue_ended); a Hold at the end goes out a pause lead before it
+Playing --every playing member suspended 3 s--> Held(auto)  --someone ready again, or play--> Prep(Resume)
+Playing --every playing member unable for the entry 5 s--> Prep(Skip) to the next ("no one could play it")
+Held or Resting --no action for 60 min--> Ended
+any --end for everyone--> Ended
+```
+
+- A prepare's purpose comes from where the room is: from `Resting`, `Start`; from `Held`, `Resume` for the held entry and `Start` for another (a skip while paused starts the new song, as today); from `Playing`, `Seek` for the same entry, `Skip` for another, `Jump` when it was chosen from the queue. The player decides the splice at the commit from what it plays against the anchor (the purpose is the hint it prepared by).
+- Next, previous, a seek and a jump while a prepare is pending start from the prepare's target, not the playing anchor (B10: skip, skip, skip moves three songs; one commit). A newer prepare replaces the older (new prep id; Ready for the old is ignored) and waits its own 2.5 s.
+- Pause while a prepare is pending cancels it and holds at its target (B11: a skip then a pause lands paused at the new song, both in the activity). Play while one is pending does nothing. Undo cancels a pending prepare.
+- Pause is scheduled: `Hold{content at at, host_us: at}` with `at = now + pause lead`; the room is `Held` from the press. A seek while held moves the held anchor (a new `Hold`, B5).
+- The armed next: due 20 s before the reference copy's end (at once for a shorter song), with the room's transition (gapless when both songs are on the same album, D5), boundary `anchor.host_us + (length - anchor.content_us)` minus the crossfade. It is recomputed after every change; a different one goes out as `ArmNext` (new prep) or `Disarm`. A queue change or a length change within 3 s of the boundary leaves the armed next for this boundary (C6); a new anchor (a commit, a hold) always recomputes it. The armed next can't be removed within those 3 s ("about to start; skip it instead"), nor can the playing entry or a pending prepare's.
+- The reference length per entry is the song's stated `duration_ms`, refined by `Room::set_length(entry, µs)` from the host's own player; nothing is armed for an entry whose length is unknown.
+- At the end of the queue an entry added before the boundary starts from silence at it (C2 with C8's autoplay additions near the end).
+
+**Who waits for whom.** A prepare waits for every member who is present (not away), plays (not a remote), and is not suspended, stepped out or unable for that entry, the host included; whoever turns into one of those while waited for stops being waited for, and someone let in during a prepare is waited for too (A11), within the same 2.5 s. At the commit, `at = now + start lead`, the lead `max(floor, 2 x p95 round trip + 50 ms)`, floor 300 ms when every playing guest is on the host's network (direct, median round trip under 8 ms) and 500 ms otherwise, at most 2 s, the p95 the worst of the playing guests' (their last 60 s, 64 samples at most). The pause lead is 150 ms on one network, else `max(150 ms, 2 x that round trip)` up to 400 ms. Those still waited for at a commit have missed it; three in a row tells the host (`Slow`). Mid-song nobody waits: a member's suspension, stall, step out or drop never changes the anchor; only every playing member suspended for 3 s (the set: present, playing, not stepped out, not unable; at least one) holds the room (D11).
+
+**Roles (D20).** A guest's role is set by the host, or else the room's default: the role the host chose for new people, or, while the host hasn't chosen (`auto_roles`), control for rooms of up to 4 people and add above (control comes back when the room is 4 again). An `Ask` without the role is refused with words as today; a `Request` needs no role, is kept for 60 s (one per person, ten at most), and anyone with control accepts or declines it; accepted, it is done as the asker's, noted "Ravi skipped (Asha said yes)". A request for a song change that the room has since moved past is out of date. Adding songs is never a request. Volume (B17) is the host's, or a remote's when the host lets guests change it.
+
+**Presence (the away rule, and WP8's ask).** Every message or clock ping from a member is `Room::heard`: a member silent for 5 s is shown away; heard again on the same connection, back. `Room::lost` (the transport's `Lost`) is away at once; a member silent 15 s is taken as lost then. Two minutes after the loss they are out (`gone`, "lost connection"); knocking again with their key before that, they are the same member at once (and get their welcome again: view, the pending prepare, the armed next).
+
+**Endings.** Leave (`Bye`) is out at once ("left"); Remove sends that member `Refused` with neutral words ("Asha took you out of the room.") and may block; End for everyone sends `Ended` to everyone, the host's own conductor included, and the room takes nothing more; a held or resting room with no action for 60 minutes ends itself the same way (D18; actions are presses, undos and the host's settings). A host crash ends nothing here (guests play on; their session's rule). Hand-over is WP20's; protocol 3 already carries `HandOver`.
+
+**Same network (F12, room side).** `Room::path(id, PathInfo, now)` keeps each guest's direct flag and round trips. Every device is taken only while on the host's network; a member in it whose median round trip is over 15 ms for 30 s is moved to apart, and the host is told (`SameRoomOff`).
+
 ### 5.8 Alignment
 
 ```rust
