@@ -18,6 +18,7 @@
 //! allocates nothing, and takes any base ratio (the source's rate over the device's), with a
 //! kernel cut at the device's rate for sources faster than it (`Kernels`).
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// What the room asks of this player.
@@ -385,21 +386,30 @@ impl Kernel {
 #[derive(Debug, Clone)]
 pub struct Kernels {
     device: u32,
-    scaled: Vec<(u32, Kernel)>,
+    scaled: Arc<[(u32, Kernel)]>,
 }
 
 impl Kernels {
+    /// The kernels for a device at `rate`: worked out the first time a renderer is made for that
+    /// rate (15 to 25 ms), and shared by every renderer after it (one per start of an output).
     pub fn for_device(rate: u32) -> Kernels {
+        static MADE: std::sync::Mutex<Vec<Kernels>> = std::sync::Mutex::new(Vec::new());
         let _ = Kernel::unity();
         let d = rate.max(1);
-        Kernels {
+        let mut made = MADE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(k) = made.iter().find(|k| k.device == d) {
+            return k.clone();
+        }
+        let k = Kernels {
             device: d,
             scaled: STANDARD_RATES
                 .iter()
                 .filter(|&&s| s > d)
                 .map(|&s| (s, Kernel::scaled(f64::from(s) / f64::from(d))))
                 .collect(),
-        }
+        };
+        made.push(k.clone());
+        k
     }
 
     /// The kernel for a source at `source` Hz (`None`: too far above the device's rate, past the
@@ -1556,9 +1566,13 @@ mod tests {
         let cd = Kernels::for_device(44_100);
         assert!(cd.pick(384_000).unwrap().taps() <= MAX_TAPS);
         // Every kernel about the same size: the phases fall as the taps grow.
-        for (_, k) in &cd.scaled {
+        for (_, k) in cd.scaled.iter() {
             let n = k.table.len();
             assert!((30_000..40_000).contains(&n), "{} taps: {n}", k.taps());
         }
+        // Worked out once per device rate: every renderer after the first shares them.
+        let again = Kernels::for_device(44_100);
+        assert!(Arc::ptr_eq(&cd.scaled, &again.scaled));
+        assert!(!Arc::ptr_eq(&cd.scaled, &Kernels::for_device(48_000).scaled));
     }
 }
