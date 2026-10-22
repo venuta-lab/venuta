@@ -40,7 +40,7 @@ await import('@fontsource-variable/figtree')
 await import('@fontsource-variable/inter')
 await import('@fontsource/shippori-mincho-b1/800')
 await import('../index.css')
-const [{ createRoot }, { createElement }, prefs, motion, lyrics, model, translation, dictionary] = await Promise.all([
+const [{ createRoot }, { createElement }, prefs, motion, lyrics, model, translation, dictionary, translationEngine] = await Promise.all([
   import('react-dom/client'),
   import('react'),
   import('../lib/prefs'),
@@ -49,6 +49,7 @@ const [{ createRoot }, { createElement }, prefs, motion, lyrics, model, translat
   import('../lib/lyricsModel'),
   import('../lib/translation'),
   import('../lib/japaneseDictionary'),
+  import('../lib/translationEngine'),
 ])
 motion.watchAwake()
 prefs.applyPrefs()
@@ -107,17 +108,31 @@ if (q.get('play') === '1') {
   }, 100)
 }
 
-// Translation models on this PC (stand-ins for the translation package's).
+// Translation models on this PC (stand-ins for the translation package's): only Spanish and French
+// are offered. `engine=deepl|microsoft|google|llm` picks a key-based engine, `key=1` keeps a
+// key for it, `auto=1` translates automatically.
 const MODELS = [
-  { id: 'hi-en', from: 'hi', to: 'en', name: 'Hindi to English', size_bytes: 47_185_920, installed: true, progress: null },
-  { id: 'ja-en', from: 'ja', to: 'en', name: 'Japanese to English', size_bytes: 61_865_984, installed: false, progress: null },
-  { id: 'es-en', from: 'es', to: 'en', name: 'Spanish to English', size_bytes: 20_971_520, installed: false, progress: 0.4 },
+  { id: 'hi-en', from: 'hi', to: 'en', name: 'Hindi to English', size_bytes: 47_185_920, installed: true, progress: null, offered: false },
+  { id: 'ja-en', from: 'ja', to: 'en', name: 'Japanese to English', size_bytes: 61_865_984, installed: false, progress: null, offered: false },
+  { id: 'es-en', from: 'es', to: 'en', name: 'Spanish to English', size_bytes: 20_971_520, installed: false, progress: 0.4, offered: true },
+  { id: 'fr-en', from: 'fr', to: 'en', name: 'French to English', size_bytes: 22_020_096, installed: false, progress: null, offered: true },
 ]
+const KEYED = ['deepl', 'microsoft', 'google', 'llm'] as const
+const previewEngine = q.get('engine')
+if (previewEngine && (KEYED as readonly string[]).includes(previewEngine))
+  translationEngine.setEngineChoice({ ...translationEngine.engineChoice(), engine: previewEngine as (typeof KEYED)[number], auto: q.get('auto') === '1' })
 translation.setTranslationBackend({
   models: () => Promise.resolve(MODELS),
   download: () => Promise.resolve(),
   remove: () => Promise.resolve(),
   translate: () => new Promise(() => {}),
+  keys: () =>
+    Promise.resolve(
+      KEYED.map((engine) => ({ engine, name: translationEngine.ENGINES[engine].name, kept: q.get('key') === '1' && engine === previewEngine, plan: engine === 'deepl' ? 'Free' : null, region: null })),
+    ),
+  saveKey: () => Promise.resolve(),
+  forgetKey: () => Promise.resolve(),
+  testKey: () => Promise.resolve(['Buenos días', 'Good morning']),
 })
 if (q.get('dict') === 'downloading') dictionary.setDictionaryStatus({ state: 'downloading', done: 40, total: 100 })
 

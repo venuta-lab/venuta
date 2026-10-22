@@ -6,10 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish = false
-description = "Lyric lines translated on the device: the translation models (downloaded only when asked, checked against pinned checksums, removable), a song's lines translated in one go, and a cache per song. Pure: no platform code (Android reuses it); nothing leaves the device but a model's download"
+description = "Lyric lines translated: on the device (the translation models, downloaded only when asked, checked against pinned checksums, removable), or by an engine with the listener's own key (DeepL, Microsoft, Google, Claude) when asked; a song's lines in one go, and a cache per song. Pure: no platform code (Android reuses it)"
 
 [features]
-default = ["bergamot", "download"]
+default = ["bergamot", "download", "keyed"]
 # Mozilla's Firefox Translations models through fxtranslate (a pure-Rust port of their engine).
 # The engine's optional C++ SIMD kernel is left off: it is compiled for one CPU level with no
 # check at run time (i8mm on Arm, which older phones lack), so the portable kernel runs
@@ -18,6 +18,8 @@ bergamot = ["dep:fxtranslate"]
 simd = ["bergamot", "fxtranslate/gemmology"]
 # Downloads models over HTTPS (ureq); without it the app supplies its own `Fetch`.
 download = ["dep:ureq"]
+# The engines with the listener's own key (DeepL, Microsoft, Google, Claude), over HTTPS.
+keyed = ["dep:ureq"]
 
 [dependencies]
 serde.workspace = true
@@ -36,3 +38,7 @@ tempfile.workspace = true
 [[test]]
 name = "bergamot_real"
 required-features = ["bergamot", "download"]
+
+[[test]]
+name = "keyed"
+required-features = ["keyed"]

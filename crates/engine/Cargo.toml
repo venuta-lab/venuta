@@ -18,7 +18,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 lyrics-text.workspace = true
-lyrics-translate = { workspace = true, features = ["bergamot", "download"] }
+lyrics-translate = { workspace = true, features = ["bergamot", "download", "keyed"] }
 media-access.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true

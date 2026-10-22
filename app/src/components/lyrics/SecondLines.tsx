@@ -3,7 +3,8 @@ import { correctLine } from '../../lib/lyricCorrections'
 import { sourceKind, sourceWords, type LyricLine } from '../../lib/lyricsModel'
 import { useEscape } from '../../lib/layers'
 import { rowsFor, type SecondKind } from '../../lib/secondLines'
-import { downloadModel, languageName, sizeWords } from '../../lib/translation'
+import { downloadModel, languageName, statusWords } from '../../lib/translation'
+import { ENGINES } from '../../lib/translationEngine'
 import type { SecondLinesView } from '../../lib/useSecondLines'
 import { SECOND_NAMES } from '../../lib/secondChoice'
 
@@ -40,24 +41,35 @@ export function SecondSwitches(props: { seconds: SecondLinesView; className?: st
   )
 }
 
-/** Translation switched on, and the lyrics carry none in your language: what it takes. */
+/** Translation switched on, and the lyrics carry none in your language: what it takes, in a
+ *  sentence, with the one button that does it (Download, Translate, Try again). */
 function TranslationNote({ seconds: v }: { seconds: SecondLinesView }) {
   const t = v.translation
-  const from = v.lang ? languageName(v.lang) : 'this language'
-  const into = languageName(v.reader)
-  if (t.kind === 'needs-model')
-    return (
-      <span className="flex flex-wrap items-center gap-2 text-[12px] text-ink/60">
-        {`Translating ${from} into ${into} needs its model on this PC (${sizeWords(t.model.size_bytes)}, downloaded once from its publisher; nothing is sent anywhere).`}
-        <button onClick={() => void downloadModel(t.model.id).catch(() => {})} className="btn btn-sm">
-          Download
+  const words = statusWords(t, v.lang, v.reader)
+  if (!words) return null
+  const line = (tone: string, button?: { label: string; run: () => void }) => (
+    <span className={`flex flex-wrap items-center gap-2 text-[12px] ${tone}`}>
+      {words}
+      {button && (
+        <button onClick={button.run} className="btn btn-sm">
+          {button.label}
         </button>
-      </span>
-    )
-  if (t.kind === 'downloading') return <span className="text-[12px] text-ink/55">{`Downloading the ${from} model, ${Math.round((t.model.progress ?? 0) * 100)}%`}</span>
-  if (t.kind === 'translating') return <span className="text-[12px] text-ink/55">Translating on this PC…</span>
-  if (t.kind === 'none') return <span className="text-[12px] text-ink/45">{`No translation into ${into} for ${from} songs on this PC yet.`}</span>
-  return null
+      )}
+    </span>
+  )
+  switch (t.kind) {
+    case 'needs-model':
+      return line('text-ink/60', { label: 'Download', run: () => void downloadModel(t.model.id).catch(() => {}) })
+    case 'ask':
+      return line('text-ink/55', { label: `Translate with ${ENGINES[t.engine].name}`, run: v.translate })
+    case 'failed':
+      return line('text-ink/60', { label: 'Try again', run: v.translate })
+    case 'translating':
+    case 'downloading':
+      return line('text-ink/55')
+    default:
+      return line('text-ink/45')
+  }
 }
 
 /** A line's rows in Now Playing, each with its source on hover and a way to correct it. Rows a

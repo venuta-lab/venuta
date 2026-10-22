@@ -8,6 +8,7 @@
   - **Hindi, Tamil, Japanese and Korean:** at best part of the meaning.
   - **Punjabi:** no usable offline model.
 - **Built:** the Bergamot engine (`crates/lyrics-translate`). Whether Translation on this PC ships, and with what wording, is the owner's call (see "What this means").
+- **Decided (L7):** it is offered only where it proved reliable: Spanish, and French after a second test of five Western European languages ("Western European languages" at the end). Every other song language is pointed to the key-based engines (DeepL, Microsoft, Google, Claude with your own key).
 
 ## Summary
 
@@ -464,3 +465,241 @@ Each has a human English translation, and every source is linked from its song b
 | 갈 길은 멀구요 행선(行船)은 더디니 늦바람 불라고 성황(城隍)님 조른다 | I have a long way to go, the ship is moving slow; I pray again and again to the earth god to blow winds to move the ship. | There is a long way to go, and the journey is slow, so the fire of the wind is slow, and the fire is slow. | It's a long way to go, and the line is slow, and the wind is slow and the wind is blowing. |
 | 님도 보구요 놀기도 하구요 몽금이 개암포 들렸다 가게나 | I will see my love, and play along the way; I will stop by at the Mong-geum-yi gae-am-po (Harbor). | I'm playing with you, too. I'm playing. I'm having a dream come a shit. | I see you, I play with you. I can't believe you've got a gun on your head. |
 | 바다에 흰돛 쌍쌍이 도으나 외로은 사랑엔 눈물만 겨워라 | White sails turn in the sea; the lonely lover’s heart is filled with tears. | There are two white sails in the sea, but only tears in love alone. | There are pairs of white sails in the sea, but only tears in the love of the lonely. |
+
+## Western European languages (work package L7, 2026-10-22)
+
+- **Question:** besides Spanish, which song languages may Translation on this device be offered for? Mozilla rates French, German, Italian, Portuguese and Dutch highest after Spanish, so those five were tested the same way as above.
+- **Rule:** a language is offered only when the meaning was kept on **every** song of its test, as Spanish was (4 of 4).
+- **Answer:** **French** (3 of 3) joins Spanish. German and Portuguese came close (2 of 3, one partly each); Italian (opera libretti and the anthem) and Dutch (older spelling) did not. Translation on this device is offered for **Spanish and French songs into English** only (`crates/lyrics-translate/src/reliable.rs`); every other song language is pointed to the key-based engines.
+
+| Language | Kept | Partly | Lost | Offered |
+|---|---|---|---|---|
+| French | 3 | 0 | 0 | **yes** |
+| German | 2 | 1 | 0 | no |
+| Italian | 0 | 1 | 2 | no |
+| Portuguese | 2 | 1 | 0 | no |
+| Dutch | 1 | 1 | 1 | no |
+
+- **How:** 15 excerpts of 3 to 5 lines, 3 per language, each with a human English translation. The same engine and settings as above: Bergamot through `fxtranslate` 0.5.0, the newest release model per pair (`base-memory` 3.0), one line per sentence, each song one batch. Run with the ignored test `western_european_lyrics` in `crates/lyrics-translate/tests/bergamot_real.rs` (the corpus file is given by `LYRICS_CORPUS`). The verdicts use the same three words as above, judged by one reader against the human translation.
+- **The texts:** the lyrics are public domain (traditional, or lyricists who died before 1955). Every English translation is by English Wikipedia editors (CC BY-SA 4.0), and keeps that licence and credit here: each links to the exact revision it came from, which lists its authors. As with the first test, these are older, more formal texts than most pop, so the test is harder than what most people play.
+
+### French
+
+#### fr-01: La Marseillaise
+
+- **Words:** Claude Joseph Rouget de Lisle, 1792 (died 1836). Original: [source](https://en.wikipedia.org/w/index.php?title=La_Marseillaise&oldid=1380651601).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=La_Marseillaise&oldid=1380651601).
+- **Meaning kept:** Bergamot **kept** (line 1 reads "Come to the children"; the rest right).
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). Line 4 was wrapped in a {{music repeat}} template (sung twice); the repeat marker was dropped. French typographic space before '!' kept as on the page. The English splits the sentence across lines 3-4 differently ('Against us, tyranny's / blood-stained standard has been raised'); line pairs are as the page aligns them. Literal prose translation, not a singing version.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Allons enfants de la Patrie, | Let's go, children of the Fatherland, | Come to the children of the Fatherland, |
+| Le jour de gloire est arrivé ! | The day of glory has arrived! | The day of glory has arrived! |
+| Contre nous de la tyrannie | Against us, tyranny's | Against us tyranny |
+| L'étendard sanglant est levé, | blood-stained standard has been raised, | The bloody banner is raised, |
+
+#### fr-02: Au clair de la lune
+
+- **Words:** Traditional (anonymous French folk song, 18th century). Original: [source](https://en.wikipedia.org/w/index.php?title=Au_clair_de_la_lune&oldid=1378126608).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Au_clair_de_la_lune&oldid=1378126608).
+- **Meaning kept:** Bergamot **kept** (clear moon for light of the moon, pen for quill).
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). The opening double quote begins a quoted speech that closes after line 8 on the page; it is kept unclosed in both columns. Literal translation (quill for 'plume').
+
+| Original | Human | Bergamot |
+|---|---|---|
+| "Au clair de la lune, | "By the light of the moon, | "In the clear moon, |
+| Mon ami Pierrot, | My friend Pierrot, | My friend Pierrot, |
+| Prête-moi ta plume | Lend me your quill | Lend me your pen |
+| Pour écrire un mot. | To write a word. | To write a word. |
+
+#### fr-03: À la claire fontaine
+
+- **Words:** Traditional (anonymous French folk song). Original: [source](https://en.wikipedia.org/w/index.php?title=%C3%80_la_claire_fontaine&oldid=1376547055).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=%C3%80_la_claire_fontaine&oldid=1376547055).
+- **Meaning kept:** Bergamot **kept**.
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). Blank lines between stanzas skipped. Line 3 is the refrain; the page prefixes it with the label '(refrain) ' in both columns, which was removed in both. Literal translation, unrhymed; line 4 'I lay and dried' is freer than 'je me suis fait sécher'.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| À la claire fontaine m'en allant promener | As I was walking by the clear fountain, | At the clear fountain going for a walk |
+| J'ai trouvé l'eau si belle que je m'y suis baignée. | I found the water so lovely I had to bathe. | I found the water so beautiful that I bathed there. |
+| Il y a longtemps que je t'aime, jamais je ne t'oublierai | I've loved you for so long, I will never forget you | I've loved you for a long time, I'll never forget you |
+| Sous les feuilles d'un chêne, je me suis fait sécher. | Under the oak's leaves, I lay and dried. | Under the leaves of an oak tree, I got dried. |
+| Sur la plus haute branche, un rossignol chantait. | On the highest bough, a nightingale sang. | On the highest branch, a nightingale sang. |
+
+### German
+
+#### de-01: Das Lied der Deutschen (third stanza)
+
+- **Words:** August Heinrich Hoffmann von Fallersleben, 1841 (died 1874). Original: [source](https://en.wikipedia.org/w/index.php?title=Deutschlandlied&oldid=1381174435).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Deutschlandlied&oldid=1381174435).
+- **Meaning kept:** Bergamot **partly** (Einigkeit (unity) becomes a made-up "unisuality"; "After that" loses what to strive for).
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). Third stanza (the current German national anthem), first 4 lines; the page shows it in bold. Plain literal translation; line 3 reorders ('Danach lasst uns alle streben' = 'Let us strive for this together').
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Einigkeit und Recht und Freiheit | Unity and justice and freedom | unisuality and justice and freedom |
+| Für das deutsche Vaterland! | For the German fatherland! | For the German Fatherland! |
+| Danach lasst uns alle streben | Let us strive for this together, | After that, let's all strive |
+| Brüderlich mit Herz und Hand! | Brotherly with heart and hand! | Brotherly with heart and hand! |
+
+#### de-02: Die Gedanken sind frei
+
+- **Words:** Traditional (anonymous German folk song, c. late 18th century; popular version published by Hoffmann von Fallersleben, 1842, died 1874). Original: [source](https://en.wikipedia.org/w/index.php?title=Die_Gedanken_sind_frei&oldid=1322392405).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Die_Gedanken_sind_frei&oldid=1322392405).
+- **Meaning kept:** Bergamot **kept**.
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First stanza. Two footnotes on the page give common variants ('fliegen' for 'fliehen' in line 2, 'mit Pulver und Blei' for 'es bleibet dabei' in line 4); they were removed with the refs and the main text is kept. Literal translation.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Die Gedanken sind frei, wer kann sie erraten, | Thoughts are free, who can guess them? | Thoughts are free, who can guess them, |
+| sie fliehen vorbei wie nächtliche Schatten. | They fly by like nocturnal shadows. | They flee by like nighttime shadows. |
+| Kein Mensch kann sie wissen, kein Jäger sie schießen | No person can know them, no hunter can shoot them | No one can know them, no hunter can shoot them |
+| es bleibet dabei: Die Gedanken sind frei! | and so it'll always be: Thoughts are free! | It remains: The thoughts are free! |
+
+#### de-03: Erlkönig
+
+- **Words:** Johann Wolfgang von Goethe, 1782 (died 1832); set as an art song by Franz Schubert, 1815. Original: [source](https://en.wikipedia.org/w/index.php?title=Erlk%C3%B6nig&oldid=1370495838).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Erlk%C3%B6nig&oldid=1370495838).
+- **Meaning kept:** Bergamot **kept** (line 3 "must have" for "has").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First stanza, from the page's 'Literal translation' column (the page also shows Bowring's 1853 rhymed version, not used here). Archaic spelling 'faßt' kept.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Wer reitet so spät durch Nacht und Wind? | Who rides, so late, through night and wind? | Who rides through night and wind so late? |
+| Es ist der Vater mit seinem Kind; | It is the father with his child. | It is the Father with his child; |
+| Er hat den Knaben wohl in dem Arm, | He has the boy well in his arm, | He must have the boy in his arm, |
+| Er faßt ihn sicher, er hält ihn warm. | He holds him safely, he keeps him warm. | He's sure to grip him, he'll keep him warm. |
+
+### Italian
+
+#### it-01: Il Canto degli Italiani
+
+- **Words:** Goffredo Mameli, 1847 (died 1849). Original: [source](https://en.wikipedia.org/w/index.php?title=Canto_degli_italiani&oldid=1368805845).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Canto_degli_italiani&oldid=1368805845).
+- **Meaning kept:** Bergamot **partly** ("has arough", "It's called his head").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of the first stanza. Explanatory footnotes inside the English lines were removed. Literal translation; capitalisation of 'Upon' kept as on the page.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Fratelli d'Italia, | Brothers of Italy, | Brothers of Italy, |
+| l'Italia s'è desta, | Italy has risen, | Italy has arough, |
+| dell'elmo di Scipio | bound Scipio's helmet | the helmet of Scipio |
+| s'è cinta la testa. | Upon her head. | It's called his head. |
+
+#### it-02: La donna è mobile
+
+- **Words:** Francesco Maria Piave, libretto of Verdi's Rigoletto, 1851 (died 1876). Original: [source](https://en.wikipedia.org/w/index.php?title=La_donna_%C3%A8_mobile&oldid=1361599092).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=La_donna_%C3%A8_mobile&oldid=1361599092).
+- **Meaning kept:** Bergamot **lost** (mobile (fickle) left literal, "accent mute").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines. The page's left English column is a literal translation (a separate rhymed 'poetic adaptation' column was not used). Note the English renders 'mobile' as 'flighty' here and as 'fickle' in the later refrain.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| La donna è mobile | Woman is flighty. | The woman is mobile |
+| Qual piuma al vento, | Like a feather in the wind, | What feather to the wind, |
+| muta d'accento | she changes in voice | accent mute |
+| e di pensiero. | and in thought. | and thought. |
+
+#### it-03: Una furtiva lagrima
+
+- **Words:** Felice Romani, libretto of Donizetti's L'elisir d'amore, 1832 (died 1865). Original: [source](https://en.wikipedia.org/w/index.php?title=Una_furtiva_lagrima&oldid=1379321193).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Una_furtiva_lagrima&oldid=1379321193).
+- **Meaning kept:** Bergamot **lost** (lagrima (tear) as "grim", "In his eyes he spun").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines, from the page's 'Literal translation' block (the separate 'Poetic translation' block, cited to an Indiana University vocal score, was not used). Lines 3-4 keep the Italian word order, so 'she seemed to envy' completes line 3's object.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Una furtiva lagrima | A furtive tear | A sneaky grim |
+| negli occhi suoi spuntò: | in her eyes appeared: | In his eyes he spun: |
+| Quelle festose giovani | Those festive young girls | Those festive young people |
+| invidiar sembrò. | she seemed to envy. | envy seemed. |
+
+### Portuguese
+
+#### pt-01: A Portuguesa
+
+- **Words:** Henrique Lopes de Mendonça, 1890 (died 1931). Original: [source](https://en.wikipedia.org/w/index.php?title=A_Portuguesa&oldid=1376670666).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=A_Portuguesa&oldid=1376670666).
+- **Meaning kept:** Bergamot **kept** (a typo-like "Brage" for brave).
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of stanza I; the stanza number 'I' (a separate bold line) is not included. Literal translation.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Heróis do mar, nobre povo, | Heroes of the sea, noble people, | Heroes of the sea, noble people, |
+| Nação valente, imortal, | Brave, immortal nation, | Brage, immortal nation, |
+| Levantai hoje de novo | Raise once again today | Lift up again today |
+| O esplendor de Portugal! | The splendor of Portugal! | The splendor of Portugal! |
+
+#### pt-02: Hino Nacional Brasileiro
+
+- **Words:** Joaquim Osório Duque-Estrada, 1909, official text 1922 (died 1927). Original: [source](https://en.wikipedia.org/w/index.php?title=Brazilian_National_Anthem&oldid=1380318999).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Brazilian_National_Anthem&oldid=1380318999).
+- **Meaning kept:** Bergamot **partly** (the inverted subject lost: "They heard from Ipiranga the placid margins").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of stanza I. The Portuguese uses heavy inversion: the English moves the subject and object of lines 1-2 ('The placid shores of the Ipiranga heard, / the resounding shout of a heroic people'), so the line pairing is by position, not word for word. Literal translation.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Ouviram do Ipiranga as margens plácidas | The placid shores of the Ipiranga heard, | They heard from Ipiranga the placid margins |
+| De um povo heroico o brado retumbante, | the resounding shout of a heroic people. | From a heroic people the resounding cry, |
+| E o sol da liberdade, em raios fúlgidos, | And the sun of Liberty in shining beams, | And the sun of freedom, in fulged rays, |
+| Brilhou no céu da pátria nesse instante. | shone in the homeland's sky at that instant. | He shone in the heavens of the homeland at that moment. |
+
+#### pt-03: Hino à Bandeira Nacional
+
+- **Words:** Olavo Bilac, 1906 (died 1918). Original: [source](https://en.wikipedia.org/w/index.php?title=Brazilian_Flag_Anthem&oldid=1365884050).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Brazilian_Flag_Anthem&oldid=1365884050).
+- **Meaning kept:** Bergamot **kept** (pendão (banner) as a made-up "pendand").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of stanza I. Literal but slightly archaic register ('Thy', 'does bring'); lines 3-4 keep the Portuguese inversion.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Salve, lindo pendão da esperança! | Hail, precious banner of hope! | Hail, beautiful pendand of hope! |
+| Salve, símbolo augusto da paz! | Hail, august symbol of peace! | Hail, august symbol of peace! |
+| Tua nobre presença à lembrança | Thy noble presence to our minds | Your noble presence to the memory |
+| A grandeza da Pátria nos traz. | The greatness of our motherland does bring. | The greatness of the Fatherland brings us. |
+
+### Dutch
+
+#### nl-01: Wien Neêrlands Bloed
+
+- **Words:** Hendrik Tollens, 1815-1817 (died 1856). Original: [source](https://en.wikipedia.org/w/index.php?title=Wien_Ne%C3%AArlands_Bloed&oldid=1364919440).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Wien_Ne%C3%AArlands_Bloed&oldid=1364919440).
+- **Meaning kept:** Bergamot **partly** (19th-century spelling: "strange brets", "Verheff' den vocals").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of the original 1817 version (the page's 'Original version' {{verse translation}} block; old spelling 'Neerlandsch' kept, unlike the article title 'Neêrlands'). Literal translation by editors, with some liberty in line 4 ('Verheff' den zang' = 'Rejoice in song').
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Wien Neerlandsch bloed in de aders vloeit, | Whoever has Dutch blood flowing in their veins, | Whose Dutch blood flows into the veins, |
+| Van vreemde smetten vrij, | Free of foreign blemishes; | Free from strange brets, |
+| Wiens hart voor land en koning gloeit, | Whose heart glows for king and country, | Whose heart glows for land and king, |
+| Verheff' den zang als wij: | Rejoice in song as we do! | Verheff' den vocals as we: |
+
+#### nl-02: De Vlaamse Leeuw
+
+- **Words:** Hippoliet Van Peene, 1847 (died 1864). Original: [source](https://en.wikipedia.org/w/index.php?title=De_Vlaamse_Leeuw&oldid=1378510107).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=De_Vlaamse_Leeuw&oldid=1378510107).
+- **Meaning kept:** Bergamot **kept** (kluisters (shackles) as "vaulters").
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). First 4 lines of stanza I; stanza number dropped. Flemish (Dutch) original. The editors' translation is near-literal but uses deliberately archaic English ('Ne'er', 'liveth', 'hath'); line 2 reorders the object ('his freedom' moved to the end).
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Zij zullen hem niet temmen, de fiere Vlaamse Leeuw, | Ne'er shall they tame him, the proud Flemish Lion, | They will not tame him, the proud Flemish Lion, |
+| Al dreigen zij zijn vrijheid met kluisters en geschreeuw. | Even if they threaten with chains and roars his freedom. | Even though they threaten his freedom with vaulters and screams. |
+| Zij zullen hem niet temmen, zolang een Vlaming leeft, | Ne'er shall he be tamed, so long as one Fleming liveth, | They will not tame him, as long as a Fleming lives, |
+| Zolang de Leeuw kan klauwen, zolang hij tanden heeft. | So long as the Lion can claw, so long as he hath teeth. | As long as the Lion can claw, as long as he has teeth. |
+
+#### nl-03: Merck toch hoe sterck
+
+- **Words:** Adriaen Valerius, 1622-1625, printed 1626 (died 1625). Original: [source](https://en.wikipedia.org/w/index.php?title=Merck_toch_hoe_sterck&oldid=1345182931).
+- **Human English:** English Wikipedia editors (CC BY-SA 4.0). [Source](https://en.wikipedia.org/w/index.php?title=Merck_toch_hoe_sterck&oldid=1345182931).
+- **Meaning kept:** Bergamot **lost** (17th-century Dutch: lines 3 and 4 lost).
+- **Corpus note:** Wiki markup stripped (links, bold/italics, templates, footnotes). Lines 5-8 of the first stanza (17th-century spelling kept: 'Spaensche', 'Siet', 'hy'). Italics on 'Maraens' and 'Bergen' stripped. Literal, unrhymed editor translation; 'Maraens' rendered 'Maranish'.
+
+| Original | Human | Bergamot |
+|---|---|---|
+| Hoor de Spaensche trommels slaen! | Hear the Spanish drums beat! | Hear the Spaensche drums beating! |
+| Hoor Maraens trompetten! | Hear the Maranish trumpets! | Hear Maraen's trumpets! |
+| Siet hoe komt hy trecken aen! | See how he marches forth | Siet how does hy trecken come to be! |
+| Bergen te besetten. | to occupy Bergen. | Mountains to beset. |

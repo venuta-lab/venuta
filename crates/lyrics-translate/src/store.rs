@@ -100,6 +100,9 @@ pub struct ModelStatus {
     pub progress: Option<f64>,
     /// Why its last download failed.
     pub error: Option<String>,
+    /// Whether it is offered for songs at all ([`crate::reliable`]): only where it kept the
+    /// meaning of lyrics in the tests.
+    pub offered: bool,
 }
 
 #[derive(Default)]
@@ -197,6 +200,7 @@ impl ModelStore {
                         .get(&m.id)
                         .map(|j| (j.done as f64 / j.total.max(1) as f64).clamp(0.0, 1.0)),
                     error: errors.get(&m.id).cloned(),
+                    offered: crate::reliable::offered(&m.from, &m.to),
                 }
             })
             .collect()

@@ -21,11 +21,15 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub mod cache;
 pub mod catalog;
+pub mod langs;
 pub mod lines;
+pub mod reliable;
 pub mod store;
 
 #[cfg(feature = "bergamot")]
 pub mod bergamot;
+#[cfg(feature = "keyed")]
+pub mod keyed;
 
 /// What can go wrong.
 #[derive(Debug, thiserror::Error)]
@@ -52,10 +56,23 @@ pub enum Error {
     NoModel { from: String, into: String },
     #[error("the {0} model isn't on this device")]
     NotInstalled(String),
-    #[error("the engine gave {got} lines for {expected}")]
+    #[error("The translation came back with {got} lines for {expected}, so it isn't shown.")]
     Lines { expected: usize, got: usize },
     #[error("the translation engine failed: {0}")]
     Engine(String),
+    // The engines with the listener's own key: said to the listener as they are.
+    #[error("Enter your {engine} key in Settings > Lyrics first.")]
+    NoKey { engine: String },
+    #[error("{engine} didn't accept your key{hint}. Check it in Settings > Lyrics.")]
+    BadKey { engine: String, hint: &'static str },
+    #[error("Your {engine} quota is used up. Translations with it stop until it renews.")]
+    Quota { engine: String },
+    #[error("{engine} is busy or getting too many requests. Try again in a minute.")]
+    Busy { engine: String },
+    #[error("Couldn't reach {engine}. Check the internet connection.")]
+    Unreachable { engine: String },
+    #[error("{engine} couldn't translate this: {detail}")]
+    Refused { engine: String, detail: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -69,6 +86,12 @@ pub trait Translator: Send + Sync {
     fn version(&self, from: &str, into: &str) -> Option<String>;
     /// Each line translated, in order, one for one.
     fn translate(&self, from: &str, into: &str, lines: &[&str]) -> Result<Vec<String>, Error>;
+    /// Whether a line of a song in `from` is worth sending: by default only lines in the song's
+    /// own script ([`lines::wanted`]); an engine that reads mixed and romanized lines (a
+    /// language model) takes every line with words.
+    fn wants(&self, from: &str, line: &str) -> bool {
+        lines::wanted(from, line)
+    }
 }
 
 /// A song's lines (`lines`, as sung, in order) translated from `from` into `into`, or the
@@ -95,7 +118,7 @@ pub fn translate_song(
         .iter()
         .map(|l| {
             let l = l.trim();
-            lines::wanted(from, l).then(|| {
+            t.wants(from, l).then(|| {
                 *index.entry(l).or_insert_with(|| {
                     unique.push(l);
                     unique.len() - 1
@@ -117,7 +140,15 @@ pub fn translate_song(
     let out: Vec<String> = unique
         .iter()
         .zip(&out)
-        .map(|(src, got)| lines::tidy(src, got))
+        .map(|(src, got)| {
+            // A line given back as it was (already in your language) has nothing to show.
+            let got = lines::tidy(src, got);
+            if lines::same(src, &got) {
+                String::new()
+            } else {
+                got
+            }
+        })
         .collect();
     let entry = cache::Entry {
         from: from.to_owned(),

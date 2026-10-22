@@ -11,6 +11,8 @@ import { LyricsWindow, type Frame } from './LyricsWindow'
 import { IconNext, IconPause, IconPlay, IconPrevious } from '../Icons'
 import { NowLyricsProvider } from './NowLyrics'
 import { useNowLyrics, useWindowCover } from './useNowLyrics'
+import { statusWords } from '../../lib/translation'
+import { ENGINES } from '../../lib/translationEngine'
 
 /**
  * Lyrics filling a whole screen (or a window), for a TV or a second monitor, readable from the
@@ -77,6 +79,7 @@ function Stage({ frame }: { frame: Frame }) {
   // Under every line (the one before too, so the stack never jumps): its pronunciation, then its
   // translation, the same rows for every line of the song.
   const rowsKey = `${seconds.rows.roman}|${seconds.rows.translation}`
+  const translationWords = statusWords(seconds.translation, seconds.lang, seconds.reader)
   const lang = seconds.lang ?? undefined
 
   // The lines always fit the screen, with its margins, in every theme. Each row is as wide as the
@@ -188,6 +191,17 @@ function Stage({ frame }: { frame: Frame }) {
             {(seconds.notes.roman || seconds.notes.translation || seconds.dictionary) && (
               <div className="opacity-50" style={{ fontSize: Math.max(12, view.h * 0.0145) }}>
                 {[seconds.notes.roman, seconds.notes.translation, seconds.dictionary].filter(Boolean).join('. ')}
+              </div>
+            )}
+            {/* Translation on and none here yet: why, or what it takes (Translate with your key). */}
+            {translationWords && (
+              <div className="flex flex-wrap items-center gap-2 opacity-60" style={{ fontSize: Math.max(12, view.h * 0.0145) }}>
+                <span>{translationWords}</span>
+                {(seconds.translation.kind === 'ask' || seconds.translation.kind === 'failed') && (
+                  <button onClick={seconds.translate} className="rounded-full bg-white/15 px-2.5 py-0.5 hover:bg-white/25">
+                    {seconds.translation.kind === 'ask' ? `Translate with ${ENGINES[seconds.translation.engine].name}` : 'Try again'}
+                  </button>
+                )}
               </div>
             )}
             <div className="mt-2 flex items-center gap-3 opacity-60" style={{ fontSize: Math.max(12, view.h * 0.015) }}>

@@ -133,7 +133,7 @@ export function sourceKind(source: SecondSource): { kind: SourceKind; by: string
 }
 
 /** Engines that run with the listener's own key (L7), by their names. */
-const KEYED: Record<string, string> = { deepl: 'DeepL', microsoft: 'Microsoft', google: 'Google', llm: 'a language model' }
+const KEYED: Record<string, string> = { deepl: 'DeepL', microsoft: 'Microsoft', google: 'Google', llm: 'Claude' }
 
 /** Where a second line came from, in a few quiet words. `device`: "PC", later "phone". */
 export function sourceWords(s: SecondSource, device = 'PC'): string {
