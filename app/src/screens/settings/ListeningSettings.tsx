@@ -22,6 +22,7 @@ const SOURCES: [string, string, string][] = [
   ['lyricsplus', 'LyricsPlus', 'Word by word, with Roman letters for some songs'],
   ['boidu', 'Better Lyrics', 'Word by word, from Apple Music. Needs a key for most songs now'],
   ['netease', 'Netease', 'Chinese songs, often with translations'],
+  ['amll', 'AMLL TTML DB', 'Word by word for many Asian songs, often with Roman letters. Looked up through Netease'],
   ['qq', 'QQ Music', 'Chinese songs'],
   ['kugou', 'Kugou', 'Chinese and other Asian songs'],
 ]

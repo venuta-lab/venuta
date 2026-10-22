@@ -28,13 +28,14 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The sources, in their default order, with the names shown for them.
-pub const SOURCES: [(&str, &str); 8] = [
+pub const SOURCES: [(&str, &str); 9] = [
     ("lrclib", "LRCLIB"),
     ("youtube", "YouTube Music"),
     ("simpmusic", "SimpMusic"),
     ("lyricsplus", "LyricsPlus"),
     ("boidu", "Better Lyrics"),
     ("netease", "Netease"),
+    ("amll", "AMLL TTML DB"),
     ("qq", "QQ Music"),
     ("kugou", "Kugou"),
 ];
@@ -73,7 +74,9 @@ pub struct LyricsRequest {
 }
 
 pub use crate::lyrics::{LyricLine, Lyrics, Second, SecondSource, Word};
-use crate::lyrics::{carried_translation, finish, mark_source, read_lrc, romaji, roman_lang};
+use crate::lyrics::{
+    carried_translation, finish, mark_source, read_lrc, romaji, roman_lang, timed_by_chars, ttml,
+};
 
 /// Lyrics one source gave.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -335,26 +338,6 @@ pub fn same_song(req: &LyricsRequest, title: &str, artist: &str, duration_s: Opt
 
 // --- Reading the formats --------------------------------------------------------------------
 
-/// A TTML time: "12.345", "1:02.5", "00:01:02.500" or "1234ms".
-fn ttml_time(t: &str) -> Option<u64> {
-    let t = t.trim();
-    if let Some(ms) = t.strip_suffix("ms") {
-        return ms.parse::<f64>().ok().map(|x| x as u64);
-    }
-    let t = t.strip_suffix('s').unwrap_or(t);
-    let mut secs = 0.0;
-    for part in t.split(':') {
-        secs = secs * 60.0 + part.parse::<f64>().ok()?;
-    }
-    Some((secs * 1000.0).round() as u64)
-}
-
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let at = tag.find(&format!("{name}=\""))? + name.len() + 2;
-    let end = tag[at..].find('"')?;
-    Some(&tag[at..at + end])
-}
-
 fn unescape(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -364,85 +347,53 @@ fn unescape(s: &str) -> String {
         .replace("&#39;", "'")
 }
 
-/// TTML (Apple's lyrics): \`<p begin end>\` lines, \`<span begin end>\` words.
+/// TTML (Apple's lyrics, and AMLL's): lines, words and the second lines they carry
+/// ([`crate::lyrics::ttml`]).
 pub fn parse_ttml(xml: &str) -> Vec<LyricLine> {
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(i) = rest.find("<p ") {
-        let after = &rest[i..];
-        let Some(open_end) = after.find('>') else {
-            break;
-        };
-        let tag = &after[..open_end];
-        let Some(close) = after.find("</p>") else {
-            break;
-        };
-        let body = &after[open_end + 1..close];
-        rest = &after[close + 4..];
-        let Some(ms) = attr(tag, "begin").and_then(ttml_time) else {
-            continue;
-        };
-        let end_ms = attr(tag, "end").and_then(ttml_time).unwrap_or(0);
-        let mut words = Vec::new();
-        let mut b = body;
-        while let Some(j) = b.find("<span") {
-            let s = &b[j..];
-            let Some(te) = s.find('>') else { break };
-            let stag = &s[..te];
-            let Some(ce) = s.find("</span>") else { break };
-            let inner = &s[te + 1..ce];
-            if !inner.contains('<')
-                && let (Some(ws), Some(we)) = (
-                    attr(stag, "begin").and_then(ttml_time),
-                    attr(stag, "end").and_then(ttml_time),
-                )
-            {
-                // A space after the span belongs to the word (the words of a line run on).
-                let spaced = s[ce + 7..].starts_with(' ');
-                words.push(Word {
-                    start_ms: ws,
-                    end_ms: we,
-                    text: format!("{}{}", unescape(inner), if spaced { " " } else { "" }),
-                });
-            }
-            b = &s[ce + 7..];
-        }
-        let text = if words.is_empty() {
-            let mut t = String::new();
-            let mut depth = 0;
-            for c in body.chars() {
-                match c {
-                    '<' => depth += 1,
-                    '>' => depth -= 1,
-                    c if depth == 0 => t.push(c),
-                    _ => {}
-                }
-            }
-            unescape(t.trim())
-        } else {
-            words
-                .iter()
-                .map(|w| w.text.as_str())
-                .collect::<String>()
-                .trim()
-                .to_owned()
-        };
-        if !text.is_empty() {
-            out.push(LyricLine {
-                start_ms: ms,
-                end_ms,
-                text,
-                words,
-                ..Default::default()
-            });
-        }
-    }
-    finish(&mut out);
-    out
+    ttml::read(xml, "").0.lines
 }
 
-/// LyricsPlus's own JSON: lines with their time, and syllables when it times words.
-fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
+/// LyricsPlus's syllables (`[{time, duration, text}]`) as timed words.
+fn kpoe_syllables(v: Option<&Value>) -> Vec<Word> {
+    v.and_then(Value::as_array)
+        .map(|ws| {
+            ws.iter()
+                .filter_map(|w| {
+                    let ms = w.get("time").and_then(Value::as_u64)?;
+                    let d = w.get("duration").and_then(Value::as_u64).unwrap_or(0);
+                    Some(Word {
+                        start_ms: ms,
+                        end_ms: ms + d,
+                        text: w.get("text").and_then(Value::as_str)?.to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A second line's text and language as LyricsPlus sends them (`{lang, text}`), when it has
+/// words.
+fn kpoe_second(v: Option<&Value>) -> Option<(String, Option<&str>)> {
+    let v = v?;
+    let text = v
+        .get("text")
+        .and_then(Value::as_str)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lang = v
+        .get("lang")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|l| !l.is_empty());
+    (!text.is_empty()).then_some((text, lang))
+}
+
+/// LyricsPlus's own JSON: lines with their time, syllables when it times words, and each
+/// line's translation and transliteration when the lyrics it relays carry them (Apple's,
+/// with their language; a transliteration timed by its own syllables). `lang` is the song's.
+fn parse_kpoe(v: &Value, lang: Option<&str>) -> Vec<LyricLine> {
     let word_timed = v.get("type").and_then(Value::as_str) == Some("Word");
     let mut lines: Vec<LyricLine> = v
         .get("lyrics")
@@ -459,24 +410,8 @@ fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
                         .unwrap_or("")
                         .trim()
                         .to_owned();
-                    let words: Vec<Word> = if word_timed {
-                        l.get("syllabus")
-                            .and_then(Value::as_array)
-                            .map(|ws| {
-                                ws.iter()
-                                    .filter_map(|w| {
-                                        let ms = w.get("time").and_then(Value::as_u64)?;
-                                        let d =
-                                            w.get("duration").and_then(Value::as_u64).unwrap_or(0);
-                                        Some(Word {
-                                            start_ms: ms,
-                                            end_ms: ms + d,
-                                            text: w.get("text").and_then(Value::as_str)?.to_owned(),
-                                        })
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default()
+                    let words = if word_timed {
+                        kpoe_syllables(l.get("syllabus"))
                     } else {
                         Vec::new()
                     };
@@ -490,12 +425,37 @@ fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
                     } else {
                         text
                     };
-                    (!text.is_empty()).then_some(LyricLine {
+                    if text.is_empty() {
+                        return None;
+                    }
+                    let script = crate::lyrics::script_of(&text);
+                    let roman = kpoe_second(l.get("transliteration"))
+                        .filter(|(r, _)| *r != text && script != "Latn")
+                        .map(|(r, rl)| Second {
+                            words: kpoe_syllables(
+                                l.get("transliteration").and_then(|t| t.get("syllabus")),
+                            ),
+                            lang: rl.map_or_else(|| roman_lang(lang, &script), str::to_owned),
+                            text: r,
+                            source: SecondSource::Lyrics("lyricsplus".into()),
+                        });
+                    let translation = kpoe_second(l.get("translation"))
+                        .filter(|(t, _)| *t != text)
+                        .map(|(t, tl)| {
+                            let mut s = carried_translation(&t, "lyricsplus");
+                            if let Some(tl) = tl {
+                                s.lang = tl.to_owned();
+                            }
+                            s
+                        });
+                    Some(LyricLine {
                         start_ms: ms,
                         end_ms: ms + duration,
                         text,
                         words,
-                        ..Default::default()
+                        script,
+                        roman,
+                        translation,
                     })
                 })
                 .collect()
@@ -511,23 +471,27 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     if body.is_empty() {
         return None;
     }
-    let mut lines = if body.starts_with('<') {
-        parse_ttml(body)
+    let (lyrics, text) = if body.starts_with('<') {
+        ttml::read(body, source)
     } else {
-        read_lrc(body).lines
-    };
-    mark_source(&mut lines, source);
-    let text = if lines.is_empty() && !body.starts_with('<') {
-        body.to_owned()
-    } else {
-        String::new()
+        let mut lines = read_lrc(body).lines;
+        mark_source(&mut lines, source);
+        let text = if lines.is_empty() {
+            body.to_owned()
+        } else {
+            String::new()
+        };
+        (
+            Lyrics {
+                lines,
+                ..Default::default()
+            },
+            text,
+        )
     };
     let f = Found {
         source: source.into(),
-        lyrics: Lyrics {
-            lines,
-            ..Default::default()
-        },
+        lyrics,
         text,
         ..Default::default()
     };
@@ -548,31 +512,57 @@ fn with_translation(mut lines: Vec<LyricLine>, translated: &str, provider: &str)
     lines
 }
 
-/// Roman letters from a second LRC (NetEase's `romalrc`, sent syllable by syllable), joined
-/// into words and put on the lines that start at the same time.
-fn with_roman(
-    mut lines: Vec<LyricLine>,
-    spaced: &str,
-    provider: &str,
-    lang: Option<&str>,
-) -> Vec<LyricLine> {
-    let r = read_lrc(spaced).lines;
-    for l in &mut lines {
-        if let Some(x) = r
-            .iter()
-            .find(|x| x.start_ms == l.start_ms && !x.text.trim().is_empty() && x.text != l.text)
-        {
-            let text = romaji::join_syllables(&l.text, &x.text)
-                .unwrap_or_else(|| x.text.split_whitespace().collect::<Vec<_>>().join(" "));
-            l.roman = Some(Second {
-                text,
-                words: Vec::new(),
-                lang: roman_lang(lang, &l.script),
-                source: SecondSource::Lyrics(provider.to_owned()),
-            });
-        }
+/// A second LRC (a translation, or Roman letters) as its timed rows.
+fn rows(lrc: Option<&str>) -> Vec<(u64, String)> {
+    lrc.map(|t| {
+        read_lrc(t)
+            .lines
+            .into_iter()
+            .filter(|l| !l.text.trim().is_empty())
+            .map(|l| (l.start_ms, l.text))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The row nearest `ms`, at most `within` ms from it.
+fn row_near(rows: &[(u64, String)], ms: u64, within: u64) -> Option<&str> {
+    rows.iter()
+        .filter(|(at, _)| at.abs_diff(ms) <= within)
+        .min_by_key(|(at, _)| at.abs_diff(ms))
+        .map(|(_, t)| t.as_str())
+}
+
+/// A line's Roman letters as a source sends them (NetEase's, AMLL's: syllable by syllable for
+/// Japanese and Korean), joined into words by the line and timed by its words when they are;
+/// as sent when they can't be joined. None when they say nothing new.
+fn roman_from(l: &LyricLine, spaced: &str, provider: &str, lang: Option<&str>) -> Option<Second> {
+    let sent = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    if sent.is_empty() || sent == l.text {
+        return None;
     }
-    lines
+    let original: String = if l.words.is_empty() {
+        l.text.clone()
+    } else {
+        l.words.iter().map(|w| w.text.as_str()).collect()
+    };
+    let (text, words) = match romaji::join_syllables_at(&original, &sent) {
+        Some(joined) => (
+            joined
+                .iter()
+                .map(|(w, _)| w.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            timed_by_chars(&l.words, &joined),
+        ),
+        None => (sent, Vec::new()),
+    };
+    Some(Second {
+        text,
+        words,
+        lang: roman_lang(lang, &l.script),
+        source: SecondSource::Lyrics(provider.to_owned()),
+    })
 }
 
 /// A language as Kugou names it ("日语"), as BCP 47.
@@ -777,6 +767,17 @@ fn get_json(
         req = req.header("Referer", r);
     }
     json_of(req.call().map_err(|e| e.to_string())?)
+}
+
+/// GET text; None for "not there" (404), as [`get_json`].
+fn get_text(agent: &ureq::Agent, url: &str) -> Result<Option<String>, AskError> {
+    if crate::net::is_offline() {
+        return Err(AskError::Down("Local only is on".into()));
+    }
+    let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().unwrap_or_default();
+    answer_of(status, &body)
 }
 
 fn artists_line(req: &LyricsRequest) -> String {
@@ -992,7 +993,6 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
     {
         return None;
     }
-    let lines = parse_kpoe(v);
     // The song's language, as LyricsPlus labels it ("ja", "hi").
     let lang = v
         .pointer("/metadata/language")
@@ -1000,6 +1000,7 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_owned);
+    let lines = parse_kpoe(v, lang.as_deref());
     (!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
         lyrics: Lyrics {
@@ -1054,7 +1055,9 @@ fn closest<'a>(
         .map(|(v, ..)| v)
 }
 
-fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+/// The song's NetEase id, from NetEase's search: the closest in length of the songs that are
+/// the one asked about.
+fn netease_id(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<i64>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
@@ -1107,46 +1110,267 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
                 .collect()
         })
         .unwrap_or_default();
-    let Some(id) = closest(req, &songs)
+    Ok(closest(req, &songs)
         .and_then(|s| s.get("id"))
-        .and_then(Value::as_i64)
-    else {
-        return Ok(None);
-    };
-    let Some(l) = get_json(
-        agent,
-        &format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1&rv=-1"),
-        Some("https://music.163.com/"),
-    )?
-    else {
-        return Ok(None);
-    };
-    Ok(netease_found(req, &l))
+        .and_then(Value::as_i64))
 }
 
-/// NetEase's lyrics answer (`song/lyric`): the lyrics, with their translations (`tlyric`,
-/// Chinese) and Roman letters (`romalrc`, asked for with `rv=-1`).
-fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
-    let lrc = l
-        .pointer("/lrc/lyric")
-        .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())?;
-    let mut f = found_from_text("netease", lrc)?;
-    if let Some(t) = l
-        .pointer("/tlyric/lyric")
-        .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    {
-        f.lyrics.lines = with_translation(f.lyrics.lines, t, "netease");
-    }
-    if let Some(r) = l
-        .pointer("/romalrc/lyric")
-        .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    {
-        f.lyrics.lines = with_roman(f.lyrics.lines, r, "netease", None);
-    }
+fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+    let Some(id) = netease_id(agent, req)? else {
+        return Ok(None);
+    };
+    netease_lyrics(req, id, |url| {
+        get_json(agent, url, Some("https://music.163.com/"))
+    })
+}
+
+/// AMLL's lyrics library (amll-ttml-db, CC0: TTML written by its contributors, every word
+/// timed, many Asian songs with their Roman letters and a Chinese translation), found by the
+/// song's NetEase id.
+fn amll(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+    let Some(id) = netease_id(agent, req)? else {
+        return Ok(None);
+    };
+    amll_lyrics(req, id, |url| get_text(agent, url))
+}
+
+/// AMLL's TTML for a song by its NetEase id (None: the library hasn't it).
+fn amll_lyrics(
+    req: &LyricsRequest,
+    id: i64,
+    ask: impl Fn(&str) -> Result<Option<String>, AskError>,
+) -> Result<Option<Found>, AskError> {
+    let url = format!(
+        "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/ncm-lyrics/{id}.ttml"
+    );
+    Ok(ask(&url)?.and_then(|ttml| amll_found(req, &ttml)))
+}
+
+/// AMLL's TTML, read, with its contributor credited.
+fn amll_found(req: &LyricsRequest, ttml: &str) -> Option<Found> {
+    let mut f = found_from_text("amll", ttml)?;
+    // <amll:meta key="ttmlAuthorGithubLogin" value="someone"/>
+    let author = ttml
+        .split("<amll:meta ")
+        .skip(1)
+        .filter_map(|m| m.split_once("/>").map(|(attrs, _)| attrs))
+        .find(|attrs| attrs.contains("key=\"ttmlAuthorGithubLogin\""))
+        .and_then(|attrs| attrs.split("value=\"").nth(1))
+        .and_then(|v| v.split('"').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    f.credit = Some(match author {
+        Some(a) => format!("Timed by {a} for the AMLL TTML DB"),
+        None => "From the AMLL TTML DB".into(),
+    });
     credits_out(f, req)
+}
+
+/// NetEase's credit lines, sent as JSON lines (`{"t":0,"c":[{"tx":"作词: "},{"tx":"Ayase"}]}`)
+/// among its `lrc` and `yrc` lines by the newer call: taken out as text ("作词: Ayase"), the
+/// rest of the lyrics kept.
+fn netease_credits(text: &str) -> (String, Vec<String>) {
+    let mut kept = String::with_capacity(text.len());
+    let mut credits = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('{') {
+            let said = serde_json::from_str::<Value>(t).ok().and_then(|v| {
+                v.get("c").and_then(Value::as_array).map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| p.get("tx").and_then(Value::as_str))
+                        .collect::<String>()
+                })
+            });
+            if let Some(said) = said.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
+                credits.push(said);
+            }
+        } else {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    (kept, credits)
+}
+
+/// NetEase's word-timed lyrics (`yrc`): `[start,length]` lines of `(start,length,0)word`
+/// words, times in ms.
+fn read_yrc(text: &str) -> Vec<LyricLine> {
+    static STAMP: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\((\d+),(\d+),-?\d+\)").expect("a valid pattern")
+    });
+    let mut lines = Vec::new();
+    for raw in text.lines() {
+        let Some((head, body)) = raw.trim().strip_prefix('[').and_then(|r| r.split_once(']'))
+        else {
+            continue;
+        };
+        let Some((start, length)) = head.split_once(',') else {
+            continue;
+        };
+        let (Ok(start), Ok(length)) = (start.trim().parse::<u64>(), length.trim().parse::<u64>())
+        else {
+            continue;
+        };
+        let stamps: Vec<regex::Captures> = STAMP.captures_iter(body).collect();
+        let mut words: Vec<Word> = Vec::new();
+        for (k, c) in stamps.iter().enumerate() {
+            let (Some(whole), Ok(at), Ok(long)) =
+                (c.get(0), c[1].parse::<u64>(), c[2].parse::<u64>())
+            else {
+                continue;
+            };
+            let to = stamps
+                .get(k + 1)
+                .and_then(|n| n.get(0))
+                .map_or(body.len(), |n| n.start());
+            let text = &body[whole.end()..to];
+            if !text.is_empty() {
+                words.push(Word {
+                    start_ms: at,
+                    end_ms: at + long,
+                    text: text.to_owned(),
+                });
+            }
+        }
+        let text = words
+            .iter()
+            .map(|w| w.text.as_str())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !text.is_empty() {
+            lines.push(LyricLine {
+                start_ms: start,
+                end_ms: start + length,
+                text,
+                words,
+                ..Default::default()
+            });
+        }
+    }
+    lines.sort_by_key(|l| l.start_ms);
+    finish(&mut lines);
+    lines
+}
+
+/// Whether two copies of a line have the same words (letters and digits, any case).
+fn same_words(a: &str, b: &str) -> bool {
+    let f = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    f(a) == f(b)
+}
+
+/// For each word-timed line, the line-timed copy of it (the same words, at most 1.5 s away,
+/// nearest, in order), so what NetEase stamped at the line-timed lines finds its line.
+fn lines_met(timed: &[LyricLine], lines: &[LyricLine]) -> Vec<Option<usize>> {
+    let mut next = 0;
+    timed
+        .iter()
+        .map(|t| {
+            let j = (next..lines.len())
+                .filter(|&j| {
+                    lines[j].start_ms.abs_diff(t.start_ms) <= 1_500
+                        && same_words(&lines[j].text, &t.text)
+                })
+                .min_by_key(|&j| lines[j].start_ms.abs_diff(t.start_ms))?;
+            next = j + 1;
+            Some(j)
+        })
+        .collect()
+}
+
+/// NetEase's lyrics answer, from the newer call (`song/lyric/v1`) or the older one
+/// (`song/lyric`): the lines (word by word from `yrc` when it has them), their translations
+/// (Chinese; `ytlrc` stamped at the word-timed lines, `tlyric` at the line-timed ones) and
+/// Roman letters (`yromalrc`, `romalrc`), and the credits it sends among them.
+fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
+    let field = |k: &str| {
+        l.pointer(&format!("/{k}/lyric"))
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())
+    };
+    let (lrc, mut credits) = netease_credits(field("lrc").unwrap_or(""));
+    let (yrc, yrc_credits) = netease_credits(field("yrc").unwrap_or(""));
+    if credits.is_empty() {
+        credits = yrc_credits;
+    }
+    let by_line = found_from_text("netease", &lrc);
+    let line_timed: Vec<LyricLine> = by_line
+        .as_ref()
+        .map(|f| f.lyrics.lines.clone())
+        .unwrap_or_default();
+    let word_timed = read_yrc(&yrc);
+    let by_word = !word_timed.is_empty();
+    let (tl, ro) = (rows(field("tlyric")), rows(field("romalrc")));
+    let (ytl, yro) = (rows(field("ytlrc")), rows(field("yromalrc")));
+    let mut f = if by_word {
+        Found {
+            source: "netease".into(),
+            lyrics: Lyrics {
+                lines: word_timed,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    } else {
+        by_line?
+    };
+    // Each line's line-timed copy, where `tlyric` and `romalrc` are stamped.
+    let met: Vec<Option<usize>> = if by_word {
+        lines_met(&f.lyrics.lines, &line_timed)
+    } else {
+        (0..f.lyrics.lines.len()).map(Some).collect()
+    };
+    for (line, met) in f.lyrics.lines.iter_mut().zip(met) {
+        let at = met.map(|j| line_timed[j].start_ms);
+        let second = |by_word_rows: &[(u64, String)], by_line_rows: &[(u64, String)]| {
+            by_word
+                .then(|| row_near(by_word_rows, line.start_ms, 100))
+                .flatten()
+                .or_else(|| at.and_then(|ms| row_near(by_line_rows, ms, 0)))
+                .map(str::to_owned)
+        };
+        let translated = second(&ytl, &tl);
+        let spaced = second(&yro, &ro);
+        if let Some(t) = translated.filter(|t| *t != line.text) {
+            line.translation = Some(carried_translation(&t, "netease"));
+        } else if line.translation.is_none() {
+            // A translation the line-timed copy carried itself (a line at the same time).
+            line.translation = met.and_then(|j| line_timed[j].translation.clone());
+        }
+        if let Some(r) = spaced.and_then(|r| roman_from(line, &r, "netease", None)) {
+            line.roman = Some(r);
+        }
+    }
+    f.credits = credits;
+    credits_out(f, req)
+}
+
+/// NetEase's lyrics for a song by its id: the newer call first (as LX Music asks it; it adds
+/// the word-timed lyrics), the older one when it has nothing or fails. Asked without its
+/// encryption, it answers the same (checked on 2026-10-22 for three songs).
+fn netease_lyrics(
+    req: &LyricsRequest,
+    id: i64,
+    ask: impl Fn(&str) -> Result<Option<Value>, AskError>,
+) -> Result<Option<Found>, AskError> {
+    let v1 = format!(
+        "https://music.163.com/api/song/lyric/v1?id={id}&cp=false&tv=0&lv=0&rv=0&kv=0&yv=0&ytv=0&yrv=0"
+    );
+    if let Ok(Some(v)) = ask(&v1)
+        && let Some(f) = netease_found(req, &v)
+    {
+        return Ok(Some(f));
+    }
+    let old = format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1&rv=-1");
+    Ok(ask(&old)?.and_then(|v| netease_found(req, &v)))
 }
 
 fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
@@ -1449,6 +1673,7 @@ pub fn ask(
         "lyricsplus" => lyricsplus(&agent, req),
         "boidu" => boidu(&agent, req),
         "netease" => netease(&agent, req),
+        "amll" => amll(&agent, req),
         "qq" => qq(&agent, req),
         "kugou" => kugou(&agent, req),
         other => return Err(AskError::Down(format!("no lyrics source called {other}"))),
@@ -1541,20 +1766,88 @@ pub fn automatic(
         drop(tx);
         let started = Instant::now();
         let mut answers: Vec<Option<Answer>> = vec![None; sources.len()];
-        loop {
+        let pick = loop {
             if let Some(pick) = outcome(&answers, false) {
-                return pick;
+                break pick;
             }
             let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
             match rx.recv_timeout(left) {
                 Ok((i, f)) => answers[i] = Some(f),
                 Err(_) => {
-                    return outcome(&answers, true)
+                    break outcome(&answers, true)
                         .unwrap_or_else(|| Err(AskError::Down("No source answered".into())));
                 }
             }
+        };
+        let Ok(Some(found)) = pick else {
+            return pick;
+        };
+        if wants_pairing(&found) {
+            // A copy of the song in Latin letters may be among the other answers. Every source
+            // was asked at once and the scope waits for each anyway, so waiting for them here
+            // costs no time.
+            while answers.iter().any(Option::is_none) {
+                let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
+                match rx.recv_timeout(left) {
+                    Ok((i, f)) => answers[i] = Some(f),
+                    Err(_) => break,
+                }
+            }
         }
+        Ok(Some(paired_pick(found, &answers)))
     })
+}
+
+/// Automatic's pick, its lines in another script paired with a copy of the song in Latin
+/// letters among the other answers, in your order, when it wants one ([`pair_from`]).
+fn paired_pick(mut found: Found, answers: &[Option<Result<Option<Found>, AskError>>]) -> Found {
+    if wants_pairing(&found) {
+        let others: Vec<&Found> = answers
+            .iter()
+            .flatten()
+            .filter_map(|a| a.as_ref().ok()?.as_ref())
+            .collect();
+        pair_from(&mut found, &others);
+    }
+    found
+}
+
+/// Whether an answer has lines in another script still wanting a pronunciation from the
+/// lyrics (none yet, or only one made on the device): then a copy in Latin letters is looked
+/// for among the other answers.
+fn wants_pairing(f: &Found) -> bool {
+    f.synced()
+        && f.lyrics
+            .lines
+            .iter()
+            .filter(|l| {
+                !matches!(l.script.as_str(), "Latn" | "Zyyy" | "")
+                    && l.roman
+                        .as_ref()
+                        .is_none_or(|r| r.source == SecondSource::Made)
+            })
+            .count()
+            >= 3
+}
+
+/// The answer's lines in another script paired with a copy of the song in Latin letters from
+/// another source's answer (the first that pairs, in the order given): that copy's lines
+/// become their pronunciation, `Paired(source)` (see [`crate::lyrics::pair`]). The source,
+/// when one paired.
+pub fn pair_from(found: &mut Found, others: &[&Found]) -> Option<String> {
+    others
+        .iter()
+        .filter(|o| o.source != found.source && o.synced())
+        .find(|o| {
+            crate::lyrics::pair::pair_roman(
+                &mut found.lyrics.lines,
+                found.lyrics.lang.as_deref(),
+                &o.lyrics.lines,
+                &o.source,
+            )
+            .is_some()
+        })
+        .map(|o| o.source.clone())
 }
 
 /// The answer to show after asking again about a song whose kept answer was in an older
@@ -2130,6 +2423,499 @@ mod tests {
         assert_eq!(total_ms(&serde_json::json!("1:02:03.5")), Some(3_723_500));
         assert_eq!(total_ms(&serde_json::json!("45.25")), Some(45_250));
         assert_eq!(total_ms(&serde_json::json!("soon")), None);
+    }
+
+    #[test]
+    fn lyricsplus_lines_carry_their_translation_and_transliteration() {
+        // LyricsPlus sends both per line when the lyrics it relays carry them (its
+        // `translation {lang, text}` and `transliteration {lang, text, syllabus}`, from Apple's
+        // TTML head). None of the answers captured on 2026-10-21 and 2026-10-22 had them, so
+        // they are added here to Idol's, in that shape.
+        let mut v = fixture("lyricsplus-idol.json");
+        v["lyrics"][0]["transliteration"] = serde_json::json!({
+            "lang": "ja-Latn",
+            "text": "Muteki no egao de arasu media",
+            "syllabus": [
+                { "time": 589, "duration": 807, "text": "Muteki no " },
+                { "time": 1396, "duration": 470, "text": "egao " },
+                { "time": 1866, "duration": 179, "text": "de " },
+                { "time": 2045, "duration": 301, "text": "arasu " },
+                { "time": 2346, "duration": 851, "text": "media" }
+            ]
+        });
+        v["lyrics"][0]["translation"] = serde_json::json!({
+            "lang": "en",
+            "text": "Taking the media by storm with an invincible smile"
+        });
+        v["lyrics"][1]["transliteration"] =
+            serde_json::json!({ "lang": "", "text": "Shiritai sono himitsu misuteriasu" });
+        v["lyrics"][1]["translation"] = serde_json::json!({ "text": "想知道那个秘密" });
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        let lp = lyricsplus_found(&idol, &v).unwrap();
+        let first = &lp.lyrics.lines[0];
+        let r = first.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Muteki no egao de arasu media");
+        assert_eq!(
+            (r.lang.as_str(), &r.source),
+            ("ja-Latn", &SecondSource::Lyrics("lyricsplus".into()))
+        );
+        assert_eq!(
+            r.words
+                .iter()
+                .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (589, 1396, "Muteki no "),
+                (1396, 1866, "egao "),
+                (1866, 2045, "de "),
+                (2045, 2346, "arasu "),
+                (2346, 3197, "media")
+            ],
+            "timed by its own syllables"
+        );
+        let t = first.translation.as_ref().unwrap();
+        assert_eq!(
+            (t.text.as_str(), t.lang.as_str()),
+            ("Taking the media by storm with an invincible smile", "en")
+        );
+        let second = &lp.lyrics.lines[1];
+        let r = second.roman.as_ref().unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.lang.as_str(), r.words.len()),
+            ("Shiritai sono himitsu misuteriasu", "ja-Latn", 0),
+            "no language sent: the song's"
+        );
+        assert_eq!(
+            second.translation.as_ref().map(|t| t.lang.as_str()),
+            Some("zh"),
+            "no language sent: told by its letters"
+        );
+        // Kept through the made pronunciation `ask` adds.
+        let mut lyrics = lp.lyrics.clone();
+        crate::lyrics::add_pronunciation(&mut lyrics);
+        assert_eq!(lyrics.lines[0].roman, lp.lyrics.lines[0].roman);
+
+        // A line already in Latin letters gets no pronunciation, whatever is sent.
+        let mut v = fixture("pairing/kesariya.lyricsplus.json");
+        v["lyrics"][0]["transliteration"] =
+            serde_json::json!({ "lang": "hi-Latn", "text": "Mujhko itna bataye koyi" });
+        let kesariya = req("Kesariya", &["Arijit Singh"], 268);
+        let lp = lyricsplus_found(&kesariya, &v).unwrap();
+        assert_eq!(lp.lyrics.lines[0].roman, None);
+    }
+
+    #[test]
+    fn neteases_newer_call_is_read_like_the_old_one() {
+        // Idol as NetEase's `song/lyric/v1` answered on 2026-10-22: its credits come as JSON
+        // lines ({"t":0,"c":[{"tx":"作词: "},{"tx":"Ayase"}]}), the rest as before.
+        let idol = idol_req();
+        let v1 = netease_found(&idol, &fixture("netease-v1-idol.json")).unwrap();
+        let old = netease_found(&idol, &fixture("netease-idol.json")).unwrap();
+        assert_eq!(
+            v1.credits,
+            ["作词: Ayase", "作曲: Ayase", "编曲: Ayase", "制作人: Ayase"]
+        );
+        assert_eq!(texts(&v1), texts(&old), "the same sung lines");
+        let first = &v1.lyrics.lines[0];
+        assert_eq!(
+            first.roman.as_ref().map(|r| r.text.as_str()),
+            Some("muteki no egao de arasu media")
+        );
+        assert_eq!(
+            first.translation.as_ref().map(|t| t.lang.as_str()),
+            Some("zh-Hans")
+        );
+        assert_eq!(
+            v1.lyrics.lines.iter().filter(|l| l.roman.is_some()).count(),
+            old.lyrics
+                .lines
+                .iter()
+                .filter(|l| l.roman.is_some())
+                .count()
+        );
+    }
+
+    #[test]
+    fn neteases_word_timed_lyrics_are_the_lines_when_it_has_them() {
+        // 孤勇者 (Eason Chan) from `song/lyric/v1` on 2026-10-22: `yrc` times every word.
+        let song = req("孤勇者", &["陈奕迅"], 256);
+        let f = netease_found(&song, &fixture("netease-v1-guyongzhe.json")).unwrap();
+        let sung = f
+            .lyrics
+            .lines
+            .iter()
+            .find(|l| l.text == "都 是勇敢的")
+            .unwrap();
+        assert_eq!((sung.start_ms, sung.end_ms), (22_310, 26_610));
+        assert_eq!(
+            sung.words
+                .iter()
+                .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (22_310, 25_190, "都 "),
+                (25_190, 25_500, "是"),
+                (25_500, 25_790, "勇"),
+                (25_790, 26_020, "敢"),
+                (26_020, 26_610, "的")
+            ]
+        );
+        assert!(f.lyrics.lines.iter().all(|l| !l.text.contains("\"tx\"")));
+        assert!(
+            f.credits.contains(&"作词: 唐恬".to_owned()),
+            "{:?}",
+            f.credits
+        );
+        assert!(
+            f.lyrics
+                .lines
+                .iter()
+                .filter(|l| !l.words.is_empty())
+                .count()
+                > 40
+        );
+
+        // With its word-timed translation and Roman letters (`ytlrc`, `yromalrc`, stamped at
+        // the word-timed lines' starts, give or take a little), and the line-timed ones
+        // (`tlyric`, `romalrc`, stamped at the `lrc` lines') for lines those don't cover. This
+        // shape was not in any captured answer, so it is written here.
+        let v = serde_json::json!({
+            "code": 200,
+            "lrc": { "lyric": "{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Ayase\"}]}\n[00:00.270]無敵の笑顔で\n[00:03.250]知りたい\n" },
+            "tlyric": { "lyric": "[00:00.270]无敌笑容\n[00:03.250]想知道\n" },
+            "romalrc": { "lyric": "[00:00.270]mu te ki no e ga o de\n[00:03.250]shi ri ta i\n" },
+            "yrc": { "lyric": "{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Ayase\"}]}\n[273,2800](273,850,0)無敵(1123,180,0)の(1303,600,0)笑顔(1903,190,0)で\n[3283,2600](3283,300,0)知(3583,200,0)り(3783,200,0)た(3983,200,0)い\n" },
+            "ytlrc": { "lyric": "[00:00.300]露出无敌笑容\n" },
+            "yromalrc": { "lyric": "[00:00.273]mu te ki no e ga o de\n" }
+        });
+        let f = netease_found(&idol_req(), &v).unwrap();
+        assert_eq!(f.credits, ["作词: Ayase"]);
+        let first = &f.lyrics.lines[0];
+        assert_eq!(first.words.len(), 4, "the word-timed lines are the lines");
+        let r = first.roman.as_ref().unwrap();
+        assert_eq!(r.text, "muteki no egao de");
+        assert_eq!(
+            r.words
+                .iter()
+                .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (273, 1123, "muteki "),
+                (1123, 1303, "no "),
+                (1303, 1903, "egao "),
+                (1903, 2093, "de")
+            ],
+            "timed by the line's words"
+        );
+        assert_eq!(
+            first.translation.as_ref().map(|t| t.text.as_str()),
+            Some("露出无敌笑容"),
+            "the word-timed translation first"
+        );
+        let second = &f.lyrics.lines[1];
+        assert_eq!(
+            second.translation.as_ref().map(|t| t.text.as_str()),
+            Some("想知道"),
+            "the line-timed one, met through the same line in `lrc`"
+        );
+        assert_eq!(
+            second.roman.as_ref().map(|r| r.text.as_str()),
+            Some("shiritai")
+        );
+        assert_eq!(second.roman.as_ref().unwrap().words.len(), 1);
+    }
+
+    #[test]
+    fn amlls_library_by_the_songs_netease_id() {
+        let song = req("夜に駆ける", &["YOASOBI"], 261);
+        let ttml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/lyrics/amll-yoru-ni-kakeru.ttml"),
+        )
+        .unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let f = amll_lyrics(&song, 1409311773, |url| {
+            asked.borrow_mut().push(url.to_owned());
+            Ok(Some(ttml.clone()))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            *asked.borrow(),
+            [
+                "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/ncm-lyrics/1409311773.ttml"
+            ]
+        );
+        assert_eq!(f.source, "amll");
+        assert_eq!(
+            f.credit.as_deref(),
+            Some("Timed by mizuhara37 for the AMLL TTML DB")
+        );
+        let first = &f.lyrics.lines[0];
+        assert!(!first.words.is_empty());
+        assert_eq!(
+            first.roman.as_ref().map(|r| &r.source),
+            Some(&SecondSource::Lyrics("amll".into()))
+        );
+        assert_eq!(
+            first
+                .translation
+                .as_ref()
+                .map(|t| (t.lang.as_str(), &t.source)),
+            Some(("zh-CN", &SecondSource::Lyrics("amll".into())))
+        );
+        // Not in the library: no lyrics, not trouble.
+        assert_eq!(amll_lyrics(&song, 1, |_| Ok(None)), Ok(None));
+        assert_eq!(label("amll"), "AMLL TTML DB");
+        assert!(order(&[]).iter().any(|(id, on)| *id == "amll" && *on));
+    }
+
+    fn idol_req() -> LyricsRequest {
+        req("アイドル", &["YOASOBI"], 213)
+    }
+
+    /// A song's LRCLIB and LyricsPlus answers as captured on 2026-10-22, each as `ask` gives
+    /// it (with its made pronunciation).
+    fn pairing_answers(song: &str) -> (Found, Found) {
+        let lr = fixture(&format!("pairing/{song}.lrclib.json"));
+        let mut lrclib = found_from_text("lrclib", lr["syncedLyrics"].as_str().unwrap()).unwrap();
+        let lp = fixture(&format!("pairing/{song}.lyricsplus.json"));
+        let mut lyricsplus = lyricsplus_found(&LyricsRequest::default(), &lp).unwrap();
+        crate::lyrics::add_pronunciation(&mut lrclib.lyrics);
+        crate::lyrics::add_pronunciation(&mut lyricsplus.lyrics);
+        (lrclib, lyricsplus)
+    }
+
+    fn paired(f: &Found) -> Vec<(&str, &str)> {
+        f.lyrics
+            .lines
+            .iter()
+            .filter_map(|l| {
+                let r = l.roman.as_ref()?;
+                matches!(r.source, SecondSource::Paired(_))
+                    .then_some((l.text.as_str(), r.text.as_str()))
+            })
+            .collect()
+    }
+
+    fn not_latin(f: &Found) -> usize {
+        f.lyrics
+            .lines
+            .iter()
+            .filter(|l| !matches!(l.script.as_str(), "Latn" | "Zyyy"))
+            .count()
+    }
+
+    #[test]
+    fn a_romanized_copy_of_the_song_is_paired_with_the_original_by_time() {
+        // Hindi and Punjabi songs whose LRCLIB lyrics are in Devanagari or Gurmukhi, and whose
+        // LyricsPlus lyrics are Apple's, in Latin letters.
+        for song in ["kesariya", "apna-bana-le", "chaleya", "heeriye"] {
+            let (mut lrclib, lyricsplus) = pairing_answers(song);
+            let made = lrclib.clone();
+            assert_eq!(
+                pair_from(&mut lrclib, &[&lyricsplus]).as_deref(),
+                Some("lyricsplus"),
+                "{song}"
+            );
+            let (n, of) = (paired(&lrclib).len(), not_latin(&lrclib));
+            eprintln!("{song}: {n} of {of} lines paired");
+            assert!(n * 10 >= of * 8, "{song}: {n} of {of}");
+            // Lines it couldn't pair keep the pronunciation made on the device.
+            for (l, m) in lrclib.lyrics.lines.iter().zip(&made.lyrics.lines) {
+                if l.roman
+                    .as_ref()
+                    .is_some_and(|r| r.source == SecondSource::Made)
+                {
+                    assert_eq!(l.roman, m.roman);
+                }
+            }
+        }
+        let (mut lrclib, lyricsplus) = pairing_answers("kesariya");
+        pair_from(&mut lrclib, &[&lyricsplus]);
+        let first = &lrclib.lyrics.lines[0];
+        assert_eq!(first.text, "मुझको इतना बताए कोई");
+        let r = first.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Mujhko itna bataye koyi");
+        assert_eq!(r.source, SecondSource::Paired("lyricsplus".into()));
+        assert_eq!(r.lang, "hi-Latn");
+        // Apple's word timing, moved to where this copy starts the line (9 440 ms; Apple's
+        // starts at 9 615).
+        assert_eq!(r.words[0].start_ms, first.start_ms);
+        assert_eq!(
+            r.words.iter().map(|w| w.text.as_str()).collect::<String>(),
+            r.text
+        );
+        assert!(
+            r.words
+                .iter()
+                .all(|w| w.end_ms <= first.end_ms.max(w.start_ms))
+        );
+
+        // Apple splits a line LRCLIB keeps whole: both halves are its pronunciation.
+        let (mut lrclib, lyricsplus) = pairing_answers("heeriye");
+        pair_from(&mut lrclib, &[&lyricsplus]);
+        let whole = lrclib
+            .lyrics
+            .lines
+            .iter()
+            .find(|l| l.text == "ਤੇਰੀ ਹੋਕੇ ਮਰਾਂ, ਜਿੰਦ-ਜਾਨ ਕਰਾਂ")
+            .unwrap();
+        let r = whole.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Teri hoke maraan Jind jaan karaan");
+        assert_eq!(r.lang, "pa-Latn");
+    }
+
+    #[test]
+    fn another_song_or_a_translation_at_the_same_times_is_never_paired() {
+        let (kesariya, _) = pairing_answers("kesariya");
+        let (_, apna) = pairing_answers("apna-bana-le");
+        // Another song in Latin letters.
+        let mut f = kesariya.clone();
+        assert_eq!(pair_from(&mut f, &[&apna]), None);
+        assert_eq!(f, kesariya, "left as it was");
+        // Another song's words at exactly this song's times.
+        let mut retimed = apna.clone();
+        retimed.lyrics.lines = kesariya
+            .lyrics
+            .lines
+            .iter()
+            .zip(apna.lyrics.lines.iter().cycle())
+            .map(|(k, a)| LyricLine {
+                start_ms: k.start_ms,
+                end_ms: k.end_ms,
+                text: a.text.clone(),
+                script: a.script.clone(),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(pair_from(&mut f, &[&retimed]), None);
+        // English at exactly this song's times: what a translation looks like.
+        let english = [
+            "The morning train was late again",
+            "We waited by the window for an hour",
+            "Somebody left a coat upon the bench",
+            "The rain stopped just before the evening",
+        ];
+        let mut translated = retimed.clone();
+        for (l, e) in translated
+            .lyrics
+            .lines
+            .iter_mut()
+            .zip(english.iter().cycle())
+        {
+            l.text = (*e).to_owned();
+        }
+        assert_eq!(pair_from(&mut f, &[&translated]), None);
+        assert_eq!(f, kesariya);
+        // Both copies already in Latin letters: nothing to pair.
+        let (mut tum, tum_lp) = pairing_answers("tum-hi-ho");
+        assert_eq!(pair_from(&mut tum, &[&tum_lp]), None);
+        // The first copy that pairs is the one used.
+        let (mut f, lp) = pairing_answers("kesariya");
+        assert_eq!(
+            pair_from(&mut f, &[&translated, &apna, &lp]).as_deref(),
+            Some("lyricsplus")
+        );
+    }
+
+    #[test]
+    fn automatic_pairs_its_pick_with_another_sources_copy() {
+        // LRCLIB first in your order: its Devanagari copy is the pick, and LyricsPlus's Latin
+        // one (answered later) its pronunciation.
+        let (lrclib, lyricsplus) = pairing_answers("kesariya");
+        let answers = vec![
+            Some(Ok(Some(lrclib.clone()))),
+            Some(Ok(None)),
+            Some(Err(AskError::Refused("no".into()))),
+            Some(Ok(Some(lyricsplus.clone()))),
+        ];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        assert_eq!(pick.source, "lrclib");
+        assert!(wants_pairing(&pick));
+        let f = paired_pick(pick, &answers);
+        assert!(paired(&f).len() > 30);
+        assert_eq!(
+            f.lyrics.lines[0].text, lrclib.lyrics.lines[0].text,
+            "still LRCLIB's"
+        );
+        // LyricsPlus first: its Latin lines are the pick and want nothing.
+        let answers = vec![Some(Ok(Some(lyricsplus.clone()))), Some(Ok(Some(lrclib)))];
+        let pick = outcome(&answers, true).unwrap().unwrap().unwrap();
+        assert!(!wants_pairing(&pick));
+        assert_eq!(paired_pick(pick, &answers), lyricsplus);
+    }
+
+    #[test]
+    fn pairing_measured_on_every_captured_song() {
+        // Both ways round: LRCLIB's copy as the original, then LyricsPlus's.
+        for song in [
+            "kesariya",
+            "apna-bana-le",
+            "chaleya",
+            "heeriye",
+            "tum-hi-ho",
+            "channa-mereya",
+        ] {
+            let (lrclib, lyricsplus) = pairing_answers(song);
+            for (name, mut original, other) in [
+                ("LRCLIB", lrclib.clone(), &lyricsplus),
+                ("LyricsPlus", lyricsplus.clone(), &lrclib),
+            ] {
+                let by = pair_from(&mut original, &[other]);
+                eprintln!(
+                    "{song}, {name} first: {} of {} lines not in Latin letters paired ({by:?})",
+                    paired(&original).len(),
+                    not_latin(&original)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn neteases_newer_call_first_and_the_old_one_when_it_has_nothing() {
+        let idol = idol_req();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let ask = |url: &str| {
+            asked.borrow_mut().push(url.to_owned());
+            Ok(Some(if url.contains("/v1?") {
+                serde_json::json!({ "code": 200, "nolyric": true })
+            } else {
+                fixture("netease-idol.json")
+            }))
+        };
+        let f = netease_lyrics(&idol, 2034742057, ask).unwrap().unwrap();
+        assert_eq!(f.lyrics.lines[0].text, "無敵の笑顔で荒らすメディア");
+        assert_eq!(
+            *asked.borrow(),
+            [
+                "https://music.163.com/api/song/lyric/v1?id=2034742057&cp=false&tv=0&lv=0&rv=0&kv=0&yv=0&ytv=0&yrv=0",
+                "https://music.163.com/api/song/lyric?id=2034742057&lv=1&kv=1&tv=-1&rv=-1"
+            ]
+        );
+        // The newer call answers: the old one isn't asked.
+        let asked = std::cell::RefCell::new(0);
+        let f = netease_lyrics(&idol, 1, |_| {
+            *asked.borrow_mut() += 1;
+            Ok(Some(fixture("netease-v1-idol.json")))
+        })
+        .unwrap();
+        assert!(f.is_some());
+        assert_eq!(*asked.borrow(), 1);
+        // The newer call fails: the old one is asked; when both fail, the old one's error.
+        let f = netease_lyrics(&idol, 1, |url| {
+            if url.contains("/v1?") {
+                Err(AskError::Down("HTTP 503".into()))
+            } else {
+                Ok(Some(fixture("netease-idol.json")))
+            }
+        })
+        .unwrap();
+        assert!(f.is_some());
+        assert_eq!(
+            netease_lyrics(&idol, 1, |_| Err(AskError::Down("HTTP 503".into()))),
+            Err(AskError::Down("HTTP 503".into()))
+        );
     }
 
     fn texts(f: &Found) -> Vec<&str> {
