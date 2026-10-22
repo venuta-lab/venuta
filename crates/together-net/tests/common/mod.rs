@@ -2,7 +2,7 @@
 //! and a guest session over this network (local only), and plain peers that speak the wire
 //! protocol and nothing more.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub use iroh::endpoint::{ConnectionError, SendStream};
 pub use iroh::{Endpoint, SecretKey};
@@ -47,6 +47,14 @@ pub fn online(id: &str) -> Song {
         format: None,
         artwork_url: None,
         added_by: None,
+    }
+}
+
+/// A host song short for its file's size: the whole file comes in the pacing's first burst.
+pub fn short_host_song(hex: &str) -> Song {
+    Song {
+        duration_ms: Some(1_000),
+        ..host_song(hex)
     }
 }
 
@@ -441,4 +449,162 @@ pub async fn guest_of(invite: &Invite, keys: &std::path::Path) -> (Arc<GuestSess
     .await
     .unwrap();
     (g, app)
+}
+
+// --- A slower link between two endpoints on this computer -----------------------------------
+
+/// A link in the middle: datagrams from the guest's side go to `to` from a socket of the link's
+/// own, and what comes back is passed on at `down_rate` bytes a second through a queue of at
+/// most `queue` bytes (more is dropped, as a router does), after `delay`. `cut` stops it.
+pub struct Link {
+    pub addr: std::net::SocketAddr,
+    pub cut: Arc<std::sync::atomic::AtomicBool>,
+}
+
+pub async fn link(to: std::net::SocketAddr, down_rate: f64, queue: usize, delay: Duration) -> Link {
+    use std::sync::atomic::Ordering;
+    let near = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let far_side = if to.is_ipv6() {
+        "[::1]:0"
+    } else {
+        "127.0.0.1:0"
+    };
+    let far = Arc::new(tokio::net::UdpSocket::bind(far_side).await.unwrap());
+    let addr = near.local_addr().unwrap();
+    let cut = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let guest: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::default();
+    // Up: at once.
+    tokio::spawn({
+        let (near, far, guest, cut) = (near.clone(), far.clone(), guest.clone(), cut.clone());
+        async move {
+            let mut buf = vec![0u8; 65_536];
+            while let Ok((n, from)) = near.recv_from(&mut buf).await {
+                *guest.lock().unwrap() = Some(from);
+                if !cut.load(Ordering::Relaxed) {
+                    let _ = far.send_to(&buf[..n], to).await;
+                }
+            }
+        }
+    });
+    // Down: queued, paced, delayed.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
+    let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    tokio::spawn({
+        let (far, queued, cut) = (far.clone(), queued.clone(), cut.clone());
+        async move {
+            let mut buf = vec![0u8; 65_536];
+            while let Ok((n, _)) = far.recv_from(&mut buf).await {
+                if cut.load(Ordering::Relaxed) || queued.load(Ordering::Relaxed) + n > queue {
+                    continue;
+                }
+                queued.fetch_add(n, Ordering::Relaxed);
+                let _ = tx.send((Instant::now(), buf[..n].to_vec()));
+            }
+        }
+    });
+    tokio::spawn(async move {
+        let mut free_at = Instant::now();
+        while let Some((came, d)) = rx.recv().await {
+            // On the link's own schedule (a timer that wakes late sends the next ones at once).
+            let start = free_at.max(came);
+            free_at = start + Duration::from_secs_f64(d.len() as f64 / down_rate);
+            let due = free_at.max(came + delay);
+            if due > Instant::now() {
+                tokio::time::sleep_until(due.into()).await;
+            }
+            queued.fetch_sub(d.len(), std::sync::atomic::Ordering::Relaxed);
+            let g = *guest.lock().unwrap();
+            if let Some(g) = g {
+                let _ = near.send_to(&d, g).await;
+            }
+        }
+    });
+    Link { addr, cut }
+}
+
+/// The host's invite, reaching it only through these links.
+pub fn invite_through(invite: &Invite, links: &[&Link]) -> Invite {
+    let t: iroh_tickets::endpoint::EndpointTicket = invite.to.parse().unwrap();
+    let mut addr = iroh::EndpointAddr::new(t.endpoint_addr().id);
+    for l in links {
+        addr = addr.with_ip_addr(l.addr);
+    }
+    Invite {
+        to: iroh_tickets::endpoint::EndpointTicket::new(addr).to_string(),
+        ..invite.clone()
+    }
+}
+
+/// The host's own address on this computer (local only: its first IPv4 one).
+pub fn host_addr(h: &TestHost) -> std::net::SocketAddr {
+    if let Some(a) = h.s.ep.addr().ip_addrs().find(|a| a.is_ipv6()) {
+        return std::net::SocketAddr::new("::1".parse().unwrap(), a.port());
+    }
+    let a =
+        h.s.ep
+            .addr()
+            .ip_addrs()
+            .find(|a| a.is_ipv4())
+            .copied()
+            .unwrap();
+    std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), a.port())
+}
+
+/// An endpoint on one address family of this computer only (`v6`: [::1], else 127.0.0.1), so
+/// another on the other family can reach it only through a [`Link`].
+pub async fn endpoint_on(v6: bool, host: bool, key: Option<SecretKey>) -> Endpoint {
+    let mut b = Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .clear_ip_transports();
+    b = if v6 {
+        b.bind_addr("[::1]:0").unwrap()
+    } else {
+        b.bind_addr("127.0.0.1:0").unwrap()
+    };
+    if host {
+        b = b.alpns(vec![net::ALPN.to_vec()]);
+    }
+    if let Some(k) = key {
+        b = b.secret_key(k);
+    }
+    b.bind().await.unwrap()
+}
+
+/// A host on [::1] only: guests on 127.0.0.1 reach it through links.
+pub async fn host_far(songs: Vec<Song>) -> TestHost {
+    let ep = endpoint_on(true, true, None).await;
+    let invite = Invite {
+        to: iroh_tickets::endpoint::EndpointTicket::new(ep.addr()).to_string(),
+        secret: SECRET.into(),
+        until: net::unix_now() + 3_600,
+        host: "Asha".into(),
+    };
+    let app = Arc::new(App::default());
+    let s = HostSession::new(
+        ep,
+        Room::new("Asha", SECRET, songs),
+        invite.clone(),
+        app.clone(),
+    );
+    s.run();
+    TestHost { s, app, invite }
+}
+
+impl Raw {
+    /// Dial from 127.0.0.1 only (for a host reached through links).
+    pub async fn dial_near(invite: &Invite, key: SecretKey) -> Raw {
+        let ep = endpoint_on(false, false, Some(key)).await;
+        let t: iroh_tickets::endpoint::EndpointTicket = invite.to.parse().unwrap();
+        let conn = tokio::time::timeout(WAIT, ep.connect(t.endpoint_addr().clone(), net::ALPN))
+            .await
+            .unwrap()
+            .unwrap();
+        let (send, recv) = conn.open_bi().await.unwrap();
+        Raw {
+            ep,
+            conn,
+            send,
+            lines: net::Lines::new(recv),
+        }
+    }
 }

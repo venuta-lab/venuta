@@ -173,6 +173,7 @@ impl GuestSession {
             )
         })?;
         let (mut send, recv) = conn.open_bi().await.map_err(|e| e.to_string())?;
+        let _ = send.set_priority(net::priority::CONTROL);
         let hello = ToHost::Hello {
             protocol: together::PROTOCOL,
             name: self.hooks.name(),
@@ -279,6 +280,7 @@ impl GuestSession {
     pub async fn fetch_cover(&self, key: &str, max: u64) -> Option<Vec<u8>> {
         let conn = self.conn.lock().unwrap().clone()?;
         let (mut send, recv) = conn.open_bi().await.ok()?;
+        let _ = send.set_priority(net::priority::COVER);
         let ask = Get {
             get: format!("cover:{key}"),
             from: 0,
@@ -462,6 +464,7 @@ impl GuestSession {
             let _ = tcp.write_all(reply("502 Bad Gateway").as_bytes()).await;
             return;
         };
+        let _ = send.set_priority(net::priority::FILE);
         let (from, to) = range.unwrap_or((0, None));
         let ask = Get {
             get: key.to_owned(),

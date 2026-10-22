@@ -17,6 +17,19 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 /// Rooms speak this protocol on the connection.
 pub const ALPN: &[u8] = b"venuta/together/1";
 
+/// How the streams of one connection go out against each other (`SendStream::set_priority`):
+/// higher first. Room messages never wait behind file bytes; covers come last.
+pub mod priority {
+    /// The room's messages, the first stream.
+    pub const CONTROL: i32 = 100;
+    /// A song's alignment envelope.
+    pub const ENVELOPE: i32 = 50;
+    /// The host's files.
+    pub const FILE: i32 = 0;
+    /// Covers.
+    pub const COVER: i32 = -10;
+}
+
 /// How this Venuta connects (from Settings).
 #[derive(Debug, Clone, Default)]
 pub struct Reach {

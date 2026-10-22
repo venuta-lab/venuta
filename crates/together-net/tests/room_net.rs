@@ -477,7 +477,7 @@ async fn the_hosts_files_are_streamed_to_people_in_the_room_as_asked() {
     let cover = dir.path().join("cover.jpg");
     std::fs::write(&cover, b"jpeg bytes").unwrap();
     let hex = &FILE_KEY["host:".len()..];
-    let h = host(vec![host_song(hex), online("aaaaaaaaaaa")]).await;
+    let h = host(vec![short_host_song(hex), online("aaaaaaaaaaa")]).await;
     h.app
         .files
         .lock()
@@ -552,7 +552,7 @@ async fn an_empty_file_is_its_size_and_nothing_more() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("empty.flac");
     std::fs::write(&path, b"").unwrap();
-    let h = host(vec![host_song(&FILE_KEY["host:".len()..])]).await;
+    let h = host(vec![short_host_song(&FILE_KEY["host:".len()..])]).await;
     h.app
         .files
         .lock()
@@ -983,7 +983,7 @@ async fn a_whole_room_host_and_guest() {
     let cover = dir.path().join("cover.jpg");
     std::fs::write(&cover, counting(5_000)).unwrap();
     let h = host(vec![
-        host_song(&FILE_KEY["host:".len()..]),
+        short_host_song(&FILE_KEY["host:".len()..]),
         online("aaaaaaaaaaa"),
     ])
     .await;

@@ -7,12 +7,13 @@
 //! host's files are) comes in through [`HostHooks`].
 
 use crate::net::{self, Clock, Lines, News};
+use crate::pace::Pacer;
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use together::invite::Invite;
 use together::proto::{self, Action, ToGuest, ToHost};
 use together::room::{Changes, HOST, Knock, Room};
@@ -55,6 +56,8 @@ pub struct HostSession {
     conns: Mutex<HashMap<u32, (Out, Connection)>>,
     /// Each guest's last few round trips (ms), for whether same room can stay on.
     trips: Mutex<HashMap<u32, Vec<u32>>>,
+    /// Each person's download of each host song: its pacing, and where it has got to.
+    pacing: Mutex<HashMap<(u32, String), (Pacer, u64)>>,
     waiting: Mutex<HashMap<u32, (Out, Connection)>>,
     pub invite: Invite,
     hooks: Arc<dyn HostHooks>,
@@ -72,6 +75,7 @@ impl HostSession {
             conns: Mutex::default(),
             waiting: Mutex::default(),
             trips: Mutex::default(),
+            pacing: Mutex::default(),
             invite,
             hooks,
             rt: Handle::current(),
@@ -177,7 +181,8 @@ impl HostSession {
         }
         let knock = self.room.lock().unwrap().knock(&key, &name, &proof);
         let (out, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        // Everything for this person goes through one writer.
+        // Everything for this person goes through one writer, ahead of any file bytes.
+        let _ = send.set_priority(net::priority::CONTROL);
         self.rt.spawn(async move {
             while let Some(line) = out_rx.recv().await {
                 if net::send_line(&mut send, &line).await.is_err() {
@@ -326,6 +331,7 @@ impl HostSession {
         if was_conn && said_bye {
             self.hooks.trace(&format!("room: {id} left"));
             let now = self.clock.now_us();
+            self.forget_downloads(id);
             let c = self.room.lock().unwrap().left(id, now);
             self.apply(c);
             return;
@@ -344,6 +350,7 @@ impl HostSession {
             if let Some(h) = weak.upgrade()
                 && !h.conns.lock().unwrap().contains_key(&id)
             {
+                h.forget_downloads(id);
                 let c = h.room.lock().unwrap().remove(id, false);
                 h.apply(c);
             }
@@ -388,6 +395,7 @@ impl HostSession {
     pub fn turn_away(&self, id: u32, block: bool, why: &str) {
         self.hooks
             .trace(&format!("room: the host took {id} out (blocked: {block})"));
+        self.forget_downloads(id);
         let c = self.room.lock().unwrap().remove(id, block);
         let gone = self
             .waiting
@@ -462,6 +470,11 @@ impl HostSession {
         net::too_far(t)
     }
 
+    /// Someone out of the room: their downloads' pacing goes.
+    fn forget_downloads(&self, id: u32) {
+        self.pacing.lock().unwrap().retain(|(who, _), _| *who != id);
+    }
+
     /// Whether everyone is on this network (same room can work).
     pub fn all_on_one_network(&self) -> bool {
         let paths: Vec<net::Path> = self
@@ -496,10 +509,19 @@ impl HostSession {
         // A song's file, or (`cover:` and its key) its cover: only to people in the room, and only
         // for songs in its queue.
         let cover = req.get.strip_prefix("cover:");
+        let _ = send.set_priority(if cover.is_some() {
+            net::priority::COVER
+        } else {
+            net::priority::FILE
+        });
         let key = cover.unwrap_or(&req.get);
-        let allowed = {
+        let (allowed, duration_ms) = {
             let r = self.room.lock().unwrap();
-            r.is_member(id) && r.queue().iter().any(|s| s.key == key && s.host_file)
+            let song = r.queue().iter().find(|s| s.key == key && s.host_file);
+            (
+                r.is_member(id) && song.is_some(),
+                song.and_then(|s| s.duration_ms),
+            )
         };
         let found = if cover.is_some() {
             self.hooks.cover(key).map(|p| (p, "image/jpeg".to_owned()))
@@ -537,17 +559,57 @@ impl HostSession {
         if file.seek(std::io::SeekFrom::Start(from)).await.is_err() {
             return;
         }
+        // A song's file goes out paced, one bucket for each person's download of each song:
+        // reading on from where the last range ended shares it, a range anywhere else (a
+        // seek) starts with a full burst. A cover goes as it is.
+        let paced = (id, key.to_owned());
+        let mut chunk = 64 * 1024;
+        if cover.is_none() {
+            let mut pacing = self.pacing.lock().unwrap();
+            let reading_on = pacing.get(&paced).is_some_and(|(_, next)| *next == from);
+            if !reading_on {
+                match Pacer::for_song(size, duration_ms, Instant::now()) {
+                    Some(p) => {
+                        pacing.insert(paced.clone(), (p, from));
+                    }
+                    None => {
+                        pacing.remove(&paced);
+                    }
+                }
+            }
+            if let Some((p, _)) = pacing.get(&paced) {
+                chunk = p.chunk();
+            }
+        }
         let mut left = to - from + 1;
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut at = from;
+        let mut buf = vec![0u8; chunk];
         while left > 0 {
             let want = (left as usize).min(buf.len());
             let n = match file.read(&mut buf[..want]).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
+            let wait = if cover.is_none() {
+                self.pacing
+                    .lock()
+                    .unwrap()
+                    .get_mut(&paced)
+                    .map(|(p, next)| {
+                        *next = at + n as u64;
+                        p.take(n, Instant::now())
+                    })
+                    .unwrap_or_default()
+            } else {
+                Duration::ZERO
+            };
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
             if net::send_line(&mut send, &buf[..n]).await.is_err() {
                 return;
             }
+            at += n as u64;
             left -= n as u64;
         }
         let _ = send.finish();

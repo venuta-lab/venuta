@@ -226,7 +226,7 @@ One iroh QUIC connection per guest, guest to host (a star). The ALPN stays `venu
 
 **Timestamps where they belong.** The host stamps `t2` in the datagram task as `read_datagram` returns, and `t3` immediately before `send_datagram`, on the same task, with nothing queued between. The guest stamps `t4` as its `read_datagram` returns. No channel or JSON encoding sits between a stamp and the wire.
 
-**Pacing of host files.** Each range stream gets a token bucket on the host: a first burst worth 10 s of the song's average bitrate, then 2 times that bitrate. With priorities, the control stream and datagrams are never queued behind file bytes. The guest's reader already asks in 2 MiB ranges; it keeps asking (the whole song still downloads), only more evenly.
+**Pacing of host files.** Each person's download of each song gets one token bucket on the host: a first burst worth 10 s of the song's average bitrate (its file size over its length), then 2 times that bitrate. A range that starts where that person's last range of the song ended (the reader reading on) shares the bucket; a range anywhere else (a seek) starts with a full burst. A bucket per range stream would give every 2 MiB range a new burst, about one a song's 10 s apart, which fills a home upload's queue again and again (measured in `together-net`'s slow-link test). Paced bytes go out in chunks of about 20 ms of the rate (4 to 64 KiB), never a 64 KiB lump. A song of unknown length and covers are not paced. With priorities, the control stream and datagrams are never queued behind file bytes. The guest's reader already asks in 2 MiB ranges; it keeps asking (the whole song still downloads), only more evenly.
 
 **Liveness.** Clock pings at 1 Hz double as a heartbeat. The host shows a member as away after 5 s with no ping; the QUIC idle timeout is 15 s. A guest whose connection closes tries again every 2 s for 2 minutes (backing off to 5 s), keeping its per-room key so the host knows it is the same person (as now). Two minutes covers a Wi-Fi roam or a phone screen sleeping, and is short enough that the host's member list stays honest (note 07 C4.8; Metrolist allows 15 minutes, Jellyfin 60 s). Meanwhile the guest plays on (rule 4).
 
@@ -1148,7 +1148,7 @@ Plus today's music-shaped detector (steps, third-difference breaks, hard-edged g
 | App CPU in a room against solo | at most 2 percentage points of one core more |
 | Memory in a room against solo | at most 40 MB more |
 | Allocations on the render thread | 0 (counting allocator in tests) |
-| Control message one-way time while the host streams to 3 guests | p99 under RTT / 2 + 20 ms |
+| Control message one-way time while the host streams to 3 guests | p99 under RTT / 2 + 20 ms, outside the first second of a burst (a burst can briefly fill a slow upload's queue; it is 10 s of one song, once per download and per seek) |
 
 ### 7.6 After a room
 
@@ -1450,7 +1450,7 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Slow member note | three prepares missed in a row | 4.10 |
 | One speaker re-anchor | when the host's heard place moves 20 ms from the anchor | 4.13 |
 | Every device: can't hold | over 5 ms for 30 s, fades out alone | 4.9 |
-| Host file pacing | 10 s burst, then 2 x the song's bitrate | 4.1 |
+| Host file pacing | 10 s burst, then 2 x the song's bitrate; one bucket per person and song, a new burst only for a seek; chunks of 20 ms of the rate | 4.1 |
 | Stream priorities | control 100, envelopes 50, files 0, covers -10 | 4.1 |
 | Envelope | 10 ms hop, 4 bands, first 30 s then 10 s every 60 s | 4.5 |
 | Alignment confidence | peak 8 sd over the mean and 1.3 x the next peak 50 ms away | 4.5 |

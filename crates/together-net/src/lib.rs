@@ -4,6 +4,7 @@
 //!   this Venuta reaches others, the invite's ticket, message lines, the session clock.
 //! - [`host`]: hosting a room: the door (knock, let in, refuse), each person served, the
 //!   room's news sent, and the host's files and covers streamed to the people in it.
+//! - [`pace`]: how the host's files are paced.
 //! - [`guest`]: joining one: connect, knock, read the room's news, ping the host's clock,
 //!   reconnect as the same person, and a small server on 127.0.0.1 that plays the host's files.
 //!
@@ -13,3 +14,4 @@
 pub mod guest;
 pub mod host;
 pub mod net;
+pub mod pace;
