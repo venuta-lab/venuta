@@ -9,6 +9,8 @@
 //! sent. This is a rule of thumb, not a dictionary: some Japanese words stay joined
 //! ("kyounanitabeta"), but no syllable is lost or changed.
 
+use std::ops::Range;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Kanji,
@@ -493,6 +495,16 @@ fn joinable(original: &str) -> bool {
 /// line. None when the line isn't Japanese or Korean, or the syllables don't line up with it
 /// (then the line is best kept as sent).
 pub fn join_syllables(original: &str, spaced: &str) -> Option<String> {
+    let out: Vec<String> = join_syllables_at(original, spaced)?
+        .into_iter()
+        .map(|(w, _)| w)
+        .collect();
+    Some(out.join(" "))
+}
+
+/// [`join_syllables`], each word with the characters of the original it came from (a range of
+/// `char` positions), so it can be timed by the original's words.
+pub fn join_syllables_at(original: &str, spaced: &str) -> Option<Vec<(String, Range<usize>)>> {
     if !joinable(original) || spaced.trim().is_empty() {
         return None;
     }
@@ -500,8 +512,19 @@ pub fn join_syllables(original: &str, spaced: &str) -> Option<String> {
     if !line_up(&mut ps, spaced) {
         return None;
     }
-    let out: Vec<String> = words(&ps).into_iter().map(|(w, ..)| w).collect();
-    (!out.is_empty()).then(|| out.join(" "))
+    // The pieces cover the line in order, so each starts where the one before ended.
+    let mut at = Vec::with_capacity(ps.len() + 1);
+    let mut n = 0;
+    for p in &ps {
+        at.push(n);
+        n += p.text.chars().count();
+    }
+    at.push(n);
+    let out: Vec<(String, Range<usize>)> = words(&ps)
+        .into_iter()
+        .map(|(w, first, last)| (w, at[first]..at[last + 1]))
+        .collect();
+    (!out.is_empty()).then_some(out)
 }
 
 /// One word of a joined line: its text and the parts (as given) it was made from.

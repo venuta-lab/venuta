@@ -17,6 +17,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub mod romaji;
+pub mod ttml;
 
 /// The answer format: bumped when lyrics are read in a new way, so answers kept from before
 /// are asked for again (and pick up what the new reading keeps).
@@ -345,6 +346,48 @@ fn pronounce(
             });
         }
     }
+}
+
+/// Romanized words timed by the original's timed words: each word (with the `char` positions
+/// it came from, in the original words' text put together) from the start of the first word it
+/// overlaps to the end of the last. Each but the last ends in a space, so the words put together
+/// are the line. Empty when the original has no timed words or a word overlaps none.
+pub(crate) fn timed_by_chars(
+    timed: &[Word],
+    joined: &[(String, std::ops::Range<usize>)],
+) -> Vec<Word> {
+    if timed.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = Vec::with_capacity(timed.len());
+    let mut at = 0;
+    for w in timed {
+        let n = w.text.chars().count();
+        spans.push(at..at + n);
+        at += n;
+    }
+    let mut out = Vec::with_capacity(joined.len());
+    for (k, (text, range)) in joined.iter().enumerate() {
+        let mut over = spans
+            .iter()
+            .zip(timed)
+            .filter(|(s, _)| s.start < range.end && range.start < s.end)
+            .map(|(_, w)| w);
+        let Some(first) = over.next() else {
+            return Vec::new();
+        };
+        let last = over.last().unwrap_or(first);
+        let mut text = text.clone();
+        if k + 1 < joined.len() {
+            text.push(' ');
+        }
+        out.push(Word {
+            start_ms: first.start_ms,
+            end_ms: last.end_ms.max(first.start_ms),
+            text,
+        });
+    }
+    out
 }
 
 /// Every translation a provider's lyrics carried, marked as theirs.

@@ -73,7 +73,9 @@ pub struct LyricsRequest {
 }
 
 pub use crate::lyrics::{LyricLine, Lyrics, Second, SecondSource, Word};
-use crate::lyrics::{carried_translation, finish, mark_source, read_lrc, romaji, roman_lang};
+use crate::lyrics::{
+    carried_translation, finish, mark_source, read_lrc, romaji, roman_lang, timed_by_chars, ttml,
+};
 
 /// Lyrics one source gave.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -335,26 +337,6 @@ pub fn same_song(req: &LyricsRequest, title: &str, artist: &str, duration_s: Opt
 
 // --- Reading the formats --------------------------------------------------------------------
 
-/// A TTML time: "12.345", "1:02.5", "00:01:02.500" or "1234ms".
-fn ttml_time(t: &str) -> Option<u64> {
-    let t = t.trim();
-    if let Some(ms) = t.strip_suffix("ms") {
-        return ms.parse::<f64>().ok().map(|x| x as u64);
-    }
-    let t = t.strip_suffix('s').unwrap_or(t);
-    let mut secs = 0.0;
-    for part in t.split(':') {
-        secs = secs * 60.0 + part.parse::<f64>().ok()?;
-    }
-    Some((secs * 1000.0).round() as u64)
-}
-
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let at = tag.find(&format!("{name}=\""))? + name.len() + 2;
-    let end = tag[at..].find('"')?;
-    Some(&tag[at..at + end])
-}
-
 fn unescape(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -364,81 +346,10 @@ fn unescape(s: &str) -> String {
         .replace("&#39;", "'")
 }
 
-/// TTML (Apple's lyrics): \`<p begin end>\` lines, \`<span begin end>\` words.
+/// TTML (Apple's lyrics, and AMLL's): lines, words and the second lines they carry
+/// ([`crate::lyrics::ttml`]).
 pub fn parse_ttml(xml: &str) -> Vec<LyricLine> {
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(i) = rest.find("<p ") {
-        let after = &rest[i..];
-        let Some(open_end) = after.find('>') else {
-            break;
-        };
-        let tag = &after[..open_end];
-        let Some(close) = after.find("</p>") else {
-            break;
-        };
-        let body = &after[open_end + 1..close];
-        rest = &after[close + 4..];
-        let Some(ms) = attr(tag, "begin").and_then(ttml_time) else {
-            continue;
-        };
-        let end_ms = attr(tag, "end").and_then(ttml_time).unwrap_or(0);
-        let mut words = Vec::new();
-        let mut b = body;
-        while let Some(j) = b.find("<span") {
-            let s = &b[j..];
-            let Some(te) = s.find('>') else { break };
-            let stag = &s[..te];
-            let Some(ce) = s.find("</span>") else { break };
-            let inner = &s[te + 1..ce];
-            if !inner.contains('<')
-                && let (Some(ws), Some(we)) = (
-                    attr(stag, "begin").and_then(ttml_time),
-                    attr(stag, "end").and_then(ttml_time),
-                )
-            {
-                // A space after the span belongs to the word (the words of a line run on).
-                let spaced = s[ce + 7..].starts_with(' ');
-                words.push(Word {
-                    start_ms: ws,
-                    end_ms: we,
-                    text: format!("{}{}", unescape(inner), if spaced { " " } else { "" }),
-                });
-            }
-            b = &s[ce + 7..];
-        }
-        let text = if words.is_empty() {
-            let mut t = String::new();
-            let mut depth = 0;
-            for c in body.chars() {
-                match c {
-                    '<' => depth += 1,
-                    '>' => depth -= 1,
-                    c if depth == 0 => t.push(c),
-                    _ => {}
-                }
-            }
-            unescape(t.trim())
-        } else {
-            words
-                .iter()
-                .map(|w| w.text.as_str())
-                .collect::<String>()
-                .trim()
-                .to_owned()
-        };
-        if !text.is_empty() {
-            out.push(LyricLine {
-                start_ms: ms,
-                end_ms,
-                text,
-                words,
-                ..Default::default()
-            });
-        }
-    }
-    finish(&mut out);
-    out
+    ttml::read(xml, "").0.lines
 }
 
 /// LyricsPlus's own JSON: lines with their time, and syllables when it times words.
@@ -511,23 +422,27 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     if body.is_empty() {
         return None;
     }
-    let mut lines = if body.starts_with('<') {
-        parse_ttml(body)
+    let (lyrics, text) = if body.starts_with('<') {
+        ttml::read(body, source)
     } else {
-        read_lrc(body).lines
-    };
-    mark_source(&mut lines, source);
-    let text = if lines.is_empty() && !body.starts_with('<') {
-        body.to_owned()
-    } else {
-        String::new()
+        let mut lines = read_lrc(body).lines;
+        mark_source(&mut lines, source);
+        let text = if lines.is_empty() {
+            body.to_owned()
+        } else {
+            String::new()
+        };
+        (
+            Lyrics {
+                lines,
+                ..Default::default()
+            },
+            text,
+        )
     };
     let f = Found {
         source: source.into(),
-        lyrics: Lyrics {
-            lines,
-            ..Default::default()
-        },
+        lyrics,
         text,
         ..Default::default()
     };
