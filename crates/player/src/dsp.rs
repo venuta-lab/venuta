@@ -540,7 +540,10 @@ mod tests {
             assert!(f64::from(w[0] - w[1]).abs() <= most, "a step: {w:?}");
             assert!(w[1] <= w[0], "only down");
         }
-        assert!(out[480..].iter().all(|&v| v == lo as i32), "untouched after");
+        assert!(
+            out[480..].iter().all(|&v| v == lo as i32),
+            "untouched after"
+        );
         // And up again, from no tools at all.
         let out = glide(None, loud().gliding(480), 1_000);
         assert!((f64::from(out[0]) - lo).abs() < 1e-3 * lo);
@@ -559,11 +562,17 @@ mod tests {
         let mut x = vec![7; 40];
         a.process(&mut x, 2);
         assert!(!a.touches(), "the glide is over, and nothing is on");
-        assert!(a.prev.is_some(), "kept until the chain itself is handed back");
+        assert!(
+            a.prev.is_some(),
+            "kept until the chain itself is handed back"
+        );
         let mut b = plain().gliding(10);
         let back = b.take_over(Some(Box::new(a)));
         assert!(back.is_some(), "what the old chain glided from comes back");
         let mut c = plain();
-        assert!(c.take_over(Some(Box::new(b))).is_some(), "no glide: the old one back");
+        assert!(
+            c.take_over(Some(Box::new(b))).is_some(),
+            "no glide: the old one back"
+        );
     }
 }

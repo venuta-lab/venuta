@@ -948,11 +948,7 @@ fn a_change_of_the_sound_tools_glides_and_is_clean() {
         rig.run(s(1.0));
         // The first glided from no chain at all, the second keeps the first inside it: nothing
         // came back yet.
-        assert!(
-            !rig.returned
-                .iter()
-                .any(|r| matches!(r, Returned::Chain(_)))
-        );
+        assert!(!rig.returned.iter().any(|r| matches!(r, Returned::Chain(_))));
         plain()
     });
     let song = Song::sine(1_000.0, R, 2, 0, s(30.0));
@@ -970,7 +966,10 @@ fn a_change_of_the_sound_tools_glides_and_is_clean() {
     let flagged = judge_sine(&heard, &r, 1_000.0, R, &declared)
         .iter()
         .any(|v| !v.flags.is_empty());
-    assert!(flagged, "a chain swapped at once steps, and the detectors hear it");
+    assert!(
+        flagged,
+        "a chain swapped at once steps, and the detectors hear it"
+    );
 }
 
 #[test]

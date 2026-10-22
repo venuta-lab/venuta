@@ -1573,6 +1573,9 @@ mod tests {
         // Worked out once per device rate: every renderer after the first shares them.
         let again = Kernels::for_device(44_100);
         assert!(Arc::ptr_eq(&cd.scaled, &again.scaled));
-        assert!(!Arc::ptr_eq(&cd.scaled, &Kernels::for_device(48_000).scaled));
+        assert!(!Arc::ptr_eq(
+            &cd.scaled,
+            &Kernels::for_device(48_000).scaled
+        ));
     }
 }
