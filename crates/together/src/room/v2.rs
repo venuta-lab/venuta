@@ -17,7 +17,7 @@
 
 use crate::MAX_PEOPLE;
 use crate::anchor::{Anchor, EntryId, Next, PrepId, Purpose, Transition};
-use crate::invite::proof_ok;
+use crate::invite::{nearby_secret, proof_ok};
 use crate::proto::v3::{
     Action, CopyReport, Entry, MAX_NAME, MAX_REQUESTS, MAX_WAITING, Member, Phase, RequestView,
     RoomView, Settings, ToGuest, ToHost,
@@ -27,6 +27,7 @@ use crate::room_player::{ListenMode, SubState};
 use crate::timeline::v3 as tl;
 use crate::transport::PathInfo;
 use crate::view;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 /// The host's member id.
@@ -152,6 +153,61 @@ pub enum Opening {
         host_us: i64,
     },
 }
+
+/// Where a kept room was (`RoomState`): it comes back held there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Place {
+    /// Nothing had played.
+    Resting,
+    /// The queue had ended after this entry.
+    QueueEnded { after: EntryId },
+    /// At this place of this entry (playing or held).
+    At { entry: EntryId, content_us: i64 },
+}
+
+/// A member as a kept room has them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptPerson {
+    pub id: u32,
+    pub key: String,
+    pub name: String,
+    pub role: Option<Role>,
+    pub mode: ListenMode,
+}
+
+/// What a room needs to come back after the host's app restarts (decision D8, the WP15 notes
+/// in 9.2): written by the app, `Room::reopen` takes it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoomState {
+    pub host_name: String,
+    pub secret: String,
+    pub queue: Vec<Entry>,
+    /// The reference copies' lengths the host's player gave (µs).
+    pub lengths: Vec<(EntryId, i64)>,
+    pub place: Place,
+    /// The guests in the room.
+    pub people: Vec<KeptPerson>,
+    /// Members dropped for silence, known again when they come back.
+    pub returning: Vec<KeptPerson>,
+    pub blocked: Vec<String>,
+    pub transition: Transition,
+    pub new_role: Option<Role>,
+    pub guests_volume: bool,
+    pub let_in_without_asking: bool,
+    pub visible: bool,
+    pub next_member: u32,
+    pub next_entry: u64,
+    pub next_prep: u64,
+    pub seq: u64,
+    pub next_request: u32,
+}
+
+/// A reopened room's ids and sequence go on from the kept ones by this much: the record can
+/// lag the room by one write, and nothing given in that moment may be given again.
+pub const REOPEN_MARGIN: u64 = 1_000;
+/// How many members dropped for silence a room remembers.
+pub const RETURNING_KEPT: usize = 32;
 
 /// A person's player, as they report it (`ToHost::State`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -369,6 +425,10 @@ pub struct Room {
     new_role: Option<Role>,
     guests_volume: bool,
     let_in_without_asking: bool,
+    /// Seen on this network: people nearby may knock (D19, on by default).
+    visible: bool,
+    /// Members dropped for silence (the newest last), let back in as themselves.
+    returning: VecDeque<KeptPerson>,
     next_member: u32,
     next_entry: u64,
     next_prep: u64,
@@ -429,6 +489,8 @@ impl Room {
             new_role: None,
             guests_volume: false,
             let_in_without_asking: false,
+            visible: true,
+            returning: VecDeque::new(),
             next_member: 1,
             next_entry: 1,
             next_prep: 1,
@@ -490,7 +552,11 @@ impl Room {
                 Changes::default(),
             );
         }
-        if !proof_ok(&self.secret, key, proof) {
+        // An invite's proof, or the door code people nearby have (it lets them knock, never
+        // in: D19).
+        let invited = proof_ok(&self.secret, key, proof);
+        let nearby = !invited && proof_ok(&nearby_secret(&self.secret), key, proof);
+        if !invited && !nearby {
             return (
                 Knock::Refused("That invite isn't for this room.".into()),
                 Changes::default(),
@@ -521,6 +587,24 @@ impl Room {
                 Changes::default(),
             );
         }
+        if let Some(i) = self.returning.iter().position(|r| r.key == key) {
+            // Dropped for silence, back (a rejoin after a restart): the same member, at once.
+            let r = self.returning.remove(i).expect("found");
+            let mut p = Person::new(r.id, &r.key, &r.name, now_us);
+            p.role = r.role;
+            p.mode = r.mode;
+            let id = p.id;
+            self.people.push(p);
+            self.note(id, "is back", false, now_us);
+            self.welcome(id, now_us);
+            return (Knock::In(id), self.done(now_us));
+        }
+        if nearby && !self.visible {
+            return (
+                Knock::Refused("This room isn't open to people nearby.".into()),
+                Changes::default(),
+            );
+        }
         if let Some(w) = self.waiting.iter().find(|w| w.key == key) {
             let id = w.id;
             self.push(id, ToGuest::Waiting);
@@ -535,7 +619,8 @@ impl Room {
         let id = self.next_member;
         self.next_member += 1;
         let p = Person::new(id, key, name, now_us);
-        if self.let_in_without_asking {
+        // Someone nearby always waits for the host (D19), whatever the invite's setting.
+        if self.let_in_without_asking && !nearby {
             self.people.push(p);
             self.welcome(id, now_us);
             (Knock::In(id), self.done(now_us))
@@ -1018,6 +1103,139 @@ impl Room {
         self.let_in_without_asking
     }
 
+    /// "Visible on this network" (D19): off, people nearby are refused at the door (members
+    /// and those coming back still come in).
+    pub fn set_visible(&mut self, on: bool) {
+        self.visible = on;
+    }
+
+    pub fn visible(&self) -> bool {
+        self.visible
+    }
+
+    // --- Kept and reopened (D8, the WP15 notes) -----------------------------------------
+
+    /// What the room needs to come back, as it is at `now_us`: a playing room's place is
+    /// where it is heard now (under the song's length).
+    pub fn to_keep(&self, now_us: i64) -> RoomState {
+        let place = match self.play {
+            Play::Resting { after: None } => Place::Resting,
+            Play::Resting { after: Some(e) } => Place::QueueEnded { after: e },
+            Play::Playing(a) | Play::Held { anchor: a, .. } => {
+                let mut c = if a.playing {
+                    a.content_at(now_us)
+                } else {
+                    a.content_us
+                };
+                if let Some(len) = self.length(a.entry) {
+                    c = c.min(len);
+                }
+                Place::At {
+                    entry: a.entry,
+                    content_us: c.max(0),
+                }
+            }
+        };
+        let kept = |p: &Person| KeptPerson {
+            id: p.id,
+            key: p.key.clone(),
+            name: p.name.clone(),
+            role: p.role,
+            mode: p.mode,
+        };
+        let mut lengths: Vec<(EntryId, i64)> = self.lengths.iter().map(|(e, l)| (*e, *l)).collect();
+        lengths.sort_unstable();
+        let mut blocked: Vec<String> = self.blocked.iter().cloned().collect();
+        blocked.sort_unstable();
+        RoomState {
+            host_name: self.host_name.clone(),
+            secret: self.secret.clone(),
+            queue: self.queue.clone(),
+            lengths,
+            place,
+            people: self
+                .people
+                .iter()
+                .filter(|p| p.id != HOST)
+                .map(kept)
+                .collect(),
+            returning: self.returning.iter().cloned().collect(),
+            blocked,
+            transition: self.transition,
+            new_role: self.new_role,
+            guests_volume: self.guests_volume,
+            let_in_without_asking: self.let_in_without_asking,
+            visible: self.visible,
+            next_member: self.next_member,
+            next_entry: self.next_entry,
+            next_prep: self.next_prep,
+            seq: self.seq,
+            next_request: self.next_request,
+        }
+    }
+
+    /// A kept room back, at the host's time `now_us`: held at its place, its members away
+    /// (kept 2 minutes from now for their reconnects, D17), every id and the sequence going on
+    /// past anything given before. Nothing plays until a press starts it.
+    pub fn reopen(s: RoomState, now_us: i64) -> Room {
+        let margin = REOPEN_MARGIN;
+        let mut r = Room::new(&s.host_name, &s.secret, Vec::new(), Opening::Resting);
+        r.queue = s.queue.into_iter().take(MAX_QUEUE).collect();
+        r.lengths = s.lengths.into_iter().collect();
+        r.blocked = s.blocked.into_iter().collect();
+        r.transition = s.transition;
+        r.new_role = s.new_role;
+        r.guests_volume = s.guests_volume;
+        r.let_in_without_asking = s.let_in_without_asking;
+        r.visible = s.visible;
+        r.next_member = s.next_member.saturating_add(margin as u32);
+        r.next_entry = s.next_entry.saturating_add(margin);
+        r.next_prep = s.next_prep.saturating_add(margin);
+        r.seq = s.seq.saturating_add(margin);
+        r.next_request = s.next_request.saturating_add(margin as u32);
+        for k in s.people.into_iter().take(MAX_PEOPLE - 1) {
+            if k.id == HOST || r.people.iter().any(|p| p.id == k.id || p.key == k.key) {
+                continue;
+            }
+            let mut p = Person::new(k.id, &k.key, &k.name, now_us);
+            p.role = k.role;
+            p.mode = k.mode;
+            p.away = true;
+            p.lost_at = Some(now_us);
+            r.people.push(p);
+        }
+        r.returning = s
+            .returning
+            .into_iter()
+            .filter(|k| !r.people.iter().any(|p| p.key == k.key))
+            .collect();
+        while r.returning.len() > RETURNING_KEPT {
+            r.returning.pop_front();
+        }
+        r.play = match s.place {
+            Place::At { entry, content_us } if r.index_of(entry).is_some() => {
+                let seq = r.new_seq();
+                Play::Held {
+                    anchor: Anchor {
+                        entry,
+                        content_us: content_us.max(0),
+                        host_us: now_us,
+                        playing: false,
+                        seq,
+                    },
+                    auto: false,
+                }
+            }
+            Place::QueueEnded { after } if r.index_of(after).is_some() => {
+                Play::Resting { after: Some(after) }
+            }
+            _ => Play::Resting { after: None },
+        };
+        r.quiet_since = Some(now_us);
+        r.note(HOST, "reopened the room", false, now_us);
+        r
+    }
+
     // --- Reading ------------------------------------------------------------------------
 
     /// The room as one person sees it: the host also sees who's waiting by name and everyone's
@@ -1273,6 +1491,21 @@ impl Room {
         }
         for id in gone {
             self.note(id, "lost connection", false, now_us);
+            if let Some(p) = self.person(id) {
+                // Known again if they come back (a rejoin after a restart, WP15).
+                let kept = KeptPerson {
+                    id: p.id,
+                    key: p.key.clone(),
+                    name: p.name.clone(),
+                    role: p.role,
+                    mode: p.mode,
+                };
+                self.returning.retain(|r| r.key != kept.key);
+                self.returning.push_back(kept);
+                while self.returning.len() > RETURNING_KEPT {
+                    self.returning.pop_front();
+                }
+            }
             self.out_of_room(id);
         }
     }

@@ -77,6 +77,14 @@ pub fn proof(secret: &str, guest_key: &str) -> String {
     h.finalize().to_hex().to_string()
 }
 
+/// The door code a room shows people on its network (A15, D19): made from the room's secret,
+/// 16 bytes as hex. Its proof lets a person knock and wait for the host, never come in by
+/// itself, and the secret can't be had from it.
+pub fn nearby_secret(secret: &str) -> String {
+    let k = blake3::derive_key("venuta room nearby door v1", secret.as_bytes());
+    k[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Whether a proof is right, compared in constant time.
 pub fn proof_ok(secret: &str, guest_key: &str, given: &str) -> bool {
     let want = proof(secret, guest_key);
