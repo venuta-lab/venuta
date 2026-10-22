@@ -13,6 +13,7 @@ pub mod sim;
 pub mod spectrum;
 pub mod sync;
 pub mod verify;
+pub mod voice;
 pub mod voice_api;
 #[cfg(windows)]
 pub mod wasapi_out;
