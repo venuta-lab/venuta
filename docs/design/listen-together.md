@@ -1226,7 +1226,7 @@ Columns: what happens, the tolerance it must meet, what the window shows, and wh
 | A12 | Join a paused room | Prepared at the held place, silent | | "Paused" | Conductor |
 | A13 | Join a resting room (queue ended) | Nothing plays | | "The room's queue has ended" | Room |
 | A14 | Already in a room, opens another invite | Asked to leave first (as today) | | | App shell |
-| A15 | Rooms nearby on the same network [07 1.3] | Shown as "Rooms nearby" (mDNS); joining one always needs the host's approval; the host has "Visible on this network" (on by default); nobody is pulled in automatically | | "Rooms nearby" list | Transport, Room |
+| A15 | Rooms nearby on the same network [07 1.3] | Shown as "Rooms nearby" (a beacon on the local network, WP15 notes); joining one always needs the host's approval; the host has "Visible on this network" (on by default); nobody is pulled in automatically | | "Rooms nearby" list | Transport, Room |
 | A16 | Guest on the same network as the host [07 C7] | Asked "Play on Asha's speaker" (selected, one speaker mode) or "Play on this device too" (every device, or apart for headphones) | | the join choice | Session, Window |
 | A17 | Joiner prefers a clean start [07 1.5] | "Start with the next song": silence until the room's next boundary, then a clean start, no seek | | option on the join screen | Conductor |
 | A18 | Joiner can't get the song [07 1.6] | Stays in the room; joins with the next song; never stalls the room | Others: nothing | "Not available for you, back with the next song" | Conductor |
@@ -1361,7 +1361,7 @@ Columns: what happens, the tolerance it must meet, what the window shows, and wh
 | I3b | Host leaves but the room goes on [07 6.2] | "Leave, hand over to...": the chosen member hosts the same timeline; guests reconnect to it and play on; a warning if some songs are only the host's | Guests: nothing heard | "Asha handed the room to Ravi" | Session (4.15) |
 | I4 | Host app killed or crashes [07 6.4] | Guests reconnect for 2 minutes, playing on (F7); then each finishes the song playing and stops cleanly, own queue back paused | as F7, F8 | "Reconnecting", then "The host went offline" | Session |
 | I5 | Host machine sleeps | As I4; on wake within 2 minutes guests reconnect, the clock starts a new epoch, the host re-commits where the room is | Clean | | Session, Clock |
-| I6 | Host restarts the app | Offered "Reopen your room" while the invite is valid; same key and invite, the room held where it was; guests still reconnecting find it (decision D8) | | "Reopen your room?" | Session (later phase) |
+| I6 | Host restarts the app | Offered "Reopen your room" while the invite is valid; same key and invite, the room held where it was; guests still reconnecting find it (decision D8) | | "Reopen your room?" | Session, app (WP15) |
 | I7 | Guest app crashes or is restarted | Own queue restored (never the room's song); offered "Rejoin Asha's room?" while the invite is valid | | Prompt | Session, Player programs |
 | I8 | Guest machine sleeps and wakes | Reconnect; new clock epoch; catch up | as A10 | | Session, Clock |
 | I9 | Invite validity ends during the room | The room goes on; new joins refused | | | Room |
@@ -1907,6 +1907,54 @@ Protocol 2 stays as it is in `together` and `together-net` (and their tests) unt
 - *Over iroh* (`together-net/tests/sessions_iroh.rs`): a host's and a guest's session on real connections: in, and the clock ready from datagram pings, 0.97 s after connecting; a start reaches the guest's player; leaving reaches the room. The guest's proxy onto `open_media` (`tests/proxy.rs`): ranges, a whole file, HEAD, a wrong token, a song the host hasn't.
 - *Left*: a room's stream stalling, and the host's file streamed to a guest, are tested per player (`room2_sync.rs`) and per transport (`proxy.rs`), not inside a simulated whole room (the simulation has no HTTP); the fade before a sleep (no power notification yet); hand-over (WP20), rooms nearby, "Line up by ear" (WP19), reopen and rejoin (WP15), whose commands answer in words; output names, Bluetooth and delay known in the view (WP19).
 
+#### WP15 notes: life cycle (the plan)
+
+What comes back after an app restart, a crash or an ending: the host's room (I6, D8), a guest's place in a room (I7), the room's queue as a playlist (I10), the drift each output was measured at, and the panel's two commands that answered in words (`together_resume`, `together_join_nearby`, with rooms nearby, A15 and D19). Nothing here changes the wire: a person nearby knocks with the existing proof (below).
+
+**Where it is.**
+
+| Part | File | What |
+|---|---|---|
+| A room's state, kept | `together/src/room/v2.rs` (`contract:` commit) | `RoomState` (serde): what a room needs to come back; `Room::state(now)` and `Room::reopen(state, now)`; members dropped for silence remembered (`returning`); the door for people nearby (`set_visible`) |
+| Records and the offer | `together/src/lifecycle.rs` (new) | `HostRecord`, `GuestRecord`, `Kept` (two files in a folder, written whole: a temporary file renamed over), `offer(host, guest, now)`: what to offer at start, and whether at once |
+| The sessions | `together/src/session.rs` | `HostSession::state`, `set_visible`; `GuestSession::ending()` (how it ended: left, refused, ended by the host, lost) |
+| The door code | `together/src/invite.rs` | `nearby_secret(secret)`: blake3's derived key of the secret, 16 bytes as hex |
+| Rooms nearby | `together-net/src/nearby.rs` (new) | the beacon (codec, the table of rooms heard, the announcer and listener on a UDP socket); `net::endpoint_on` (an endpoint on a given UDP port, else any) |
+| Drift per output | `player/src/drift_memory.rs` (new), `engine/program.rs`, `engine/control.rs` | `DriftMemory` keyed by output; the room program seeds its sound card rate from it and remembers what it measured |
+| The app | `app/.../together/{mod,host,guest,keep}.rs` | the records written and cleared, reopen, rejoin (prompted and automatic), the beacon while hosting, the listener while in no room, the commands |
+
+**The host's record** (`together-room.json` in the app's data folder): the invite (its secret and end), the endpoint's secret key and UDP port, the room's `RoomState`, when it was written, and the app's own part (the music folder, the host's own items by song key, so its files are served again and its copies found). Written when the room opens; at once when anything but the place changes (the state's JSON without the place differs from the last written); every 2 s while the room plays (the place). Removed when the room ends (End for everyone, the room ending itself after an hour) or the invite ends; kept through a quit, a crash or a kill. A quit is a crash for the guests: nothing is said, their connections time out, they play on (rule 4).
+
+**Reopen** (offered at start while the invite is valid, never by itself: D8 says offered).
+
+- *The same way in.* The endpoint is made with the kept key, so it is the same endpoint id that guests' reconnects dial (over the internet, the address lookup finds where it is now); on the kept UDP port when it is free (Local only has no lookup: the invite's addresses are all there is), else on any. The invite keeps its secret and end; its ticket is made again (where the endpoint is now) for new shares.
+- *The room held at its last place.* The place kept is where the room was when last written: a playing anchor's content at that moment (at most 2 s before the app went), under the song's length. The room comes back `Held` at it, with the host's time of the reopen. A host's time is its monotonic clock since boot (4.2), so after an app restart it runs on; after a reboot it starts again, which no guest is still reconnecting through.
+- *Nothing old reused.* The sequence numbers and the ids (entries, prepares, members, requests) go on from the kept ones plus 1000: the record can lag the room by one write, and a guest may hold an anchor or an id given in that moment. A guest takes the reopened room's held anchor as newer than anything it has, so it holds; an armed next it has is older than that anchor, so it is withdrawn.
+- *Members.* Everyone who was in comes back as away and lost at the reopen, kept 2 minutes from then (D17) with their name, role and mode; sub-states, prepares, the armed next, requests, the undo and the people at the door are not kept; who was blocked stays blocked. The activity says "Asha reopened the room".
+- *The host's player.* Attached (never adopted: what it plays at start is its own queue, paused), and told the held place, which it prepares silently (A12). Nothing of the room is heard until a press starts it.
+- *Guests still reconnecting* (their 2 minutes from the loss not over) connect to the same endpoint, say hello with the same key, and are in at once as the same members; their welcome holds them (a 30 ms fade like any pause).
+
+**Rejoin** (I7). The guest's record (`together-rejoin.json`): the invite as joined (the link's, or the one made for a room nearby), the host's name, and when it was last in the room (`in_at`, written when it comes in and every 10 s while in). Removed when the session ends by Leave, by being refused or taken out, or by the host ending the room; kept through a quit or a crash, and when the session ends by the 2-minute rule ("The host went offline": "Rejoin Asha's room?" is offered at once, the host may come back). At start, while the invite is valid: automatic when `in_at` is under 2 minutes ago (it was in the room, the room still keeps it), else offered. A rejoin is a join with the same invite, so the same per-room key, so the same member: within the 2 minutes the room still keeps them; after, Room v2 remembers members it dropped for silence (key, id, name, role, mode; at most 32, for the room's life) and lets them back in at once as the same member ("Ravi is back"). Who left, was removed or was denied is not remembered. The own queue is the player's own program, restored as at any start; the room's song is never saved as "where you were" (WP9).
+
+**The offer** (`lifecycle::offer`): the newest valid record wins (one person is in one room at a time); `Reopen` for the host's, `Rejoin { host }` for a guest's, with `auto`. "Not now" removes the record.
+
+**Rooms nearby** (A15, D19). Not mDNS: iroh 1.3 has no local discovery, and a DNS-SD crate would be a new dependency for one datagram. A beacon of our own:
+
+- *What.* One UDP datagram every 2 s to 239.255.77.31 port 47731 (multicast TTL 1: it never leaves the network), a JSON object under 1200 bytes: `{"venuta":"room","v":1,"door":"<32 hex>","host":"Asha","listening":3,"to":"<ticket>","until":<unix s>}`, and `"gone":true` once when it stops. Anything else is dropped; a room not heard for 7 s is dropped from the list.
+- *When.* Announced only while the room is open (not ended), "Visible on this network" is on (on by default, D19), the invite is valid, and Hide my IP is off (a datagram carries the sender's address). Heard only while this Venuta is in no room and the window has asked for the view; the listener ends when a room begins. Each room heard gets a small id for the window (`NearbyView.id`).
+- *The door code.* `door = nearby_secret(secret)`: public on the network, it lets a person knock, never in. Room v2's knock: an invite proof as now; a door proof is refused unless the room is visible ("This room isn't open to people nearby."), lets a known member or a returning one in at once, and otherwise always waits at the door, even with "Let people in without asking" on (D19: joining always needs approval). The joiner makes an invite from the beacon (`to`, `door` as the secret, `until`, `host`) and joins as with a link; that invite is what its record keeps.
+
+**Drift per output.** What the room program learns of an output is its sound card's rate against the monotonic clock (`DacRate`, the feed-forward's part that belongs to the output; the integral belongs to the room's clock and is not kept). `DriftMemory` (in memory, loaded from and saved to a file by the app) maps an output key to `{ ppm, span_s }`: the output's endpoint id, or `name:<the output's name>` for an output without one (the simulated outputs, later AAudio's device id). When the room program first sees an output (attach, or a switch), its `DacRate` is seeded from the memory: until its own pairs span 2 s it answers the seed instead of 0. When it lets the output go (detach, or a switch), a rate measured over at least 8 s is remembered. Nothing of it touches solo playback (4.11: read only by room programs). For the integrator: fix/devices adds a per-device store keyed by endpoint id; this module is small on purpose, to be merged into it (the key, the two numbers, `recall` and `remember`).
+
+**I10.** Built in WP9 (`last_queue` in the view, `together_save_queue`). The gates here: every ending leaves the room's songs, in order, with the session (host and guest), and the app makes a playlist of them (a unit test on a library folder in a temporary directory).
+
+**Tests first.**
+
+- `crates/together/tests/lifecycle.rs` (the session simulation of WP9): I6, a host restart with guests reconnecting (same members, held at the kept place, the host's new player prepared silent and committed only at Play, seq and ids going on); a host reopening after the guests' 2 minutes (their sessions end by the 2-minute rule, their records kept, a rejoin comes back as the same member); I7, a guest's crash under 2 minutes (offered at once, the same member) and over 2 minutes (offered, the same member through `returning`); every ending's record rule; I10 for every ending; the door for people nearby (waits even when let in without asking; refused when not visible; a member back at once).
+- Units: `RoomState` through JSON and back; `offer`'s rules; `Kept`; the beacon's codec and table, and an announcer heard by a listener on 127.0.0.1; an endpoint bound again on its port; `DacRate` seeded; `DriftMemory` through its file.
+- `crates/player/tests/drift_memory.rs`: a room on a sound card 120 ppm fast remembers about 120 for that output; the next room on it starts with that rate.
+- `crates/player/tests/room_whole.rs`: a host restart with real players: from the reopen until the start nothing is heard from the host's new player, and nothing from each guest after its hold's fade; after the start everyone hears the kept place on, together; zero clicks.
+
 #### Phase 2
 
 | WP | Size | Depends on | Owns | Tests written first |
@@ -2072,6 +2120,10 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Download chunks | 64 KiB | 4.6 |
 | Shared-mode buffer | 10 ms period, 50 ms buffer | 4.8 |
 | Output delay | -500 to +500 ms, per output endpoint, remembered; Bluetooth suggestion 170 ms (SBC, measured) | 4.8, 4.14 |
+| A room kept for reopening | the invite's 24 h; written on every change and every 2 s while playing; seq and ids go on from the kept ones plus 1000 | 4.15, WP15 |
+| Rejoin by itself | last in the room under 2 minutes ago | 4.15, WP15 |
+| Rooms nearby | a datagram every 2 s to 239.255.77.31:47731, TTL 1; dropped when unheard for 7 s | A15, WP15 |
+| Drift remembered per output | measured over at least 8 s; seeds the next room until it has 2 s of its own | 4.11, WP15 |
 
 ## Appendix B: words used here
 
