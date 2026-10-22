@@ -6,13 +6,13 @@ use std::cell::Cell;
 use std::io::{Cursor, Write};
 use std::path::Path;
 
-use lyrics_text::Word;
 use lyrics_text::japanese::dictionary::{self, Error, Fetch, Progress, Spec};
 use lyrics_text::japanese::{Japanese, NeedsDictionary, needs_dictionary};
+use lyrics_text::{Line, Word, romanize};
 use sha2::{Digest, Sha256};
 
 fn ro(s: &str) -> String {
-    Japanese::kana_only().romanize(s).expect("kana only").text
+    Japanese::kana_only().romanize(s).expect("kana only")
 }
 
 #[test]
@@ -66,12 +66,19 @@ fn w(start_ms: u64, end_ms: u64, text: &str) -> Word {
     }
 }
 
+fn line(text: &str, words: &[Word]) -> Option<lyrics_text::Roman> {
+    romanize(&Line::new(text).words(words))
+}
+
 #[test]
-fn each_sound_is_a_piece() {
-    let r = Japanese::kana_only().romanize("まっちゃ").unwrap();
-    assert_eq!(r.piece_texts(), ["ma", "t", "cha"]);
-    let line = "さくら さくら";
-    let r = Japanese::kana_only().romanize(line).unwrap();
+fn each_sound_keeps_its_time() {
+    let words = [w(0, 100, "ま"), w(100, 200, "っ"), w(200, 300, "ちゃ")];
+    let r = line("まっちゃ", &words).unwrap();
+    assert_eq!(r.lang, "ja-Latn");
+    assert_eq!(
+        r.words,
+        vec![w(0, 100, "Ma"), w(100, 200, "t"), w(200, 300, "cha")]
+    );
     let words = [
         w(0, 100, "さ"),
         w(100, 200, "く"),
@@ -79,14 +86,23 @@ fn each_sound_is_a_piece() {
         w(300, 900, "さくら"),
     ];
     assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
+        line("さくら さくら", &words).unwrap().words,
         vec![
-            w(0, 100, "sa"),
+            w(0, 100, "Sa"),
             w(100, 200, "ku"),
             w(200, 300, "ra "),
             w(300, 900, "sakura"),
         ]
     );
+}
+
+#[test]
+fn a_line_with_kanji_waits_for_the_dictionary() {
+    assert_eq!(line("君の名は", &[]), None);
+    // Kanji alone in a song known to be Japanese are not read as Chinese.
+    let ja = romanize(&Line::new("未来").lang(Some("ja")));
+    assert_eq!(ja, None);
+    assert_eq!(line("さよならBaby", &[]).unwrap().text, "Sayonara Baby");
 }
 
 // The installer, against a fake download.

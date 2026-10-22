@@ -2,12 +2,12 @@
 //! (Ukraine's 2010 national system, Bulgaria's 2009 Streamlined System, Serbian Latin as
 //! Serbs write it, Greece's ELOT 743), Russian in a simplified BGN/PCGN style.
 
-use lyrics_text::Word;
 use lyrics_text::cyrillic::{self, Lang};
 use lyrics_text::greek;
+use lyrics_text::{Line, Word, romanize};
 
 fn cy(s: &str, lang: Lang) -> String {
-    cyrillic::romanize(s, lang).text
+    cyrillic::romanize(s, lang)
 }
 
 #[test]
@@ -84,12 +84,12 @@ fn language_from_the_letters() {
     assert_eq!(Lang::from_tag("uk-UA"), Some(Lang::Ukrainian));
     assert_eq!(Lang::from_tag("sr"), Some(Lang::Serbian));
     assert_eq!(Lang::from_tag("en"), None);
-    assert_eq!(Lang::Bulgarian.tag(), "bg-Latn");
+    assert_eq!(Lang::Bulgarian.code(), "bg");
 }
 
 #[test]
 fn greek_elot_743() {
-    let g = |s| greek::romanize(s).text;
+    let g = |s| greek::romanize(s);
     assert_eq!(g("Σ' αγαπώ"), "S' agapo");
     assert_eq!(g("Καλημέρα"), "Kalimera");
     assert_eq!(g("Ευχαριστώ"), "Efcharisto");
@@ -116,26 +116,39 @@ fn w(start_ms: u64, end_ms: u64, text: &str) -> Word {
     }
 }
 
+fn line(text: &str, words: &[Word], lang: Option<&str>) -> lyrics_text::Roman {
+    romanize(&Line::new(text).words(words).lang(lang)).expect("romanized")
+}
+
 #[test]
 fn word_timing() {
-    let line = "Я тебя люблю";
     let words = [w(0, 100, "Я "), w(100, 300, "тебя "), w(300, 600, "люблю")];
-    let r = cyrillic::romanize(line, Lang::Russian);
+    let r = line("Я тебя люблю", &words, Some("ru"));
+    assert_eq!(r.lang, "ru-Latn");
     assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
+        r.words,
         vec![
             w(0, 100, "Ya "),
             w(100, 300, "tebya "),
             w(300, 600, "lyublyu")
         ]
     );
-    let line = "Σ' αγαπώ";
     let words = [w(0, 100, "Σ' "), w(100, 300, "αγαπώ")];
-    let r = greek::romanize(line);
-    assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
-        vec![w(0, 100, "S' "), w(100, 300, "agapo")]
-    );
+    let r = line("Σ' αγαπώ", &words, None);
+    assert_eq!(r.lang, "el-Latn");
+    assert_eq!(r.words, vec![w(0, 100, "S' "), w(100, 300, "agapo")]);
+}
+
+#[test]
+fn whole_lines() {
+    // The song's language picks the table; without it the letters do.
+    assert_eq!(line("Київ", &[], Some("uk")).text, "Kyiv");
+    assert_eq!(line("Київ", &[], None).lang, "uk-Latn");
+    assert_eq!(line("Волим те", &[], Some("sr")).lang, "sr-Latn");
+    // An apostrophe inside a word, and the Greek question mark, stay with their word.
+    assert_eq!(line("м'ята", &[], Some("uk")).text, "Miata");
+    assert_eq!(line("Τι κάνεις;", &[], None).text, "Ti kaneis?");
+    assert_eq!(line("Я люблю rock", &[], None).text, "Ya lyublyu rock");
 }
 
 #[test]

@@ -18,17 +18,19 @@ mod kana;
 
 use std::borrow::Cow;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 
+use crate::Pieces;
 use crate::chinese::{is_han, other};
-use crate::pieces::{Builder, Romanized, is_kana};
+use crate::layout::{Builder, is_kana};
 use kana::{Kana, hiragana, write_word};
 
-/// The BCP 47 tag of the pronunciation line.
-pub const LANG: &str = "ja-Latn";
+/// The language of the pronunciation (it is written "ja-Latn").
+pub const LANG: &str = "ja";
 
 /// The line has kanji and the dictionary isn't loaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -70,20 +72,64 @@ impl Japanese {
         self.segmenter.is_some()
     }
 
-    /// The line in romaji.
-    pub fn romanize(&self, line: &str) -> Result<Romanized, NeedsDictionary> {
+    /// The text in romaji, all in lower case.
+    pub fn romanize(&self, text: &str) -> Result<String, NeedsDictionary> {
+        let mut out = Pieces::new(text);
+        self.write(text, 0..text.len(), &mut out)?;
+        Ok(out.into_text())
+    }
+
+    /// Romanizes `line[range]` into `out`: a piece per kana, a kanji's reading with the
+    /// kanji. Nothing is written when it needs the dictionary and it isn't loaded.
+    pub fn write(
+        &self,
+        line: &str,
+        range: Range<usize>,
+        out: &mut Pieces,
+    ) -> Result<(), NeedsDictionary> {
         match &self.segmenter {
-            Some(s) => Ok(with_words(s, line)),
-            None if needs_dictionary(line) => Err(NeedsDictionary),
-            None => Ok(kana_words(line)),
+            Some(s) => with_words(s, line, range, &mut Builder::new(out)),
+            None if needs_dictionary(&line[range.clone()]) => return Err(NeedsDictionary),
+            None => kana_words(line, range, &mut Builder::new(out)),
         }
+        Ok(())
     }
 }
 
+/// The romanizer for the dictionary in `dir` (kana only without one, or when it can't be
+/// read), loaded the first time it is asked for and kept.
+pub fn shared(dir: Option<&Path>) -> Arc<Japanese> {
+    static KANA: OnceLock<Arc<Japanese>> = OnceLock::new();
+    static LOADED: Mutex<Option<(PathBuf, Arc<Japanese>)>> = Mutex::new(None);
+    let kana = || KANA.get_or_init(|| Arc::new(Japanese::kana_only())).clone();
+    let Some(dir) = dir else { return kana() };
+    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((d, j)) = loaded.as_ref()
+        && d == dir
+    {
+        return j.clone();
+    }
+    match Japanese::with_dictionary(dir) {
+        Ok(j) => {
+            let j = Arc::new(j);
+            *loaded = Some((dir.to_path_buf(), j.clone()));
+            j
+        }
+        Err(_) => kana(),
+    }
+}
+
+fn chars_of(line: &str, range: Range<usize>) -> Vec<(usize, char)> {
+    let base = range.start;
+    line[range]
+        .char_indices()
+        .map(|(i, c)| (base + i, c))
+        .collect()
+}
+
 /// Kana only, cut at spaces, punctuation and where hiragana turns to katakana.
-fn kana_words(line: &str) -> Romanized {
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
-    let mut b = Builder::default();
+fn kana_words(line: &str, range: Range<usize>, b: &mut Builder) {
+    let chars = chars_of(line, range);
     let mut word: Vec<Kana> = Vec::new();
     let mut last_kata: Option<bool> = None;
     let mut i = 0;
@@ -94,7 +140,7 @@ fn kana_words(line: &str) -> Romanized {
             // ー goes with the word it lengthens.
             if c != 'ー' {
                 if last_kata.is_some_and(|k| k != kata) {
-                    flush(&mut word, &mut b);
+                    flush(&mut word, b);
                 }
                 last_kata = Some(kata);
             }
@@ -105,12 +151,11 @@ fn kana_words(line: &str) -> Romanized {
             i += 1;
             continue;
         }
-        flush(&mut word, &mut b);
+        flush(&mut word, b);
         last_kata = None;
-        i = other(&chars, i, &mut b);
+        i = other(&chars, i, b);
     }
-    flush(&mut word, &mut b);
-    b.finish()
+    flush(&mut word, b);
 }
 
 fn flush(word: &mut Vec<Kana>, b: &mut Builder) {
@@ -131,13 +176,14 @@ struct Tok<'a> {
     reading: Option<String>,
 }
 
-fn tokens<'a>(s: &'a Segmenter, line: &'a str) -> Vec<Tok<'a>> {
-    let Ok(mut toks) = s.segment(Cow::Borrowed(line)) else {
+fn tokens<'a>(s: &'a Segmenter, line: &'a str, range: Range<usize>) -> Vec<Tok<'a>> {
+    let base = range.start;
+    let Ok(mut toks) = s.segment(Cow::Borrowed(&line[range])) else {
         return Vec::new();
     };
     toks.iter_mut()
         .map(|t| {
-            let src = t.byte_start..t.byte_end;
+            let src = base + t.byte_start..base + t.byte_end;
             let d: Vec<String> = t.details().into_iter().map(str::to_owned).collect();
             let field = |i: usize| d.get(i).filter(|f| *f != "*").cloned();
             let mut reading = field(7);
@@ -252,37 +298,35 @@ fn japanese(c: char) -> bool {
     is_kana(c) && !matches!(c, '・' | '･') || is_han(c) || c == '々'
 }
 
-fn with_words(s: &Segmenter, line: &str) -> Romanized {
-    let toks = tokens(s, line);
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
-    let mut b = Builder::default();
+fn with_words(s: &Segmenter, line: &str, range: Range<usize>, b: &mut Builder) {
+    let toks = tokens(s, line, range.clone());
+    let chars = chars_of(line, range.clone());
     let mut word: Vec<Kana> = Vec::new();
     let mut prev: Option<&Tok> = None;
-    let mut at = 0;
+    let mut at = range.start;
     for t in &toks {
         if t.src.start > at && line[at..t.src.start].chars().any(char::is_whitespace) {
-            flush(&mut word, &mut b);
+            flush(&mut word, b);
             prev = None;
         }
         at = t.src.end;
         if !t.surface.chars().any(japanese) {
             // Punctuation, Latin words, digits: as the Chinese reader places them.
-            flush(&mut word, &mut b);
+            flush(&mut word, b);
             prev = None;
             let from = chars.partition_point(|&(i, _)| i < t.src.start);
             let to = chars.partition_point(|&(i, _)| i < t.src.end);
             let mut i = from;
             while i < to {
-                i = other(&chars[..to], i, &mut b);
+                i = other(&chars[..to], i, b);
             }
             continue;
         }
         if !prev.is_some_and(|p| joins(p, t)) {
-            flush(&mut word, &mut b);
+            flush(&mut word, b);
         }
         word.extend(aligned(line, t));
         prev = Some(t);
     }
-    flush(&mut word, &mut b);
-    b.finish()
+    flush(&mut word, b);
 }

@@ -22,7 +22,7 @@
 
 use std::ops::Range;
 
-use crate::pieces::{Piece, Romanized};
+use crate::Pieces;
 
 /// How to write the line.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -32,27 +32,38 @@ pub struct Options {
     pub hyphens: bool,
 }
 
-/// The BCP 47 tag of the pronunciation line.
-pub const LANG: &str = "ko-Latn";
+/// The language of the pronunciation (it is written "ko-Latn").
+pub const LANG: &str = "ko";
 
 /// A Hangul syllable block (가 to 힣).
 pub fn is_syllable(c: char) -> bool {
     ('\u{AC00}'..='\u{D7A3}').contains(&c)
 }
 
-/// The line in Revised Romanization, without hyphens.
-pub fn romanize(line: &str) -> Romanized {
-    romanize_with(line, Options::default())
+/// The text in Revised Romanization, without hyphens, all in lower case.
+pub fn romanize(text: &str) -> String {
+    romanize_with(text, Options::default())
 }
 
-/// The line in Revised Romanization.
-pub fn romanize_with(line: &str, opts: Options) -> Romanized {
-    let mut out = Romanized::default();
-    let mut chars = line.char_indices().peekable();
+/// The text in Revised Romanization, all in lower case.
+pub fn romanize_with(text: &str, opts: Options) -> String {
+    let mut out = Pieces::new(text);
+    write(text, 0..text.len(), opts, &mut out);
+    out.into_text()
+}
+
+/// Romanizes `line[range]` into `out`, a piece per syllable.
+pub fn write(line: &str, range: std::ops::Range<usize>, opts: Options, out: &mut Pieces) {
+    let base = range.start;
+    let mut chars = line[range]
+        .char_indices()
+        .map(|(i, c)| (base + i, c))
+        .peekable();
+    let mut syllables = Vec::new();
     while let Some(&(at, c)) = chars.peek() {
         if is_syllable(c) {
             // A word: the syllables in a row.
-            let mut syllables = Vec::new();
+            syllables.clear();
             while let Some(&(at, c)) = chars.peek() {
                 if !is_syllable(c) {
                     break;
@@ -60,32 +71,17 @@ pub fn romanize_with(line: &str, opts: Options) -> Romanized {
                 syllables.push((c, at..at + c.len_utf8()));
                 chars.next();
             }
-            word(&syllables, opts, &mut out);
-        } else if c.is_whitespace() {
-            out.text.push(c);
-            chars.next();
-        } else {
-            // Anything else up to the next space or syllable, as written (ㅋ as "k").
-            let start = out.text.len();
-            let mut end = at;
-            while let Some(&(at, c)) = chars.peek() {
-                if is_syllable(c) || c.is_whitespace() {
-                    break;
-                }
-                match compat_jamo(c) {
-                    Some(r) => out.text.push_str(r),
-                    None => out.text.push(c),
-                }
-                end = at + c.len_utf8();
-                chars.next();
-            }
-            out.pieces.push(Piece {
-                out: start..out.text.len(),
-                src: at..end,
-            });
+            word(&syllables, opts, out);
+            continue;
         }
+        // Anything else as it is (a Hangul letter written alone, ㅋ, as its sound).
+        let src = at..at + c.len_utf8();
+        match compat_jamo(c) {
+            Some(r) => out.push(src, r),
+            None => out.keep(src),
+        }
+        chars.next();
     }
-    out
 }
 
 // Initial consonants (choseong), U+1100 + index.
@@ -358,7 +354,7 @@ fn apply(rule: &Rule, seq: &mut Vec<Jamo>, skip: &dyn Fn(&[Jamo]) -> bool) {
     }
 }
 
-fn word(syllables: &[(char, Range<usize>)], opts: Options, out: &mut Romanized) {
+fn word(syllables: &[(char, Range<usize>)], opts: Options, out: &mut Pieces) {
     let mut seq: Vec<Jamo> = Vec::with_capacity(syllables.len() * 3);
     for (of, &(c, _)) in syllables.iter().enumerate() {
         let mut parts = decompose(c);
@@ -412,21 +408,16 @@ fn word(syllables: &[(char, Range<usize>)], opts: Options, out: &mut Romanized) 
 
     // Each syllable's letters as one piece.
     let mut at = 0;
-    for of in 0..syllables.len() {
-        let start = out.text.len();
+    for (of, (_, src)) in syllables.iter().enumerate() {
+        out.begin(src.start);
         while at < seq.len() && seq[at].of == of {
-            out.text.push_str(roman(seq[at].c));
+            out.write(roman(seq[at].c));
             at += 1;
         }
         if opts.hyphens && of + 1 < syllables.len() && needs_hyphen(&seq, at) {
-            out.text.push('-');
+            out.write("-");
         }
-        if out.text.len() > start {
-            out.pieces.push(Piece {
-                out: start..out.text.len(),
-                src: syllables[of].1.clone(),
-            });
-        }
+        out.end(src.end);
     }
 }
 

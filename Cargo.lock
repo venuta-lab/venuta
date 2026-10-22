@@ -171,6 +171,7 @@ dependencies = [
  "image",
  "iroh",
  "iroh-tickets",
+ "lyrics-text",
  "media-access",
  "notify",
  "phone-server",
@@ -2029,6 +2030,7 @@ dependencies = [
  "image",
  "keyring",
  "lofty",
+ "lyrics-text",
  "media-access",
  "rayon",
  "realfft",
@@ -4134,9 +4136,12 @@ version = "0.3.0"
 dependencies = [
  "lindera",
  "pinyin_pro",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
+ "unicode-normalization",
  "ureq",
  "zip",
 ]

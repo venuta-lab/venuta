@@ -12,7 +12,10 @@
 //! less naturally and `iuliia` has no Bulgarian or Serbian. The script is shared, so the
 //! song's language picks the table ([`Lang::from_tag`]), or the letters do ([`detect`]).
 
-use crate::pieces::{Romanized, by_letters};
+use std::ops::Range;
+
+use crate::Pieces;
+use crate::layout::by_letters;
 
 /// Which language's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,13 +39,13 @@ impl Lang {
         })
     }
 
-    /// The BCP 47 tag of the pronunciation line.
-    pub fn tag(self) -> &'static str {
+    /// Its language code ("uk"); the pronunciation is tagged "uk-Latn".
+    pub fn code(self) -> &'static str {
         match self {
-            Lang::Russian => "ru-Latn",
-            Lang::Ukrainian => "uk-Latn",
-            Lang::Bulgarian => "bg-Latn",
-            Lang::Serbian => "sr-Latn",
+            Lang::Russian => "ru",
+            Lang::Ukrainian => "uk",
+            Lang::Bulgarian => "bg",
+            Lang::Serbian => "sr",
         }
     }
 }
@@ -83,9 +86,16 @@ pub fn detect(text: &str) -> Lang {
     }
 }
 
-/// The line in Roman letters, by `lang`'s table.
-pub fn romanize(line: &str, lang: Lang) -> Romanized {
-    by_letters(line, is_letter, |w| steps(w, lang), |_| None)
+/// The text in Roman letters, by `lang`'s table.
+pub fn romanize(text: &str, lang: Lang) -> String {
+    let mut out = Pieces::new(text);
+    write(text, 0..text.len(), lang, &mut out);
+    out.into_text()
+}
+
+/// Romanizes `line[range]` into `out`, a piece per letter group.
+pub fn write(line: &str, range: Range<usize>, lang: Lang, out: &mut Pieces) {
+    by_letters(line, range, out, is_letter, |w| steps(w, lang), |_| None)
 }
 
 fn steps(w: &[char], lang: Lang) -> Vec<(usize, String)> {

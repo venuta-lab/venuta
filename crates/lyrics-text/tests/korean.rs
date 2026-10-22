@@ -2,11 +2,11 @@
 //! it, on every example in the rules (Ministry of Culture notice 2014-42), the regression set of
 //! koroman (MIT) whose rules the converter ports, and common lyric phrases.
 
-use lyrics_text::Word;
 use lyrics_text::korean::{self, Options};
+use lyrics_text::{Line, Word, romanize};
 
 fn rr(s: &str) -> String {
-    korean::romanize(s).text
+    korean::romanize(s)
 }
 
 /// Every example the rules give, chapter 2 and chapter 3, articles 1 to 3 and 6 (names of
@@ -110,7 +110,7 @@ fn every_example_of_the_rules() {
 fn hyphens_when_asked() {
     let opts = Options { hyphens: true };
     for (k, want) in NIKL_HYPHEN {
-        assert_eq!(korean::romanize_with(k, opts).text, *want, "{k}");
+        assert_eq!(korean::romanize_with(k, opts), *want, "{k}");
     }
     // Without the option, as the lyrics are usually written.
     assert_eq!(rr("중앙"), "jungang");
@@ -235,15 +235,24 @@ fn w(start_ms: u64, end_ms: u64, text: &str) -> Word {
     }
 }
 
+/// The line through the crate's one entry, timed by `words`: (start, end, text) per word.
+fn timed(line: &str, words: &[Word]) -> (String, String, Vec<(u64, u64, String)>) {
+    let r = romanize(&Line::new(line).words(words)).expect("romanized");
+    let words = r
+        .words
+        .into_iter()
+        .map(|w| (w.start_ms, w.end_ms, w.text))
+        .collect();
+    (r.text, r.lang, words)
+}
+
 #[test]
-fn each_syllable_is_its_own_piece() {
+fn each_syllable_keeps_its_time() {
     // A consonant carried over to the next syllable is said, and so timed, with it.
-    assert_eq!(korean::romanize("먹어").piece_texts(), ["meo", "geo"]);
-    assert_eq!(
-        korean::romanize("사랑해").piece_texts(),
-        ["sa", "rang", "hae"]
-    );
-    assert_eq!(korean::romanize("신라").piece_texts(), ["sil", "la"]);
+    let (_, _, got) = timed("먹어", &[w(0, 100, "먹"), w(100, 200, "어")]);
+    assert_eq!(got, [(0, 100, "Meo".into()), (100, 200, "geo".into())]);
+    let (_, _, got) = timed("신라", &[w(0, 100, "신"), w(100, 200, "라")]);
+    assert_eq!(got, [(0, 100, "Sil".into()), (100, 200, "la".into())]);
 }
 
 #[test]
@@ -255,19 +264,18 @@ fn word_timing_follows_the_syllables() {
         w(200, 300, "해 "),
         w(400, 600, "너를"),
     ];
-    let r = korean::romanize(line);
+    let (text, lang, got) = timed(line, &words);
+    assert_eq!(text, "Saranghae neoreul");
+    assert_eq!(lang, "ko-Latn");
     assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
-        vec![
-            w(0, 100, "sa"),
-            w(100, 200, "rang"),
-            w(200, 300, "hae "),
-            w(400, 600, "neoreul"),
+        got,
+        [
+            (0, 100, "Sa".into()),
+            (100, 200, "rang".into()),
+            (200, 300, "hae ".into()),
+            (400, 600, "neoreul".into()),
         ]
     );
-    let second = r.to_second(line, &words, "ko-Latn");
-    assert_eq!(second.text, "saranghae neoreul");
-    assert_eq!(second.lang, "ko-Latn");
 }
 
 #[test]

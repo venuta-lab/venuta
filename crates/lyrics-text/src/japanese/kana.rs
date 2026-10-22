@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use crate::pieces::Builder;
+use crate::layout::Builder;
 
 /// One kana of a word and the characters of the line it stands for (a kanji's reading: every
 /// kana of it points at the kanji).

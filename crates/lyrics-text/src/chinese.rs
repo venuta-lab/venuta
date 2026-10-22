@@ -16,7 +16,8 @@ use std::sync::OnceLock;
 
 use pinyin_pro::options::{PinyinOptions, PinyinOutput, ToneType, TypeMode};
 
-use crate::pieces::{Builder, Romanized, cjk_punct, narrow};
+use crate::Pieces;
+use crate::layout::{Builder, cjk_punct, narrow};
 
 /// How to write the line.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -25,8 +26,8 @@ pub struct Options {
     pub tones: bool,
 }
 
-/// The BCP 47 tag of the pronunciation line.
-pub const LANG: &str = "zh-Latn-pinyin";
+/// The language of the pronunciation (it is written "zh-Latn").
+pub const LANG: &str = "zh";
 
 /// A Han character (CJK ideographs and their extensions, compatibility ideographs, 〇).
 pub fn is_han(c: char) -> bool {
@@ -34,15 +35,27 @@ pub fn is_han(c: char) -> bool {
         0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F | 0x3007)
 }
 
-/// The line in pinyin without tone marks.
-pub fn romanize(line: &str) -> Romanized {
-    romanize_with(line, Options::default())
+/// The text in pinyin without tone marks, all in lower case.
+pub fn romanize(text: &str) -> String {
+    romanize_with(text, Options::default())
 }
 
-/// The line in pinyin.
-pub fn romanize_with(line: &str, opts: Options) -> Romanized {
-    let mut b = Builder::default();
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
+/// The text in pinyin, all in lower case.
+pub fn romanize_with(text: &str, opts: Options) -> String {
+    let mut out = Pieces::new(text);
+    write(text, 0..text.len(), opts, &mut out);
+    out.into_text()
+}
+
+/// Romanizes `line[range]` into `out`: a syllable per character, spaces between them, CJK
+/// punctuation as its Latin mark, anything else as a word of its own.
+pub fn write(line: &str, range: std::ops::Range<usize>, opts: Options, out: &mut Pieces) {
+    let base = range.start;
+    let chars: Vec<(usize, char)> = line[range]
+        .char_indices()
+        .map(|(i, c)| (base + i, c))
+        .collect();
+    let mut b = Builder::new(out);
     let mut i = 0;
     while i < chars.len() {
         if is_han(chars[i].1) {
@@ -55,7 +68,6 @@ pub fn romanize_with(line: &str, opts: Options) -> Romanized {
         }
         i = other(&chars, i, &mut b);
     }
-    b.finish()
 }
 
 /// Anything that isn't Han at `i`: a space, a punctuation mark, or a word as written (Latin
@@ -78,7 +90,7 @@ pub(crate) fn other(chars: &[(usize, char)], mut i: usize, b: &mut Builder) -> u
         let (at, c) = chars[i];
         let stop = c.is_whitespace()
             || is_han(c)
-            || crate::pieces::is_kana(c)
+            || crate::layout::is_kana(c)
             || (cjk_punct(c).is_some() && !inside_latin(chars, i));
         if stop {
             break;

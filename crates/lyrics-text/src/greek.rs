@@ -2,10 +2,13 @@
 //! road signs use: "Efcharisto", "Bampas", "Angelos", "Psychi". Accents are dropped; a
 //! diaeresis keeps two vowels apart ("Chaidepse"). A small table of our own.
 
-use crate::pieces::{Romanized, by_letters};
+use std::ops::Range;
 
-/// The BCP 47 tag of the pronunciation line.
-pub const LANG: &str = "el-Latn";
+use crate::Pieces;
+use crate::layout::by_letters;
+
+/// The language of the pronunciation (it is written "el-Latn").
+pub const LANG: &str = "el";
 
 /// A Greek letter (or a combining accent written after one).
 pub fn is_greek(c: char) -> bool {
@@ -13,9 +16,16 @@ pub fn is_greek(c: char) -> bool {
         || ('\u{0300}'..='\u{036F}').contains(&c)
 }
 
-/// The line in Roman letters.
-pub fn romanize(line: &str) -> Romanized {
-    by_letters(line, is_greek, steps, |c| match c {
+/// The text in Roman letters.
+pub fn romanize(text: &str) -> String {
+    let mut out = Pieces::new(text);
+    write(text, 0..text.len(), &mut out);
+    out.into_text()
+}
+
+/// Romanizes `line[range]` into `out`, a piece per letter group.
+pub fn write(line: &str, range: Range<usize>, out: &mut Pieces) {
+    by_letters(line, range, out, is_greek, steps, |c| match c {
         // The Greek question mark, and ";" written for it.
         ';' | '\u{037E}' => Some("?"),
         '\u{0387}' => Some(";"),

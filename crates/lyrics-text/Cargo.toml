@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish = false
-description = "Lyric lines in Roman letters, made on the device: script detection and one converter per writing system, with the original's word timing kept. Pure: no platform code, so Windows and Android share it"
+description = "Second lines for lyrics: a sung line in another script, said in English letters, timed by the original's words. Pure: no platform code (Android reuses it); the network only to fetch the Japanese dictionary when asked"
 
 [features]
 default = ["japanese", "download"]
@@ -16,6 +16,8 @@ japanese = ["dep:lindera", "dep:sha2", "dep:zip"]
 download = ["japanese", "dep:ureq"]
 
 [dependencies]
+serde.workspace = true
+unicode-normalization.workspace = true
 thiserror.workspace = true
 # Mandarin pinyin with phrase-aware polyphones (MIT). Pinned: the gate tests read its output.
 pinyin_pro = "=3.29.4"
@@ -25,6 +27,7 @@ zip = { version = "4.6.1", default-features = false, features = ["deflate"], opt
 ureq = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
 
 [[example]]

@@ -1456,7 +1456,12 @@ pub fn ask(
     if !crate::net::is_offline() {
         note(source, &answer);
     }
-    answer
+    answer.map(|found| {
+        found.map(|mut f| {
+            crate::lyrics::add_pronunciation(&mut f.lyrics);
+            f
+        })
+    })
 }
 
 /// Every source's answer so far (None: not in yet) as Automatic's: the first timed one in your
@@ -1757,6 +1762,7 @@ impl Kept {
     fn read(json: &str) -> Option<Found> {
         let mut f: Found = serde_json::from_str(json).ok()?;
         finish(&mut f.lyrics.lines);
+        crate::lyrics::add_pronunciation(&mut f.lyrics);
         Some(f)
     }
 

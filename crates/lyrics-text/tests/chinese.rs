@@ -1,15 +1,15 @@
 //! Chinese gate: Mandarin pinyin for the common polyphonic characters (readings as the
 //! Xiandai Hanyu Cidian gives them), Traditional characters, mixed lines and word timing.
 
-use lyrics_text::Word;
 use lyrics_text::chinese::{self, Options};
+use lyrics_text::{Line, Word, romanize};
 
 fn py(s: &str) -> String {
-    chinese::romanize(s).text
+    chinese::romanize(s)
 }
 
 fn toned(s: &str) -> String {
-    chinese::romanize_with(s, Options { tones: true }).text
+    chinese::romanize_with(s, Options { tones: true })
 }
 
 /// Phrases with a polyphonic character, and their reading with tones (一 and 不 with their tone
@@ -181,26 +181,39 @@ fn w(start_ms: u64, end_ms: u64, text: &str) -> Word {
     }
 }
 
+fn line(text: &str, words: &[Word]) -> lyrics_text::Roman {
+    romanize(&Line::new(text).words(words)).expect("romanized")
+}
+
 #[test]
-fn one_piece_per_character() {
-    let line = "我爱你 baby";
-    let r = chinese::romanize(line);
-    assert_eq!(r.piece_texts(), ["wo", "ai", "ni", "baby"]);
+fn each_character_keeps_its_time() {
     let words = [
         w(0, 100, "我"),
         w(100, 200, "爱"),
         w(200, 300, "你 "),
         w(300, 500, "baby"),
     ];
+    let r = line("我爱你 baby", &words);
+    assert_eq!(r.text, "Wo ai ni baby");
+    assert_eq!(r.lang, "zh-Latn");
     assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
+        r.words,
         vec![
-            w(0, 100, "wo "),
+            w(0, 100, "Wo "),
             w(100, 200, "ai "),
             w(200, 300, "ni "),
             w(300, 500, "baby")
         ]
     );
+}
+
+#[test]
+fn whole_lines_mixed_with_other_writing() {
+    // Words of other scripts keep a space from the pinyin around them.
+    assert_eq!(line("我是Jay", &[]).text, "Wo shi Jay");
+    assert_eq!(line("Hello世界", &[]).text, "Hello shi jie");
+    assert_eq!(line("你好，世界！", &[]).text, "Ni hao, shi jie!");
+    assert_eq!(line("「愛你」", &[]).text, "\"Ai ni\"");
 }
 
 #[test]

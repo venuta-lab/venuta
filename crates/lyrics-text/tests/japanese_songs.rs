@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use lyrics_text::Word;
 use lyrics_text::japanese::Japanese;
+use lyrics_text::{Line, Word, romanize};
 
 fn dictionary() -> Option<Japanese> {
     let Some(dir) = std::env::var_os("LYRICS_TEXT_IPADIC").map(PathBuf::from) else {
@@ -70,7 +70,7 @@ fn song_lines_read_as_people_read_them() {
     let (mut exact, mut errors, mut letters) = (0, 0, 0);
     let mut misses = Vec::new();
     for (ja, human) in &lines {
-        let ours = j.romanize(ja).unwrap().text;
+        let ours = j.romanize(ja).unwrap();
         let (a, b) = (sounds(&ours), sounds(human));
         let d = distance(&a, &b);
         errors += d;
@@ -97,7 +97,7 @@ fn song_lines_read_as_people_read_them() {
 #[test]
 fn particles_endings_and_words() {
     let Some(j) = dictionary() else { return };
-    let ro = |s: &str| j.romanize(s).unwrap().text;
+    let ro = |s: &str| j.romanize(s).unwrap();
     assert_eq!(ro("君の名は"), "kimi no na wa");
     assert_eq!(ro("私は学校へ行きます"), "watashi wa gakkou e ikimasu");
     assert_eq!(ro("本を読んでいる"), "hon o yonde iru");
@@ -118,15 +118,29 @@ fn w(start_ms: u64, end_ms: u64, text: &str) -> Word {
 
 #[test]
 fn a_reading_takes_the_time_of_its_kanji() {
-    let Some(j) = dictionary() else { return };
+    let Some(dir) = std::env::var_os("LYRICS_TEXT_IPADIC").map(PathBuf::from) else {
+        return;
+    };
+    let timed = |text: &str, words: &[Word]| {
+        romanize(&Line::new(text).words(words).japanese_dictionary(Some(&dir)))
+            .expect("romanized")
+            .words
+    };
     // 走る: the kanji's reading with the kanji, the kana ending on its own.
-    assert_eq!(j.romanize("走る").unwrap().piece_texts(), ["hashi", "ru"]);
-    let line = "未来へ";
-    let r = j.romanize(line).unwrap();
+    assert_eq!(
+        timed("走る", &[w(0, 100, "走"), w(100, 200, "る")]),
+        vec![w(0, 100, "Hashi"), w(100, 200, "ru")]
+    );
     let words = [w(0, 100, "未"), w(100, 200, "来"), w(200, 300, "へ")];
     assert_eq!(
-        lyrics_text::pieces::timed_words(line, &words, &r),
-        vec![w(0, 200, "mirai "), w(200, 300, "e")]
+        timed("未来へ", &words),
+        vec![w(0, 200, "Mirai "), w(200, 300, "e")]
+    );
+    // With the dictionary, a line with kanji is read whole.
+    let r = romanize(&Line::new("君の名は").japanese_dictionary(Some(&dir))).unwrap();
+    assert_eq!(
+        (r.text.as_str(), r.lang.as_str()),
+        ("Kimi no na wa", "ja-Latn")
     );
 }
 
