@@ -143,34 +143,202 @@ fn wasapi_shared_passes_the_conformance_suite_with_a_clean_loopback() {
         "the output runs at the mix format"
     );
 
-    // The loopback, first channel.
+    // The loopback, first channel, against what was rendered.
     let all = captured.lock().unwrap();
     let ch = usize::from(channels);
     let x: Vec<f32> = all.iter().step_by(ch).copied().collect();
-    let found = bursts(&x, rate);
-    assert_eq!(
-        found.len(),
-        3,
-        "three tones and silence between them, found {found:?}"
-    );
-    let fade = (rate as usize) * 40 / 1000;
-    for (b, &(freq, _, _)) in found.iter().zip(&report.tones) {
-        let seg: Vec<f64> = x[b.clone()].iter().map(|&v| f64::from(v)).collect();
-        let mid = &seg[seg.len() / 4..seg.len() / 2];
-        let level = (mid.iter().map(|v| v * v).sum::<f64>() / mid.len() as f64).sqrt()
-            * std::f64::consts::SQRT_2;
-        let lock = audio_check::sine::SineLock::new(freq, rate, level);
-        let end = audio_check::Declared::span(seg.len().saturating_sub(fade)..seg.len());
-        let clicks = audio_check::sine::check(&seg, &lock, &end);
+    let fits = judge_loopback(&x, &report.info.format, &report.tones)
+        .unwrap_or_else(|e| panic!("the loopback: {e}"));
+    eprintln!("loopback against what was rendered: {fits:?}");
+    if let Some(why) = processed(&fits) {
+        panic!(
+            "effects in the path ({why}): the loopback is taken after this output's sound effects, so it can't judge clicks or silence here. Turn the output's audio enhancements off and run again."
+        );
+    }
+    for (f, &(freq, tail_from, _)) in fits.iter().zip(&report.tones) {
+        let seg: Vec<f64> = x[f.onset..f.end].iter().map(|&v| f64::from(v)).collect();
+        let lock = audio_check::sine::SineLock::new(freq, rate, 0.5 * f.gain);
+        let fade = audio_check::Declared::span(tail_from as usize..seg.len());
+        let clicks = audio_check::sine::check(&seg, &lock, &fade);
         assert_eq!(clicks, [], "{freq} Hz through the loopback");
     }
     // Digital silence between the tones and after the last (before each stop, the tone's fade
     // and then only silence reached the output).
-    for w in found.windows(2) {
-        assert!(x[w[0].end..w[1].start].iter().all(|v| v.abs() <= SILENT));
+    for w in fits.windows(2) {
+        assert!(
+            x[w[0].end..w[1].onset].iter().all(|v| v.abs() <= SILENT),
+            "sound between tones"
+        );
     }
-    let last = found.last().unwrap();
-    assert!(x[last.end..].iter().all(|v| v.abs() <= SILENT));
+    let last = fits.last().unwrap();
+    assert!(
+        x[last.end..].iter().all(|v| v.abs() <= SILENT),
+        "sound after the last stop"
+    );
+}
+
+/// One tone as the loopback had it, against what was rendered.
+#[derive(Debug, Clone, PartialEq)]
+struct ToneFit {
+    /// Where it begins in the capture (its first sound) and where its fade ends.
+    onset: usize,
+    end: usize,
+    /// The loopback's level against the rendered tone's (the endpoint's volume, where the
+    /// loopback is taken after it).
+    gain: f64,
+    /// What differs from the rendered tone at that gain, over the tone, in dB under the tone.
+    /// Far under -60 on a path with nothing after the mixer; an output's effects (filters,
+    /// delays) make it large. Sound after the fade on a clean path is a fault, not an effect.
+    residual_db: f64,
+    /// Sound in the 60 ms after the fade's end (from 1 ms on), dBFS.
+    after_db: f64,
+}
+
+/// Finds each tone of a conformance run (`tones`: frequency, fade start, silence start) in a
+/// capture, in order, each beginning at the first sound after the last one's end, and compares
+/// it with what was rendered. On a path with nothing after the mixer the capture is the
+/// rendered tone at one gain (`residual_db` far under -60) with digital silence after each
+/// fade; an output's sound effects (filters, delays, ringing) show as a large residual over
+/// the tone itself. Sound after a fade with the tone itself clean is a fault, for the caller.
+fn judge_loopback(
+    x: &[f32],
+    fmt: &player::output::DeviceFormat,
+    tones: &[(f64, u64, u64)],
+) -> Result<Vec<ToneFit>, String> {
+    let rate = fmt.rate as usize;
+    let after = rate * 60 / 1000;
+    let mut from = 0;
+    let mut fits = Vec::new();
+    for &(freq, tail_from, silent_from) in tones {
+        let onset = from
+            + x[from..]
+                .iter()
+                .position(|v| v.abs() > SILENT)
+                .ok_or(format!("no {freq} Hz tone after sample {from}"))?;
+        let len = silent_from as usize;
+        if onset + len + after > x.len() {
+            return Err(format!("the capture ends inside the {freq} Hz tone"));
+        }
+        let tone = conformance::ToneRender::faded(freq, fmt.clone(), tail_from);
+        let r: Vec<f64> = (0..len as u64).map(|k| tone.value(k)).collect();
+        let steady = rate / 20..(tail_from as usize).saturating_sub(rate / 20);
+        let (xr, rr) = steady.clone().fold((0.0, 0.0), |(a, b), k| {
+            (a + f64::from(x[onset + k]) * r[k], b + r[k] * r[k])
+        });
+        let gain = if rr > 0.0 { xr / rr } else { 0.0 };
+        let (mut err, mut sig) = (0.0, 0.0);
+        for k in 0..len {
+            let want = gain * r[k];
+            let d = f64::from(x[onset + k]) - want;
+            err += d * d;
+            sig += want * want;
+        }
+        let tail = &x[onset + len + rate / 1000..onset + len + after];
+        let rms =
+            (tail.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / tail.len() as f64).sqrt();
+        fits.push(ToneFit {
+            onset,
+            end: onset + len,
+            gain,
+            residual_db: 10.0 * (err.max(1e-300) / sig.max(1e-300)).log10(),
+            after_db: 20.0 * rms.max(1e-15).log10(),
+        });
+        from = onset + len;
+    }
+    Ok(fits)
+}
+
+/// Why the path has effects in it, if it has.
+fn processed(fits: &[ToneFit]) -> Option<String> {
+    fits.iter().find_map(|f| {
+        (f.residual_db > -60.0 || f.gain < 0.01).then(|| {
+            format!(
+                "at sample {} the loopback differs from what was rendered by {:.1} dB at gain {:.3}, with {:.1} dBFS of sound after the fade",
+                f.onset, f.residual_db, f.gain, f.after_db
+            )
+        })
+    })
+}
+
+/// The loopback judge on made-up captures (CI): a clean path is judged, an output's effects
+/// are told, not judged.
+#[cfg(test)]
+mod loopback_judge {
+    use super::*;
+
+    fn fmt() -> player::output::DeviceFormat {
+        player::output::DeviceFormat {
+            rate: 48_000,
+            channels: 2,
+            container_bits: 32,
+            valid_bits: 32,
+            kind: player::output::SampleKind::Float,
+        }
+    }
+
+    /// Three tones as a run renders them (shorter), with gaps, at a gain.
+    fn capture(gain: f64, gaps: [usize; 3]) -> (Vec<f32>, Vec<(f64, u64, u64)>) {
+        let tones = vec![
+            (1_000.0, 24_000, 24_000 + 1_440),
+            (600.0, 12_000, 12_000 + 1_440),
+            (1_500.0, 12_000, 12_000 + 1_440),
+        ];
+        let mut x = Vec::new();
+        for (&(freq, tail, silent), gap) in tones.iter().zip(gaps) {
+            x.extend(std::iter::repeat_n(0.0f32, gap));
+            let t = conformance::ToneRender::faded(freq, fmt(), tail);
+            x.extend((0..silent).map(|k| (gain * t.value(k)) as f32));
+        }
+        x.extend(std::iter::repeat_n(0.0f32, 9_600));
+        (x, tones)
+    }
+
+    #[test]
+    fn a_clean_path_is_the_rendered_tones_at_one_gain_with_silence_after() {
+        let (x, tones) = capture(0.7, [6_353, 13_174, 3_600]);
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        assert_eq!(processed(&fits), None, "{fits:?}");
+        assert_eq!(
+            fits.iter().map(|f| f.onset).collect::<Vec<_>>(),
+            [
+                6_353,
+                6_353 + 25_440 + 13_174,
+                6_353 + 25_440 + 13_174 + 13_440 + 3_600
+            ]
+        );
+        assert!(fits.iter().all(|f| (f.gain - 0.7).abs() < 1e-6));
+    }
+
+    #[test]
+    fn sound_after_a_fade_on_a_clean_path_is_a_fault_not_an_effect() {
+        let (mut x, tones) = capture(0.7, [6_353, 13_174, 3_600]);
+        // Something plays on after the last stop (a stale buffer).
+        let end = x.len() - 9_600;
+        for (k, v) in x[end + 480..end + 960].iter_mut().enumerate() {
+            *v = 0.2 * (k as f32 * 0.3).sin();
+        }
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        assert_eq!(processed(&fits), None, "the tones themselves are clean");
+        assert!(fits[2].after_db > -40.0, "{fits:?}");
+        assert!(x[fits[2].end..].iter().any(|v| v.abs() > SILENT));
+    }
+
+    #[test]
+    fn an_output_with_effects_is_told_and_not_judged() {
+        // What an output's effects do after the mixer: a delay and a filter that rings on
+        // (a one-pole low-pass, 50 ms to decay), so the 75 ms between the last two tones is
+        // never silent: the merged run seen on the owner's laptop.
+        let (clean, tones) = capture(0.7, [6_353, 13_174, 3_600]);
+        let mut x = vec![0.0f32; 4_800];
+        let (mut y, a) = (0.0f64, (-1.0 / (0.05 * 48_000.0f64)).exp());
+        for v in clean {
+            y = a * y + (1.0 - a) * f64::from(v) * 8.0;
+            x.push(y as f32);
+        }
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        let why = processed(&fits).expect("effects told");
+        assert!(why.contains("differs from what was rendered"), "{why}");
+    }
 }
 
 /// The suite in exclusive mode (no loopback: an exclusive stream bypasses the mixer).

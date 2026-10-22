@@ -627,6 +627,7 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
         let mut learned: Option<Latency> = None;
         let mut most_ever = 0u32;
         let mut worst_after_settle = i64::MIN;
+        let (mut steady, mut after_first) = (0usize, 0usize);
         for line in text.lines().skip(1) {
             let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
             if r[col("state")] != 1 {
@@ -649,9 +650,14 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
                     let now = t.push(after - p.frame);
                     if let Some(prev) = learned.filter(|l: &Latency| l.settled) {
                         let behind = before as i64 - p.frame as i64;
-                        worst_after_settle = worst_after_settle.max(behind - i64::from(prev.most));
+                        worst_after_settle = worst_after_settle
+                            .max(behind - i64::from(prev.most) - i64::from(prev.band));
                     }
                     most_ever = most_ever.max(now.most);
+                    if learned.is_some_and(|l: Latency| l.settled) || after_first > 0 {
+                        after_first += 1;
+                        steady += usize::from(now.settled);
+                    }
                     learned = Some(now);
                 }
             }
@@ -663,12 +669,19 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             if exclusive { 1_440 } else { 2_400 }
         );
         assert!(l.settled, "{name}: steady by the end");
+        // Once first steady, steady nearly all the time (the wobble of a queue is its band, not
+        // a change): only the gap and its refill may unsettle it.
+        eprintln!("{name}: steady at {steady} of {after_first} fills after the first");
+        assert!(
+            steady * 10 >= after_first * 9,
+            "{name}: steady {steady} of {after_first}"
+        );
         // More than the driver says (2400 shared, 1440 exclusive): what made the suite fail.
         assert!(l.frames > if exclusive { 1_440 } else { 2_400 }, "{name}");
         // Once steady, the DAC was never further behind than it said (the suite'"'"'s check).
         assert!(
-            worst_after_settle <= i64::from(most_ever) + 48,
-            "{name}: {worst_after_settle} behind"
+            worst_after_settle <= 0,
+            "{name}: {worst_after_settle} frames further behind than most and band"
         );
         if exclusive {
             let s = m.slip();
