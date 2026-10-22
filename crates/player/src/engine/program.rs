@@ -6,7 +6,7 @@
 //! A program decides what plays and turns it into render commands through the `Deck`; it
 //! learns what happened from the renderer's notes. Nothing here waits for audio.
 
-use super::control::{Deck, Lane, Place, Retire, Stopped};
+use super::control::{Deck, Lane, Msg, Place, Retire, Stopped};
 use super::status::View;
 use super::{Cmd, Item, Signal, SyncStatus};
 use crate::output::{self, Mode};
@@ -923,6 +923,7 @@ pub(crate) enum RoomMsg<T> {
         transition: Transition,
         align: Alignment,
     },
+    Disarm,
     Commit(Anchor),
     Hold(Anchor),
     SetMode(SyncMode),
@@ -935,21 +936,21 @@ pub(crate) enum RoomMsg<T> {
 /// The room's hold on engine 2: every call a message to the control thread; its status read
 /// from what the room program publishes.
 struct RoomLink<T> {
-    tx: Sender<RoomMsg<T>>,
+    tx: Sender<Msg<T>>,
     status: Arc<Mutex<RoomPlayStatus>>,
 }
 
 pub(super) fn attach<T: Send + 'static>(
-    tx: Sender<RoomMsg<T>>,
+    tx: Sender<Msg<T>>,
     clock: ClockMapHandle,
     mode: SyncMode,
 ) -> Box<dyn RoomHandle<T>> {
     let status = Arc::new(Mutex::new(RoomPlayStatus::default()));
-    let _ = tx.send(RoomMsg::Attach {
+    let _ = tx.send(Msg::Room(RoomMsg::Attach {
         clock,
         mode,
         status: status.clone(),
-    });
+    }));
     Box::new(RoomLink { tx, status })
 }
 
@@ -962,13 +963,13 @@ impl<T: Send> RoomHandle<T> for RoomLink<T> {
         room_content_us: i64,
         align: Alignment,
     ) {
-        let _ = self.tx.send(RoomMsg::Prepare {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Prepare {
             prep,
             entry,
             item,
             room_content_us,
             align,
-        });
+        }));
     }
     fn arm_next(
         &self,
@@ -978,37 +979,40 @@ impl<T: Send> RoomHandle<T> for RoomLink<T> {
         transition: Transition,
         align: Alignment,
     ) {
-        let _ = self.tx.send(RoomMsg::ArmNext {
+        let _ = self.tx.send(Msg::Room(RoomMsg::ArmNext {
             entry,
             item,
             boundary_host_us,
             transition,
             align,
-        });
+        }));
+    }
+    fn disarm(&self) {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Disarm));
     }
     fn commit(&self, anchor: Anchor) {
-        let _ = self.tx.send(RoomMsg::Commit(anchor));
+        let _ = self.tx.send(Msg::Room(RoomMsg::Commit(anchor)));
     }
     fn hold(&self, anchor: Anchor) {
-        let _ = self.tx.send(RoomMsg::Hold(anchor));
+        let _ = self.tx.send(Msg::Room(RoomMsg::Hold(anchor)));
     }
     fn set_mode(&self, mode: SyncMode) {
-        let _ = self.tx.send(RoomMsg::SetMode(mode));
+        let _ = self.tx.send(Msg::Room(RoomMsg::SetMode(mode)));
     }
     fn set_extra_latency(&self, us: i32) {
-        let _ = self.tx.send(RoomMsg::SetExtraLatency(us));
+        let _ = self.tx.send(Msg::Room(RoomMsg::SetExtraLatency(us)));
     }
     fn step_out(&self) {
-        let _ = self.tx.send(RoomMsg::StepOut);
+        let _ = self.tx.send(Msg::Room(RoomMsg::StepOut));
     }
     fn rejoin(&self) {
-        let _ = self.tx.send(RoomMsg::Rejoin);
+        let _ = self.tx.send(Msg::Room(RoomMsg::Rejoin));
     }
     fn status(&self) -> RoomPlayStatus {
         *self.status.lock().unwrap_or_else(|p| p.into_inner())
     }
     fn detach(self: Box<Self>) {
-        let _ = self.tx.send(RoomMsg::Detach);
+        let _ = self.tx.send(Msg::Room(RoomMsg::Detach));
     }
 }
 
@@ -1019,6 +1023,7 @@ pub(super) struct Inert;
 impl<T> RoomHandle<T> for Inert {
     fn prepare(&self, _: PrepId, _: EntryId, _: T, _: i64, _: Alignment) {}
     fn arm_next(&self, _: EntryId, _: T, _: i64, _: Transition, _: Alignment) {}
+    fn disarm(&self) {}
     fn commit(&self, _: Anchor) {}
     fn hold(&self, _: Anchor) {}
     fn set_mode(&self, _: SyncMode) {}
@@ -1126,7 +1131,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
                 });
             }
             // The switch at the boundary is WP5's.
-            RoomMsg::ArmNext { .. } => {}
+            RoomMsg::ArmNext { .. } | RoomMsg::Disarm => {}
             RoomMsg::Commit(a) => {
                 self.anchor = Some(a);
                 if !a.playing {

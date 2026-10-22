@@ -301,9 +301,10 @@ impl Said {
 }
 
 pub struct Player<T> {
-    tx: Sender<Cmd<T>>,
-    /// Engine 2: where a room's calls go (the room program is the control thread's).
-    room: Option<Sender<program::RoomMsg<T>>>,
+    /// Engine 1's commands.
+    tx: Option<Sender<Cmd<T>>>,
+    /// Engine 2's: commands and a room's calls, in one queue, in order.
+    msgs: Option<Sender<control::Msg<T>>>,
     thread: Option<JoinHandle<()>>,
     kind: EngineKind,
     /// An engine on a test's simulated clock: dropping the player moves that clock until the
@@ -342,8 +343,8 @@ impl<T: Item + Serialize> Player<T> {
                     .spawn(move || Engine::new(output, Box::new(on_status)).run(rx))
                     .expect("start the player thread");
                 Self {
-                    tx,
-                    room: None,
+                    tx: Some(tx),
+                    msgs: None,
                     thread: Some(thread),
                     kind,
                     sim: None,
@@ -356,8 +357,8 @@ impl<T: Item + Serialize> Player<T> {
                 };
                 let spawned = control::spawn(output, Box::new(on_status), watch);
                 Self {
-                    tx: spawned.commands,
-                    room: Some(spawned.rooms),
+                    tx: None,
+                    msgs: Some(spawned.msgs),
                     thread: Some(spawned.thread),
                     kind,
                     sim,
@@ -367,7 +368,15 @@ impl<T: Item + Serialize> Player<T> {
     }
 
     pub fn send(&self, cmd: Cmd<T>) {
-        let _ = self.tx.send(cmd);
+        match (&self.tx, &self.msgs) {
+            (Some(tx), _) => {
+                let _ = tx.send(cmd);
+            }
+            (None, Some(m)) => {
+                let _ = m.send(control::Msg::Cmd(cmd));
+            }
+            (None, None) => {}
+        }
     }
 
     /// Whether the player thread is still running (it ends only on Quit, or a panic).
@@ -383,7 +392,12 @@ impl<T: Item + Serialize> Player<T> {
 
 impl<T> Drop for Player<T> {
     fn drop(&mut self) {
-        let _ = self.tx.send(Cmd::Quit);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Cmd::Quit);
+        }
+        if let Some(m) = &self.msgs {
+            let _ = m.send(control::Msg::Cmd(Cmd::Quit));
+        }
         if let Some(t) = self.thread.take() {
             // On a test's clock the engine quits only as that clock moves (its fade, its
             // output's tail): moved here, on the thread that runs the simulation.
@@ -405,7 +419,7 @@ impl<T: Item + Serialize> RoomPlayer<T> for Player<T> {
         clock: together::clock_map::ClockMapHandle,
         mode: SyncMode,
     ) -> Box<dyn RoomHandle<T>> {
-        match &self.room {
+        match &self.msgs {
             Some(tx) => program::attach(tx.clone(), clock, mode),
             None => Box::new(program::Inert),
         }

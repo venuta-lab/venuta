@@ -27,7 +27,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TrySendError, channel};
 use std::thread::JoinHandle;
 use together::time::{MonoClock, RealClock, SimClock, Timebase};
 
@@ -45,9 +45,15 @@ const READY_S: f64 = 0.5;
 /// A change of the sound tools glides over this long, ms.
 pub(super) const GLIDE_MS: u32 = 50;
 
+/// What the control thread is told: your commands and a room's calls, in one queue, in the
+/// order they were made.
+pub(crate) enum Msg<T> {
+    Cmd(Cmd<T>),
+    Room(RoomMsg<T>),
+}
+
 pub(super) struct Spawned<T> {
-    pub commands: Sender<Cmd<T>>,
-    pub rooms: Sender<RoomMsg<T>>,
+    pub msgs: Sender<Msg<T>>,
     pub thread: JoinHandle<()>,
 }
 
@@ -58,8 +64,7 @@ pub(super) fn spawn<T: Item + Serialize>(
     on_status: Box<dyn FnMut(Status<T>) + Send>,
     watch: Watch,
 ) -> Spawned<T> {
-    let (cmd_tx, cmd_rx) = channel();
-    let (room_tx, room_rx) = channel();
+    let (msg_tx, msg_rx) = channel();
     let (wake_tx, wake_rx) = channel();
     // The clock everything waits on; sleepers made here, before the threads start.
     let (tb, own_clock): (Arc<dyn Timebase>, Option<SimClock>) = match &output {
@@ -100,8 +105,7 @@ pub(super) fn spawn<T: Item + Serialize>(
             let mut control = Control {
                 shared: shared.clone(),
                 pacer: control_pacer,
-                cmds: cmd_rx,
-                rooms: room_rx,
+                msgs: msg_rx,
                 wake: wake_tx,
                 program: Program::new(),
                 deck,
@@ -121,8 +125,7 @@ pub(super) fn spawn<T: Item + Serialize>(
         })
         .expect("start the player thread");
     Spawned {
-        commands: cmd_tx,
-        rooms: room_tx,
+        msgs: msg_tx,
         thread,
     }
 }
@@ -130,8 +133,7 @@ pub(super) fn spawn<T: Item + Serialize>(
 struct Control<T: Item + Serialize> {
     shared: Arc<Shared<T>>,
     pacer: Pacer,
-    cmds: Receiver<Cmd<T>>,
-    rooms: Receiver<RoomMsg<T>>,
+    msgs: Receiver<Msg<T>>,
     wake: Sender<()>,
     program: Program<T>,
     deck: Deck,
@@ -143,27 +145,16 @@ impl<T: Item + Serialize> Control<T> {
         loop {
             let busy = self.program.busy() || self.deck.busy();
             let until = self.pacer.now() + if busy { BUSY_NS } else { IDLE_NS };
-            match self.pacer.recv_until(&self.cmds, until) {
-                Ok(cmd) => {
-                    quitting |= self.command(cmd);
-                    self.answer();
-                    // Every command waiting now, in order, each with its answer.
-                    while let Ok(cmd) = self.cmds.try_recv() {
-                        quitting |= self.command(cmd);
-                        self.answer();
+            match self.pacer.recv_until(&self.msgs, until) {
+                Ok(m) => {
+                    quitting |= self.take(m);
+                    // Every message waiting now, in order, each with its answer.
+                    while let Ok(m) = self.msgs.try_recv() {
+                        quitting |= self.take(m);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => quitting |= self.command(Cmd::Quit),
-            }
-            loop {
-                match self.rooms.try_recv() {
-                    Ok(m) => {
-                        self.program.room(m, &mut self.deck);
-                        self.answer();
-                    }
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-                }
             }
             self.turn();
             self.publish();
@@ -171,6 +162,19 @@ impl<T: Item + Serialize> Control<T> {
                 break;
             }
         }
+    }
+
+    /// A command or a room's call, answered. True for Quit.
+    fn take(&mut self, m: Msg<T>) -> bool {
+        let quit = match m {
+            Msg::Cmd(c) => self.command(c),
+            Msg::Room(r) => {
+                self.program.room(r, &mut self.deck);
+                false
+            }
+        };
+        self.answer();
+        quit
     }
 
     /// True for Quit.
@@ -475,6 +479,9 @@ pub(super) struct Deck {
     pub(super) endpoint: Option<String>,
     pub(super) quitting: bool,
     snapshot: Option<RenderSnapshot>,
+    /// How far what was handed over runs ahead of the DAC, as the presentation pairs say (the
+    /// output's real latency: `OutputInfo::buffer_frames` can say far less).
+    lead: Option<u64>,
 }
 
 /// What the output is asked to open for a song.
@@ -530,6 +537,7 @@ impl Deck {
             endpoint: None,
             quitting: false,
             snapshot: None,
+            lead: None,
         }
     }
 
@@ -618,6 +626,16 @@ impl Deck {
     /// `ms` in device frames.
     pub(super) fn ms(&self, ms: u32) -> u64 {
         u64::from(self.rate()) * u64::from(ms) / 1000
+    }
+
+    /// The output's lead (frames handed over and not yet at the DAC): measured from the
+    /// presentation, the reported buffer until the device has said.
+    fn lead_frames(&self) -> u64 {
+        self.lead.unwrap_or_else(|| {
+            self.open
+                .as_ref()
+                .map_or(0, |o| u64::from(o.info.buffer_frames))
+        })
     }
 
     fn period(&self) -> u64 {
@@ -735,6 +753,7 @@ impl Deck {
         let mode = dev.out().mode();
         let name = dev.out().name();
         self.endpoint = dev.endpoint();
+        self.lead = None;
         self.open = Some(Open {
             dev,
             info,
@@ -1070,6 +1089,14 @@ impl Deck {
             if snap.frames > 0 {
                 r.fresh = false;
             }
+            if let Some(o) = self.open.as_ref()
+                && let Some(p) = o.presentation.read()
+            {
+                let rate = f64::from(o.info.format.rate.max(1));
+                let since = self.tb.now_ns().saturating_sub(p.time_ns) as f64 / 1e9;
+                let at_dac = p.frame + (since * rate) as u64;
+                self.lead = Some(snap.frames.saturating_sub(at_dac));
+            }
             self.snapshot = Some(snap);
             let mut marks = Vec::new();
             while let Ok(m) = r.link.markers.try_recv() {
@@ -1180,15 +1207,14 @@ impl Deck {
     }
 
     /// The device frame at the DAC at local time `t_ns`: from the newest presentation pair
-    /// (before one comes: what has been rendered less the output's buffer, now).
+    /// (before one comes: what has been rendered less the output's lead, now).
     pub(super) fn frame_at(&self, t_ns: u64) -> Option<u64> {
         let o = self.open.as_ref()?;
         let rate = f64::from(o.info.format.rate.max(1));
         let (f, at) = match o.presentation.read() {
             Some(p) => (p.frame, p.time_ns),
             None => (
-                self.frames()
-                    .saturating_sub(u64::from(o.info.buffer_frames)),
+                self.frames().saturating_sub(self.lead_frames()),
                 self.now_ns(),
             ),
         };
@@ -1238,8 +1264,12 @@ impl Deck {
         self.quiet_from = 0;
         let now = self.now_ns();
         self.idle_since = Some(now);
+        // What the output still holds plays out: its lead as the presentation measured it (a
+        // queueing driver holds far more than its reported buffer), and two periods more.
+        let held = self.lead_frames();
         let tail = self.open.as_ref().map_or(0, |o| {
-            u64::from(o.info.buffer_frames + 2 * o.info.period_frames) * 1_000_000_000
+            (held.max(u64::from(o.info.buffer_frames)) + 2 * u64::from(o.info.period_frames))
+                * 1_000_000_000
                 / u64::from(o.info.format.rate.max(1))
         });
         self.drained_at = now + tail;
@@ -1307,7 +1337,7 @@ impl Deck {
     /// The output's part of the signal path: its name, mode, format and latency (ms).
     pub(super) fn output_signal(&self) -> Option<(String, Mode, DeviceFormat, f32)> {
         let o = self.open.as_ref()?;
-        let latency = o.info.buffer_frames as f32 * 1000.0 / o.info.format.rate.max(1) as f32;
+        let latency = self.lead_frames() as f32 * 1000.0 / o.info.format.rate.max(1) as f32;
         Some((o.name.clone(), o.mode, o.info.format.clone(), latency))
     }
 
