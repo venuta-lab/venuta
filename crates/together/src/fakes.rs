@@ -10,7 +10,7 @@
 use crate::align::{Alignment, CopyClass};
 use crate::anchor::{Anchor, EntryId, PrepId, Transition};
 use crate::clock_map::ClockMapHandle;
-use crate::room_player::{RoomHandle, RoomPlayStatus, RoomPlayer, SubState, SyncMode};
+use crate::room_player::{RoomHandle, RoomPlayStatus, RoomPlayer, SubState, Suspension, SyncMode};
 use crate::time::{MonoClock, Timebase};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -42,6 +42,8 @@ pub enum Call<I> {
     SetExtraLatency(i32),
     StepOut,
     Rejoin,
+    Suspend(Suspension),
+    Resume,
     Detach,
 }
 
@@ -58,6 +60,8 @@ pub struct Script {
     pub copy: Option<CopyClass>,
     /// The error it reports while in step, in µs.
     pub error_us: Option<i64>,
+    /// The length it reports for the entry it plays, in µs.
+    pub length_us: Option<i64>,
 }
 
 struct Fake<I> {
@@ -214,6 +218,12 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
     fn rejoin(&self) {
         self.record(Call::Rejoin);
     }
+    fn suspend(&self, why: Suspension) {
+        self.record(Call::Suspend(why));
+    }
+    fn resume(&self) {
+        self.record(Call::Resume);
+    }
 
     fn status(&self) -> RoomPlayStatus {
         let now = self.log.clock.now_ns();
@@ -225,6 +235,7 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
         };
         let mut preparing: Option<(u64, PrepId, EntryId)> = None;
         let mut stepped_out = false;
+        let mut away: Option<Suspension> = None;
         let mut playing = false;
         for (at, c) in &f.calls {
             match c {
@@ -245,6 +256,8 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
                 Call::Hold(_) => playing = false,
                 Call::StepOut => stepped_out = true,
                 Call::Rejoin => stepped_out = false,
+                Call::Suspend(why) => away = Some(*why),
+                Call::Resume => away = None,
                 _ => {}
             }
         }
@@ -264,6 +277,8 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
             SubState::CannotPlay
         } else if stepped_out {
             SubState::SteppedOut
+        } else if let Some(why) = away {
+            SubState::Suspended(why)
         } else if playing {
             SubState::InStep
         } else if st.ready.is_some() {
@@ -274,6 +289,7 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
         if st.sub_state == SubState::InStep {
             st.error_us = s.error_us;
         }
+        st.length_us = st.entry.and(s.length_us);
         st
     }
 

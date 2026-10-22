@@ -570,40 +570,21 @@ impl GuestSession {
             }
         }
         let text = String::from_utf8_lossy(&head).to_string();
-        let mut first = text.lines().next().unwrap_or("").split_whitespace();
-        let method = first.next().unwrap_or("");
-        let target = first.next().unwrap_or("");
         let reply = |code: &str| {
             format!("HTTP/1.1 {code}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         };
-        let Some((path, query)) = target.split_once('?') else {
-            let _ = tcp.write_all(reply("404 Not Found").as_bytes()).await;
-            return;
-        };
-        let key = path.strip_prefix("/s/").unwrap_or("");
-        let token_ok = query.strip_prefix("t=").is_some_and(|t| {
-            t.len() == token.len()
-                && t.bytes()
-                    .zip(token.bytes())
-                    .fold(0u8, |a, (x, y)| a | (x ^ y))
-                    == 0
-        });
-        let key_ok = key
-            .strip_prefix("host:")
-            .is_some_and(|h| h.len() == 32 && h.bytes().all(|c| c.is_ascii_hexdigit()));
-        if !token_ok || !key_ok || !(method == "GET" || method == "HEAD") {
-            let _ = tcp.write_all(reply("403 Forbidden").as_bytes()).await;
-            return;
-        }
-        // "Range: bytes=a-" or "bytes=a-b".
-        let range = text.lines().find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            if !k.trim().eq_ignore_ascii_case("range") {
-                return None;
+        let req = match crate::proxy::read_request(&text, token) {
+            Ok(r) => r,
+            Err(code) => {
+                let _ = tcp.write_all(reply(code).as_bytes()).await;
+                return;
             }
-            let (a, b) = v.trim().strip_prefix("bytes=")?.split_once('-')?;
-            Some((a.trim().parse::<u64>().ok()?, b.trim().parse::<u64>().ok()))
-        });
+        };
+        let (key, range, method) = (
+            req.key.as_str(),
+            req.range,
+            if req.head { "HEAD" } else { "GET" },
+        );
         let Some(conn) = self.conn.lock().unwrap().clone() else {
             let _ = tcp
                 .write_all(reply("503 Service Unavailable").as_bytes())
