@@ -1,0 +1,15 @@
+[package]
+name = "lyrics-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Second lines for lyrics: a sung line in another script, said in English letters, timed by the original's words. Pure: no files, network or platform code (Android reuses it)"
+
+[dependencies]
+serde.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
