@@ -19,7 +19,7 @@
 //! runs inside a simulation's lockstep (decoding takes no virtual time).
 
 use crate::decode::{
-    ByteWait, DecodeState, Source, SourceFormat, StreamBytes, StreamWatch, Waiter,
+    ByteWait, DecodeState, FileInfo, Source, SourceFormat, StreamBytes, StreamWatch, Waiter,
 };
 use crate::voice_api::{
     BLOCK_FRAMES, Block, Dropped, END_OF_SOURCE, FIRST_AFTER_SEEK, MAX_CH, VoiceFeed, VoiceId,
@@ -104,6 +104,14 @@ pub struct VoiceStatus {
     pub format: Option<SourceFormat>,
     /// The song's length in frames, when known.
     pub frames: Option<u64>,
+    /// The song's length in milliseconds: its frames, or (a stream that doesn't say) the
+    /// catalog's length, when known.
+    pub duration_ms: Option<u64>,
+    /// About the file (size, bitrate, decoder), once open: for the signal path.
+    pub info: FileInfo,
+    /// An online song's loudness as the catalog says it, once open: its levelling when its tags
+    /// give none (`Gain::or_loudness`).
+    pub loudness_db: Option<f64>,
     /// The content frame it starts at.
     pub start: u64,
     /// The content frame after the last frame handed over.
@@ -142,6 +150,9 @@ struct Shared {
 struct Meta {
     format: Option<SourceFormat>,
     frames: Option<u64>,
+    duration_ms: Option<u64>,
+    info: FileInfo,
+    loudness_db: Option<f64>,
     error: Option<String>,
     stream: Option<StreamWatch>,
     tap: Option<VoiceTap>,
@@ -383,6 +394,9 @@ impl Voice {
             phase: s.phase(),
             format: meta.format.clone(),
             frames: meta.frames,
+            duration_ms: meta.duration_ms,
+            info: meta.info.clone(),
+            loudness_db: meta.loudness_db,
             start: s.start,
             decoded_to: s.decoded_to.load(Ordering::Acquire),
             in_ring: s.in_ring.load(Ordering::Acquire),
@@ -479,6 +493,9 @@ fn decode(
         let mut meta = shared.meta();
         meta.format = Some(format.clone());
         meta.frames = source.frames;
+        meta.duration_ms = source.duration_ms();
+        meta.info = source.info.clone();
+        meta.loudness_db = source.loudness_db;
         meta.stream = source.stream_watch();
     }
     let start = if shared.start > 0 {
@@ -734,8 +751,9 @@ mod tests {
                     heard.samples == all[start as usize * ch..],
                     "{name} from {start}: the frames of a straight decode"
                 );
+                // The thread says so just after it hands the last block over.
+                wait_for(&v, |s| s.phase == Phase::Ended);
                 let s = v.status();
-                assert_eq!(s.phase, Phase::Ended, "{name}");
                 assert_eq!(s.decoded_to, (all.len() / ch) as u64);
                 assert_eq!(s.error, None);
             }
@@ -794,6 +812,19 @@ mod tests {
             t.decoded_to == s.decoded_to + 10 * BLOCK_FRAMES as u64
         });
         assert_eq!(v.status().in_ring, s.in_ring);
+    }
+
+    #[test]
+    fn an_open_voice_says_what_the_signal_path_and_levelling_need() {
+        let path = fixture("seek-music.ogg");
+        let v = voice(4, file(path.clone()), 0);
+        wait_for(&v, |s| s.phase == Phase::Full);
+        let s = v.status();
+        let own = Source::open(&path).unwrap();
+        assert_eq!(s.info, own.info, "the file's size, bitrate and decoder");
+        assert_eq!(s.duration_ms, own.duration_ms());
+        assert!(s.duration_ms.is_some_and(|d| d > 0));
+        assert_eq!(s.loudness_db, None, "a file has no catalog loudness");
     }
 
     /// The gate: a stream that stops in the middle of a packet loses nothing. Bytes come in
