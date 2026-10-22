@@ -828,8 +828,77 @@ const BY_WORDS: &[&str] = &[
     "mastered", "recorded", "vocals",
 ];
 
+/// How the Chinese services end the name of a job on a song, or of who holds its rights, when
+/// they make one up from smaller words ("词版权管理方", "录音作品及MV版权", "联合出品",
+/// "出品监制", "人声录音室", "音乐制作人"): a head in Chinese characters ending in one of these
+/// names a job, not words to sing.
+const JOB_ENDINGS: &[&str] = &[
+    "版权",
+    "版權",
+    "管理方",
+    "出品",
+    "出品方",
+    "出品人",
+    "监制",
+    "監製",
+    "制作",
+    "製作",
+    "制作人",
+    "製作人",
+    "录音",
+    "錄音",
+    "录音师",
+    "錄音師",
+    "录音室",
+    "錄音室",
+    "录音棚",
+    "錄音棚",
+    "混音",
+    "混音师",
+    "混音師",
+    "母带",
+    "母帶",
+    "编辑",
+    "編輯",
+    "编写",
+    "編寫",
+    "统筹",
+    "統籌",
+    "企划",
+    "企劃",
+    "策划",
+    "策劃",
+    "发行",
+    "發行",
+    "工程师",
+    "工程師",
+    "总监",
+    "總監",
+    "推广",
+    "推廣",
+    "宣传",
+    "宣傳",
+    "设计",
+    "設計",
+    "鸣谢",
+    "鳴謝",
+];
+
+/// Whether a credit line's head (before its colon) is a job's name made up from smaller words:
+/// short, in Chinese characters (with Latin letters for a name like "MV"), ending in a job's
+/// name ([`JOB_ENDINGS`]). A sung line before a colon ("他说：…") ends in no such word.
+fn names_a_job(head: &str) -> bool {
+    use lyrics_text::script::Script;
+    let han = |c: char| Script::of(c) == Script::Hani;
+    head.chars().count() <= 16
+        && head.chars().any(han)
+        && head.chars().all(|c| han(c) || c.is_ascii_alphanumeric())
+        && JOB_ENDINGS.iter().any(|e| head.ends_with(e))
+}
+
 /// Whether a lyric line names who made the song instead of being sung: "作词 : Ayase",
-/// "作曲/编曲：X", "Lyrics by: X", "Composed by X".
+/// "作曲/编曲：X", "Lyrics by: X", "Composed by X", and who holds its rights or put it out
+/// ("词版权管理方：X", "联合出品：X", "OP/SP：X").
 pub fn is_credit(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {
@@ -842,7 +911,7 @@ pub fn is_credit(line: &str) -> bool {
         let credit_word = |part: &str| {
             let p = part.trim().to_lowercase();
             let p = p.strip_suffix(" by").unwrap_or(&p).trim();
-            CREDIT_WORDS.contains(&p)
+            CREDIT_WORDS.contains(&p) || names_a_job(p)
         };
         if !name.is_empty()
             && !head.is_empty()
@@ -1273,6 +1342,43 @@ mod tests {
             "Time: it's running out",
             "曲",
             "Written in the stars",
+        ] {
+            assert!(!is_credit(sung), "{sung}");
+        }
+    }
+
+    #[test]
+    fn copyright_and_production_lines_are_credits() {
+        // As NetEase sends them after the words (孤勇者, 2026-10-22), and the lines it writes the
+        // same way for other songs.
+        for credit in [
+            "词版权管理方：北京梦织音传媒有限公司",
+            "曲版权管理方：索尼音乐版权代理（北京）有限公司",
+            "录音作品及MV版权：EAS MUSIC LTD",
+            "联合出品：拳头游戏/腾讯游戏/腾讯视频",
+            "出品监制：霍锦 卢泓宇",
+            "出品：网易云音乐",
+            "监制：Someone",
+            "OP/SP：Sony Music",
+            "制作人：钱雷",
+            "人声录音室：雅旺录音室",
+            "人声编辑: 汝文博",
+            "音乐制作：Someone",
+            "版權管理方：Someone",
+        ] {
+            assert!(is_credit(credit), "{credit}");
+        }
+        // Sung lines that happen to hold a colon stay sung.
+        for sung in [
+            "他说：我爱你",
+            "曲终人散：只剩下我",
+            "我对你说：不要走",
+            "出品：",
+            "版权",
+            "Time: it's running out",
+            "Baby: you are the one",
+            "听我说：这世界出品的梦",
+            "愛してる：ずっと",
         ] {
             assert!(!is_credit(sung), "{sung}");
         }

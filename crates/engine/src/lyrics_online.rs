@@ -2566,6 +2566,28 @@ mod tests {
             "{:?}",
             f.credits
         );
+        // The copyright and production lines it sends after the words are credits too.
+        for credit in [
+            "词版权管理方：北京梦织音传媒有限公司",
+            "曲版权管理方：索尼音乐版权代理（北京）有限公司",
+            "录音作品及MV版权：EAS MUSIC LTD",
+            "联合出品：拳头游戏/腾讯游戏/腾讯视频",
+            "出品监制：霍锦 卢泓宇",
+        ] {
+            assert!(
+                f.credits.iter().any(|c| c == credit),
+                "{credit}: {:?}",
+                f.credits
+            );
+        }
+        assert!(
+            f.lyrics
+                .lines
+                .iter()
+                .all(|l| !l.text.contains("版权") && !l.text.contains("出品")),
+            "{:?}",
+            texts(&f)
+        );
         assert!(
             f.lyrics
                 .lines
