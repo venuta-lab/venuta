@@ -641,45 +641,14 @@ fn lyrics(root: &std::path::Path, lib: &Library, s: &Song) -> Vec<Value> {
     })]
 }
 
-/// `[mm:ss.xx]` lines, in time order; tags like `[ar:…]` and word timings left out.
+/// `[mm:ss.xx]` lines, in time order, read the way Venuta reads lyrics everywhere
+/// (`engine::lyrics`): tags like `[ar:…]` and word timings left out (apps show a line at a time).
 pub fn parse_lrc(text: &str) -> Vec<(u64, String)> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let mut rest = line.trim();
-        let mut stamps = Vec::new();
-        while let Some(inner) = rest.strip_prefix('[') {
-            let Some(end) = inner.find(']') else { break };
-            let tag = &inner[..end];
-            let Some((m, s)) = tag.split_once(':') else {
-                break;
-            };
-            match (m.trim().parse::<u64>(), s.trim().parse::<f64>()) {
-                (Ok(m), Ok(s)) => stamps.push(m * 60_000 + (s * 1000.0).round() as u64),
-                _ => break,
-            }
-            rest = &inner[end + 1..];
-        }
-        if stamps.is_empty() {
-            continue;
-        }
-        // Word timings ("<00:12.30>") are for karaoke; apps show a line at a time.
-        let mut text = String::new();
-        let mut skip = false;
-        for ch in rest.chars() {
-            match ch {
-                '<' => skip = true,
-                '>' if skip => skip = false,
-                c if !skip => text.push(c),
-                _ => {}
-            }
-        }
-        let text = text.trim().to_owned();
-        for ms in stamps {
-            out.push((ms, text.clone()));
-        }
-    }
-    out.sort_by_key(|(ms, _)| *ms);
-    out
+    engine::lyrics::read_lrc(text)
+        .lines
+        .into_iter()
+        .map(|l| (l.start_ms, l.text))
+        .collect()
 }
 
 /// The picture file for anything with a cover: a song, an album, an artist or a playlist.

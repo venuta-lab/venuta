@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Segmented, Switch } from '../../components/ui'
+import { lyricsSourcesHealth, type LyricsSourceHealth } from '../../lib/engine'
 import { listening, listeningVersion, loadListening, subscribeListening, updateListening } from '../../lib/listening'
 import { notify } from '../../lib/notify'
 import { setMyName } from '../../lib/together'
@@ -19,7 +20,7 @@ const SOURCES: [string, string, string][] = [
   ['youtube', 'YouTube Music', "The catalog's own lyrics, timed when it has them"],
   ['simpmusic', 'SimpMusic', 'Lyrics by the song itself (answers only SimpMusic now)'],
   ['lyricsplus', 'LyricsPlus', 'Word by word, with Roman letters for some songs'],
-  ['boidu', 'Better Lyrics', 'Word by word, from Apple Music'],
+  ['boidu', 'Better Lyrics', 'Word by word, from Apple Music. Needs a key for most songs now'],
   ['netease', 'Netease', 'Chinese songs, often with translations'],
   ['qq', 'QQ Music', 'Chinese songs'],
   ['kugou', 'Kugou', 'Chinese and other Asian songs'],
@@ -224,6 +225,12 @@ const toSetting = (list: { id: string; on: boolean }[]) => list.map((s) => (s.on
 export function LyricsSources() {
   const { l, set } = useListening()
   const order = sourceOrder(l.lyrics_sources)
+  // How each source has answered since Venuta started: one that turned Venuta away or didn't
+  // answer says so, instead of looking as if it had nothing.
+  const [health, setHealth] = useState<LyricsSourceHealth[]>([])
+  useEffect(() => {
+    void lyricsSourcesHealth().then(setHealth, () => setHealth([]))
+  }, [])
   const moveSource = (i: number, by: -1 | 1) => {
     const next = order.slice()
     const j = i + by
@@ -236,6 +243,8 @@ export function LyricsSources() {
       <ol className="mt-3 grid gap-0.5">
         {order.map((s, i) => {
           const [, label, note] = SOURCES.find(([k]) => k === s.id) ?? [s.id, s.id, '']
+          const h = health.find((x) => x.source === s.id)
+          const silent = h?.state === 'refused' || h?.state === 'down'
           return (
             <li key={s.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-ink/[0.04]">
               <span className="w-5 text-right text-[12px] tabular-nums text-ink/45">{i + 1}</span>
@@ -243,6 +252,11 @@ export function LyricsSources() {
               <span className="min-w-0 flex-1">
                 <span className={`block truncate text-[13.5px] ${s.on ? '' : 'text-ink/45'}`}>{label}</span>
                 <span className="block truncate text-[12px] text-ink/50">{note}</span>
+                {silent && (
+                  <span className="block truncate text-[12px] text-problem" title={h?.why ?? undefined}>
+                    {h?.state === 'refused' ? 'Not answering right now. Asked again when Venuta restarts' : 'Not answering right now'}
+                  </span>
+                )}
               </span>
               <button disabled={i === 0} onClick={() => moveSource(i, -1)} aria-label={`Move ${label} up`} className="grid h-7 w-7 place-items-center rounded-full text-ink/60 hover:bg-ink/[0.1] hover:text-ink disabled:opacity-30">
                 ↑

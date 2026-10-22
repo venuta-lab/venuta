@@ -8,8 +8,14 @@
 //! lyrics) is turned away.
 //!
 //! "Automatic" asks every source in your order at once and takes the first timed answer in
-//! that order, else the first plain one. Answers are kept (a found answer for good, "none"
-//! for a day), so a song is asked about once.
+//! that order, else the first plain one. Answers are kept (a found answer until Venuta reads
+//! lyrics in a new way, `crate::lyrics::VERSION`; "none" for a day), so a song is asked about
+//! once.
+//!
+//! A source that turns Venuta away (401, 403: it wants a key, or answers only its own app) or
+//! can't be reached is not saying "no lyrics for this song": that is never kept as a miss. A
+//! source that turned Venuta away isn't asked again until Venuta restarts, and Settings says
+//! it isn't answering.
 //!
 //! The catalog's own lyrics (YouTube Music) come through the app's catalog client: the
 //! caller passes them in as a source like any other.
@@ -18,7 +24,7 @@ use base64::Engine as _;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The sources, in their default order, with the names shown for them.
@@ -66,31 +72,17 @@ pub struct LyricsRequest {
     pub duration_ms: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Word {
-    pub ms: u64,
-    pub end_ms: u64,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Line {
-    pub ms: u64,
-    pub text: String,
-    /// Word by word, when the source times each word.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub words: Vec<Word>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub translation: Option<String>,
-}
+pub use crate::lyrics::{LyricLine, Lyrics, Second, SecondSource, Word};
+use crate::lyrics::{carried_translation, finish, mark_source, read_lrc, romaji, roman_lang};
 
 /// Lyrics one source gave.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Found {
     /// The source's id ("lrclib").
     pub source: String,
-    /// Timed lines; empty when only the words are known.
-    pub lines: Vec<Line>,
+    /// Timed lines (empty when only the words are known), the song's language, the format.
+    #[serde(flatten)]
+    pub lyrics: Lyrics,
     /// The words as text, when not timed.
     #[serde(default)]
     pub text: String,
@@ -99,11 +91,15 @@ pub struct Found {
     /// Who the source says wrote them down ("Source: Musixmatch").
     #[serde(default)]
     pub credit: Option<String>,
+    /// Who made the song, as the source wrote it among the lyrics ("作词 : Ayase"): taken out
+    /// of the sung lines and kept here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credits: Vec<String>,
 }
 
 impl Found {
     pub fn synced(&self) -> bool {
-        !self.lines.is_empty()
+        !self.lyrics.lines.is_empty()
     }
     fn usable(&self) -> bool {
         self.synced() || !self.text.trim().is_empty() || self.instrumental
@@ -140,6 +136,122 @@ pub fn order(setting: &[String]) -> Vec<(&'static str, bool)> {
         }
     }
     out
+}
+
+// --- When a source doesn't answer ------------------------------------------------------------
+
+/// Why a source gave no answer. Neither is "no lyrics for this song", so neither is kept as one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskError {
+    /// It turned Venuta away (401, 403: it wants a key, or answers only its own app).
+    Refused(String),
+    /// It couldn't be reached, was busy, or answered with something unreadable.
+    Down(String),
+}
+
+impl std::fmt::Display for AskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AskError::Refused(why) | AskError::Down(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<String> for AskError {
+    fn from(why: String) -> Self {
+        AskError::Down(why)
+    }
+}
+
+/// What an HTTP answer means: its body (200), "not there" (404), or why there is none. The
+/// reason a source gives for turning Venuta away is kept, to show.
+pub fn answer_of(status: u16, body: &str) -> Result<Option<String>, AskError> {
+    let why = || {
+        let v: Option<Value> = serde_json::from_str(body).ok();
+        ["/message", "/error/reason", "/reason", "/error"]
+            .iter()
+            .find_map(|k| {
+                v.as_ref()?
+                    .pointer(k)?
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("HTTP {status}"))
+    };
+    match status {
+        200 => Ok(Some(body.to_owned())),
+        404 => Ok(None),
+        401 | 403 => Err(AskError::Refused(why())),
+        429 => Err(AskError::Down(format!("Busy: {}", why()))),
+        s => Err(AskError::Down(format!("HTTP {s}"))),
+    }
+}
+
+/// How each source has answered since Venuta started.
+static HEALTH: Mutex<Vec<(String, Health)>> = Mutex::new(Vec::new());
+
+#[derive(Debug, Clone, PartialEq)]
+enum Health {
+    Answering,
+    Refused(String),
+    Down(String),
+}
+
+fn note(source: &str, answer: &Result<Option<Found>, AskError>) {
+    let h = match answer {
+        Ok(_) => Health::Answering,
+        Err(AskError::Refused(why)) => Health::Refused(why.clone()),
+        Err(AskError::Down(why)) => Health::Down(why.clone()),
+    };
+    if let Ok(mut all) = HEALTH.lock() {
+        all.retain(|(s, _)| s != source);
+        all.push((source.to_owned(), h));
+    }
+}
+
+/// Why a source turned Venuta away this session, when it did.
+fn refused(source: &str) -> Option<String> {
+    HEALTH.lock().ok()?.iter().find_map(|(s, h)| match h {
+        Health::Refused(why) if s == source => Some(why.clone()),
+        _ => None,
+    })
+}
+
+/// How a source has answered since Venuta started, for Settings.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceHealth {
+    pub source: String,
+    pub label: String,
+    /// "answering", "refused" (not asked again until Venuta restarts), "down" (didn't answer
+    /// the last time) or "unknown" (not asked yet).
+    pub state: String,
+    /// What the source said, when it said why.
+    pub why: Option<String>,
+}
+
+/// Every source's health, in the default order.
+pub fn health() -> Vec<SourceHealth> {
+    let all = HEALTH.lock().map(|h| h.clone()).unwrap_or_default();
+    SOURCES
+        .iter()
+        .map(|(id, label)| {
+            let h = all.iter().find(|(s, _)| s == id).map(|(_, h)| h);
+            let (state, why) = match h {
+                None => ("unknown", None),
+                Some(Health::Answering) => ("answering", None),
+                Some(Health::Refused(w)) => ("refused", Some(w.clone())),
+                Some(Health::Down(w)) => ("down", Some(w.clone())),
+            };
+            SourceHealth {
+                source: (*id).into(),
+                label: (*label).into(),
+                state: state.into(),
+                why,
+            }
+        })
+        .collect()
 }
 
 // --- Is it the same song? -------------------------------------------------------------------
@@ -223,114 +335,6 @@ pub fn same_song(req: &LyricsRequest, title: &str, artist: &str, duration_s: Opt
 
 // --- Reading the formats --------------------------------------------------------------------
 
-fn lrc_time(t: &str) -> Option<u64> {
-    let (m, s) = t.trim().split_once(':')?;
-    let m: f64 = m.trim().parse().ok()?;
-    let s: f64 = s.trim().replace(',', ".").parse().ok()?;
-    (m >= 0.0 && s >= 0.0).then(|| ((m * 60.0 + s) * 1000.0).round() as u64)
-}
-
-/// LRC, with several \`[mm:ss.xx]\` stamps on a line and \`<mm:ss.xx>\` word stamps (enhanced
-/// LRC). Header tags (\`[ar:…]\`) are left out; a line without a stamp is not a timed line.
-pub fn parse_lrc(text: &str) -> Vec<Line> {
-    let mut out: Vec<Line> = Vec::new();
-    for raw in text.lines() {
-        let mut rest = raw.trim();
-        let mut stamps = Vec::new();
-        while let Some(r) = rest.strip_prefix('[') {
-            let Some((tag, after)) = r.split_once(']') else {
-                break;
-            };
-            match lrc_time(tag) {
-                Some(ms) => stamps.push(ms),
-                None => {
-                    stamps.clear();
-                    break;
-                }
-            }
-            rest = after;
-        }
-        if stamps.is_empty() {
-            continue;
-        }
-        let (words, text) = words_of(rest);
-        for ms in stamps {
-            out.push(Line {
-                ms,
-                text: text.clone(),
-                words: words.clone(),
-                translation: None,
-            });
-        }
-    }
-    out.sort_by_key(|l| l.ms);
-    // A word's end is the next word's start (the last one's, the line's next start, up to 3 s).
-    for i in 0..out.len() {
-        let next = out.get(i + 1).map(|l| l.ms);
-        let line = &mut out[i];
-        let n = line.words.len();
-        for w in 0..n {
-            let end = if w + 1 < n {
-                line.words[w + 1].ms
-            } else {
-                next.unwrap_or(line.words[w].ms + 3_000)
-                    .min(line.words[w].ms + 3_000)
-            };
-            if line.words[w].end_ms == 0 {
-                line.words[w].end_ms = end.max(line.words[w].ms);
-            }
-        }
-    }
-    out
-}
-
-/// A line's words from \`<mm:ss.xx>\` stamps, and the line's text without them.
-fn words_of(line: &str) -> (Vec<Word>, String) {
-    if !line.contains('<') {
-        return (Vec::new(), line.trim().to_owned());
-    }
-    let mut words = Vec::new();
-    let mut text = String::new();
-    let mut rest = line;
-    let mut at: Option<u64> = None;
-    loop {
-        let (before, after) = match rest.split_once('<') {
-            Some(x) => x,
-            None => (rest, ""),
-        };
-        if let Some(ms) = at
-            && !before.is_empty()
-        {
-            words.push(Word {
-                ms,
-                end_ms: 0,
-                text: before.to_owned(),
-            });
-        }
-        text.push_str(before);
-        if after.is_empty() {
-            break;
-        }
-        let Some((tag, next)) = after.split_once('>') else {
-            text.push('<');
-            text.push_str(after);
-            break;
-        };
-        match lrc_time(tag) {
-            Some(ms) => at = Some(ms),
-            None => {
-                text.push('<');
-                text.push_str(tag);
-                text.push('>');
-            }
-        }
-        rest = next;
-    }
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    words.retain(|w| !w.text.trim().is_empty());
-    (words, text)
-}
-
 /// A TTML time: "12.345", "1:02.5", "00:01:02.500" or "1234ms".
 fn ttml_time(t: &str) -> Option<u64> {
     let t = t.trim();
@@ -361,7 +365,7 @@ fn unescape(s: &str) -> String {
 }
 
 /// TTML (Apple's lyrics): \`<p begin end>\` lines, \`<span begin end>\` words.
-pub fn parse_ttml(xml: &str) -> Vec<Line> {
+pub fn parse_ttml(xml: &str) -> Vec<LyricLine> {
     let mut out = Vec::new();
     let mut rest = xml;
     while let Some(i) = rest.find("<p ") {
@@ -378,6 +382,7 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
         let Some(ms) = attr(tag, "begin").and_then(ttml_time) else {
             continue;
         };
+        let end_ms = attr(tag, "end").and_then(ttml_time).unwrap_or(0);
         let mut words = Vec::new();
         let mut b = body;
         while let Some(j) = b.find("<span") {
@@ -395,7 +400,7 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
                 // A space after the span belongs to the word (the words of a line run on).
                 let spaced = s[ce + 7..].starts_with(' ');
                 words.push(Word {
-                    ms: ws,
+                    start_ms: ws,
                     end_ms: we,
                     text: format!("{}{}", unescape(inner), if spaced { " " } else { "" }),
                 });
@@ -423,27 +428,31 @@ pub fn parse_ttml(xml: &str) -> Vec<Line> {
                 .to_owned()
         };
         if !text.is_empty() {
-            out.push(Line {
-                ms,
+            out.push(LyricLine {
+                start_ms: ms,
+                end_ms,
                 text,
                 words,
-                translation: None,
+                ..Default::default()
             });
         }
     }
+    finish(&mut out);
     out
 }
 
 /// LyricsPlus's own JSON: lines with their time, and syllables when it times words.
-fn parse_kpoe(v: &Value) -> Vec<Line> {
+fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
     let word_timed = v.get("type").and_then(Value::as_str) == Some("Word");
-    v.get("lyrics")
+    let mut lines: Vec<LyricLine> = v
+        .get("lyrics")
         .and_then(Value::as_array)
         .map(|lines| {
             lines
                 .iter()
                 .filter_map(|l| {
                     let ms = l.get("time").and_then(Value::as_u64)?;
+                    let duration = l.get("duration").and_then(Value::as_u64).unwrap_or(0);
                     let text = l
                         .get("text")
                         .and_then(Value::as_str)
@@ -460,7 +469,7 @@ fn parse_kpoe(v: &Value) -> Vec<Line> {
                                         let d =
                                             w.get("duration").and_then(Value::as_u64).unwrap_or(0);
                                         Some(Word {
-                                            ms,
+                                            start_ms: ms,
                                             end_ms: ms + d,
                                             text: w.get("text").and_then(Value::as_str)?.to_owned(),
                                         })
@@ -481,16 +490,19 @@ fn parse_kpoe(v: &Value) -> Vec<Line> {
                     } else {
                         text
                     };
-                    (!text.is_empty()).then_some(Line {
-                        ms,
+                    (!text.is_empty()).then_some(LyricLine {
+                        start_ms: ms,
+                        end_ms: ms + duration,
                         text,
                         words,
-                        translation: None,
+                        ..Default::default()
                     })
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    finish(&mut lines);
+    lines
 }
 
 /// Lyrics in any of the formats the sources send: TTML, LRC, or text.
@@ -499,11 +511,12 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     if body.is_empty() {
         return None;
     }
-    let lines = if body.starts_with('<') {
+    let mut lines = if body.starts_with('<') {
         parse_ttml(body)
     } else {
-        parse_lrc(body)
+        read_lrc(body).lines
     };
+    mark_source(&mut lines, source);
     let text = if lines.is_empty() && !body.starts_with('<') {
         body.to_owned()
     } else {
@@ -511,23 +524,212 @@ fn found_from_text(source: &str, body: &str) -> Option<Found> {
     };
     let f = Found {
         source: source.into(),
-        lines,
+        lyrics: Lyrics {
+            lines,
+            ..Default::default()
+        },
         text,
-        instrumental: false,
-        credit: None,
+        ..Default::default()
     };
     f.usable().then_some(f)
 }
 
 /// Translations from a second LRC, put on the lines that start at the same time.
-fn with_translation(mut lines: Vec<Line>, translated: &str) -> Vec<Line> {
-    let t = parse_lrc(translated);
+fn with_translation(mut lines: Vec<LyricLine>, translated: &str, provider: &str) -> Vec<LyricLine> {
+    let t = read_lrc(translated).lines;
     for l in &mut lines {
         if let Some(x) = t
             .iter()
-            .find(|x| x.ms == l.ms && !x.text.is_empty() && x.text != l.text)
+            .find(|x| x.start_ms == l.start_ms && !x.text.is_empty() && x.text != l.text)
         {
-            l.translation = Some(x.text.clone());
+            l.translation = Some(carried_translation(&x.text, provider));
+        }
+    }
+    lines
+}
+
+/// Roman letters from a second LRC (NetEase's `romalrc`, sent syllable by syllable), joined
+/// into words and put on the lines that start at the same time.
+fn with_roman(
+    mut lines: Vec<LyricLine>,
+    spaced: &str,
+    provider: &str,
+    lang: Option<&str>,
+) -> Vec<LyricLine> {
+    let r = read_lrc(spaced).lines;
+    for l in &mut lines {
+        if let Some(x) = r
+            .iter()
+            .find(|x| x.start_ms == l.start_ms && !x.text.trim().is_empty() && x.text != l.text)
+        {
+            let text = romaji::join_syllables(&l.text, &x.text)
+                .unwrap_or_else(|| x.text.split_whitespace().collect::<Vec<_>>().join(" "));
+            l.roman = Some(Second {
+                text,
+                words: Vec::new(),
+                lang: roman_lang(lang, &l.script),
+                source: SecondSource::Lyrics(provider.to_owned()),
+            });
+        }
+    }
+    lines
+}
+
+/// A language as Kugou names it ("日语"), as BCP 47.
+fn kugou_language(name: &str) -> Option<String> {
+    Some(
+        match name.trim() {
+            "日语" => "ja",
+            "韩语" => "ko",
+            "英语" => "en",
+            "国语" | "普通话" | "华语" => "zh",
+            "粤语" => "yue",
+            "泰语" => "th",
+            _ => return None,
+        }
+        .to_owned(),
+    )
+}
+
+/// Kugou's KRC key (the format is XOR'd with it, after a "krc1" mark, then zlib-compressed).
+const KRC_KEY: [u8; 16] = [
+    64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105,
+];
+
+/// A KRC download's text.
+fn krc_text(content: &str) -> Option<String> {
+    use std::io::Read as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content.trim())
+        .ok()?;
+    let body = bytes.strip_prefix(b"krc1")?;
+    let plain: Vec<u8> = body
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ KRC_KEY[i % KRC_KEY.len()])
+        .collect();
+    let mut text = String::new();
+    flate2::read::ZlibDecoder::new(&plain[..])
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
+}
+
+/// KRC: `[start,length]` lines of `<offset,length,0>word` words, and a `[language:]` block
+/// (base64 JSON) holding each line's Roman letters word by word (type 0) and its translation
+/// (type 1).
+fn parse_krc(text: &str, lang: Option<&str>) -> Vec<LyricLine> {
+    let mut lines: Vec<LyricLine> = Vec::new();
+    let mut romans: Vec<Vec<String>> = Vec::new();
+    let mut translations: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let raw = raw.trim().trim_start_matches('﻿');
+        let Some(r) = raw.strip_prefix('[') else {
+            continue;
+        };
+        let Some((head, body)) = r.split_once(']') else {
+            continue;
+        };
+        if let Some(block) = head.strip_prefix("language:") {
+            let json: Option<Value> = base64::engine::general_purpose::STANDARD
+                .decode(block.trim())
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
+            for part in json
+                .as_ref()
+                .and_then(|j| j.get("content"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let rows: Vec<Vec<String>> = part
+                    .get("lyricContent")
+                    .and_then(Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| {
+                                row.as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|x| x.as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match part.get("type").and_then(Value::as_u64) {
+                    Some(0) => romans = rows,
+                    Some(1) => translations = rows.into_iter().map(|r| r.concat()).collect(),
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        let Some((start, length)) = head.split_once(',') else {
+            continue;
+        };
+        let (Ok(start), Ok(length)) = (start.trim().parse::<u64>(), length.trim().parse::<u64>())
+        else {
+            continue;
+        };
+        let mut words = Vec::new();
+        for seg in body.split('<').skip(1) {
+            let Some((stamp, word)) = seg.split_once('>') else {
+                continue;
+            };
+            let mut n = stamp.split(',').map(|x| x.trim().parse::<u64>());
+            let (Some(Ok(off)), Some(Ok(len))) = (n.next(), n.next()) else {
+                continue;
+            };
+            words.push(Word {
+                start_ms: start + off,
+                end_ms: start + off + len,
+                text: word.to_owned(),
+            });
+        }
+        let text = words.iter().map(|w| w.text.as_str()).collect::<String>();
+        lines.push(LyricLine {
+            start_ms: start,
+            end_ms: start + length,
+            text: text.split_whitespace().collect::<Vec<_>>().join(" "),
+            words,
+            ..Default::default()
+        });
+    }
+    finish(&mut lines);
+    for (i, l) in lines.iter_mut().enumerate() {
+        // Roman letters word by word, timed by the original's words.
+        if let Some(row) = romans.get(i).filter(|r| r.len() == l.words.len()) {
+            let parts: Vec<(&str, &str)> = l
+                .words
+                .iter()
+                .zip(row)
+                .map(|(w, r)| (w.text.as_str(), r.as_str()))
+                .collect();
+            let joined = romaji::join_parts(&parts);
+            let text = joined
+                .iter()
+                .map(|j| j.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.trim().is_empty() && text != l.text {
+                l.roman = Some(Second {
+                    words: joined
+                        .iter()
+                        .map(|j| Word {
+                            start_ms: l.words[j.first].start_ms,
+                            end_ms: l.words[j.last].end_ms,
+                            text: j.text.clone(),
+                        })
+                        .collect(),
+                    text,
+                    lang: roman_lang(lang, &l.script),
+                    source: SecondSource::Lyrics("kugou".into()),
+                });
+            }
+        }
+        if let Some(t) = translations.get(i).filter(|t| !t.trim().is_empty()) {
+            l.translation = Some(carried_translation(t, "kugou"));
         }
     }
     lines
@@ -548,33 +750,33 @@ fn enc(s: &str) -> String {
     urlencoding::encode(s).into_owned()
 }
 
-/// GET JSON; None for "not there" (404, 401), an error for trouble.
+/// An answer's body as JSON, read by [`answer_of`].
+fn json_of(mut resp: ureq::http::Response<ureq::Body>) -> Result<Option<Value>, AskError> {
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().unwrap_or_default();
+    match answer_of(status, &body)? {
+        Some(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| AskError::Down(e.to_string())),
+        None => Ok(None),
+    }
+}
+
+/// GET JSON; None for "not there" (404), an error when the source turned Venuta away or had
+/// trouble.
 fn get_json(
     agent: &ureq::Agent,
     url: &str,
     referer: Option<&str>,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, AskError> {
     if crate::net::is_offline() {
-        return Err("Local only is on".into());
+        return Err(AskError::Down("Local only is on".into()));
     }
     let mut req = agent.get(url);
     if let Some(r) = referer {
         req = req.header("Referer", r);
     }
-    let mut resp = req.call().map_err(|e| e.to_string())?;
-    match resp.status().as_u16() {
-        200 => {
-            let text = resp
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| e.to_string())?;
-            serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|e| e.to_string())
-        }
-        401 | 404 => Ok(None),
-        s => Err(format!("HTTP {s}")),
-    }
+    json_of(req.call().map_err(|e| e.to_string())?)
 }
 
 fn artists_line(req: &LyricsRequest) -> String {
@@ -585,7 +787,7 @@ fn duration_s(req: &LyricsRequest) -> Option<u64> {
     (req.duration_ms > 0).then(|| (req.duration_ms as f64 / 1000.0).round() as u64)
 }
 
-fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let base = "https://lrclib.net/api";
     let title = search_title(&req.title);
     let mut candidates: Vec<(Value, bool)> = Vec::new();
@@ -670,7 +872,8 @@ fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Str
         }));
     }
     let synced = v.get("syncedLyrics").and_then(Value::as_str).unwrap_or("");
-    let lines = parse_lrc(synced);
+    let mut lines = read_lrc(synced).lines;
+    mark_source(&mut lines, "lrclib");
     let text = if lines.is_empty() {
         v.get("plainLyrics")
             .and_then(Value::as_str)
@@ -682,14 +885,17 @@ fn lrclib(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Str
     };
     let f = Found {
         source: "lrclib".into(),
-        lines,
+        lyrics: Lyrics {
+            lines,
+            ..Default::default()
+        },
         text,
         ..Default::default()
     };
     Ok(f.usable().then_some(f))
 }
 
-fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let Some(id) = req.video_id.as_deref().filter(|i| !i.is_empty()) else {
         return Ok(None);
     };
@@ -714,11 +920,15 @@ fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, 
                 .and_then(Value::as_str)
                 .filter(|t| !t.trim().is_empty())
             {
-                let lines = parse_lrc(t);
+                let mut lines = read_lrc(t).lines;
+                mark_source(&mut lines, "simpmusic");
                 if !lines.is_empty() {
                     return Ok(Some(Found {
                         source: "simpmusic".into(),
-                        lines,
+                        lyrics: Lyrics {
+                            lines,
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }));
                 }
@@ -739,7 +949,7 @@ fn simpmusic(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, 
         }))
 }
 
-fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let mut url = format!(
         "https://lyricsplus.binimum.org/v2/lyrics/get?title={}&artist={}",
         enc(&search_title(&req.title)),
@@ -754,22 +964,54 @@ fn lyricsplus(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>,
     let Some(v) = get_json(agent, &url, None)? else {
         return Ok(None);
     };
-    // Its length is in its metadata: another recording's lyrics are not these.
-    if let Some(total) = v.pointer("/metadata/totalDuration").and_then(Value::as_f64)
-        && req.duration_ms > 0
-        && (total / 1000.0 - req.duration_ms as f64 / 1000.0).abs() > SAME_LENGTH_S
-    {
-        return Ok(None);
-    }
-    let lines = parse_kpoe(&v);
-    Ok((!lines.is_empty()).then(|| Found {
-        source: "lyricsplus".into(),
-        lines,
-        ..Default::default()
-    }))
+    Ok(lyricsplus_found(req, &v))
 }
 
-fn boidu(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+/// A length as LyricsPlus sends it: ms as a number, or text ("3:33.234", "1:02:03.5", "45.25").
+fn total_ms(v: &Value) -> Option<u64> {
+    if let Some(ms) = v.as_f64() {
+        return (ms >= 0.0).then(|| ms.round() as u64);
+    }
+    let mut secs = 0.0;
+    for part in v.as_str()?.trim().split(':') {
+        let part = part.trim();
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+            return None;
+        }
+        secs = secs * 60.0 + part.parse::<f64>().ok()?;
+    }
+    Some((secs * 1000.0).round() as u64)
+}
+
+/// LyricsPlus's answer, when it is the song asked about.
+fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
+    // Its length is in its metadata: another recording's lyrics are not these.
+    if let Some(total) = v.pointer("/metadata/totalDuration").and_then(total_ms)
+        && req.duration_ms > 0
+        && (total as f64 - req.duration_ms as f64).abs() / 1000.0 > SAME_LENGTH_S
+    {
+        return None;
+    }
+    let lines = parse_kpoe(v);
+    // The song's language, as LyricsPlus labels it ("ja", "hi").
+    let lang = v
+        .pointer("/metadata/language")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned);
+    (!lines.is_empty()).then(|| Found {
+        source: "lyricsplus".into(),
+        lyrics: Lyrics {
+            lines,
+            lang,
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+}
+
+fn boidu(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let Some(d) = duration_s(req) else {
         return Ok(None);
     };
@@ -812,13 +1054,16 @@ fn closest<'a>(
         .map(|(v, ..)| v)
 }
 
-fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
         req.artists.first().cloned().unwrap_or_default()
     );
-    let mut resp = agent
+    if crate::net::is_offline() {
+        return Err(AskError::Down("Local only is on".into()));
+    }
+    let resp = agent
         .post("https://music.163.com/api/search/get")
         .header("Referer", "https://music.163.com/")
         .send_form([
@@ -828,16 +1073,9 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, St
             ("offset", "0"),
         ])
         .map_err(|e| e.to_string())?;
-    if resp.status().as_u16() != 200 {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
-    }
-    let v: Value = serde_json::from_str(
-        &resp
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let Some(v) = json_of(resp)? else {
+        return Ok(None);
+    };
     let songs: Vec<(Value, String, String, Option<f64>)> = v
         .pointer("/result/songs")
         .and_then(Value::as_array)
@@ -877,33 +1115,41 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, St
     };
     let Some(l) = get_json(
         agent,
-        &format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1"),
+        &format!("https://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1&rv=-1"),
         Some("https://music.163.com/"),
     )?
     else {
         return Ok(None);
     };
-    let Some(lrc) = l
+    Ok(netease_found(req, &l))
+}
+
+/// NetEase's lyrics answer (`song/lyric`): the lyrics, with their translations (`tlyric`,
+/// Chinese) and Roman letters (`romalrc`, asked for with `rv=-1`).
+fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
+    let lrc = l
         .pointer("/lrc/lyric")
         .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(mut f) = found_from_text("netease", lrc) else {
-        return Ok(None);
-    };
+        .filter(|t| !t.trim().is_empty())?;
+    let mut f = found_from_text("netease", lrc)?;
     if let Some(t) = l
         .pointer("/tlyric/lyric")
         .and_then(Value::as_str)
         .filter(|t| !t.trim().is_empty())
     {
-        f.lines = with_translation(f.lines, t);
+        f.lyrics.lines = with_translation(f.lyrics.lines, t, "netease");
     }
-    Ok(Some(f))
+    if let Some(r) = l
+        .pointer("/romalrc/lyric")
+        .and_then(Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+    {
+        f.lyrics.lines = with_roman(f.lyrics.lines, r, "netease", None);
+    }
+    credits_out(f, req)
 }
 
-fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let referer = Some("https://y.qq.com/");
     let q = format!(
         "{} {}",
@@ -990,22 +1236,33 @@ fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String>
     else {
         return Ok(None);
     };
-    let Some(raw) = l
-        .get("lyric")
-        .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let text = base64::engine::general_purpose::STANDARD
-        .decode(raw.trim())
-        .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_else(|| unescape(raw));
-    Ok(found_from_text("qq", &text))
+    Ok(qq_found(req, &l))
 }
 
-fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, String> {
+/// QQ Music's lyrics answer (`fcg_query_lyric_new`).
+fn qq_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
+    let text = |key: &str| {
+        let raw = l
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())?;
+        Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(raw.trim())
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_else(|| unescape(raw)),
+        )
+    };
+    let mut f = found_from_text("qq", &text("lyric")?)?;
+    // Its translation, when it has one, is a second LRC at the same times.
+    if let Some(tr) = text("trans") {
+        f.lyrics.lines = with_translation(f.lyrics.lines, &tr, "qq");
+    }
+    credits_out(f, req)
+}
+
+fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
@@ -1076,51 +1333,153 @@ fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, Stri
     ) else {
         return Ok(None);
     };
-    let Some(d) = get_json(
-        agent,
-        &format!(
-            "https://lyrics.kugou.com/download?ver=1&client=pc&id={}&accesskey={}&fmt=lrc",
-            enc(&id),
-            enc(key)
-        ),
-        None,
-    )?
-    else {
+    let lang = first
+        .get("language")
+        .and_then(Value::as_str)
+        .and_then(kugou_language);
+    let download = |fmt: &str| {
+        get_json(
+            agent,
+            &format!(
+                "https://lyrics.kugou.com/download?ver=1&client=pc&id={}&accesskey={}&fmt={fmt}",
+                enc(&id),
+                enc(key)
+            ),
+            None,
+        )
+    };
+    // KRC times every word and carries Roman letters and translations; LRC when it can't be read.
+    if let Some(d) = download("krc")?
+        && let Some(f) = kugou_krc_found(req, &d, lang.as_deref())
+    {
+        return Ok(Some(f));
+    }
+    let Some(d) = download("lrc")? else {
         return Ok(None);
     };
-    let Some(content) = d.get("content").and_then(Value::as_str) else {
-        return Ok(None);
+    Ok(kugou_found(req, &d).map(|mut f| {
+        f.lyrics.lang = lang;
+        f
+    }))
+}
+
+/// Kugou's KRC download (`fmt=krc`): every word timed, with Roman letters and translations
+/// when it has them.
+fn kugou_krc_found(req: &LyricsRequest, d: &Value, lang: Option<&str>) -> Option<Found> {
+    let text = krc_text(d.get("content").and_then(Value::as_str)?)?;
+    let lines = parse_krc(&text, lang);
+    if lines.is_empty() {
+        return None;
+    }
+    let f = Found {
+        source: "kugou".into(),
+        lyrics: Lyrics {
+            lines,
+            lang: lang.map(str::to_owned),
+            ..Default::default()
+        },
+        ..Default::default()
     };
-    let Some(text) = base64::engine::general_purpose::STANDARD
+    credits_out(f, req)
+}
+
+/// Kugou's lyrics download (`fmt=lrc`).
+fn kugou_found(req: &LyricsRequest, d: &Value) -> Option<Found> {
+    let content = d.get("content").and_then(Value::as_str)?;
+    let text = base64::engine::general_purpose::STANDARD
         .decode(content.trim())
         .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-    else {
-        return Ok(None);
-    };
-    Ok(found_from_text("kugou", &text))
+        .and_then(|b| String::from_utf8(b).ok())?;
+    let f = found_from_text("kugou", &text)?;
+    credits_out(f, req)
+}
+
+/// The lines that name who made the song ("作词 : Ayase", and the "Artist - Title" line some
+/// sources start with) taken out of the sung lines, and kept as credits.
+fn credits_out(mut f: Found, req: &LyricsRequest) -> Option<Found> {
+    let lines = std::mem::take(&mut f.lyrics.lines);
+    let title = fold(&search_title(&req.title));
+    let artists: Vec<String> = req
+        .artists
+        .iter()
+        .map(|a| fold(a))
+        .filter(|a| a.chars().count() >= 3)
+        .collect();
+    // Only before the first sung line: a dash further in is part of the words.
+    let mut leading = true;
+    let mut sung = Vec::new();
+    for l in lines {
+        let names_song = || {
+            let f = fold(&l.text);
+            l.text.contains(" - ")
+                && ((title.chars().count() >= 2 && f.contains(&title))
+                    || artists.iter().any(|a| f.contains(a.as_str())))
+        };
+        if crate::lyrics::is_credit(&l.text) || (leading && names_song()) {
+            f.credits.push(l.text.trim().to_owned());
+        } else {
+            leading &= l.text.trim().is_empty();
+            sung.push(l);
+        }
+    }
+    f.lyrics.lines = sung;
+    f.usable().then_some(f)
 }
 
 /// The catalog's own lyrics, asked of the app's catalog client (see the module notes).
 pub type CatalogAsk<'a> = &'a (dyn Fn(&LyricsRequest) -> Result<Option<Found>, String> + Sync);
 
-/// Ask one source.
+/// Ask one source. One that turned Venuta away this session isn't asked again.
 pub fn ask(
     source: &str,
     req: &LyricsRequest,
     catalog: CatalogAsk,
-) -> Result<Option<Found>, String> {
+) -> Result<Option<Found>, AskError> {
+    if let Some(why) = refused(source) {
+        return Err(AskError::Refused(why));
+    }
+    if crate::net::is_offline() && source != "youtube" {
+        return Err(AskError::Down("Local only is on".into()));
+    }
     let agent = agent();
-    match source {
+    let answer = match source {
         "lrclib" => lrclib(&agent, req),
-        "youtube" => catalog(req),
+        "youtube" => catalog(req).map_err(AskError::Down),
         "simpmusic" => simpmusic(&agent, req),
         "lyricsplus" => lyricsplus(&agent, req),
         "boidu" => boidu(&agent, req),
         "netease" => netease(&agent, req),
         "qq" => qq(&agent, req),
         "kugou" => kugou(&agent, req),
-        other => Err(format!("no lyrics source called {other}")),
+        other => return Err(AskError::Down(format!("no lyrics source called {other}"))),
+    };
+    if !crate::net::is_offline() {
+        note(source, &answer);
+    }
+    answer
+}
+
+/// Every source's answer so far (None: not in yet) as Automatic's: the first timed one in your
+/// order (see [`choose`]), else "no lyrics" only when every source said so. When one turned
+/// Venuta away, had trouble or never answered, there is no answer (and nothing to keep).
+pub fn outcome(
+    answers: &[Option<Result<Option<Found>, AskError>>],
+    all_in: bool,
+) -> Option<Result<Option<Found>, AskError>> {
+    let plain: Vec<Option<Option<Found>>> = answers
+        .iter()
+        .map(|a| a.as_ref().map(|r| r.as_ref().ok().cloned().flatten()))
+        .collect();
+    match choose(&plain, all_in)? {
+        Some(f) => Some(Ok(Some(f))),
+        None => {
+            let troubled = answers.iter().find_map(|a| match a {
+                None => Some(AskError::Down("Some sources didn't answer in time".into())),
+                Some(Err(e)) => Some(e.clone()),
+                Some(Ok(_)) => None,
+            });
+            Some(troubled.map_or(Ok(None), Err))
+        }
     }
 }
 
@@ -1147,35 +1506,83 @@ fn first_plain(answers: &[Option<Option<Found>>]) -> Option<Found> {
         .cloned()
 }
 
-/// Automatic: every source in \`sources\` asked at once (each a moment after the one before),
-/// the first timed answer in that order taken.
-pub fn automatic(req: &LyricsRequest, sources: &[&str], catalog: CatalogAsk) -> Option<Found> {
+/// Automatic: every source in `sources` asked at once (each a moment after the one before),
+/// the first timed answer in that order taken. Sources that turned Venuta away this session are
+/// left out. An error when nothing was found and a source didn't answer (so the miss isn't
+/// sure).
+pub fn automatic(
+    req: &LyricsRequest,
+    sources: &[&str],
+    catalog: CatalogAsk,
+) -> Result<Option<Found>, AskError> {
+    let sources: Vec<&str> = sources
+        .iter()
+        .copied()
+        .filter(|s| refused(s).is_none())
+        .collect();
     if sources.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let (tx, rx) = mpsc::channel::<(usize, Option<Found>)>();
+    type Answer = Result<Option<Found>, AskError>;
+    let (tx, rx) = mpsc::channel::<(usize, Answer)>();
     std::thread::scope(|scope| {
         for (i, s) in sources.iter().enumerate() {
             let tx = tx.clone();
             scope.spawn(move || {
                 std::thread::sleep(Duration::from_millis(150 * i as u64));
-                let _ = tx.send((i, ask(s, req, catalog).ok().flatten()));
+                let _ = tx.send((i, ask(s, req, catalog)));
             });
         }
         drop(tx);
         let started = Instant::now();
-        let mut answers: Vec<Option<Option<Found>>> = vec![None; sources.len()];
+        let mut answers: Vec<Option<Answer>> = vec![None; sources.len()];
         loop {
-            if let Some(pick) = choose(&answers, false) {
+            if let Some(pick) = outcome(&answers, false) {
                 return pick;
             }
             let left = ALL_TIMEOUT.saturating_sub(started.elapsed());
             match rx.recv_timeout(left) {
                 Ok((i, f)) => answers[i] = Some(f),
-                Err(_) => return choose(&answers, true).flatten(),
+                Err(_) => {
+                    return outcome(&answers, true)
+                        .unwrap_or_else(|| Err(AskError::Down("No source answered".into())));
+                }
             }
         }
     })
+}
+
+/// The answer to show after asking again about a song whose kept answer was in an older
+/// format (`stale`), and what is kept: a new answer replaces it; when the source now has
+/// nothing, the old one stays (in today's format, so it isn't asked about again); when the
+/// source didn't answer, the old one is shown and the song is asked about again next time.
+pub fn renewed(
+    kept: &Kept,
+    song: &str,
+    slot: &str,
+    answer: Result<Option<Found>, AskError>,
+    stale: Option<Found>,
+) -> Option<Found> {
+    match (answer, stale) {
+        (Ok(None), Some(old)) => {
+            kept.put(song, slot, Some(&old));
+            Some(old)
+        }
+        (Err(_), old) => old,
+        (answer, _) => {
+            remember(kept, song, slot, &answer);
+            answer.ok().flatten()
+        }
+    }
+}
+
+/// Keep an answer for a song (`slot`: the source, or "auto"): what was found, or that there
+/// is none. A source that turned Venuta away or didn't answer is not saying "none": nothing is
+/// kept, so the song is asked about again.
+pub fn remember(kept: &Kept, song: &str, slot: &str, answer: &Result<Option<Found>, AskError>) {
+    if let Ok(found) = answer {
+        kept.put(song, slot, found.as_ref());
+    }
 }
 
 /// Every source's answer for the picker (switched-off ones too, marked so), at once.
@@ -1313,7 +1720,12 @@ impl Kept {
     pub fn open() -> Result<Self, String> {
         let dir = crate::paths::app_data_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let conn = Connection::open(dir.join("cache.sqlite")).map_err(|e| e.to_string())?;
+        Self::open_at(&dir.join("cache.sqlite"))
+    }
+
+    /// Kept answers in the given database file.
+    pub fn open_at(file: &std::path::Path) -> Result<Self, String> {
+        let conn = Connection::open(file).map_err(|e| e.to_string())?;
         conn.busy_timeout(Duration::from_secs(30))
             .map_err(|e| e.to_string())?;
         conn.execute_batch(
@@ -1329,10 +1741,8 @@ impl Kept {
         Ok(Kept { conn })
     }
 
-    /// Some(answer) when one is kept and still good.
-    pub fn get(&self, song: &str, source: &str) -> Option<Option<Found>> {
-        let row: Option<(Option<String>, i64)> = self
-            .conn
+    fn row(&self, song: &str, source: &str) -> Option<(Option<String>, i64)> {
+        self.conn
             .query_row(
                 "SELECT found, at FROM lyrics WHERE song = ?1 AND source = ?2",
                 params![song, source],
@@ -1340,16 +1750,42 @@ impl Kept {
             )
             .optional()
             .ok()
-            .flatten();
-        match row {
-            Some((Some(json), _)) => serde_json::from_str(&json).ok().map(Some),
-            Some((None, at)) if now_ms() - at < MISS_TTL_MS => Some(None),
+            .flatten()
+    }
+
+    /// A kept answer, read in today's shape (old rows get their line ends and scripts).
+    fn read(json: &str) -> Option<Found> {
+        let mut f: Found = serde_json::from_str(json).ok()?;
+        finish(&mut f.lyrics.lines);
+        Some(f)
+    }
+
+    /// Some(answer) when one is kept and still good: found in today's answer format
+    /// ([`crate::lyrics::VERSION`]), or "none" from the last day.
+    pub fn get(&self, song: &str, source: &str) -> Option<Option<Found>> {
+        match self.row(song, source)? {
+            (Some(json), _) => Self::read(&json)
+                .filter(|f| f.lyrics.version >= crate::lyrics::VERSION)
+                .map(Some),
+            (None, at) if now_ms() - at < MISS_TTL_MS => Some(None),
             _ => None,
         }
     }
 
+    /// A found answer kept in an older answer format: asked for again, and shown meanwhile or
+    /// when the source can't answer now.
+    pub fn stale(&self, song: &str, source: &str) -> Option<Found> {
+        let (json, _) = self.row(song, source)?;
+        Self::read(&json?).filter(|f| f.lyrics.version < crate::lyrics::VERSION)
+    }
+
+    /// Keep an answer (None: there is none), in today's answer format.
     pub fn put(&self, song: &str, source: &str, found: Option<&Found>) {
-        let json = found.and_then(|f| serde_json::to_string(f).ok());
+        let json = found.and_then(|f| {
+            let mut f = f.clone();
+            f.lyrics.version = crate::lyrics::VERSION;
+            serde_json::to_string(&f).ok()
+        });
         let _ = self.conn.execute(
             "INSERT OR REPLACE INTO lyrics (song, source, found, at) VALUES (?1, ?2, ?3, ?4)",
             params![song, source, json, now_ms()],
@@ -1379,10 +1815,11 @@ mod tests {
         crate::net::set_offline(true);
         let refused = get_json(&agent(), "http://127.0.0.1:9/lyrics", None);
         crate::net::set_offline(false);
-        assert_eq!(refused, Err("Local only is on".to_owned()));
+        let offline = Err(AskError::Down("Local only is on".to_owned()));
+        assert_eq!(refused, offline);
         assert_ne!(
             get_json(&agent(), "http://127.0.0.1:9/lyrics", None),
-            Err("Local only is on".to_owned())
+            offline
         );
     }
 
@@ -1422,24 +1859,25 @@ mod tests {
     }
 
     #[test]
-    fn lrc_lines_words_and_several_stamps() {
-        let lines = parse_lrc(
-            "[ar:Someone]\n[00:01.00]One\n[00:03.50][00:10.00]Again\nnot timed\n[00:05.00]<00:05.00>Word <00:05.40>by <00:05.90>word",
-        );
+    fn every_source_reads_lrc_with_the_shared_reader() {
+        let f = found_from_text(
+            "netease",
+            "[ar:Someone]
+[00:01.00]One
+[00:01.00]Uno
+[00:05.00]<00:05.00>Word <00:05.40>by",
+        )
+        .unwrap();
+        let l = &f.lyrics.lines;
         assert_eq!(
-            lines.iter().map(|l| l.ms).collect::<Vec<_>>(),
-            [1000, 3500, 5000, 10000]
+            l.iter().map(|l| l.start_ms).collect::<Vec<_>>(),
+            [1000, 5000]
         );
-        assert_eq!(lines[2].text, "Word by word");
-        assert_eq!(lines[2].words.len(), 3);
-        assert_eq!(
-            (lines[2].words[0].ms, lines[2].words[0].end_ms),
-            (5000, 5400)
-        );
-        assert_eq!(
-            lines[2].words[2].end_ms, 8900,
-            "the last word ends by the next line, at most 3 s on"
-        );
+        assert_eq!(l[1].text, "Word by", "word stamps are timing, not text");
+        assert_eq!(l[1].words.len(), 2);
+        let t = l[0].translation.as_ref().unwrap();
+        assert_eq!(t.text, "Uno");
+        assert_eq!(t.source, SecondSource::Lyrics("netease".into()));
     }
 
     #[test]
@@ -1447,16 +1885,17 @@ mod tests {
         let xml = r#"<tt><body><div><p begin="00:01.000" end="00:03.000"><span begin="00:01.000" end="00:01.500">Hel</span><span begin="00:01.500" end="00:02.000">lo</span> <span begin="00:02.100" end="00:03.000">you</span></p><p begin="4.5" end="6">Plain &amp; line</p></div></body></tt>"#;
         let lines = parse_ttml(xml);
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].ms, 1000);
+        assert_eq!((lines[0].start_ms, lines[0].end_ms), (1000, 3000));
         assert_eq!(lines[0].text, "Hello you");
         assert_eq!(lines[0].words.len(), 3);
         assert_eq!(
             lines[1],
-            Line {
-                ms: 4500,
+            LyricLine {
+                start_ms: 4500,
+                end_ms: 6000,
                 text: "Plain & line".into(),
-                words: vec![],
-                translation: None
+                script: "Latn".into(),
+                ..Default::default()
             }
         );
     }
@@ -1505,11 +1944,13 @@ mod tests {
     fn timed(source: &str) -> Option<Option<Found>> {
         Some(Some(Found {
             source: source.into(),
-            lines: vec![Line {
-                ms: 0,
-                text: "x".into(),
+            lyrics: Lyrics {
+                lines: vec![LyricLine {
+                    text: "x".into(),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         }))
     }
@@ -1556,6 +1997,322 @@ mod tests {
                 .flatten()
                 .map(|f| f.source),
             Some("a".into())
+        );
+    }
+
+    #[test]
+    fn a_source_that_turns_venuta_away_is_not_a_song_without_lyrics() {
+        // SimpMusic and Better Lyrics as they answered on 2026-10-21.
+        assert_eq!(
+            answer_of(
+                403,
+                include_str!("../tests/fixtures/lyrics/simpmusic-403.json")
+            ),
+            Err(AskError::Refused(
+                "This API is only available to SimpMusic clients".into()
+            ))
+        );
+        assert_eq!(
+            answer_of(
+                401,
+                include_str!("../tests/fixtures/lyrics/betterlyrics-401.json")
+            ),
+            Err(AskError::Refused(
+                "Uncached queries require a valid API key via X-API-Key header".into()
+            ))
+        );
+        assert_eq!(answer_of(404, ""), Ok(None), "not there: no lyrics");
+        assert_eq!(answer_of(200, "{}"), Ok(Some("{}".into())));
+        assert!(matches!(answer_of(503, ""), Err(AskError::Down(_))));
+        assert!(matches!(answer_of(429, ""), Err(AskError::Down(_))));
+    }
+
+    #[test]
+    fn a_refusing_source_rests_for_the_session_and_says_so() {
+        // A made-up id, so other tests' sources are left alone.
+        note(
+            "test-refuses",
+            &Err(AskError::Refused("API key required".into())),
+        );
+        let r = ask("test-refuses", &req("Song", &["Someone"], 200), &|_| {
+            Ok(None)
+        });
+        assert_eq!(
+            r,
+            Err(AskError::Refused("API key required".into())),
+            "not asked again"
+        );
+        note("test-down", &Err(AskError::Down("HTTP 503".into())));
+        assert_eq!(refused("test-down"), None, "trouble isn't a refusal");
+        note("boidu", &Err(AskError::Refused("API key required".into())));
+        let h = health();
+        let b = h.iter().find(|h| h.source == "boidu").unwrap();
+        assert_eq!(
+            (b.state.as_str(), b.why.as_deref()),
+            ("refused", Some("API key required"))
+        );
+        assert_eq!(h.len(), SOURCES.len());
+    }
+
+    #[test]
+    fn automatic_keeps_a_miss_only_when_every_source_said_none() {
+        let none = || Some(Ok(None));
+        let refused = || Some(Err(AskError::Refused("no".into())));
+        assert_eq!(outcome(&[none(), none()], true), Some(Ok(None)));
+        assert!(matches!(outcome(&[none(), refused()], true), Some(Err(_))));
+        assert!(
+            matches!(outcome(&[none(), None], true), Some(Err(_))),
+            "one never answered"
+        );
+        assert_eq!(outcome(&[none(), None], false), None, "still waiting");
+        // A timed answer wins whatever the others did.
+        let found = || {
+            Some(Ok(Some(Found {
+                source: "b".into(),
+                lyrics: Lyrics {
+                    lines: vec![LyricLine {
+                        text: "x".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            })))
+        };
+        assert!(matches!(
+            outcome(&[refused(), found()], true),
+            Some(Ok(Some(_)))
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let kept = Kept::open_at(&dir.path().join("cache.sqlite")).unwrap();
+        remember(&kept, "s", "auto", &Err(AskError::Refused("no".into())));
+        assert_eq!(
+            kept.get("s", "auto"),
+            None,
+            "a refusal is never kept as a miss"
+        );
+        remember(&kept, "s", "auto", &Ok(None));
+        assert_eq!(kept.get("s", "auto"), Some(None), "a real miss is");
+    }
+
+    fn fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/lyrics")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn lyricsplus_turns_away_another_recording_by_its_length() {
+        // Idol (YOASOBI) as LyricsPlus answered on 2026-10-21: "totalDuration": "3:33.234".
+        let v = fixture("lyricsplus-idol.json");
+        let idol = |secs| req("アイドル", &["YOASOBI"], secs);
+        assert!(
+            lyricsplus_found(&idol(213), &v).is_some(),
+            "the same length"
+        );
+        assert!(
+            lyricsplus_found(&idol(260), &v).is_none(),
+            "47 s longer is another recording"
+        );
+        assert!(lyricsplus_found(&idol(0), &v).is_some(), "length unknown");
+        // The length as a number of ms, as it was sent before.
+        let mut n = v.clone();
+        n["metadata"]["totalDuration"] = serde_json::json!(213_234);
+        assert!(lyricsplus_found(&idol(260), &n).is_none());
+        assert_eq!(total_ms(&serde_json::json!("1:02:03.5")), Some(3_723_500));
+        assert_eq!(total_ms(&serde_json::json!("45.25")), Some(45_250));
+        assert_eq!(total_ms(&serde_json::json!("soon")), None);
+    }
+
+    fn texts(f: &Found) -> Vec<&str> {
+        f.lyrics.lines.iter().map(|l| l.text.as_str()).collect()
+    }
+
+    #[test]
+    fn credit_lines_from_the_chinese_sources_are_not_sung() {
+        // Idol (YOASOBI) on NetEase and QQ Music, Gunjou on Kugou, as they answered on 2026-10-21.
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        let ne = netease_found(&idol, &fixture("netease-idol.json")).unwrap();
+        assert_eq!(
+            &texts(&ne)[..2],
+            ["無敵の笑顔で荒らすメディア", "知りたいその秘密ミステリアス"]
+        );
+        assert_eq!(
+            ne.credits,
+            [
+                "作词 : Ayase",
+                "作曲 : Ayase",
+                "编曲 : Ayase",
+                "制作人 : Ayase"
+            ]
+        );
+        assert!(
+            ne.lyrics.lines[0].translation.is_some(),
+            "the translations still meet their lines"
+        );
+
+        let qq = qq_found(&idol, &fixture("qq-idol.json")).unwrap();
+        assert_eq!(texts(&qq)[0], "無敵の笑顔で荒らすメディア");
+        assert_eq!(
+            qq.credits,
+            [
+                "アイドル - YOASOBI (ヨアソビ)",
+                "词：Ayase",
+                "曲：Ayase",
+                "编曲：Ayase"
+            ]
+        );
+
+        let gunjou = req("群青", &["YOASOBI"], 248);
+        let kg = kugou_found(&gunjou, &fixture("kugou-gunjou-lrc.json")).unwrap();
+        assert_eq!(texts(&kg)[0], "嗚呼 いつもの様に");
+        assert_eq!(
+            kg.credits,
+            [
+                "YOASOBI - 群青 - THE FIRST TAKE",
+                "作词：Ayase",
+                "作曲：Ayase"
+            ]
+        );
+        // A sung line with a dash further in is still sung.
+        assert!(kg.lyrics.lines.len() > 80);
+    }
+
+    #[test]
+    fn what_the_sources_send_beside_the_lines_is_kept() {
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        // LyricsPlus labels the song's language.
+        let lp = lyricsplus_found(&idol, &fixture("lyricsplus-idol.json")).unwrap();
+        assert_eq!(lp.lyrics.lang.as_deref(), Some("ja"));
+
+        // NetEase: Roman letters (romalrc, syllable by syllable) joined into words, at the
+        // line's own time, and its Chinese translation.
+        let ne = netease_found(&idol, &fixture("netease-idol.json")).unwrap();
+        let first = &ne.lyrics.lines[0];
+        assert_eq!(first.text, "無敵の笑顔で荒らすメディア");
+        let roman = first.roman.as_ref().unwrap();
+        assert_eq!(roman.text, "muteki no egao de arasu media");
+        assert_eq!(roman.lang, "ja-Latn");
+        assert_eq!(roman.source, SecondSource::Lyrics("netease".into()));
+        let tr = first.translation.as_ref().unwrap();
+        assert_eq!(
+            (tr.text.as_str(), tr.lang.as_str()),
+            ("露出无敌笑容来摧毁媒体", "zh-Hans")
+        );
+        let english = ne
+            .lyrics
+            .lines
+            .iter()
+            .find(|l| l.text == "You're my savior")
+            .unwrap();
+        assert!(english.roman.is_none(), "nothing to romanize");
+        assert!(
+            ne.lyrics.lines.iter().filter(|l| l.roman.is_some()).count() > 70,
+            "every Japanese line"
+        );
+
+        // QQ Music's translation (empty in the captured answer; one added here).
+        let mut qq = fixture("qq-idol.json");
+        qq["trans"] = Value::String("[00:00.74]露出无敌笑容\n".into());
+        let qq = qq_found(&idol, &qq).unwrap();
+        let tr = qq.lyrics.lines[0].translation.as_ref().unwrap();
+        assert_eq!(
+            (tr.text.as_str(), tr.lang.as_str()),
+            ("露出无敌笑容", "zh-Hans")
+        );
+        assert_eq!(tr.source, SecondSource::Lyrics("qq".into()));
+
+        // Kugou's KRC: every word timed, Roman letters timed by the words, translations.
+        let gunjou = req("群青", &["YOASOBI"], 248);
+        let kg = kugou_krc_found(&gunjou, &fixture("kugou-gunjou-krc.json"), Some("ja")).unwrap();
+        assert_eq!(kg.lyrics.lang.as_deref(), Some("ja"));
+        assert_eq!(
+            kg.credits,
+            [
+                "YOASOBI - 群青 - THE FIRST TAKE",
+                "作词：Ayase",
+                "作曲：Ayase"
+            ]
+        );
+        let l = &kg.lyrics.lines[0];
+        assert_eq!(l.text, "嗚呼 いつもの様に");
+        assert_eq!((l.start_ms, l.end_ms), (4493, 6727));
+        assert_eq!(l.words[0].start_ms, 4493);
+        let roman = l.roman.as_ref().unwrap();
+        assert_eq!(roman.text, "aa itsumono you ni");
+        assert_eq!(
+            roman
+                .words
+                .iter()
+                .map(|w| (w.start_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (4493, "aa"),
+                (5148, "itsumono"),
+                (5807, "you"),
+                (6203, "ni")
+            ]
+        );
+        assert_eq!(
+            l.translation
+                .as_ref()
+                .map(|t| (t.text.as_str(), t.lang.as_str())),
+            Some(("啊啊 一如既往般", "zh-Hans"))
+        );
+        // The same lines as its LRC, as many and at the same times.
+        let lrc = kugou_found(&gunjou, &fixture("kugou-gunjou-lrc.json")).unwrap();
+        assert_eq!(kg.lyrics.lines.len(), lrc.lyrics.lines.len());
+        assert_eq!(kugou_language("日语").as_deref(), Some("ja"));
+        assert_eq!(krc_text("not krc"), None);
+    }
+
+    #[test]
+    fn answers_kept_in_an_older_format_are_asked_for_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = Kept::open_at(&dir.path().join("cache.sqlite")).unwrap();
+        // A NetEase answer as version 1 kept it: `ms`, a translation as text, no version.
+        let old = r#"{"source":"netease","lines":[{"ms":273,"text":"無敵の笑顔で","translation":"露出无敌笑容"},{"ms":3283,"text":"知りたい"}],"text":"","instrumental":false,"credit":null}"#;
+        kept.conn
+            .execute(
+                "INSERT INTO lyrics (song, source, found, at) VALUES ('s', 'auto', ?1, 0)",
+                params![old],
+            )
+            .unwrap();
+        assert_eq!(kept.get("s", "auto"), None, "asked for again");
+        let stale = kept.stale("s", "auto").unwrap();
+        let first = &stale.lyrics.lines[0];
+        assert_eq!((first.start_ms, first.end_ms), (273, 3283));
+        assert_eq!(first.script, "Jpan");
+        assert_eq!(first.translation.as_ref().unwrap().lang, "zh-Hans");
+
+        // The source didn't answer: the old answer is shown, and asked for again next time.
+        let shown = renewed(
+            &kept,
+            "s",
+            "auto",
+            Err(AskError::Down("x".into())),
+            Some(stale.clone()),
+        );
+        assert_eq!(shown.as_ref(), Some(&stale));
+        assert_eq!(kept.get("s", "auto"), None);
+        // It has nothing now: the old answer stays, kept in today's format.
+        renewed(&kept, "s", "auto", Ok(None), Some(stale.clone()));
+        let now = kept.get("s", "auto").unwrap().unwrap();
+        assert_eq!(now.lyrics.version, crate::lyrics::VERSION);
+        assert_eq!(kept.stale("s", "auto"), None);
+        // A new answer replaces it.
+        let mut fresh = stale.clone();
+        fresh.lyrics.lines[0].text = "new".into();
+        assert_eq!(
+            renewed(&kept, "t", "auto", Ok(Some(fresh.clone())), None)
+                .map(|f| f.lyrics.lines[0].text.clone()),
+            Some("new".into())
+        );
+        assert_eq!(
+            kept.get("t", "auto").unwrap().unwrap().lyrics.lines[0].text,
+            "new"
         );
     }
 }
