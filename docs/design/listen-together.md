@@ -543,6 +543,41 @@ The renderer publishes, through a seqlock and plain atomics: the voices and thei
 - Kernel tables (the resampler's) built when the player starts, never lazily.
 - Every buffer sized at device open for the largest period.
 
+#### Settled in WP3 (the renderer as built, `crates/player/src/render.rs`)
+
+**Making one.** `Renderer::new(RenderSetup { format, max_period, ends, rate, clock })` on the control thread, after the output opened (`format` and `max_period` from `OutputInfo`, `ends` from `render_link`, `rate` the shared `RateTarget`, `clock` the `MonoClock` for the deadline measure). It returns the renderer (handed to `Output::start`) and an `Arc<RenderStatus>` for the status thread. Everything is made here: four voice slots (three voices, plus one fading out after its `Drop` while the control thread reuses its slot), each with a window for the filter and a ring of up to 512 held blocks; the mix and voice buffers; the resampler's kernels for every standard source rate above the device's. A different device format means a new renderer.
+
+**The loop.** `render(out, frames, at)` takes every waiting command (`try_recv`, never waits), then works in chunks of at most 512 frames (so no buffer depends on the device's period, and a call longer than `max_period` is still served). Per chunk, for each voice slot: pop every block its tap has (blocks of an older epoch are given back unplayed), check the guard, copy what the chunk needs into the window, resample, run the voice's chain, apply its envelope and add it into the mix (channel remap as `output::remap`); then the master gain, then the encode (as `output::encode`, into the given slice). At the end of the call: one marker per voice that sounded (its first frame this call, its content place there, the mean ratio over the call), the notes, the status, and the deadline margin of the call.
+
+**Commands at exact frames.** Every command becomes slot state at once (no queue of pending commands): a start frame, a fade scheduled to begin at a frame, a gapless link. A command whose frame has passed is done at the first frame it can be, keeping the content to device mapping: a late `StartAt` starts at the room's place for now (`content + (now - at) x ratio`, rounded to a whole frame) and always fades in; a late fade-out starts now and keeps its length; the new voice of a late `FadeOutThenIn` or `EndFade` starts where the fade ends. Each is a `Late` note.
+
+**Shapes, by construction.** The renderer enforces the splice table rather than trusting the commands: a voice that starts partway into its song (content above 0, or later than asked) fades in over at least 15 ms whatever `fade_in` says; a stop fades over at least 30 ms; a `Drop` of a voice still sounding fades it out over 30 ms first and returns the tap after. Curves: fades in and out are raised cosine, crossfades equal power (cos and sin), all from the level the voice is at, so a fade that begins during another never steps.
+
+| Splice row | Commands |
+|---|---|
+| Pause, stop | `StopAt { fade: 30 ms }`; the control thread keeps the output running for one buffer of the silence that follows |
+| Leaving, removed, room ended | `StopAt { fade: 1 s }` |
+| Start, resume partway | `StartAt { fade_in: 15 ms }` |
+| Join, rejoin, catch-up | `StartAt { fade_in: 300 ms }` |
+| Start at the song's first frame | `StartAt { content: 0, fade_in: 0 }` |
+| Seek, realign | `SwitchAt { how: Crossfade { 40 ms } }` |
+| Skip, jump | `SwitchAt { how: FadeOutThenIn { 30 ms } }` |
+| Song boundary, gapless | `SwitchAt { how: Gapless }`: the join is at the old voice's own end, not at `at` (sample-exact, the control thread takes up the few ms by rate). When the two voices have the same rate and channels the new voice's frames continue the old one's window, so even a resampled join is one continuous signal; otherwise the new voice starts on the device frame after the old one's last. A new voice whose first frame is not `to_content` is not joined: the old one ends as songs end, and the new one fades in |
+| Song boundary, longer copy | `SwitchAt { how: EndFade { 150 ms } }` |
+| Song boundary, crossfade | `SwitchAt { how: Crossfade { the set length } }` |
+| Volume, sleep timer | `Gain`: a raised-cosine ramp over 20 ms from the gain it is at |
+| A stream running dry | the guard (below) |
+| Coming back after running dry | automatic, from silence with a 15 ms fade-in at the place it faded at, once 1 s of the source is in hand (or its end); in a room the control thread may instead drop the voice and rejoin with a new one |
+| Output switch | a new renderer for the new output, its voice started partway (`StartAt`, 15 ms) |
+
+**The guard, exactly.** In input frames of the voice, with `r` its ratio at the most trim (source rate / device rate x 1.0005) and `h` the kernel's half width (32 for the 64-tap kernel, so `h + 1` is the design's 33 frames): `guard = ceil((30 ms + one period) x r) + h + 1`. At each call, a sounding voice whose source has not ended must have, contiguous from where it reads, the frames this call needs plus the guard. If not, it begins a 30 ms raised-cosine fade over frames it already holds and then falls silent (`Starved`), unless the fade it is in already ends sooner. The same holds before a break in its blocks (a newer epoch while sounding, or a hole in the content frames): the voice fades out before the break and fades back in after it, at the content place the blocks give. A voice may only start once it holds what the call needs plus the guard.
+
+**The resampler** (D12, `sync.rs`): the tested 64-tap Kaiser windowed sinc, kept as it is and made general. One loop serves both the old engine's `Resampler` (now a thin wrapper, its tests unchanged) and the renderer's `Converter`, which works on a window it is lent instead of keeping its own history (no allocation), with any base ratio (source rate / device rate). At ratio 1 the kernel is the same table as before, bit for bit, and the glide and the landing on a whole frame are the same code, so a voice at its own rate with no trim is bit-perfect again once it lands. Above the device rate a kernel scaled by the ratio cuts at 0.413 of the device rate (flat to 19.8 kHz at 48 kHz, nothing above the device's Nyquist folds back); it has `ceil(32 x ratio)` taps on each side and `ceil(512 / ratio)` phases, so every kernel holds about the same 33,000 coefficients (260 KB). Kernels are built at `Renderer::new` for the standard rates above the device's (up to 384 kHz); a rate between standard ones takes the next standard kernel above it (a little lower cutoff, never aliasing); a rate past 8.7 times the device's is refused with a note.
+
+**Notes and markers.** Notes go back on their own bounded queue (`render_link`'s third size): `Started`, `Joined`, `Faded` (every shaped span, device frames `from..to`), `Gain` (the ramp's span), `Resampling` on and off (spans that are not the source bit for bit), `Starved`, `Resumed`, `Ended`, `Silent`, `Late`, `Refused`, and `Dropped` (notes or markers lost to a full queue, counted, never waited on). The declared spans of the 7.1 detectors are exactly the `Faded`, `Gain` and `Resampling` spans, plus silences.
+
+**Status by atomics.** `RenderStatus` holds a sequence lock over each slot (voice id, state, content place, ratio) and plain atomics for device frames rendered, the trim in ppm, the overall state (silent, playing, fading, starved), counts of starvations, late and refused commands and lost notes, and the deadline histogram (100 buckets of 1% of the period, and late calls). `RenderStatus::read()` gives a plain `RenderSnapshot`. The margin is measured on the render call itself (`clock` read on entry and on return, against the call's frames at the device rate); the output's own part of the period (the wait and the buffer calls) is what WP14's `deadline_probe probe` measures. `Deadline::to_log_line(seconds, ran_dry)` writes the playback log line in exactly WP14's format (a test parses it with `Histogram::from_log_line`); `ran_dry` comes from the output's `Xrun` events, counted by the status thread, since the renderer cannot see the device run dry.
+
 ### 4.8 Output devices and latency compensation
 
 #### The output owns the render thread
