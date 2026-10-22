@@ -9,6 +9,7 @@
 //!   reconnect as the same person, and a small server on 127.0.0.1 that plays the host's files.
 //!
 //! - [`clock_link`]: the clock's pings on any `Transport`: the guest's pinger, the host's answer.
+//! - [`proxy`]: the guest's player onto the host's files, on any `Transport`.
 //! - [`transport`]: the real `Transport` of the Listen together contracts, for the sessions
 //!   to come (control lines, clock datagrams, media, peers kept by key, path changes).
 //!
@@ -23,4 +24,5 @@ pub mod guest;
 pub mod host;
 pub mod net;
 pub mod pace;
+pub mod proxy;
 pub mod transport;
