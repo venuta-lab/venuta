@@ -204,6 +204,21 @@ pub trait RoomHandle<I>: Send {
     fn resume(&self) {
         self.rejoin();
     }
+    /// My copy of `entry` lines up as `align` from the room's place now on (the measure
+    /// refined during the song, WP11): an offset within 20 ms of the one it plays at is taken
+    /// up by rate, never heard; a larger one is kept for the next voice of the song, never
+    /// jumped to. The class changes the controller's column at once. A player that can't tell
+    /// does nothing.
+    fn refine(&self, entry: EntryId, align: Alignment) {
+        let _ = (entry, align);
+    }
+    /// The room follows this player (a one-speaker host: every other member a remote, WP18):
+    /// no controller and no rate change (its output is the solo path's), the armed next joins
+    /// at this copy's own end, and `RoomPlayStatus::heard` says where it is for the room to
+    /// re-anchor. `false`: it follows the room's clock again, measured afresh.
+    fn lead(&self, on: bool) {
+        let _ = on;
+    }
     fn status(&self) -> RoomPlayStatus;
     /// The room lets go: the room program is dropped, your own program comes back paused.
     fn detach(self: Box<Self>);

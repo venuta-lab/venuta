@@ -44,6 +44,11 @@ pub enum Call<I> {
     Rejoin,
     Suspend(Suspension),
     Resume,
+    Refine {
+        entry: EntryId,
+        align: Alignment,
+    },
+    Lead(bool),
     Detach,
 }
 
@@ -70,6 +75,9 @@ struct Fake<I> {
     /// A state set by hand, over what the script says.
     forced: Option<SubState>,
     attached: bool,
+    /// Where it says it is heard: the room's time from this clock, its sound card this many
+    /// ppm fast (`None`: it says nothing).
+    heard: Option<(Arc<dyn MonoClock>, f64)>,
 }
 
 /// The test's side of a fake player: what was called, and control over its answers.
@@ -116,6 +124,13 @@ impl<I: Clone> FakeLog<I> {
     pub fn attached(&self) -> bool {
         lock(&self.fake).attached
     }
+
+    /// Say where it is heard (`RoomPlayStatus::heard`), as a player playing on by its own sound
+    /// card would: from each place it was told to start, on at `ppm` fast against the room's
+    /// time, read from `room` (the host's clock, for a host's fake).
+    pub fn heard_from(&self, room: Arc<dyn MonoClock>, ppm: f64) {
+        lock(&self.fake).heard = Some((room, ppm));
+    }
 }
 
 /// A player for the conductor's tests.
@@ -132,6 +147,7 @@ impl<I: Clone + Send + 'static> FakeRoomPlayer<I> {
                 calls: Vec::new(),
                 forced: None,
                 attached: false,
+                heard: None,
             })),
             clock,
         };
@@ -224,6 +240,12 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
     fn resume(&self) {
         self.record(Call::Resume);
     }
+    fn refine(&self, entry: EntryId, align: Alignment) {
+        self.record(Call::Refine { entry, align });
+    }
+    fn lead(&self, on: bool) {
+        self.record(Call::Lead(on));
+    }
 
     fn status(&self) -> RoomPlayStatus {
         let now = self.log.clock.now_ns();
@@ -237,9 +259,16 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
         let mut stepped_out = false;
         let mut away: Option<Suspension> = None;
         let mut playing = false;
+        // The place it last started from (entry, room content, host time), and an entry
+        // prepared since (its commit starts it again: a seek).
+        let mut started: Option<(EntryId, i64, i64)> = None;
+        let mut fresh: Option<EntryId> = None;
         for (at, c) in &f.calls {
             match c {
-                Call::Prepare { prep, entry, .. } => preparing = Some((*at, *prep, *entry)),
+                Call::Prepare { prep, entry, .. } => {
+                    preparing = Some((*at, *prep, *entry));
+                    fresh = Some(*entry);
+                }
                 Call::ArmNext { entry, .. } => {
                     st.next_ready = (now >= at + s.next_ready_after_ns
                         && !s.unable.contains(entry))
@@ -247,6 +276,12 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
                 }
                 Call::Disarm => st.next_ready = None,
                 Call::Commit(a) => {
+                    if a.playing
+                        && (!playing || st.entry != Some(a.entry) || fresh == Some(a.entry))
+                    {
+                        started = Some((a.entry, a.content_us, a.host_us));
+                        fresh = None;
+                    }
                     st.entry = Some(a.entry);
                     playing = a.playing;
                     if st.next_ready == Some(a.entry) {
@@ -290,6 +325,22 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
             st.error_us = s.error_us;
         }
         st.length_us = st.entry.and(s.length_us);
+        if let (Some((room, ppm)), Some((entry, content, from))) = (&f.heard, started)
+            && playing
+            && st.sub_state == SubState::InStep
+        {
+            let host_us = (room.now_ns() / 1_000) as i64;
+            if host_us >= from {
+                let ran = (host_us - from) as f64 * (1.0 + ppm / 1e6);
+                st.heard = Some(Anchor {
+                    entry,
+                    content_us: content + ran.round() as i64,
+                    host_us,
+                    playing: true,
+                    seq: 0,
+                });
+            }
+        }
         st
     }
 
