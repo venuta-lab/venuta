@@ -38,7 +38,7 @@ Both switches are on every lyrics view: Now Playing, the big screen, the desktop
 ## How it is shown
 
 - One layout rule for every view: the original line, then pronunciation, then translation, smaller and dimmer, wrapped, never clipped. A song keeps the same number of rows for every line, so the desktop strip doesn't change size line by line.
-- The big screen fits long lines to the screen with safe margins (shrinks before it clips).
+- The big screen fits long lines to the screen with safe margins (shrinks before it clips), in the room above the song bar as measured, however many lines the bar has under the song (where the rows came from, the translation note and its button).
 - The desktop lyrics strip grows to fit the rows that are switched on.
 - Second lines are worked out once per song in Rust and cached with the lyrics, never per frame.
 

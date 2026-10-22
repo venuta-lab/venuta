@@ -68,6 +68,26 @@ save(
   ]),
 )
 
+// The same Japanese song translated into English by Google Cloud Translation with your key: every
+// row under every line, and the attribution Google asks for beside each translated line.
+const JA_GOOGLE = { ...JA, trLang: 'en', trSource: { kind: 'translated', by: 'google' } }
+const jaGoogleLine = (start, words, romanWords, tr) =>
+  line(start, start + 4000, words.join(''), 'Jpan', { ...JA_GOOGLE, words, roman: romanWords.join(' ').replace(' ,', ','), romanWords, tr })
+save(
+  'japanese-google',
+  song('ja', [
+    jaGoogleLine(1000, ['夜空', 'に', '星', 'が', '光る'], ['yozora', 'ni', 'hoshi', 'ga', 'hikaru'], 'Stars shine in the night sky'),
+    jaGoogleLine(5000, ['君', 'の', '声', 'が', '聞こえる'], ['kimi', 'no', 'koe', 'ga', 'kikoeru'], 'I can hear your voice'),
+    jaGoogleLine(9000, ['明日', 'も', 'また', '会おう'], ['ashita', 'mo', 'mata', 'aou'], "Let's meet again tomorrow"),
+    jaGoogleLine(
+      13000,
+      ['遠く', 'まで', '歩いて', 'いこう', '、', '二人', 'で', '手', 'を', 'つないで'],
+      ['tooku', 'made', 'aruite', 'ikou', ',', 'futari', 'de', 'te', 'wo', 'tsunaide'],
+      "Let's walk far away together, holding hands",
+    ),
+  ]),
+)
+
 // Spanish: in Latin letters already, so a translation only (made on this PC), no word timing.
 const ES = { trLang: 'en', trSource: { kind: 'translated', by: 'firefox-translations' } }
 save(
