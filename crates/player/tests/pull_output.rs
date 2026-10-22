@@ -628,6 +628,8 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
         let mut most_ever = 0u32;
         let mut worst_after_settle = i64::MIN;
         let (mut steady, mut after_first) = (0usize, 0usize);
+        let mut last_pair: Option<player::output_api::PresentationPair> = None;
+        let mut ahead_at = None;
         for line in text.lines().skip(1) {
             let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
             if r[col("state")] != 1 {
@@ -635,6 +637,16 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             }
             let held = u32::try_from(r[col("held")]).ok();
             let before = r[col("before")] as u64;
+            if let Some(p) = last_pair
+                && before < 96_000
+            {
+                let at = p.frame as f64
+                    + (r[col("wake_ns")] as u64).saturating_sub(p.time_ns) as f64 * f64::from(RATE)
+                        / 1e9;
+                if at > before as f64 + f64::from(RATE) / 1_000.0 && ahead_at.is_none() {
+                    ahead_at = Some((before, at));
+                }
+            }
             m.space(held, before, r[col("wake_ns")] as u64);
             m.filled(r[col("filled_ns")] as u64);
             if r[col("pos_ok")] == 1 {
@@ -646,6 +658,7 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
                 );
                 xruns.extend(rd.xrun);
                 if let Some(p) = rd.pair {
+                    last_pair = Some(p);
                     let after = r[col("after")] as u64;
                     let now = t.push(after - p.frame);
                     if let Some(prev) = learned.filter(|l: &Latency| l.settled) {
@@ -663,6 +676,9 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             }
         }
         assert_eq!(xruns, [96_000], "{name}");
+        // The start (the driver takes ten buffers in 1.2 ms there): the presentation never
+        // claims a frame not handed over, at any wake up to the late period.
+        assert_eq!(ahead_at, None, "{name}: the DAC past what was rendered");
         let l = learned.expect("a latency learned");
         eprintln!(
             "{name}: learned {l:?}, most at any time {most_ever}, the driver says {}",
@@ -689,4 +705,35 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
             assert!((2_399..2_600).contains(&s), "the silence counted: {s}");
         }
     }
+}
+
+/// The conformance suite on a queueing exclusive driver whose queue a stop and reset don't
+/// empty (what the owner's Realtek laptop did in the suite: the start straight after a stop took
+/// two buffers, then nothing for 20 ms while the position ran on, "the DAC is at frame 1016,
+/// past the 960 rendered"). Draining no longer fills the queue with silence, and a start of a
+/// known queue is settled against its depth before any pair: the suite passes, what played
+/// first at that start was the last run's silence, and nothing loud.
+#[test]
+fn the_suite_passes_on_a_queue_that_keeps_what_it_held_over_a_reset() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        exclusive: true,
+        queue: Some(10),
+        keeps_queue: true,
+        quiet_after_restart_ns: Some(40 * MS),
+        latency: 48,
+        ..FakeCfg::default()
+    });
+    let report = conformance::run(&mut out, &clock, &want()).expect("conformance");
+    let f = fake.lock().unwrap();
+    assert!(
+        f.stale_played > 0,
+        "a start played what the queue held from before"
+    );
+    assert_eq!(f.stale_loud, 0, "and that was silence");
+    assert_eq!(f.errors, Vec::<String>::new());
+    eprintln!(
+        "learned {:?} gaps {:?} stale {} xruns {}",
+        report.latency, f.gaps, f.stale_played, report.xruns
+    );
+    assert_eq!(report.xruns, 0);
 }

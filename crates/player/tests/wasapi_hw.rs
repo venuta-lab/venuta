@@ -47,26 +47,24 @@ fn trace_path() -> Option<String> {
 
 fn write_trace(
     t: &player::output::Trace,
-    mode: &str,
-    info: &player::output_api::OutputInfo,
+    name: &str,
+    about: &str,
     notes: Option<player::output::DeviceNotes>,
     events: &[OutputEvent],
-    lead_ms: (f64, f64),
 ) {
     let stem = trace_path().expect("a trace path");
-    let csv = format!("{stem}-{mode}.csv");
+    let csv = format!("{stem}-{name}.csv");
     std::fs::write(&csv, t.csv()).expect("write the trace");
     let about = format!(
-        "{info:?}\n{notes:?}\nrows {} (dropped {})\nevents {events:?}\nlead before the gap {:.2} ms, after {:.2} ms\n\
-         flags: near 1, passed 2, suspect 4, certain 8, settled 16, counted 32, dry 64, watching 128\n\
-         state: 1 running, 2 draining; value: exclusive lead / shared pipeline (or the shift when settled); \
-         delta: exclusive frames later than usual / shared lag behind time; -1: none\n",
+        "{about}\n{notes:?}\nrows {} (dropped {})\nevents {events:?}\n\
+         flags: near 1, passed 2, suspect 4, certain 8, settled 16, counted 32, dry 64, watching 128, queued 256\n\
+         state: 1 running, 2 draining; a start is where `before` goes back to one buffer\n\
+         value: exclusive lead / shared pipeline (or the shift when settled)\n\
+         delta: exclusive frames later than usual (a queue: its lead) / shared lag behind time; -1: none\n",
         t.rows().len(),
         t.dropped(),
-        lead_ms.0,
-        lead_ms.1
     );
-    std::fs::write(format!("{stem}-{mode}.txt"), about).expect("write the notes");
+    std::fs::write(format!("{stem}-{name}.txt"), about).expect("write the notes");
     eprintln!("trace written to {csv}");
 }
 
@@ -122,7 +120,18 @@ fn wasapi_shared_passes_the_conformance_suite_with_a_clean_loopback() {
         Box::new(move |s: &[f32]| c.lock().unwrap().extend_from_slice(s)),
     )
     .expect("the loopback recorder");
-    let report = conformance::run(&mut out, &RealClock, &want()).expect("conformance");
+    let trace = trace_path().map(|_| out.trace(40_000));
+    let run = conformance::run(&mut out, &RealClock, &want());
+    if let Some(t) = &trace {
+        write_trace(
+            t,
+            "conformance-shared",
+            &format!("{run:?}"),
+            out.notes(),
+            &[],
+        );
+    }
+    let report = run.expect("conformance");
     std::thread::sleep(Duration::from_millis(500));
     let (rate, channels) = (rec.rate, rec.channels);
     rec.stop().expect("the recording");
@@ -346,7 +355,18 @@ mod loopback_judge {
 #[ignore = "plays test tones on a real output in exclusive mode; run by hand"]
 fn wasapi_exclusive_passes_the_conformance_suite() {
     let mut out: WasapiOutput = wasapi_output(device().as_deref(), true);
-    let report = conformance::run(&mut out, &RealClock, &want()).expect("conformance");
+    let trace = trace_path().map(|_| out.trace(40_000));
+    let run = conformance::run(&mut out, &RealClock, &want());
+    if let Some(t) = &trace {
+        write_trace(
+            t,
+            "conformance-exclusive",
+            &format!("{run:?}"),
+            out.notes(),
+            &[],
+        );
+    }
+    let report = run.expect("conformance");
     eprintln!("{report:?} {:?}", out.notes());
     assert_eq!(out.mode(), Mode::Exclusive, "it fell back to shared");
     assert_eq!(report.xruns, 0);
@@ -444,7 +464,9 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         );
         if let Some(t) = &trace {
             let name = format!("{mode:?}").to_lowercase();
-            write_trace(t, &name, &info, out.notes(), &seen, (before, after));
+            let about =
+                format!("{info:?}, lead before the gap {before:.2} ms, after {after:.2} ms");
+            write_trace(t, &name, &about, out.notes(), &seen);
         }
         assert!(!went_back, "the presentation went back");
         assert_eq!(

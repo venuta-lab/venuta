@@ -653,6 +653,13 @@ pub struct PositionMap {
     queued: bool,
     short_wakes: u32,
     last_wake_ns: Option<u64>,
+    /// Exclusive, a queue: how much of ours it keeps ahead of the DAC when full (frames handed
+    /// over before a fill less our frame at the DAC), learned in steady running and kept over
+    /// starts; and a start of it is being settled.
+    depth: Option<i64>,
+    starting: bool,
+    /// At a start of a queue: frames of the position that may be what it held from before.
+    stale_max: u64,
 }
 
 /// Samples kept for a usual value.
@@ -724,6 +731,9 @@ struct Watch {
     /// Pipeline samples from then on count.
     from_ns: u64,
     after: Ring,
+    /// A start of a queue whose depth is known: settles against that depth (what it held
+    /// from before it, played first, is a slip), and says no gap meanwhile.
+    start: bool,
 }
 
 impl PositionMap {
@@ -746,14 +756,39 @@ impl PositionMap {
         }
     }
 
-    /// A start: device frame 0 again, nothing known.
+    /// A start: device frame 0 again, nothing held from before.
     pub fn restart(&mut self) {
+        self.restart_holding(0);
+    }
+
+    /// A start, the device having held `held` frames handed over before it and not yet played
+    /// when it was stopped and reset (0 after a drained stop). What the device is (a queue) and
+    /// how deep it keeps its queue are kept over starts. A queue that held something may play it
+    /// first after the start (a reset doesn't empty every driver's queue): then its start is
+    /// settled against that depth before any pair is published, what played first taken off as
+    /// a slip, and a gap is said only when the position passes what was handed over by more
+    /// than it held.
+    pub fn restart_holding(&mut self, held: u64) {
+        let depth = match (self.queued, self.usual.median()) {
+            (true, Some(m)) if self.usual.full() && self.watch.is_none() => Some(m + self.slip),
+            _ => self.depth,
+        };
+        let starting = self.queued && depth.is_some() && held > 0;
         *self = PositionMap {
             rate: self.rate,
             period: self.period,
             exclusive: self.exclusive,
+            queued: self.queued,
+            depth,
+            starting,
+            stale_max: if starting { held } else { 0 },
             ..PositionMap::default()
         };
+    }
+
+    /// The device queues what it is given (exclusive mode; see `note_wake`).
+    pub fn queued(&self) -> bool {
+        self.queued
     }
 
     fn frames_of_ns(&self, ns: u64) -> f64 {
@@ -781,6 +816,7 @@ impl PositionMap {
                 certain: false,
                 from_ns: now_ns + SETTLE_NS,
                 after: Ring::default(),
+                start: false,
             });
         }
     }
@@ -877,6 +913,7 @@ impl PositionMap {
                     certain: true,
                     from_ns: time_ns + SETTLE_NS,
                     after: Ring::default(),
+                    start: false,
                 });
             }
         }
@@ -904,6 +941,8 @@ impl PositionMap {
         let w = *w;
         self.watch = None;
         let shift = match (self.usual.median(), w.after.median()) {
+            // A start of a known queue: against the depth it keeps (by our own count).
+            (_, Some(a)) if w.start => self.depth.map_or(0, |d| d - a),
             (Some(u), Some(a)) if self.usual.full() => u - a,
             _ => 0,
         };
@@ -914,7 +953,7 @@ impl PositionMap {
             self.why.flags |= WHY_COUNTED;
             self.slip += shift;
         }
-        let xrun = if counted || w.certain {
+        let xrun = if (counted && !w.start) || w.certain {
             self.gap(w.at)
         } else {
             None
@@ -936,9 +975,26 @@ impl PositionMap {
         if before == 0 {
             return None;
         }
+        if self.starting {
+            self.starting = false;
+            self.watch = Some(Watch {
+                at: 0,
+                certain: false,
+                from_ns: time_ns + SETTLE_NS,
+                after: Ring::default(),
+                start: true,
+            });
+        }
         let lead = before as i64 - (raw as i64 - self.slip);
         self.why.delta = lead;
-        if lead <= 0 {
+        if self.watch.is_some_and(|w| w.start) {
+            // A start of a queue that held something: what plays first may be that; a gap only
+            // past what was handed over by more than it held.
+            if lead + (self.stale_max as i64) <= 0 {
+                self.why.flags |= WHY_PASSED;
+                xrun = self.certain(before, time_ns);
+            }
+        } else if lead <= 0 {
             self.why.flags |= WHY_PASSED;
             xrun = self.certain(before, time_ns);
         } else if lead <= i64::from(self.period) / 8 {
@@ -949,6 +1005,7 @@ impl PositionMap {
                     certain: false,
                     from_ns: time_ns + SETTLE_NS,
                     after: Ring::default(),
+                    start: false,
                 });
             }
         }
@@ -1713,6 +1770,8 @@ struct Loop<D: PullDevice> {
     buffer_ns: u64,
     /// The latency as this start learns it.
     learned: LatencyTracker,
+    /// Frames handed over and not yet at the DAC, at the last reading.
+    held: u64,
     /// The generation of the renderer this start plays (`RenderCell`).
     generation: u64,
 }
@@ -1767,6 +1826,7 @@ fn render_thread<O: PullOpener>(
         drain_deadline: 0,
         buffer_ns,
         learned,
+        held: 0,
         generation: 0,
     };
     lp.run(cmds, sleeper);
@@ -1814,12 +1874,19 @@ impl<D: PullDevice> Loop<D> {
             return Err(OutputError::Lost);
         }
         // Whatever the device still holds (a tail still draining) is from before: let it go,
-        // so nothing held from before plays and the position starts again from 0.
+        // so nothing held from before plays and the position starts again from 0. (A queue a
+        // reset doesn't empty may still play it: the position map is told how much it held.)
+        let held = if matches!(self.state, RtState::Running | RtState::Draining) {
+            self.held
+        } else {
+            0
+        };
+        self.held = 0;
         self.state = RtState::Idle;
         self.dev.halt().map_err(|f| self.fault(f))?;
         self.generation = self.ctx.cell.generation();
         self.pump.restart();
-        self.map.restart();
+        self.map.restart_holding(held);
         self.ctx.presentation.clear();
         self.ctx.latency.clear();
         self.learned.restart();
@@ -1877,7 +1944,15 @@ impl<D: PullDevice> Loop<D> {
         if !draining {
             self.map.space(space.held, before, wake_ns);
         }
-        if let Err(f) = self.fill(space.free, !draining) {
+        // Draining into a queue, nothing more is handed over: silence written now would only
+        // wait in the queue and play after the next start (a double buffer needs it, or it
+        // plays a stale buffer again).
+        let free = if draining && self.map.queued() {
+            0
+        } else {
+            space.free
+        };
+        if let Err(f) = self.fill(free, !draining) {
             self.fault(f);
             return;
         }
@@ -1932,6 +2007,7 @@ impl<D: PullDevice> Loop<D> {
                 if !draining && let Some(at) = r.xrun {
                     self.xrun(at);
                 }
+                self.held = after.saturating_sub((raw as i64 - self.map.slip()).max(0) as u64);
                 done = draining && raw as i64 - self.map.slip() >= self.drain_until as i64;
             }
             Ok(None) => {}
