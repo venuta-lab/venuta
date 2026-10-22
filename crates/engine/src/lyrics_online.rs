@@ -28,13 +28,14 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The sources, in their default order, with the names shown for them.
-pub const SOURCES: [(&str, &str); 8] = [
+pub const SOURCES: [(&str, &str); 9] = [
     ("lrclib", "LRCLIB"),
     ("youtube", "YouTube Music"),
     ("simpmusic", "SimpMusic"),
     ("lyricsplus", "LyricsPlus"),
     ("boidu", "Better Lyrics"),
     ("netease", "Netease"),
+    ("amll", "AMLL TTML DB"),
     ("qq", "QQ Music"),
     ("kugou", "Kugou"),
 ];
@@ -768,6 +769,17 @@ fn get_json(
     json_of(req.call().map_err(|e| e.to_string())?)
 }
 
+/// GET text; None for "not there" (404), as [`get_json`].
+fn get_text(agent: &ureq::Agent, url: &str) -> Result<Option<String>, AskError> {
+    if crate::net::is_offline() {
+        return Err(AskError::Down("Local only is on".into()));
+    }
+    let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().unwrap_or_default();
+    answer_of(status, &body)
+}
+
 fn artists_line(req: &LyricsRequest) -> String {
     req.artists.join(", ")
 }
@@ -1043,7 +1055,9 @@ fn closest<'a>(
         .map(|(v, ..)| v)
 }
 
-fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+/// The song's NetEase id, from NetEase's search: the closest in length of the songs that are
+/// the one asked about.
+fn netease_id(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<i64>, AskError> {
     let q = format!(
         "{} {}",
         search_title(&req.title),
@@ -1096,15 +1110,60 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
                 .collect()
         })
         .unwrap_or_default();
-    let Some(id) = closest(req, &songs)
+    Ok(closest(req, &songs)
         .and_then(|s| s.get("id"))
-        .and_then(Value::as_i64)
-    else {
+        .and_then(Value::as_i64))
+}
+
+fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+    let Some(id) = netease_id(agent, req)? else {
         return Ok(None);
     };
     netease_lyrics(req, id, |url| {
         get_json(agent, url, Some("https://music.163.com/"))
     })
+}
+
+/// AMLL's lyrics library (amll-ttml-db, CC0: TTML written by its contributors, every word
+/// timed, many Asian songs with their Roman letters and a Chinese translation), found by the
+/// song's NetEase id.
+fn amll(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
+    let Some(id) = netease_id(agent, req)? else {
+        return Ok(None);
+    };
+    amll_lyrics(req, id, |url| get_text(agent, url))
+}
+
+/// AMLL's TTML for a song by its NetEase id (None: the library hasn't it).
+fn amll_lyrics(
+    req: &LyricsRequest,
+    id: i64,
+    ask: impl Fn(&str) -> Result<Option<String>, AskError>,
+) -> Result<Option<Found>, AskError> {
+    let url = format!(
+        "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/ncm-lyrics/{id}.ttml"
+    );
+    Ok(ask(&url)?.and_then(|ttml| amll_found(req, &ttml)))
+}
+
+/// AMLL's TTML, read, with its contributor credited.
+fn amll_found(req: &LyricsRequest, ttml: &str) -> Option<Found> {
+    let mut f = found_from_text("amll", ttml)?;
+    // <amll:meta key="ttmlAuthorGithubLogin" value="someone"/>
+    let author = ttml
+        .split("<amll:meta ")
+        .skip(1)
+        .filter_map(|m| m.split_once("/>").map(|(attrs, _)| attrs))
+        .find(|attrs| attrs.contains("key=\"ttmlAuthorGithubLogin\""))
+        .and_then(|attrs| attrs.split("value=\"").nth(1))
+        .and_then(|v| v.split('"').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    f.credit = Some(match author {
+        Some(a) => format!("Timed by {a} for the AMLL TTML DB"),
+        None => "From the AMLL TTML DB".into(),
+    });
+    credits_out(f, req)
 }
 
 /// NetEase's credit lines, sent as JSON lines (`{"t":0,"c":[{"tx":"作词: "},{"tx":"Ayase"}]}`)
@@ -1614,6 +1673,7 @@ pub fn ask(
         "lyricsplus" => lyricsplus(&agent, req),
         "boidu" => boidu(&agent, req),
         "netease" => netease(&agent, req),
+        "amll" => amll(&agent, req),
         "qq" => qq(&agent, req),
         "kugou" => kugou(&agent, req),
         other => return Err(AskError::Down(format!("no lyrics source called {other}"))),
@@ -2495,6 +2555,51 @@ mod tests {
             Some("shiritai")
         );
         assert_eq!(second.roman.as_ref().unwrap().words.len(), 1);
+    }
+
+    #[test]
+    fn amlls_library_by_the_songs_netease_id() {
+        let song = req("夜に駆ける", &["YOASOBI"], 261);
+        let ttml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/lyrics/amll-yoru-ni-kakeru.ttml"),
+        )
+        .unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let f = amll_lyrics(&song, 1409311773, |url| {
+            asked.borrow_mut().push(url.to_owned());
+            Ok(Some(ttml.clone()))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            *asked.borrow(),
+            [
+                "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/ncm-lyrics/1409311773.ttml"
+            ]
+        );
+        assert_eq!(f.source, "amll");
+        assert_eq!(
+            f.credit.as_deref(),
+            Some("Timed by mizuhara37 for the AMLL TTML DB")
+        );
+        let first = &f.lyrics.lines[0];
+        assert!(!first.words.is_empty());
+        assert_eq!(
+            first.roman.as_ref().map(|r| &r.source),
+            Some(&SecondSource::Lyrics("amll".into()))
+        );
+        assert_eq!(
+            first
+                .translation
+                .as_ref()
+                .map(|t| (t.lang.as_str(), &t.source)),
+            Some(("zh-CN", &SecondSource::Lyrics("amll".into())))
+        );
+        // Not in the library: no lyrics, not trouble.
+        assert_eq!(amll_lyrics(&song, 1, |_| Ok(None)), Ok(None));
+        assert_eq!(label("amll"), "AMLL TTML DB");
+        assert!(order(&[]).iter().any(|(id, on)| *id == "amll" && *on));
     }
 
     fn idol_req() -> LyricsRequest {
