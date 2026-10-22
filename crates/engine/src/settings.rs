@@ -71,13 +71,71 @@ pub struct Settings {
 /// The player's settings: `engine` 1 plays with engine 1, kept as a fallback until it is removed;
 /// anything else (and no setting) plays with engine 2, the default since it passed every gate
 /// (release R1 of the Listen together design).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Where the sound goes (`docs/design/devices.md`): the output chosen, by its endpoint id, or
+/// none to follow Windows' default (the default); exclusive mode where the device takes it (on
+/// unless turned off); and the extra delay set for each output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerSettings {
     #[serde(default)]
     pub engine: u32,
+    /// The output chosen, by its endpoint id; `None` follows Windows' default.
+    #[serde(default)]
+    pub output: Option<String>,
+    /// The chosen output's name, for when it is away ("SNOWSKY DISC, not connected").
+    #[serde(default)]
+    pub output_name: String,
+    /// Exclusive mode (bit-perfect) where the device takes it.
+    #[serde(default = "yes")]
+    pub exclusive: bool,
+    /// The extra delay set for each output (Bluetooth, a receiver), ms, by endpoint id: how much
+    /// later than the device says you hear it. One not in here has none set. Listen together's
+    /// delay per output is this one.
+    #[serde(default)]
+    pub output_delay_ms: BTreeMap<String, i32>,
+}
+
+impl Default for PlayerSettings {
+    fn default() -> Self {
+        PlayerSettings {
+            engine: 0,
+            output: None,
+            output_name: String::new(),
+            exclusive: true,
+            output_delay_ms: BTreeMap::new(),
+        }
+    }
 }
 
 impl Settings {
+    /// The extra delay set for each output: `player.output_delay_ms`, with the values Listen
+    /// together saved before under `listening.together_delay` by an output's id (not its
+    /// "default" entry, which named no output) where none is set now.
+    pub fn output_delays(&self) -> BTreeMap<String, i32> {
+        let mut d = self.player.output_delay_ms.clone();
+        for (k, v) in &self.listening.together_delay {
+            if k != "default" {
+                d.entry(k.clone()).or_insert(*v);
+            }
+        }
+        d
+    }
+
+    /// Set (or, `None`, clear) an output's extra delay, -500 to +500 ms.
+    pub fn set_output_delay(&mut self, endpoint: &str, ms: Option<i32>) {
+        match ms {
+            Some(ms) => {
+                self.player
+                    .output_delay_ms
+                    .insert(endpoint.to_owned(), ms.clamp(-500, 500));
+            }
+            None => {
+                self.player.output_delay_ms.remove(endpoint);
+            }
+        }
+        // An old value saved by Listen together would otherwise come back.
+        self.listening.together_delay.remove(endpoint);
+    }
     /// The choices made for this account and channel; None until it is asked.
     pub fn ytm_choices_of(&self, account: &str) -> Option<YtmChoices> {
         self.ytm_choices.get(account).copied()
@@ -394,6 +452,32 @@ pub fn save_answers(root: &Path, a: &crate::review::Answers) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_output_follows_windows_exclusive_where_it_can_and_delays_are_kept_per_output() {
+        let old: Settings = serde_json::from_str(r#"{"player": {"engine": 2}}"#).unwrap();
+        assert_eq!(old.player.output, None, "Windows' default, followed");
+        assert!(old.player.exclusive, "bit-perfect unless turned off");
+        assert!(PlayerSettings::default().exclusive);
+        // Listen together's values by output id come over; its "default" named no output.
+        let mut s: Settings = serde_json::from_str(
+            r#"{"listening": {"together_delay": {"default": 90, "{bt}": 180}},
+                "player": {"output_delay_ms": {"{dac}": 0}}}"#,
+        )
+        .unwrap();
+        let d = s.output_delays();
+        assert_eq!(d.get("{bt}"), Some(&180));
+        assert_eq!(d.get("{dac}"), Some(&0), "zero is a value set");
+        assert_eq!(d.get("default"), None);
+        s.set_output_delay("{bt}", Some(900));
+        assert_eq!(s.output_delays().get("{bt}"), Some(&500), "within 500 ms");
+        s.set_output_delay("{bt}", None);
+        assert_eq!(
+            s.output_delays().get("{bt}"),
+            None,
+            "cleared, the old one gone too"
+        );
+    }
 
     #[test]
     fn likes_go_to_youtube_music_only_once_switched_on() {
