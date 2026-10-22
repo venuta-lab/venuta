@@ -278,7 +278,9 @@ impl Chain {
     }
 
     /// Process left-justified interleaved samples in place. Does nothing (not one bit) when
-    /// no tool is on.
+    /// no tool is on. Never allocates: the renderer runs it on the render thread, after the
+    /// resampler, so a chain for the renderer is made for the device's rate and the voice's
+    /// channels.
     pub fn process(&mut self, samples: &mut [i32], channels: u16) {
         if !self.active {
             return;
