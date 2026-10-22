@@ -11,7 +11,7 @@
 //!   with real players in `crates/player/tests/room_whole.rs` (7.3, 7.4, 7.6, clicks);
 //! - copies and alignment (E1 to E11): WP11; one speaker mode's details (A16, B17, J7): WP18;
 //!   output delays (H3, H3b, J8): WP19; hand-over (I3b): WP20; reopen and rejoin (I6, I7):
-//!   WP15; rooms nearby (A15): not built;
+//!   WP15, in `lifecycle.rs`, with the door for rooms nearby (A15);
 //! - the window's (B9, the panel's words and greying): `app/tests` and WP12's model tests;
 //!   the app shell's (A14, B15, C8, J4, H13): the app.
 

@@ -21,7 +21,7 @@ use crate::proto::v3::{
     self, Action, Advice, Member, Phase as WirePhase, RoomView as WireRoom, ToGuest, ToHost,
     check_to_guest, check_to_host,
 };
-use crate::room::v2::{Changes, HOST, HostNote, Knock, Room};
+use crate::room::v2::{Changes, HOST, HostNote, Knock, Room, RoomState};
 use crate::room_player::{ListenMode, SubState, Suspension};
 use crate::time::MonoClock;
 use crate::transport::{
@@ -60,6 +60,19 @@ pub enum Stage {
     /// The connection lost; the music plays on.
     Reconnecting,
     Ended,
+}
+
+/// How a guest's session ended (what the app keeps for a rejoin follows it, WP15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    /// They left.
+    Left,
+    /// Not let in, or taken out.
+    Refused,
+    /// The host ended the room.
+    Ended,
+    /// The host was gone 2 minutes (the host may come back: a rejoin is offered).
+    Lost,
 }
 
 fn us(ns: u64) -> i64 {
@@ -311,6 +324,16 @@ impl<I: Clone + Send + 'static> HostSession<I> {
 
     pub fn set_let_in(&mut self, on: bool) {
         self.room.set_let_in_without_asking(on);
+    }
+
+    /// "Visible on this network" (D19): whether people nearby may knock.
+    pub fn set_visible(&mut self, on: bool) {
+        self.room.set_visible(on);
+    }
+
+    /// What the room needs to come back after the app restarts (D8), as it is now.
+    pub fn state(&self) -> RoomState {
+        self.room.to_keep(self.now_us())
     }
 
     /// The host suggests something to one person (G7).
@@ -663,6 +686,7 @@ pub struct GuestSession<I> {
     path: Option<PathInfo>,
     close_at: Option<u64>,
     last_queue: Option<u32>,
+    ending: Option<Ending>,
     now_ns: u64,
 }
 
@@ -699,6 +723,7 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             path: None,
             close_at: None,
             last_queue: None,
+            ending: None,
             now_ns,
         };
         g.hello();
@@ -763,6 +788,11 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
         self.last_queue
     }
 
+    /// How it ended (`None` while it goes on).
+    pub fn ending(&self) -> Option<Ending> {
+        self.ending
+    }
+
     /// A press: to the room now, or held while reconnecting (sent when back, if fresh).
     pub fn ask(&mut self, action: Action) {
         self.press(action, false);
@@ -809,15 +839,16 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
     /// Leave: the goodbye, then the player let go at once, the connection closed a moment on.
     pub fn leave(&mut self) {
         let _ = self.t.send(self.host, ControlMsg::of(&ToHost::Bye));
-        self.finish(None);
+        self.finish(None, Ending::Left);
     }
 
-    fn finish(&mut self, why: Option<String>) {
+    fn finish(&mut self, why: Option<String>, ending: Ending) {
         if self.stage == Stage::Ended {
             return;
         }
         self.stage = Stage::Ended;
         self.why = why;
+        self.ending = Some(ending);
         self.last_queue = self
             .conductor
             .view()
@@ -880,7 +911,7 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
         }
         if self.conductor.ended() {
             let why = format!("Lost the connection to {}'s room.", self.host_name());
-            self.finish(Some(why));
+            self.finish(Some(why), Ending::Lost);
         }
         if self
             .pressing
@@ -941,8 +972,13 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             }
             ToGuest::Refused { why } | ToGuest::Ended { why } => {
                 let why = why.clone();
+                let ending = if matches!(m, ToGuest::Ended { .. }) {
+                    Ending::Ended
+                } else {
+                    Ending::Refused
+                };
                 self.conductor.message(&m, now_ns);
-                self.finish(Some(why));
+                self.finish(Some(why), ending);
                 return;
             }
             ToGuest::Commit { .. } | ToGuest::Hold { .. } => self.pressing = None,

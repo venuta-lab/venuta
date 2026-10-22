@@ -1915,7 +1915,7 @@ What comes back after an app restart, a crash or an ending: the host's room (I6,
 
 | Part | File | What |
 |---|---|---|
-| A room's state, kept | `together/src/room/v2.rs` (`contract:` commit) | `RoomState` (serde): what a room needs to come back; `Room::state(now)` and `Room::reopen(state, now)`; members dropped for silence remembered (`returning`); the door for people nearby (`set_visible`) |
+| A room's state, kept | `together/src/room/v2.rs` (`contract:` commit) | `RoomState` (serde): what a room needs to come back; `Room::to_keep(now)` and `Room::reopen(state, now)`; members dropped for silence remembered (`returning`); the door for people nearby (`set_visible`) |
 | Records and the offer | `together/src/lifecycle.rs` (new) | `HostRecord`, `GuestRecord`, `Kept` (two files in a folder, written whole: a temporary file renamed over), `offer(host, guest, now)`: what to offer at start, and whether at once |
 | The sessions | `together/src/session.rs` | `HostSession::state`, `set_visible`; `GuestSession::ending()` (how it ended: left, refused, ended by the host, lost) |
 | The door code | `together/src/invite.rs` | `nearby_secret(secret)`: blake3's derived key of the secret, 16 bytes as hex |
