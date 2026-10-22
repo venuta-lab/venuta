@@ -698,7 +698,7 @@ fn priority_of(get: &str) -> i32 {
 
 /// Whether the selected path is another than the last one seen (the first one is no change;
 /// a moment with none selected changes nothing): the new path's state when it is.
-fn changed(
+pub(crate) fn changed(
     last: &mut Option<iroh::TransportAddr>,
     now: Option<(iroh::TransportAddr, PathInfo)>,
 ) -> Option<PathInfo> {
@@ -715,7 +715,7 @@ fn selected(conn: &Connection) -> Option<(iroh::TransportAddr, PathInfo)> {
     Some((p.remote_addr().clone(), info_of(&p)))
 }
 
-fn info_of(p: &iroh::endpoint::Path<'_>) -> PathInfo {
+pub(crate) fn info_of(p: &iroh::endpoint::Path<'_>) -> PathInfo {
     PathInfo {
         direct: p.is_ip(),
         relay: p.is_relay(),

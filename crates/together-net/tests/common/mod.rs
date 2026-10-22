@@ -13,8 +13,8 @@ pub use std::time::{Duration, Instant};
 pub use together::invite::Invite;
 pub use together::proto::{self, Action, Role, RoomView, Song, ToGuest, ToHost};
 pub use together::room::Room;
-pub use together_net::guest::{GuestHooks, GuestSession, Stage};
-pub use together_net::host::{Get, HostHooks, HostSession};
+pub use together_net::guest::{GuestHooks, GuestSession, GuestTiming, Stage};
+pub use together_net::host::{Get, HostHooks, HostSession, HostTiming};
 pub use together_net::net::{self, News, Reach};
 pub use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -643,4 +643,27 @@ impl Link {
     pub fn cut(&self) {
         self.cut.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// A host with these timings.
+pub async fn host_timed(songs: Vec<Song>, timing: HostTiming) -> TestHost {
+    let reach = local();
+    let ep = net::endpoint(&reach, true, None).await.unwrap();
+    let ticket = net::ticket(&ep, &reach).await;
+    let invite = Invite {
+        to: ticket,
+        secret: SECRET.into(),
+        until: net::unix_now() + 3_600,
+        host: "Asha".into(),
+    };
+    let app = Arc::new(App::default());
+    let s = HostSession::new_timed(
+        ep,
+        Room::new("Asha", SECRET, songs),
+        invite.clone(),
+        app.clone(),
+        timing,
+    );
+    s.run();
+    TestHost { s, app, invite }
 }

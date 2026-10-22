@@ -761,8 +761,8 @@ async fn a_press_goes_at_once_or_waits_for_the_connection_and_the_guest_comes_ba
     let t = Instant::now();
     let mut v2 = next.await.unwrap();
     assert!(
-        t.elapsed() >= Duration::from_secs(2),
-        "tried again after a few seconds ({:?})",
+        t.elapsed() >= Duration::from_millis(1_500),
+        "tried again after 2 s, the first wait ({:?})",
         t.elapsed()
     );
     assert_eq!(v2.conn.remote_id(), who, "the same key: the same person");

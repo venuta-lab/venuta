@@ -9,8 +9,10 @@
 
 use crate::host::Get;
 use crate::net::{self, Clock, Lines, News, Reach};
+use crate::transport::Timing;
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
+use n0_future::StreamExt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use together::clock::Sample;
@@ -48,13 +50,76 @@ pub trait GuestHooks: Send + Sync + 'static {
     fn name(&self) -> String;
 }
 
+/// How a guest's session waits (design 4.1).
+#[derive(Debug, Clone)]
+pub struct GuestTiming {
+    /// How it dials again after the connection is lost.
+    pub redial: Timing,
+    /// A press held while reconnecting goes only this long after it was pressed (D10).
+    pub held_for: Duration,
+}
+
+impl Default for GuestTiming {
+    fn default() -> Self {
+        GuestTiming {
+            redial: Timing::default(),
+            held_for: HELD_FOR,
+        }
+    }
+}
+
+/// A press held while reconnecting is dropped after this (D10).
+pub const HELD_FOR: Duration = Duration::from_secs(10);
+/// Clock pings: this many, `BURST_EVERY` apart, on connect, reconnect and a change of path;
+/// then one each `PING_EVERY` (design 4.2).
+pub const BURST: u32 = 20;
+pub const BURST_EVERY: Duration = Duration::from_millis(50);
+pub const PING_EVERY: Duration = Duration::from_secs(1);
+/// How long one dial may take.
+const DIAL: Duration = Duration::from_secs(25);
+
+/// Why a press held while reconnecting didn't go, in words for the window.
+pub fn too_late(action: &Action) -> String {
+    let what = match action {
+        Action::Play => "Your play",
+        Action::Pause => "Your pause",
+        Action::Seek { .. } => "Your seek",
+        Action::Next => "Your skip",
+        Action::Previous => "Your skip back",
+        Action::Jump { .. } => "Your jump",
+        Action::Add { .. } => "The songs you added",
+        Action::Remove { .. } => "Your removal",
+        Action::Move { .. } => "Your move in the queue",
+    };
+    let verb = if matches!(action, Action::Add { .. }) {
+        "were"
+    } else {
+        "was"
+    };
+    format!("{what} {verb} too late to send.")
+}
+
+/// A press waiting for the connection.
+struct Held {
+    n: u64,
+    at: std::time::Instant,
+    line: Vec<u8>,
+    action: Action,
+}
+
 pub struct GuestSession {
     pub invite: Invite,
     ep: Endpoint,
     conn: Mutex<Option<Connection>>,
     out: Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>,
-    /// What was asked while the connection was down, to send once it's back.
-    held: Mutex<Vec<Vec<u8>>>,
+    /// What was asked while the connection was down, to send once it's back (while fresh).
+    held: Mutex<Vec<Held>>,
+    held_n: std::sync::atomic::AtomicU64,
+    /// Itself, for the tasks a press starts.
+    this: std::sync::Weak<GuestSession>,
+    timing: GuestTiming,
+    /// A new burst of clock pings is due (a change of path).
+    burst: Arc<tokio::sync::Notify>,
     /// This session's own clock (the host's is learned against it).
     pub local: Clock,
     pub clock: Arc<Mutex<together::clock::Clock>>,
@@ -93,6 +158,18 @@ impl GuestSession {
         app: String,
         hooks: Arc<dyn GuestHooks>,
     ) -> Result<Arc<GuestSession>, String> {
+        Self::join_timed(invite, reach, key_dir, app, hooks, GuestTiming::default()).await
+    }
+
+    /// [`GuestSession::join`], waiting as `timing` says.
+    pub async fn join_timed(
+        invite: Invite,
+        reach: &Reach,
+        key_dir: &std::path::Path,
+        app: String,
+        hooks: Arc<dyn GuestHooks>,
+        timing: GuestTiming,
+    ) -> Result<Arc<GuestSession>, String> {
         if !invite.open_at(net::unix_now()) {
             return Err("This room's invite has ended. Ask for a new one.".into());
         }
@@ -103,7 +180,8 @@ impl GuestSession {
             .await
             .map_err(|e| e.to_string())?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-        let g = Arc::new(GuestSession {
+        let g = Arc::new_cyclic(|this| GuestSession {
+            this: this.clone(),
             invite,
             ep,
             conn: Mutex::default(),
@@ -116,6 +194,9 @@ impl GuestSession {
             why: Mutex::default(),
             server: Mutex::default(),
             held: Mutex::default(),
+            held_n: Default::default(),
+            timing,
+            burst: Arc::default(),
             proxy_port: port,
             proxy_token: token.clone(),
             app,
@@ -132,7 +213,7 @@ impl GuestSession {
             }
         });
         *g.server.lock().unwrap() = Some(server);
-        g.connect().await?;
+        g.connect(DIAL).await?;
         Ok(g)
     }
 
@@ -145,18 +226,19 @@ impl GuestSession {
     /// called again from the task it starts, when the connection drops.)
     fn connect(
         self: &Arc<Self>,
+        limit: Duration,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
-        Box::pin(self.connect_once())
+        Box::pin(self.connect_once(limit))
     }
 
-    async fn connect_once(self: &Arc<Self>) -> Result<(), String> {
+    async fn connect_once(self: &Arc<Self>, limit: Duration) -> Result<(), String> {
         let ticket: iroh_tickets::endpoint::EndpointTicket = self
             .invite
             .to
             .parse()
             .map_err(|_| "That invite isn't readable.".to_owned())?;
         let conn = tokio::time::timeout(
-            Duration::from_secs(25),
+            limit,
             self.ep.connect(ticket.endpoint_addr().clone(), net::ALPN),
         )
         .await
@@ -191,9 +273,13 @@ impl GuestSession {
             let _ = send.finish();
         });
         *self.conn.lock().unwrap() = Some(conn.clone());
-        // What was asked while the connection was down goes first.
-        for line in std::mem::take(&mut *self.held.lock().unwrap()) {
-            let _ = out.send(line);
+        // What was asked while the connection was down goes first, if still fresh.
+        for h in std::mem::take(&mut *self.held.lock().unwrap()) {
+            if h.at.elapsed() < self.timing.held_for {
+                let _ = out.send(h.line);
+            } else {
+                self.hooks.note(&too_late(&h.action));
+            }
         }
         *self.out.lock().unwrap() = Some(out);
         // Its news.
@@ -209,12 +295,15 @@ impl GuestSession {
             }
             g.dropped().await;
         });
-        // The host's clock: a burst at first, then now and then.
+        // The host's clock: a burst at first (and after a change of path), then one a second,
+        // for as long as this connection lasts.
         let g = self.clone();
+        let c = conn.clone();
         self.rt.spawn(async move {
             let mut n: u32 = 0;
+            let mut burst = BURST;
             loop {
-                if g.out.lock().unwrap().is_none() || *g.stage.lock().unwrap() == Stage::Ended {
+                if c.close_reason().is_some() || *g.stage.lock().unwrap() == Stage::Ended {
                     break;
                 }
                 g.send(ToHost::Ping {
@@ -222,7 +311,33 @@ impl GuestSession {
                     t1: g.local.now_us(),
                 });
                 n += 1;
-                tokio::time::sleep(Duration::from_millis(if n < 16 { 80 } else { 2_000 })).await;
+                let wait = if burst > 1 {
+                    burst -= 1;
+                    BURST_EVERY
+                } else {
+                    PING_EVERY
+                };
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = g.burst.notified() => burst = BURST,
+                }
+            }
+        });
+        // Its paths: a change tells the clock, and a burst follows.
+        let g = self.clone();
+        self.rt.spawn(async move {
+            let mut last = None;
+            let mut paths = conn.paths_stream();
+            while let Some(list) = paths.next().await {
+                let now = list
+                    .iter()
+                    .find(|p| p.is_selected())
+                    .map(|p| (p.remote_addr().clone(), crate::transport::info_of(&p)));
+                if crate::transport::changed(&mut last, now).is_some() {
+                    g.hooks.trace("room: the path to the host changed");
+                    g.clock.lock().unwrap().path_changed(g.local.now_us());
+                    g.burst.notify_one();
+                }
             }
         });
         Ok(())
@@ -318,12 +433,20 @@ impl GuestSession {
         self.set_stage(Stage::Reconnecting);
         self.hooks
             .trace("room: the connection to the host dropped; trying again");
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+        let lost = std::time::Instant::now();
+        let redial = self.timing.redial.clone();
+        for wait in redial.redial_waits() {
+            if lost.elapsed() + wait >= redial.redial_for {
+                break;
+            }
+            tokio::time::sleep(wait).await;
             if *self.stage.lock().unwrap() == Stage::Ended {
                 return;
             }
-            if self.connect().await.is_ok() {
+            let left = redial.redial_for.saturating_sub(lost.elapsed());
+            if self.connect(left.min(DIAL)).await.is_ok() {
+                // Back, perhaps by another path: the clock measures afresh.
+                self.clock.lock().unwrap().reconnected(self.local.now_us());
                 self.hooks.trace("room: back in touch with the host");
                 return;
             }
@@ -372,19 +495,46 @@ impl GuestSession {
 
     /// A press: to the host now, or as soon as the connection is back (never dropped quietly).
     pub fn ask(&self, action: Action) {
-        let m = ToHost::Ask { action };
+        let m = ToHost::Ask {
+            action: action.clone(),
+        };
         if self.out.lock().unwrap().is_some() {
             self.send(m);
             return;
         }
         if *self.stage.lock().unwrap() == Stage::Reconnecting {
-            let mut held = self.held.lock().unwrap();
-            if held.len() < 20 {
-                held.push(proto::line(&m));
+            let n = self
+                .held_n
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            {
+                let mut held = self.held.lock().unwrap();
+                if held.len() < 20 {
+                    held.push(Held {
+                        n,
+                        at: std::time::Instant::now(),
+                        line: proto::line(&m),
+                        action: action.clone(),
+                    });
+                }
             }
             self.hooks.note(
                 "Reconnecting: your press will reach the room as soon as the connection is back.",
             );
+            // Not sent by then, it is dropped, and said so.
+            let held_for = self.timing.held_for;
+            let me = self.this.clone();
+            self.rt.spawn(async move {
+                tokio::time::sleep(held_for).await;
+                let Some(g) = me.upgrade() else { return };
+                let gone = {
+                    let mut held = g.held.lock().unwrap();
+                    let i = held.iter().position(|h| h.n == n);
+                    i.map(|i| held.remove(i))
+                };
+                if let Some(h) = gone {
+                    g.hooks.note(&too_late(&h.action));
+                }
+            });
         }
     }
 

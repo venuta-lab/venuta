@@ -276,3 +276,200 @@ async fn a_song_of_no_known_length_and_covers_go_unpaced() {
     assert_eq!(got, 2_000_000);
     assert!(all < Duration::from_millis(1_500), "{all:?}");
 }
+
+// --- What the live sessions (protocol 2) take from WP8 -------------------------------------
+
+/// A guest session joined to a plain host, with these timings: the host's side of its first
+/// connection, the welcome sent.
+async fn joined_timed(
+    h: &RawHost,
+    keys: &std::path::Path,
+    timing: GuestTiming,
+) -> (Arc<GuestSession>, Arc<App>, Visit) {
+    let ep = h.ep.clone();
+    let invite = h.invite.clone();
+    let visit = tokio::spawn(async move { RawHost { ep, invite }.visit().await });
+    let app = Arc::new(App::default());
+    let g = GuestSession::join_timed(
+        h.invite.clone(),
+        &local(),
+        keys,
+        "Venuta 9.9.9".into(),
+        app.clone(),
+        timing,
+    )
+    .await
+    .unwrap();
+    let mut v = visit.await.unwrap();
+    assert!(matches!(v.hear().await, Some(ToHost::Hello { .. })));
+    v.say(&ToGuest::Welcome {
+        you: 1,
+        room: Room::new("Asha", SECRET, vec![]).view(false),
+    })
+    .await;
+    until("in", || *g.stage.lock().unwrap() == Stage::In).await;
+    (g, app, v)
+}
+
+fn quick_guest() -> GuestTiming {
+    GuestTiming {
+        redial: together_net::transport::Timing {
+            redial_first: Duration::from_millis(100),
+            redial_most: Duration::from_millis(300),
+            redial_for: Duration::from_secs(20),
+        },
+        held_for: Duration::from_millis(400),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_press_held_while_reconnecting_goes_only_while_it_is_fresh() {
+    let keys = tempfile::tempdir().unwrap();
+    let h = RawHost::new(net::unix_now() + 3_600).await;
+    let (g, app, v) = joined_timed(&h, keys.path(), quick_guest()).await;
+    v.conn.close(9u32.into(), b"blip");
+    until("reconnecting", || {
+        *g.stage.lock().unwrap() == Stage::Reconnecting
+    })
+    .await;
+    g.ask(Action::Pause);
+    app.until("too late", |t| {
+        t.contains(&Told::Note("Your pause was too late to send.".into()))
+    })
+    .await;
+    // A fresh one, then the host answers again: only the fresh one goes.
+    g.ask(Action::Next);
+    let ep = h.ep.clone();
+    let invite = h.invite.clone();
+    let mut v2 = tokio::spawn(async move { RawHost { ep, invite }.visit().await })
+        .await
+        .unwrap();
+    assert!(matches!(v2.hear().await, Some(ToHost::Hello { .. })));
+    assert_eq!(
+        v2.hear().await,
+        Some(ToHost::Ask {
+            action: Action::Next
+        })
+    );
+    assert!(matches!(v2.hear().await, Some(ToHost::Ping { id: 0, .. })));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_kind_of_press_says_why_it_did_not_go() {
+    use together_net::guest::too_late;
+    assert_eq!(too_late(&Action::Play), "Your play was too late to send.");
+    assert_eq!(
+        too_late(&Action::Seek { position_ms: 1 }),
+        "Your seek was too late to send."
+    );
+    assert_eq!(too_late(&Action::Next), "Your skip was too late to send.");
+    assert_eq!(
+        too_late(&Action::Previous),
+        "Your skip back was too late to send."
+    );
+    assert_eq!(
+        too_late(&Action::Jump { index: 1 }),
+        "Your jump was too late to send."
+    );
+    assert_eq!(
+        too_late(&Action::Add {
+            songs: vec![],
+            next: false
+        }),
+        "The songs you added were too late to send."
+    );
+    assert_eq!(
+        too_late(&Action::Remove { index: 1 }),
+        "Your removal was too late to send."
+    );
+    assert_eq!(
+        too_late(&Action::Move { from: 1, to: 2 }),
+        "Your move in the queue was too late to send."
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_guest_stops_trying_after_its_time_and_says_the_room_is_lost() {
+    let keys = tempfile::tempdir().unwrap();
+    let h = RawHost::new(net::unix_now() + 3_600).await;
+    let timing = GuestTiming {
+        redial: together_net::transport::Timing {
+            redial_for: Duration::from_millis(1_500),
+            ..quick_guest().redial
+        },
+        ..quick_guest()
+    };
+    let (g, _app, v) = joined_timed(&h, keys.path(), timing).await;
+    let t = Instant::now();
+    v.conn.close(9u32.into(), b"gone");
+    h.ep.close().await;
+    until("ended, and why", || g.why.lock().unwrap().is_some()).await;
+    assert_eq!(*g.stage.lock().unwrap(), Stage::Ended);
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    assert_eq!(
+        g.why.lock().unwrap().as_deref(),
+        Some("Lost Asha's room. Join again with the invite.")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_guests_pings_come_twenty_in_a_burst_then_one_a_second() {
+    let keys = tempfile::tempdir().unwrap();
+    let h = RawHost::new(net::unix_now() + 3_600).await;
+    let (_g, _app, mut v) = joined_timed(&h, keys.path(), quick_guest()).await;
+    let mut at = Vec::new();
+    while at.len() < 22 {
+        if let Some(ToHost::Ping { id, .. }) = v.hear().await {
+            assert_eq!(id as usize, at.len());
+            at.push(Instant::now());
+        }
+    }
+    let burst = at[19] - at[0];
+    assert!(
+        burst >= Duration::from_millis(800) && burst < Duration::from_millis(1_600),
+        "20 pings 50 ms apart: {burst:?}"
+    );
+    for w in at[19..].windows(2) {
+        let gap = w[1] - w[0];
+        assert!(
+            gap >= Duration::from_millis(850) && gap < Duration::from_millis(1_500),
+            "then one a second: {gap:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_host_keeps_a_dropped_member_as_long_as_a_guest_tries_again() {
+    assert_eq!(HostTiming::default().away_for, Duration::from_secs(120));
+    assert_eq!(
+        GuestTiming::default().redial.redial_for,
+        Duration::from_secs(120),
+        "the same two minutes (D17)"
+    );
+    let h = host_timed(
+        vec![],
+        HostTiming {
+            away_for: Duration::from_millis(500),
+        },
+    )
+    .await;
+    let ali = member(&h, 1, "Ali").await;
+    ali.conn.close(0u32.into(), b"gone");
+    until("away", || {
+        h.s.room
+            .lock()
+            .unwrap()
+            .view(true)
+            .members
+            .iter()
+            .any(|m| m.id == 1 && m.away)
+    })
+    .await;
+    let t = Instant::now();
+    until("out", || !h.s.room.lock().unwrap().is_member(1)).await;
+    assert!(
+        t.elapsed() >= Duration::from_millis(350),
+        "{:?}",
+        t.elapsed()
+    );
+}

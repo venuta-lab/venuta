@@ -48,6 +48,22 @@ pub struct Get {
     pub to: Option<u64>,
 }
 
+/// How a hosted room waits (design 4.1, D17).
+#[derive(Debug, Clone)]
+pub struct HostTiming {
+    /// A member whose connection dropped is kept, shown away, this long: as long as a guest
+    /// tries to come back.
+    pub away_for: Duration,
+}
+
+impl Default for HostTiming {
+    fn default() -> Self {
+        HostTiming {
+            away_for: Duration::from_secs(120),
+        }
+    }
+}
+
 pub struct HostSession {
     pub ep: Endpoint,
     pub clock: Clock,
@@ -61,6 +77,7 @@ pub struct HostSession {
     waiting: Mutex<HashMap<u32, (Out, Connection)>>,
     pub invite: Invite,
     hooks: Arc<dyn HostHooks>,
+    timing: HostTiming,
     rt: Handle,
 }
 
@@ -68,6 +85,17 @@ impl HostSession {
     /// A room on this endpoint (made with `host: true`), its clock starting now. Called on the
     /// async runtime the room's work runs on. Nobody is let in until [`HostSession::run`].
     pub fn new(ep: Endpoint, room: Room, invite: Invite, hooks: Arc<dyn HostHooks>) -> Arc<Self> {
+        Self::new_timed(ep, room, invite, hooks, HostTiming::default())
+    }
+
+    /// [`HostSession::new`], waiting as `timing` says.
+    pub fn new_timed(
+        ep: Endpoint,
+        room: Room,
+        invite: Invite,
+        hooks: Arc<dyn HostHooks>,
+        timing: HostTiming,
+    ) -> Arc<Self> {
         Arc::new(HostSession {
             ep,
             clock: Clock::new(),
@@ -78,6 +106,7 @@ impl HostSession {
             downloads: Downloads::default(),
             invite,
             hooks,
+            timing,
             rt: Handle::current(),
         })
     }
@@ -326,7 +355,7 @@ impl HostSession {
         if !was_waiting && !was_conn {
             return;
         }
-        // A goodbye: out at once. Gone without one (dropped): away now, out after a minute
+        // A goodbye: out at once. Gone without one (dropped): away now, out after the grace
         // unless back.
         if was_conn && said_bye {
             self.hooks.trace(&format!("room: {id} left"));
@@ -345,8 +374,9 @@ impl HostSession {
         };
         self.apply(c);
         let weak = Arc::downgrade(&self);
+        let away_for = self.timing.away_for;
         self.rt.spawn(async move {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(away_for).await;
             if let Some(h) = weak.upgrade()
                 && !h.conns.lock().unwrap().contains_key(&id)
             {
