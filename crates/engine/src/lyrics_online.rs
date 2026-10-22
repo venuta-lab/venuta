@@ -352,8 +352,47 @@ pub fn parse_ttml(xml: &str) -> Vec<LyricLine> {
     ttml::read(xml, "").0.lines
 }
 
-/// LyricsPlus's own JSON: lines with their time, and syllables when it times words.
-fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
+/// LyricsPlus's syllables (`[{time, duration, text}]`) as timed words.
+fn kpoe_syllables(v: Option<&Value>) -> Vec<Word> {
+    v.and_then(Value::as_array)
+        .map(|ws| {
+            ws.iter()
+                .filter_map(|w| {
+                    let ms = w.get("time").and_then(Value::as_u64)?;
+                    let d = w.get("duration").and_then(Value::as_u64).unwrap_or(0);
+                    Some(Word {
+                        start_ms: ms,
+                        end_ms: ms + d,
+                        text: w.get("text").and_then(Value::as_str)?.to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A second line's text and language as LyricsPlus sends them (`{lang, text}`), when it has
+/// words.
+fn kpoe_second(v: Option<&Value>) -> Option<(String, Option<&str>)> {
+    let v = v?;
+    let text = v
+        .get("text")
+        .and_then(Value::as_str)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lang = v
+        .get("lang")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|l| !l.is_empty());
+    (!text.is_empty()).then_some((text, lang))
+}
+
+/// LyricsPlus's own JSON: lines with their time, syllables when it times words, and each
+/// line's translation and transliteration when the lyrics it relays carry them (Apple's,
+/// with their language; a transliteration timed by its own syllables). `lang` is the song's.
+fn parse_kpoe(v: &Value, lang: Option<&str>) -> Vec<LyricLine> {
     let word_timed = v.get("type").and_then(Value::as_str) == Some("Word");
     let mut lines: Vec<LyricLine> = v
         .get("lyrics")
@@ -370,24 +409,8 @@ fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
                         .unwrap_or("")
                         .trim()
                         .to_owned();
-                    let words: Vec<Word> = if word_timed {
-                        l.get("syllabus")
-                            .and_then(Value::as_array)
-                            .map(|ws| {
-                                ws.iter()
-                                    .filter_map(|w| {
-                                        let ms = w.get("time").and_then(Value::as_u64)?;
-                                        let d =
-                                            w.get("duration").and_then(Value::as_u64).unwrap_or(0);
-                                        Some(Word {
-                                            start_ms: ms,
-                                            end_ms: ms + d,
-                                            text: w.get("text").and_then(Value::as_str)?.to_owned(),
-                                        })
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default()
+                    let words = if word_timed {
+                        kpoe_syllables(l.get("syllabus"))
                     } else {
                         Vec::new()
                     };
@@ -401,12 +424,37 @@ fn parse_kpoe(v: &Value) -> Vec<LyricLine> {
                     } else {
                         text
                     };
-                    (!text.is_empty()).then_some(LyricLine {
+                    if text.is_empty() {
+                        return None;
+                    }
+                    let script = crate::lyrics::script_of(&text);
+                    let roman = kpoe_second(l.get("transliteration"))
+                        .filter(|(r, _)| *r != text && script != "Latn")
+                        .map(|(r, rl)| Second {
+                            words: kpoe_syllables(
+                                l.get("transliteration").and_then(|t| t.get("syllabus")),
+                            ),
+                            lang: rl.map_or_else(|| roman_lang(lang, &script), str::to_owned),
+                            text: r,
+                            source: SecondSource::Lyrics("lyricsplus".into()),
+                        });
+                    let translation = kpoe_second(l.get("translation"))
+                        .filter(|(t, _)| *t != text)
+                        .map(|(t, tl)| {
+                            let mut s = carried_translation(&t, "lyricsplus");
+                            if let Some(tl) = tl {
+                                s.lang = tl.to_owned();
+                            }
+                            s
+                        });
+                    Some(LyricLine {
                         start_ms: ms,
                         end_ms: ms + duration,
                         text,
                         words,
-                        ..Default::default()
+                        script,
+                        roman,
+                        translation,
                     })
                 })
                 .collect()
@@ -907,7 +955,6 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
     {
         return None;
     }
-    let lines = parse_kpoe(v);
     // The song's language, as LyricsPlus labels it ("ja", "hi").
     let lang = v
         .pointer("/metadata/language")
@@ -915,6 +962,7 @@ fn lyricsplus_found(req: &LyricsRequest, v: &Value) -> Option<Found> {
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_owned);
+    let lines = parse_kpoe(v, lang.as_deref());
     (!lines.is_empty()).then(|| Found {
         source: "lyricsplus".into(),
         lyrics: Lyrics {
@@ -2045,6 +2093,85 @@ mod tests {
         assert_eq!(total_ms(&serde_json::json!("1:02:03.5")), Some(3_723_500));
         assert_eq!(total_ms(&serde_json::json!("45.25")), Some(45_250));
         assert_eq!(total_ms(&serde_json::json!("soon")), None);
+    }
+
+    #[test]
+    fn lyricsplus_lines_carry_their_translation_and_transliteration() {
+        // LyricsPlus sends both per line when the lyrics it relays carry them (its
+        // `translation {lang, text}` and `transliteration {lang, text, syllabus}`, from Apple's
+        // TTML head). None of the answers captured on 2026-10-21 and 2026-10-22 had them, so
+        // they are added here to Idol's, in that shape.
+        let mut v = fixture("lyricsplus-idol.json");
+        v["lyrics"][0]["transliteration"] = serde_json::json!({
+            "lang": "ja-Latn",
+            "text": "Muteki no egao de arasu media",
+            "syllabus": [
+                { "time": 589, "duration": 807, "text": "Muteki no " },
+                { "time": 1396, "duration": 470, "text": "egao " },
+                { "time": 1866, "duration": 179, "text": "de " },
+                { "time": 2045, "duration": 301, "text": "arasu " },
+                { "time": 2346, "duration": 851, "text": "media" }
+            ]
+        });
+        v["lyrics"][0]["translation"] = serde_json::json!({
+            "lang": "en",
+            "text": "Taking the media by storm with an invincible smile"
+        });
+        v["lyrics"][1]["transliteration"] =
+            serde_json::json!({ "lang": "", "text": "Shiritai sono himitsu misuteriasu" });
+        v["lyrics"][1]["translation"] = serde_json::json!({ "text": "想知道那个秘密" });
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        let lp = lyricsplus_found(&idol, &v).unwrap();
+        let first = &lp.lyrics.lines[0];
+        let r = first.roman.as_ref().unwrap();
+        assert_eq!(r.text, "Muteki no egao de arasu media");
+        assert_eq!(
+            (r.lang.as_str(), &r.source),
+            ("ja-Latn", &SecondSource::Lyrics("lyricsplus".into()))
+        );
+        assert_eq!(
+            r.words
+                .iter()
+                .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (589, 1396, "Muteki no "),
+                (1396, 1866, "egao "),
+                (1866, 2045, "de "),
+                (2045, 2346, "arasu "),
+                (2346, 3197, "media")
+            ],
+            "timed by its own syllables"
+        );
+        let t = first.translation.as_ref().unwrap();
+        assert_eq!(
+            (t.text.as_str(), t.lang.as_str()),
+            ("Taking the media by storm with an invincible smile", "en")
+        );
+        let second = &lp.lyrics.lines[1];
+        let r = second.roman.as_ref().unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.lang.as_str(), r.words.len()),
+            ("Shiritai sono himitsu misuteriasu", "ja-Latn", 0),
+            "no language sent: the song's"
+        );
+        assert_eq!(
+            second.translation.as_ref().map(|t| t.lang.as_str()),
+            Some("zh"),
+            "no language sent: told by its letters"
+        );
+        // Kept through the made pronunciation `ask` adds.
+        let mut lyrics = lp.lyrics.clone();
+        crate::lyrics::add_pronunciation(&mut lyrics);
+        assert_eq!(lyrics.lines[0].roman, lp.lyrics.lines[0].roman);
+
+        // A line already in Latin letters gets no pronunciation, whatever is sent.
+        let mut v = fixture("pairing/kesariya.lyricsplus.json");
+        v["lyrics"][0]["transliteration"] =
+            serde_json::json!({ "lang": "hi-Latn", "text": "Mujhko itna bataye koyi" });
+        let kesariya = req("Kesariya", &["Arijit Singh"], 268);
+        let lp = lyricsplus_found(&kesariya, &v).unwrap();
+        assert_eq!(lp.lyrics.lines[0].roman, None);
     }
 
     fn texts(f: &Found) -> Vec<&str> {
