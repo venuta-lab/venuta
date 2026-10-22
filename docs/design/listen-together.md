@@ -1541,6 +1541,53 @@ Where the first frame after a seek lies is taken from the first packet that give
 
 **Left to others.** The alignment envelope and PCM hash need the song from its start, which a voice starting partway never sees: WP11 runs `analysis::envelope` over a `Source` of its own. The readiness rule (2 s or 3 s decoded, 10 s of bytes ahead or all) is WP4's, read from `VoiceStatus`.
 
+#### WP4 notes: engine 2's control thread, programs and status thread (the plan)
+
+**Where it is.** `crates/player/src/engine.rs` keeps engine 1 as it is, and the types both engines share (`Player`, `Cmd`, `Status`, `Signal`, `Item`, `OutputChoice`). Engine 2 is in its submodules: `engine/control.rs` (the command loop, the output's life, voices, render commands), `engine/program.rs` (`OwnProgram`, `RoomProgram`), `engine/status.rs` (the status thread), `engine/memory.rs` (the memory outputs and the clocks they run on). `Player::spawn` stays engine 1; `Player::spawn_with(EngineKind, ..)` chooses, and the app reads `player.engine` from its settings (1 unless set to 2). Engine 2 takes `Cmd::Sync` as engine 1's rooms send it only once WP5's adapter is in; until then it plays on alone.
+
+**Clocks.** Everything in engine 2 waits on one `Timebase`: the control and status threads through sleepers made before they start, voices through their `Pace`, the output through its own thread.
+
+| Output choice | Clock | Who moves time |
+|---|---|---|
+| `Device` | `RealClock`, voices `Pace::Real` | real time (the WASAPI output v2) |
+| `PacedMemory` | `RealClock`, voices `Pace::Real` | real time, into a `SimOutput` (10 ms periods, 50 ms buffer) |
+| `Memory` | a `SimClock` of its own, voices `Pace::Clock` | the engine's driver thread: as fast as the threads' work allows and at most 32 times real time. Decoding takes no virtual time, so nothing runs dry, and a run is the same however busy the machine is |
+| `Sim { clock, output }` | the test's `SimClock` | the test (`pass`). Dropping the player passes time on that clock until the engine has quit, so a test drops it from the thread that runs the simulation |
+
+The memory outputs fill `output::Captured` as engine 1's memory device does (formats opened, frames per open, and the bytes as the renderer made them, each start's run after the one before), so the existing tests read both engines alike.
+
+**The control thread** ("venuta-player") waits for a command (`recv_timeout` in real time; on a `SimClock`, polled between sleeps of 1 ms) at most 5 ms while anything is under way (a voice opening, the output running) and 100 ms otherwise. Each turn: commands, room calls, the output's events, the renderer's markers, notes and returned things (all `try_recv`), then the program's step. It never waits for audio: a fade is a command at a frame, and what follows it is done when its note comes back.
+
+**Frames and places.** "Now" is the renderer status's `frames` (the next call's `at`); a solo command goes at now plus two periods, so it is taken before its frame unless the thread is held up for two periods (then the renderer does it late, keeping its length). The place a voice is at on a device frame comes from its markers: the last one at or before the frame, its content plus the frames since times its ratio (exact when bit-perfect).
+
+**The output's life.** Opened for the first song to play (an `OpenRequest` of its format). In exclusive and memory mode, a song of another format (rate, channels or bits) reopens it at that song's start, from silence; in shared mode it never reopens (D2). A new renderer for every start (device frames count from 0 at a start, and a renderer's envelopes are in its own frames); the resampler's kernels are worked out once per device rate and kept (`sync::Kernels::for_device`), since making them took 15 to 25 ms. The output is stopped only once the last fade has been rendered and a period more (the output pads its tail with silence, WP1), closed after 10 s paused (a sound device only: a memory output keeps no other app out), on an output switch, a reopen for another format, and at quit. `Lost`: the renderer is taken back, the output closed and opened again (0.5, 1, 2 and 5 s apart) and the song started partway (15 ms) where it was last heard; after the fourth failure it pauses with the error. `DefaultChanged` (following the default): the same, at once. `Xrun` events count `ran_dry`. The endpoint id from the WASAPI output's notes is kept for the delay per output (WP19).
+
+**Voices.** At most three (the renderer's fourth slot is for one fading out after its `Drop`): the song playing, the next one decoded ahead (solo: from when the song playing sounds), and a spare (a seek's target). Each opens on the player's shared downloads (`Item::open_on(&Streams)`), so a seek in a stream is a new voice on the same bytes. A `Voice` is dropped only once its tap is back (`Returned::Tap`) or the renderer it was in is dropped, so a decode thread never stops under a voice that sounds. A start given in milliseconds before the song's rate is known (a queue restored partway) is sought by the opener itself; otherwise the voice starts at a frame. Ready, solo: its ring full, its end decoded, or 0.5 s (a file) or 1 s (a stream) in its ring; a solo `StartAt` or `SwitchAt` is sent only then (WP3: a late start would skip ahead). The room's own readiness (4.4) is the room program's.
+
+**The own program's actions, as render commands.**
+
+| Action | What the renderer is told |
+|---|---|
+| Play from the start or partway | a new renderer; when the volume is not 1, `Gain` first and the voice from the frame its 20 ms ramp ends (a renderer starts at gain 1); `StartAt` (no fade at a song's first frame, 15 ms partway); then the output starts |
+| Pause, the sleep timer's end | `StopAt` (30 ms); once it has played out, the output stops and a voice waits, paused, at the place the fade began |
+| Seek while playing | the spare at the new place; ready: `SwitchAt` `Crossfade` 40 ms; not ready within 150 ms: `StopAt` now and `StartAt` (15 ms) once it is |
+| Seek while paused | the paused voice replaced; nothing sounds |
+| Next, Previous, Jump, removing the song playing, a new queue while playing | the new song's voice (the one decoded ahead when it is that song); ready: `SwitchAt` `FadeOutThenIn` 30 ms; not: `StopAt` now and `StartAt` once it is |
+| A song's end | the next linked once it is ready and the last second (or the end) of this one is decoded: `SwitchAt` `Gapless`, or with the crossfade setting (songs of different albums) `Crossfade` over its length, sent 250 ms before the fade's frame; the queue moves on at `Joined` or `Started`. The next not ready in time: it starts from silence when it is. Another format in exclusive or memory mode: the output stops after the song's end, reopens, and the next starts at frame 0. Stop after this song: the output stops at its end with the next one paused at its start |
+| Volume, the sleep timer's last 10 s | `Gain` (20 ms ramp); the timer as `Gain`s of the falling level, 50 ms apart |
+| Sound tools | `Chain` for every voice in the renderer, gliding from the chain it replaces (below) |
+| Output switch, quit | as a pause; then the new output opens and the place starts partway (15 ms), or the thread ends |
+
+A queue edit that changes which song is next drops the next voice (a `Drop` also unlinks one already linked).
+
+**Sound tool changes glide (WP3's question).** A chain swapped in at once steps: a preamp or levelling change is a gain step, new filter coefficients a jump in the output. So a new chain for a voice already sounding takes over from the one it replaces: for 50 ms the renderer runs both on the same frames and crossfades their outputs on a raised cosine, with equal gains (both are the same music, so their sum keeps its level); the old chain stays inside the new one until that one comes back, so nothing is freed on the render thread. A voice with sound tools on, or gliding, counts as resampled for the detectors (WP3's rule). Small changes to `dsp.rs` and `render.rs`, in a `contract:` commit.
+
+**The status thread** ("venuta-status"), every 100 ms or at once after a command: it builds `Status` from what the control thread publishes (a small mutex the render thread never touches: the queue when it changed, the index, the play state, the place, the length, the signal path) and the renderer's atomics, leaves out a report that would only repeat the last one (as engine 1), and calls the app's callback, so the callback never runs on the render thread or the control thread. The place is the heard one: the presentation pair's frame carried to now, mapped through the markers (paused: the paused place). Once a minute, and when an output stops, it writes the deadline line (`Deadline::to_log_line` for the stretch since the last line, `ran_dry` the `Xrun`s in it) to the playback log. The spectrum reads a ring of the last 4096 frames (mono) that the render path fills right after the renderer, only while a spectrum is asked for, with no lock and no allocation.
+
+**Programs.** `Program::Own(OwnProgram)` or `Program::Room { room, own }`. Attaching sets the own program aside (what sounds fades out over 30 ms, its voices are dropped, its queue and place kept: paused where the fade began) and a `RoomProgram` begins with nothing. Detaching fades the room's voices out over 1 s, drops the room program whole, and puts the own program back paused at its place. The own program has no room field and the room program no queue. WP4's room program takes `prepare` (a voice at the room's content plus the copy's offset), `commit` (a `StartAt` at the device frame for the anchor's host time, through the clock map and the presentation pair; a crossfade or a fade-out-then-in when something sounds), `hold` (`StopAt` at the frame for its host time), `step_out` and `rejoin`, and reports readiness and the entry heard. The sync tick, the next armed and switched at the boundary, suspensions, modes and the rest are WP5's.
+
+**Tests.** The player suite (`playback.rs`, `pause_seek.rs`, `remote_fixture.rs`, and engine.rs's own tests) runs on both engines. In `pause_seek.rs` the proof that nothing of the old place is heard after a move while paused is the flush count on engine 1 (its memory device keeps whatever it was given) and the sound itself on engine 2. New gates: the status callback runs on the status thread, by its name; every solo action judged clean by the detectors, with the spans the renderer's notes declared; programs that switch and come back bit-identical to a player that never joined; nothing allocated on the render path through every solo action; the deadline line in WP14's format.
+
 #### Phase 2
 
 | WP | Size | Depends on | Owns | Tests written first |
