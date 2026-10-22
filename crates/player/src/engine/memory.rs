@@ -201,6 +201,10 @@ impl Output for MemoryOutput {
     fn events(&self) -> Receiver<OutputEvent> {
         self.sim.events()
     }
+
+    fn latency(&self) -> Option<crate::output_api::Latency> {
+        self.sim.latency()
+    }
 }
 
 /// The render path of a memory output, kept: on the simulated device's own thread (a test's,

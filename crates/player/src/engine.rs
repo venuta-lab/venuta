@@ -424,6 +424,18 @@ impl<T: Item + Serialize> RoomPlayer<T> for Player<T> {
             None => Box::new(program::Inert),
         }
     }
+
+    fn adopt(
+        &self,
+        clock: together::clock_map::ClockMapHandle,
+        mode: SyncMode,
+        entry: together::anchor::EntryId,
+    ) -> Box<dyn RoomHandle<T>> {
+        match &self.msgs {
+            Some(tx) => program::adopt(tx.clone(), clock, mode, entry),
+            None => Box::new(program::Inert),
+        }
+    }
 }
 
 /// One song's decoded audio, waiting to be played.

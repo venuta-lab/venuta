@@ -8,9 +8,10 @@
 //! then your own music, frame for frame as it plays alone. The device must never run dry.
 
 mod common;
+mod engines;
 
 use common::{Piece, all_clicks, channels, song};
-use player::engine::{Cmd, OutputChoice, Player, Status};
+use player::engine::{Cmd, EngineKind, OutputChoice, Player, Status};
 use player::output::Captured;
 use player::sync::{SyncNote, SyncPlan};
 use std::path::{Path, PathBuf};
@@ -57,7 +58,7 @@ struct Run {
 
 impl Run {
     /// A player on a paced device whose clock runs `drift_ppm` fast (negative: slow).
-    fn new(drift_ppm: f64) -> Self {
+    fn new(engine: EngineKind, drift_ppm: f64) -> Self {
         let captured = Arc::new(Mutex::new(Captured {
             drift_ppm,
             ..Captured::default()
@@ -66,7 +67,8 @@ impl Run {
         let last = Arc::new(Mutex::new(None));
         let (noted, seen) = (notes.clone(), last.clone());
         let (tx, moved) = std::sync::mpsc::channel();
-        let player = Player::spawn(
+        let player = Player::spawn_with(
+            engine,
             OutputChoice::PacedMemory(captured.clone()),
             move |s: Status<PathBuf>| {
                 noted.lock().unwrap().extend(s.sync_notes.iter().cloned());
@@ -200,12 +202,12 @@ fn the_ear_hears_every_kind_of_click() {
     }
 }
 
-#[test]
-fn normal_play_is_clean_at_every_rate_and_the_volume_glides() {
+on_both_engines! {
+    fn normal_play_is_clean_at_every_rate_and_the_volume_glides(engine) {
     for rate in [44_100, 48_000, 96_000] {
         let piece = stereo(rate);
         let a = song(&format!("normal-{rate}"), &piece, 0.0, 4.0, true, true);
-        let r = Run::new(0.0);
+        let r = Run::new(engine, 0.0);
         r.load(&a, 0, true);
         sleep(1_200);
         // The volume moved, twice, and back up.
@@ -219,12 +221,14 @@ fn normal_play_is_clean_at_every_rate_and_the_volume_glides() {
         clean(&format!("{rate} Hz"), &piece, &c, dry, 3.0);
         assert_eq!(notes, [], "nothing done for a room");
     }
+    }
 }
 
 /// A room's song played from its start at `start`, with `plans` (time from the start, ms off the
 /// true start) re-sent as a follower does when the host's clock estimate moves, on a device
 /// drifting `drift_ppm`: what was heard.
 fn room(
+    engine: EngineKind,
     name: &str,
     piece: &Piece,
     same_room: bool,
@@ -233,7 +237,7 @@ fn room(
     plans: &[(u64, f64)],
 ) -> (Captured, Vec<SyncNote>, u64, Status<PathBuf>) {
     let a = song(name, piece, 0.0, secs + 2.0, true, true);
-    let r = Run::new(drift_ppm);
+    let r = Run::new(engine, drift_ppm);
     r.load(&a, 0, false);
     r.send(Cmd::Sync(Some(plan(None, 0, true, same_room))));
     sleep(300);
@@ -257,11 +261,12 @@ fn room(
     (c, notes, dry, status)
 }
 
-#[test]
-fn a_room_in_step_is_clean_apart_and_in_one_room() {
+on_both_engines! {
+    fn a_room_in_step_is_clean_apart_and_in_one_room(engine) {
     let piece = stereo(48_000);
     for same_room in [false, true] {
         let (c, notes, dry, _) = room(
+            engine,
             &format!("step-{same_room}"),
             &piece,
             same_room,
@@ -281,10 +286,11 @@ fn a_room_in_step_is_clean_apart_and_in_one_room() {
             "nothing to line up: {notes:?}"
         );
     }
+    }
 }
 
-#[test]
-fn a_wobbling_or_late_clock_estimate_is_never_heard() {
+on_both_engines! {
+    fn a_wobbling_or_late_clock_estimate_is_never_heard(engine) {
     let piece = stereo(48_000);
     let mut seed = 5;
     // Apart: a wobble of up to 40 ms every 400 ms, then a step of 150 ms (a new path to the
@@ -293,7 +299,7 @@ fn a_wobbling_or_late_clock_estimate_is_never_heard() {
         .map(|k| (k * 400, noise(&mut seed) * 40.0))
         .collect();
     plans.push((4_400, 150.0));
-    let (c, notes, dry, _) = room("wobble-apart", &piece, false, 0.0, 6.0, &plans);
+    let (c, notes, dry, _) = room(engine, "wobble-apart", &piece, false, 0.0, 6.0, &plans);
     clean("apart, wobbling", &piece, &c, dry, 5.0);
     assert!(
         !notes.iter().any(|n| matches!(n, SyncNote::Seek { .. })),
@@ -304,12 +310,13 @@ fn a_wobbling_or_late_clock_estimate_is_never_heard() {
         .map(|k| (k * 300, noise(&mut seed) * 1.5))
         .collect();
     plans.push((4_800, 8.0));
-    let (c, _, dry, _) = room("wobble-same", &piece, true, 0.0, 7.0, &plans);
+    let (c, _, dry, _) = room(engine, "wobble-same", &piece, true, 0.0, 7.0, &plans);
     clean("one room, wobbling", &piece, &c, dry, 6.0);
+    }
 }
 
-#[test]
-fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound() {
+on_both_engines! {
+    fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound(engine) {
     // A sound card 300 ppm fast and one 300 ppm slow (worse than most), in one room; and apart,
     // a fast card with the room's start known 15 ms later just after it (apart, only past 10
     // ms is anything done): the rate is eased the other way, within 500 ppm, never a seek, and
@@ -322,7 +329,7 @@ fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound() {
     ] {
         let name = format!("drift-{same_room}-{drift}");
         let plans: Vec<(u64, f64)> = later.map(|ms| (1_200, ms)).into_iter().collect();
-        let (c, notes, dry, status) = room(&name, &piece, same_room, drift, 12.0, &plans);
+        let (c, notes, dry, status) = room(engine, &name, &piece, same_room, drift, 12.0, &plans);
         clean(&name, &piece, &c, dry, 11.0);
         let rates: Vec<i32> = notes
             .iter()
@@ -350,21 +357,22 @@ fn a_sound_card_running_fast_or_slow_is_followed_without_a_sound() {
     }
     // Apart, a card far off (0.5%: 300 ms in a minute, compressed here into seconds by the room
     // being suddenly 900 ms on): lined up once, faded out and in, never a click.
-    let (c, notes, dry, _) = room("far-apart", &piece, false, 0.0, 7.0, &[(1_500, -900.0)]);
+    let (c, notes, dry, _) = room(engine, "far-apart", &piece, false, 0.0, 7.0, &[(1_500, -900.0)]);
     clean("apart, far off", &piece, &c, dry, 5.0);
     let seeks = notes
         .iter()
         .filter(|n| matches!(n, SyncNote::Seek { faded: true, .. }))
         .count();
     assert_eq!(seeks, 1, "once, faded: {notes:?}");
+    }
 }
 
-#[test]
-fn joining_partway_and_another_output_fade_in() {
+on_both_engines! {
+    fn joining_partway_and_another_output_fade_in(engine) {
     let piece = stereo(48_000);
     let a = song("join", &piece, 0.0, 12.0, true, true);
     // The room started this song 3 s ago.
-    let r = Run::new(0.0);
+    let r = Run::new(engine, 0.0);
     r.load(&a, 3_000, false);
     r.send(Cmd::Sync(Some(plan(
         Some(Instant::now() - Duration::from_secs(3)),
@@ -381,14 +389,15 @@ fn joining_partway_and_another_output_fade_in() {
     clean("joined 3 s in", &piece, &c, dry, 1.5);
     let c2 = std::mem::take(&mut *next.lock().unwrap());
     clean("another output", &piece, &c2, 0, 1.5);
+    }
 }
 
-#[test]
-fn pause_resume_seek_and_skip_in_a_room_are_clean() {
+on_both_engines! {
+    fn pause_resume_seek_and_skip_in_a_room_are_clean(engine) {
     let piece = stereo(48_000);
     let a = song("flow-a", &piece, 0.0, 20.0, true, true);
     let b = song("flow-b", &piece, 40.0, 20.0, true, true);
-    let r = Run::new(0.0);
+    let r = Run::new(engine, 0.0);
     let ready = |f: &Path, ms: u64| {
         r.load(f, ms, false);
         r.send(Cmd::Sync(Some(plan(None, ms, true, false))));
@@ -426,10 +435,11 @@ fn pause_resume_seek_and_skip_in_a_room_are_clean() {
     sleep(1_500);
     let (c, _, dry) = r.finish();
     clean("pause, resume, seek, skip", &piece, &c, dry, 5.0);
+    }
 }
 
-#[test]
-fn one_song_into_the_next_at_the_very_frame_is_clean() {
+on_both_engines! {
+    fn one_song_into_the_next_at_the_very_frame_is_clean(engine) {
     // Two songs cut one after the other from the same music (a live album): any slip at the
     // seam would show. Apart and in one room (where a correction is under way as it nears).
     let piece = stereo(48_000);
@@ -450,7 +460,7 @@ fn one_song_into_the_next_at_the_very_frame_is_clean() {
             false,
             true,
         );
-        let r = Run::new(if same_room { 400.0 } else { 0.0 });
+        let r = Run::new(engine, if same_room { 400.0 } else { 0.0 });
         r.load(&a, 0, false);
         r.send(Cmd::Sync(Some(plan(None, 0, true, same_room))));
         sleep(300);
@@ -480,15 +490,16 @@ fn one_song_into_the_next_at_the_very_frame_is_clean() {
             4.0,
         );
     }
+    }
 }
 
-#[test]
-fn after_a_room_your_music_is_frame_for_frame_as_alone() {
+on_both_engines! {
+    fn after_a_room_your_music_is_frame_for_frame_as_alone(engine) {
     // Your own song played alone, as the reference.
     let piece = stereo(48_000);
     let own = song("own", &piece, 100.0, 6.0, true, true);
     let alone = {
-        let r = Run::new(0.0);
+        let r = Run::new(engine, 0.0);
         r.load(&own, 1_000, false);
         sleep(200);
         r.send(Cmd::Play);
@@ -505,7 +516,7 @@ fn after_a_room_your_music_is_frame_for_frame_as_alone() {
     // The room each way it can be when it ends, then your song.
     let a = song("room-song", &piece, 0.0, 30.0, true, true);
     for (name, same_room, drift) in [("apart", false, 0.0), ("one room, correcting", true, 400.0)] {
-        let r = Run::new(drift);
+        let r = Run::new(engine, drift);
         r.load(&a, 0, false);
         r.send(Cmd::Sync(Some(plan(None, 0, true, same_room))));
         sleep(300);
@@ -539,15 +550,17 @@ fn after_a_room_your_music_is_frame_for_frame_as_alone() {
         assert_eq!(dry, 0, "{name}: never dry");
         let _ = notes;
     }
+    }
 }
 
-#[test]
-fn a_start_known_later_just_after_it_never_cuts_silence_into_the_music() {
+on_both_engines! {
+    fn a_start_known_later_just_after_it_never_cuts_silence_into_the_music(engine) {
     // Just after a song starts, a guest's estimate of the host's clock gets better and moves the
     // start 40 ms later (apart) or 8 ms (one room): the music plays on, no silence cut in.
     let piece = stereo(48_000);
     for (same_room, later, at) in [(false, 40.0, 415), (true, 8.0, 403)] {
         let (c, _, dry, _) = room(
+            engine,
             &format!("later-{same_room}"),
             &piece,
             same_room,
@@ -562,5 +575,6 @@ fn a_start_known_later_just_after_it_never_cuts_silence_into_the_music() {
             dry,
             2.0,
         );
+    }
     }
 }

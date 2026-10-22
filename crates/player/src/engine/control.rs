@@ -195,8 +195,8 @@ impl<T: Item + Serialize> Control<T> {
                 self.deck.quitting = true;
                 return true;
             }
-            // Engine 1's rooms: taken by engine 2 once WP5's adapter is in.
-            Cmd::Sync(_) => {}
+            // A protocol 2 room (WP5's adapter).
+            Cmd::Sync(plan) => self.program.sync(plan, &mut self.deck),
             other => self.program.command(other, &mut self.deck),
         }
         false
@@ -225,6 +225,10 @@ impl<T: Item + Serialize> Control<T> {
 
     /// What the status thread reports when it next looks.
     fn publish(&mut self) {
+        let notes = self.program.take_notes();
+        if !notes.is_empty() {
+            self.shared.sync_notes().extend(notes);
+        }
         let mut v = self.shared.view();
         self.program.view(&self.deck, &mut v);
         self.deck.fill_view(&mut v);
@@ -337,6 +341,11 @@ impl Lane {
     pub(super) fn error(&self) -> Option<String> {
         self.status().error
     }
+
+    /// The loudness of the blocks it decoded that end after content frame `from`.
+    pub(super) fn loudness(&self, from: u64) -> Vec<crate::voice::Loudness> {
+        self.voice.loudness(from)
+    }
 }
 
 /// A voice on its way out: dropped once its tap is back, or the renderer it was in goes.
@@ -381,6 +390,8 @@ struct Running {
     generation: u64,
     link: RenderLink,
     status: Arc<RenderStatus>,
+    /// The trim the sync tick asks of this renderer (a room's only; 0 otherwise).
+    rate: Arc<RateTarget>,
     /// Frames before the first render call: none rendered yet.
     fresh: bool,
 }
@@ -397,6 +408,15 @@ impl Dev {
             #[cfg(windows)]
             Dev::Wasapi(w) => w.as_mut(),
             Dev::Other(o) => o.as_mut(),
+        }
+    }
+
+    /// The latency the output learned while running (WP1d).
+    fn latency(&self) -> Option<crate::output_api::Latency> {
+        match self {
+            #[cfg(windows)]
+            Dev::Wasapi(w) => w.latency(),
+            Dev::Other(o) => o.latency(),
         }
     }
 
@@ -452,12 +472,18 @@ pub(super) struct Deck {
     pending: VecDeque<RenderCmd>,
     unstarted: Option<Box<dyn Render>>,
     going: Vec<Going>,
+    /// Voices the last notes said fell silent or ended: one retired after its fade in the
+    /// same turn is dropped at once (its note is already read).
+    silenced: Vec<VoiceId>,
     live: Vec<Live>,
     marks: Vec<(VoiceId, VecDeque<Marker>)>,
     /// No fade commanded ends after this device frame.
     quiet_from: u64,
     /// The output is to be stopped and closed, then opened again for another format.
     reopen: bool,
+    /// The running renderer is not to be given anything more: stopped once quiet, the next
+    /// start gets a fresh one (a room let go of the player).
+    renew: bool,
     /// Another output chosen: the open one is closed once quiet.
     switching: Option<OutputChoice>,
     /// Open and not running since (for letting a sound device go); its tail played out by.
@@ -518,10 +544,12 @@ impl Deck {
             pending: VecDeque::new(),
             unstarted: None,
             going: Vec::new(),
+            silenced: Vec::new(),
             live: Vec::new(),
             marks: Vec::new(),
             quiet_from: 0,
             reopen: false,
+            renew: false,
             switching: None,
             idle_since: None,
             drained_at: 0,
@@ -552,6 +580,7 @@ impl Deck {
             || !self.pending.is_empty()
             || self.retry.is_some()
             || self.reopen
+            || self.renew
             || self.switching.is_some()
     }
 
@@ -564,6 +593,17 @@ impl Deck {
     /// A new voice of `item` from `place`: its decode thread opens it (on the shared downloads)
     /// and decodes ahead; nothing waits here.
     pub(super) fn lane<T: Item>(&mut self, item: &T, place: Place) -> Lane {
+        self.lane_with(item, place, None)
+    }
+
+    /// A new voice decoding `depth` ahead (`None`: the voice's own, 2 s for a file and 3 s for a
+    /// stream).
+    pub(super) fn lane_with<T: Item>(
+        &mut self,
+        item: &T,
+        place: Place,
+        depth: Option<std::time::Duration>,
+    ) -> Lane {
         let vid = VoiceId(self.next_vid);
         self.next_vid = self.next_vid.wrapping_add(1).max(1);
         let hold = item.stream_key().and_then(|k| self.streams.hold(&k));
@@ -592,7 +632,7 @@ impl Deck {
             id: vid,
             open,
             start,
-            depth: None,
+            depth,
             pace: self.pace.clone(),
         });
         Lane {
@@ -628,9 +668,13 @@ impl Deck {
         u64::from(self.rate()) * u64::from(ms) / 1000
     }
 
-    /// The output's lead (frames handed over and not yet at the DAC): measured from the
-    /// presentation, the reported buffer until the device has said.
+    /// The output's lead (frames handed over and not yet at the DAC): the latency the output
+    /// learned (WP1d), else as measured here from the presentation, else the reported buffer
+    /// until the device has said.
     fn lead_frames(&self) -> u64 {
+        if let Some(l) = self.open.as_ref().and_then(|o| o.dev.latency()) {
+            return u64::from(l.frames);
+        }
         self.lead.unwrap_or_else(|| {
             self.open
                 .as_ref()
@@ -673,7 +717,7 @@ impl Deck {
     /// output waiting for its next try.
     pub(super) fn ready_for(&mut self, f: &SourceFormat) -> bool {
         if self.run.is_some() {
-            if self.fits(f) && !self.reopen && self.switching.is_none() {
+            if self.fits(f) && !self.reopen && !self.renew && self.switching.is_none() {
                 return true;
             }
             self.reopen |= !self.fits(f);
@@ -774,11 +818,14 @@ impl Deck {
             return;
         };
         let (link, ends) = render_link(64, 1_024, 1_024);
+        // A new renderer for every start, with a rate of its own at 0: no trim of a room's
+        // reaches a start made after it.
+        let rate = Arc::new(RateTarget::default());
         let (renderer, status) = Renderer::new(RenderSetup {
             format: o.info.format.clone(),
             max_period: o.info.period_frames,
             ends,
-            rate: Arc::new(RateTarget::default()),
+            rate: rate.clone(),
             clock: self.mono.clone(),
         });
         let format = o.info.format.clone();
@@ -807,8 +854,10 @@ impl Deck {
             generation: self.generation,
             link,
             status,
+            rate,
             fresh: true,
         });
+        self.renew = false;
         self.snapshot = None;
         self.quiet_from = 0;
         self.idle_since = None;
@@ -862,10 +911,23 @@ impl Deck {
     /// Give `lane` to the renderer, from silence at device frame `at`, fading in over `fade`
     /// frames. False when it can't be given (no tap: it failed).
     pub(super) fn start(&mut self, lane: &mut Lane, at: u64, fade: u32) -> bool {
+        self.start_from(lane, at, None, fade)
+    }
+
+    /// `start`, with the content frame that is to be at `at` (`None`: the lane's start; a
+    /// later one is reached by the renderer skipping what the voice decoded before it).
+    pub(super) fn start_from(
+        &mut self,
+        lane: &mut Lane,
+        at: u64,
+        content: Option<u64>,
+        fade: u32,
+    ) -> bool {
         let s = lane.status();
-        let (Some(fmt), Some(content)) = (s.format.clone(), lane.start_of(&s)) else {
+        let (Some(fmt), Some(first)) = (s.format.clone(), lane.start_of(&s)) else {
             return false;
         };
+        let content = content.unwrap_or(first).max(first);
         let Some(tap) = lane.voice.take_tap() else {
             return false;
         };
@@ -922,6 +984,10 @@ impl Deck {
             Retire::Now => {
                 let end = self.frames() + self.ms(30) + 2 * self.period();
                 self.quiet_from = self.quiet_from.max(end);
+                self.send(RenderCmd::Drop { voice: lane.vid });
+                true
+            }
+            Retire::AfterFade if self.silenced.contains(&lane.vid) => {
                 self.send(RenderCmd::Drop { voice: lane.vid });
                 true
             }
@@ -1084,6 +1150,7 @@ impl Deck {
             }
         }
         let mut notes = Vec::new();
+        self.silenced.clear();
         if let Some(r) = &mut self.run {
             let snap = r.status.read();
             if snap.frames > 0 {
@@ -1129,6 +1196,9 @@ impl Deck {
         for n in &notes {
             if let Some(tx) = &self.watch.notes {
                 let _ = tx.send(shifted(*n, self.offset));
+            }
+            if let RenderNote::Silent { voice, .. } | RenderNote::Ended { voice, .. } = *n {
+                self.silenced.push(voice);
             }
             if let RenderNote::Silent { voice, .. } | RenderNote::Ended { voice, .. } = *n
                 && let Some(g) = self
@@ -1211,15 +1281,17 @@ impl Deck {
     pub(super) fn frame_at(&self, t_ns: u64) -> Option<u64> {
         let o = self.open.as_ref()?;
         let rate = f64::from(o.info.format.rate.max(1));
-        let (f, at) = match o.presentation.read() {
-            Some(p) => (p.frame, p.time_ns),
+        let (f, at) = match self.pair() {
+            Some((frame, time)) => (frame as f64, time),
+            // Before this start's first pair: what is rendered less what the output holds
+            // (a start's first frame is heard a lead after now).
             None => (
-                self.frames().saturating_sub(self.lead_frames()),
+                self.frames() as f64 - self.lead_frames() as f64,
                 self.now_ns(),
             ),
         };
         let d = (t_ns as f64 - at as f64) / 1e9 * rate;
-        Some((f as f64 + d).max(0.0) as u64)
+        Some((f + d).max(0.0) as u64)
     }
 
     // --- The output's life ---
@@ -1256,6 +1328,7 @@ impl Deck {
         }
         let generation = r.generation;
         drop(r);
+        self.renew = false;
         self.pending.clear();
         self.unstarted = None;
         self.going.retain(|g| g.lane.given != Some(generation));
@@ -1299,7 +1372,7 @@ impl Deck {
     /// it must reopen or switch; close it once its tail has played when it must, or (a sound
     /// device) after 10 s unused. Returns what the program must know.
     fn step(&mut self, wanted: bool) -> Option<Stopped> {
-        let must = self.reopen || self.switching.is_some() || !wanted;
+        let must = self.reopen || self.renew || self.switching.is_some() || !wanted;
         if self.run.is_some() && must && self.quiet() {
             if let Some(o) = self.open.as_mut() {
                 let back = o.dev.out().stop();
@@ -1410,5 +1483,471 @@ fn shifted(n: RenderNote, by: u64) -> RenderNote {
             by: late,
         },
         other => other,
+    }
+}
+
+// --- The room's view of the deck (WP5) -------------------------------------------------------
+
+impl Deck {
+    /// Ask the running renderer for this trim (ppm; it glides there at 1000 ppm/s and holds it
+    /// within ±500 ppm).
+    pub(super) fn set_trim(&self, ppm: f64) {
+        if let Some(r) = &self.run {
+            r.rate.set_ppm(ppm);
+        }
+    }
+
+    /// The trim the sounding voice plays at now, as the renderer said at its last call.
+    pub(super) fn trim_now(&self) -> f64 {
+        self.snapshot.as_ref().map_or(0.0, |s| s.ppm)
+    }
+
+    /// The running renderer gets nothing more: it stops once quiet, and the next start has a
+    /// fresh one (a room let go of the player: nothing of its trim can reach your own music).
+    pub(super) fn renew_renderer(&mut self) {
+        if self.run.is_some() {
+            self.renew = true;
+        }
+    }
+
+    /// The newest presentation pair of the start running now: (its generation, device frame,
+    /// mono time).
+    pub(super) fn presented(&self) -> Option<(u64, u64, u64)> {
+        let (frame, time) = self.pair()?;
+        Some((self.run.as_ref()?.generation, frame, time))
+    }
+
+    /// The output has said which frame is at its DAC when (a pair of this start): frames for
+    /// times are exact from here on. A start from silence in a room waits for it (the output
+    /// runs in silence meanwhile, a period or two).
+    pub(super) fn placed(&self) -> bool {
+        self.pair().is_some()
+    }
+
+    /// The newest presentation pair, once this start has rendered (a pair read before its
+    /// first call may be the last start's, on the same output).
+    fn pair(&self) -> Option<(u64, u64)> {
+        if !self.run.as_ref().is_some_and(|r| !r.fresh) {
+            return None;
+        }
+        let p = self.open.as_ref()?.presentation.read()?;
+        Some((p.frame, p.time_ns))
+    }
+
+    /// The device frame at the DAC at local time `t_ns`, from a presentation pair only (no
+    /// guess from the lead): `None` before the first pair of this start.
+    pub(super) fn dac_frame(&self, t_ns: u64) -> Option<f64> {
+        let (_, frame, time) = self.presented()?;
+        let rate = f64::from(self.rate().max(1));
+        Some(frame as f64 + (t_ns as f64 - time as f64) / 1e9 * rate)
+    }
+
+    /// The content place (source frames) `vid` had at device frame `f` (fractional), from its
+    /// markers.
+    pub(super) fn content_at_f(&self, vid: VoiceId, f: f64) -> Option<f64> {
+        let (_, q) = self.marks.iter().find(|(v, _)| *v == vid)?;
+        let m = q.iter().rev().find(|m| (m.frame as f64) <= f)?;
+        Some(m.content + (f - m.frame as f64) * m.ratio)
+    }
+
+    /// The local time at which device frame `f` is at the DAC (from the newest presentation
+    /// pair; before one comes, from what is rendered and the output's lead).
+    pub(super) fn time_of(&self, f: u64) -> Option<u64> {
+        let o = self.open.as_ref()?;
+        let rate = f64::from(o.info.format.rate.max(1));
+        let (pf, at) = match self.pair() {
+            Some((frame, time)) => (frame as f64, time),
+            None => (
+                self.frames() as f64 - self.lead_frames() as f64,
+                self.now_ns(),
+            ),
+        };
+        let t = at as f64 + (f as f64 - pf) / rate * 1e9;
+        Some(t.max(0.0) as u64)
+    }
+
+    /// No fade commanded ends after this device frame.
+    pub(super) fn quiet_after(&self) -> u64 {
+        self.quiet_from
+    }
+
+    /// This computer's mono time (ns) at `i` (an `Instant` of the app's: the same clock as the
+    /// engine's on a real output, QPC on Windows).
+    pub(super) fn ns_of_instant(&self, i: std::time::Instant) -> u64 {
+        let (now_i, now) = (std::time::Instant::now(), self.now_ns());
+        if i >= now_i {
+            now + (i - now_i).as_nanos() as u64
+        } else {
+            now.saturating_sub((now_i - i).as_nanos() as u64)
+        }
+    }
+}
+
+// --- The sync tick: the controller of section 4.9 ---------------------------------------------
+
+/// The sync tick's period, ns.
+pub(super) const TICK_NS: u64 = 20_000_000;
+/// No integral and no realign for this long after a start, a switch or a realign, ns.
+pub(super) const SETTLE_NS: u64 = 400_000_000;
+/// The errors the median is taken over (200 ms of ticks).
+const MEDIAN_OF: usize = 10;
+/// The average after the median: its time constant, s.
+const AVERAGE_S: f64 = 1.0;
+/// The integral learns only while the error is under this, ms.
+const INTEGRAL_UNDER_MS: f64 = 20.0;
+/// What the integral may add at most, ppm.
+const INTEGRAL_MAX: f64 = 200.0;
+/// The whole trim at most, ppm (under one cent of pitch).
+pub(super) const TRIM_MAX: f64 = 500.0;
+
+/// One column of the controller's table (4.9).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Column {
+    /// ppm per ms of error, while correcting.
+    pub gain: f64,
+    /// Correcting starts past this and stops under `band_out`, ms.
+    pub band_in: f64,
+    pub band_out: f64,
+    /// The integral's time constant, s.
+    pub integral_s: f64,
+    /// Past this for `line_ns`: a realign, ms.
+    pub line_ms: f64,
+    pub line_ns: u64,
+    /// At most one realign per this, ns.
+    pub realign_every_ns: u64,
+    /// How long a quiet moment is looked for, ns.
+    pub quiet_look_ns: u64,
+}
+
+/// Speakers heard together.
+pub(super) const SAME_ROOM: Column = Column {
+    gain: 250.0,
+    band_in: 1.0,
+    band_out: 0.3,
+    integral_s: 30.0,
+    line_ms: 50.0,
+    line_ns: 2_000_000_000,
+    realign_every_ns: 10_000_000_000,
+    quiet_look_ns: 10_000_000_000,
+};
+
+/// Each on their own.
+pub(super) const APART: Column = Column {
+    gain: 25.0,
+    band_in: 10.0,
+    band_out: 3.0,
+    integral_s: 60.0,
+    line_ms: 250.0,
+    line_ns: 3_000_000_000,
+    realign_every_ns: 30_000_000_000,
+    quiet_look_ns: 30_000_000_000,
+};
+
+/// What the controller says after a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(super) struct Steer {
+    /// The trim to ask for, ppm.
+    pub ppm: f64,
+    /// The filtered error, ms (positive: ahead).
+    pub error_ms: Option<f64>,
+    /// The proportional part acts (outside the band).
+    pub correcting: bool,
+    /// The error has been past the realign line for the column's time.
+    pub far: bool,
+    pub settling: bool,
+}
+
+/// The controller (4.9): a median and an average on the error, feed-forward from the clock's
+/// and the sound card's rates, a proportional part outside a band, an integral for what the
+/// feed-forward misses.
+#[derive(Debug, Default)]
+pub(super) struct Controller {
+    errs: std::collections::VecDeque<f64>,
+    avg: Option<f64>,
+    integral: f64,
+    correcting: bool,
+    far_since: Option<u64>,
+    settle_until: u64,
+    last_ns: Option<u64>,
+    /// The proportional part as applied at the last tick (after the cap), ppm.
+    p_last: f64,
+    out: Steer,
+}
+
+impl Controller {
+    /// A start, a switch or a realign: the error is measured afresh and nothing slow acts until
+    /// `until` (at least 400 ms). The integral is kept: it is the sound card's and the clock's,
+    /// not the place's.
+    pub(super) fn settle(&mut self, now: u64, until: u64) {
+        self.errs.clear();
+        self.avg = None;
+        self.correcting = false;
+        self.far_since = None;
+        self.settle_until = until.max(now + SETTLE_NS);
+    }
+
+    /// Frozen (suspended, stepped out): nothing measured, the trim kept.
+    pub(super) fn freeze(&mut self) {
+        self.last_ns = None;
+        self.errs.clear();
+        self.avg = None;
+        self.far_since = None;
+        self.out.error_ms = None;
+        self.out.far = false;
+        self.out.correcting = false;
+    }
+
+    pub(super) fn last(&self) -> Steer {
+        self.out
+    }
+
+    /// One tick: `err_ms` the error measured now (none: nothing to measure, the trim kept);
+    /// `ff` the feed-forward (ppm); `bound_ms` the clock's bound.
+    pub(super) fn tick(
+        &mut self,
+        now: u64,
+        err_ms: Option<f64>,
+        col: &Column,
+        bound_ms: f64,
+        ff: f64,
+    ) -> Steer {
+        let dt = self
+            .last_ns
+            .map_or(0.0, |t| now.saturating_sub(t) as f64 / 1e9)
+            .min(0.2);
+        self.last_ns = Some(now);
+        let settling = now < self.settle_until;
+        self.out.settling = settling;
+        let Some(e) = err_ms else {
+            return self.out;
+        };
+        if self.errs.len() == MEDIAN_OF {
+            self.errs.pop_front();
+        }
+        self.errs.push_back(e);
+        let mut sorted: Vec<f64> = self.errs.iter().copied().collect();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        let prev = self.avg.filter(|_| !settling && dt > 0.0);
+        let avg = match self.avg {
+            Some(a) if !settling => a + (median - a) * (dt / AVERAGE_S).min(1.0),
+            _ => median,
+        };
+        self.avg = Some(avg);
+        // The band is at least half the clock's bound: what the clock can't rule out is not
+        // chased.
+        let band_in = col.band_in.max(bound_ms / 2.0);
+        let band_out = band_in * col.band_out / col.band_in;
+        if avg.abs() > band_in {
+            self.correcting = true;
+        } else if avg.abs() < band_out {
+            self.correcting = false;
+        }
+        let p = if self.correcting {
+            -col.gain * avg
+        } else {
+            0.0
+        };
+        // The integral learns the rate the feed-forward misses: the error drifting at `slope`
+        // while `p_last` acted says the missing rate is the integral plus `p_last` less the
+        // slope; the integral moves toward it with the column's time constant. (An integral of
+        // the error itself, with the proportional part off inside the band, would swing there.)
+        if let Some(prev) = prev
+            && avg.abs() < INTEGRAL_UNDER_MS
+        {
+            let slope = (avg - prev) / dt * 1_000.0;
+            self.integral = (self.integral + (self.p_last - slope) * dt / col.integral_s)
+                .clamp(-INTEGRAL_MAX, INTEGRAL_MAX);
+        }
+        let ppm = (ff + self.integral + p).clamp(-TRIM_MAX, TRIM_MAX);
+        self.p_last = ppm - ff - self.integral;
+        // To a tenth of a ppm: a player exactly in place keeps its rate exactly.
+        let ppm = (ppm * 10.0).round() / 10.0;
+        let far = if !settling && avg.abs() > col.line_ms {
+            let since = *self.far_since.get_or_insert(now);
+            now - since >= col.line_ns
+        } else {
+            self.far_since = None;
+            false
+        };
+        self.out = Steer {
+            ppm,
+            error_ms: Some(avg),
+            correcting: self.correcting,
+            far,
+            settling,
+        };
+        self.out
+    }
+}
+
+/// The sound card's rate against the mono clock, from the presentation pairs of the last
+/// 10 s (a least-squares line), for the feed-forward.
+#[derive(Debug, Default)]
+pub(super) struct DacRate {
+    pts: std::collections::VecDeque<(f64, f64)>,
+    generation: u64,
+    last_time: u64,
+}
+
+/// The window, and the least span used, s.
+const DAC_WINDOW_S: f64 = 10.0;
+const DAC_LEAST_S: f64 = 2.0;
+/// A pair this far off the line is a gap or a slip: the window starts again, s.
+const DAC_JUMP_S: f64 = 0.002;
+
+impl DacRate {
+    /// Take the newest pair (`generation`, device frame, mono ns) at `rate`.
+    pub(super) fn push(&mut self, generation: u64, frame: u64, time_ns: u64, rate: u32) {
+        if generation != self.generation {
+            self.pts.clear();
+            self.generation = generation;
+        }
+        if time_ns == self.last_time {
+            return;
+        }
+        self.last_time = time_ns;
+        let (t, f) = (time_ns as f64 / 1e9, frame as f64 / f64::from(rate.max(1)));
+        if let Some(&(t0, f0)) = self.pts.back() {
+            let slope = self.slope().unwrap_or(1.0);
+            if ((f - f0) - (t - t0) * slope).abs() > DAC_JUMP_S {
+                self.pts.clear();
+            }
+        }
+        self.pts.push_back((t, f));
+        while self
+            .pts
+            .front()
+            .is_some_and(|&(t0, _)| t - t0 > DAC_WINDOW_S)
+        {
+            self.pts.pop_front();
+        }
+    }
+
+    /// Device seconds per mono second, once the pairs span 2 s.
+    fn slope(&self) -> Option<f64> {
+        let (&(t0, _), &(t1, _)) = (self.pts.front()?, self.pts.back()?);
+        if t1 - t0 < DAC_LEAST_S {
+            return None;
+        }
+        let n = self.pts.len() as f64;
+        let (mt, mf) = self
+            .pts
+            .iter()
+            .fold((0.0, 0.0), |(a, b), &(t, f)| (a + t - t0, b + f));
+        let (mt, mf) = (mt / n, mf / n);
+        let (mut sxy, mut sxx) = (0.0, 0.0);
+        for &(t, f) in &self.pts {
+            let x = t - t0 - mt;
+            sxy += x * (f - mf);
+            sxx += x * x;
+        }
+        (sxx > 0.0).then(|| sxy / sxx)
+    }
+
+    /// How fast the card runs against the mono clock, ppm (positive: fast); 0 until known.
+    pub(super) fn ppm(&self) -> f64 {
+        self.slope().map_or(0.0, |s| (s - 1.0) * 1e6)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: u64 = 1_000_000;
+
+    #[test]
+    fn the_controller_closes_an_error_by_rate_within_the_cap() {
+        let mut c = Controller::default();
+        let mut err = 8.0;
+        let mut now = 0;
+        for _ in 0..1_500 {
+            now += 20 * MS;
+            let s = c.tick(now, Some(err), &SAME_ROOM, 0.0, 0.0);
+            assert!(s.ppm.abs() <= TRIM_MAX);
+            // Playing faster (positive ppm) takes the error down (ahead is positive).
+            // A ppm faster moves the content on by a microsecond a second.
+            err += s.ppm * 1e-3 * 0.02;
+        }
+        // 8 ms ahead: slowed (negative), until inside the band.
+        assert!(err.abs() < SAME_ROOM.band_out * 2.0, "{err}");
+    }
+
+    #[test]
+    fn feed_forward_alone_holds_a_drift_and_a_player_in_place_keeps_rate_zero() {
+        let mut c = Controller::default();
+        let s = c.tick(20 * MS, Some(0.0), &SAME_ROOM, 0.0, -300.0);
+        assert_eq!(s.ppm, -300.0);
+        let mut c = Controller::default();
+        for k in 1..500 {
+            let s = c.tick(k * 20 * MS, Some(0.01), &SAME_ROOM, 0.0, 0.0);
+            assert_eq!(s.ppm, 0.0, "a frame's worth of noise moves nothing");
+        }
+    }
+
+    #[test]
+    fn a_rate_the_feed_forward_misses_is_learned_without_a_swing() {
+        // The card runs 40 ppm faster than the feed-forward knows: the error drifts until the
+        // integral has learned it, never leaving the band once inside.
+        let (mut c, mut err, mut now) = (Controller::default(), 0.0, 0);
+        let mut u = 0.0;
+        for k in 0..30_000 {
+            now += 20 * MS;
+            let s = c.tick(now, Some(err), &SAME_ROOM, 0.0, 0.0);
+            u = s.ppm;
+            // Ahead by 40 ppm unless slowed.
+            err += (u + 40.0) * 1e-3 * 0.02;
+            if k > 15_000 {
+                assert!(err.abs() < SAME_ROOM.band_in, "{err} ms at {k}");
+            }
+        }
+        assert!((u + 40.0).abs() < 2.0, "learned: {u}");
+    }
+
+    #[test]
+    fn the_band_widens_to_half_the_clocks_bound() {
+        for (err, corrects) in [(4.0, false), (6.0, true)] {
+            let mut c = Controller::default();
+            let mut s = Steer::default();
+            for k in 1..200 {
+                s = c.tick(k * 20 * MS, Some(err), &SAME_ROOM, 10.0, 0.0);
+                if s.correcting {
+                    break;
+                }
+            }
+            assert_eq!(s.correcting, corrects, "{err} ms against a 5 ms band");
+        }
+    }
+
+    #[test]
+    fn far_only_after_the_line_has_held() {
+        let mut c = Controller::default();
+        c.settle(0, 0);
+        let mut now = 0;
+        let mut far_at = None;
+        for _ in 0..200 {
+            now += 20 * MS;
+            if c.tick(now, Some(300.0), &APART, 0.0, 0.0).far {
+                far_at.get_or_insert(now);
+            }
+        }
+        let t = far_at.expect("far");
+        let from = APART.line_ns + SETTLE_NS;
+        assert!((from..from + 100 * MS).contains(&t), "{t}");
+    }
+
+    #[test]
+    fn the_dac_rate_is_read_off_the_pairs_and_a_gap_starts_again() {
+        let mut d = DacRate::default();
+        for k in 0..400u64 {
+            let t = 1_000_000_000 + k * 20 * MS;
+            let f = ((k * 20 * MS) as f64 * 48_000.0 / 1e9 * (1.0 + 300e-6)) as u64;
+            d.push(1, f, t, 48_000);
+        }
+        assert!((d.ppm() - 300.0).abs() < 1.0, "{}", d.ppm());
+        // A gap: frames 100 ms behind.
+        d.push(1, 400 * 960, 1_000_000_000 + 400 * 20 * MS, 48_000);
+        assert_eq!(d.ppm(), 0.0, "measured again");
     }
 }

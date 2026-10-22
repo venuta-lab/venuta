@@ -102,6 +102,14 @@ pub struct RoomPlayStatus {
     pub copy: Option<CopyClass>,
     /// The rate trim applied now, in ppm (0 outside rooms).
     pub ppm: f64,
+    /// What is heard now, as the room counts it: the room's content `content_us` of `entry`
+    /// (my copy's offset taken off) heard at host time `host_us`, from the output's
+    /// presentation (`playing` while it sounds, `seq` 0). The host makes the room's opening
+    /// anchor from it after `adopt` (A1); a one-speaker host re-anchors from it.
+    pub heard: Option<Anchor>,
+    /// Every device mode: this output could not keep within 5 ms for 30 s, so it faded out;
+    /// it plays again once the mode is set to apart (or the person listens as a remote).
+    pub cant_hold: bool,
 }
 
 impl Default for RoomPlayStatus {
@@ -115,6 +123,8 @@ impl Default for RoomPlayStatus {
             bound_us: None,
             copy: None,
             ppm: 0.0,
+            heard: None,
+            cant_hold: false,
         }
     }
 }
@@ -124,6 +134,21 @@ pub trait RoomPlayer<I>: Send + Sync {
     /// The room takes the player: your own program is set aside (kept), a room program begins.
     /// The host attaches too, with an identity clock map.
     fn attach(&self, clock: ClockMapHandle, mode: SyncMode) -> Box<dyn RoomHandle<I>>;
+    /// The host opening a room while its own music plays (A1, note 07 C1.1): the room
+    /// program is made from the own program in place. The voice sounding goes on as `entry`,
+    /// untouched (no fade, no seek, no rate until the room's first anchor), and the own queue
+    /// waits paused at the place heard then; `RoomPlayStatus::heard` says where that is in
+    /// host time, for the opening anchor. With nothing sounding it is `attach`, which is also
+    /// what a player that can't play on in place does.
+    fn adopt(
+        &self,
+        clock: ClockMapHandle,
+        mode: SyncMode,
+        entry: EntryId,
+    ) -> Box<dyn RoomHandle<I>> {
+        let _ = entry;
+        self.attach(clock, mode)
+    }
 }
 
 /// The room's hold on the player, for as long as the person plays in the room.

@@ -9,6 +9,7 @@ use crate::dsp::Sound;
 use crate::output::{DeviceFormat, SampleKind};
 use crate::queue::Repeat;
 use crate::render::{Deadline, RenderStatus};
+use crate::sync::SyncNote;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -93,6 +94,8 @@ pub(super) struct Shared<T> {
     pub view: Mutex<View<T>>,
     /// The view as each command left it, for its answer.
     pub answers: Mutex<Vec<View<T>>>,
+    /// What was done to the music for a protocol 2 room, not yet reported.
+    pub sync_notes: Mutex<Vec<SyncNote>>,
     pub common: Arc<Common>,
 }
 
@@ -110,6 +113,7 @@ impl<T> Shared<T> {
         Shared {
             view: Mutex::new(View::default()),
             answers: Mutex::new(Vec::new()),
+            sync_notes: Mutex::new(Vec::new()),
             common: Arc::new(Common {
                 ran_dry: AtomicU64::new(0),
                 tap: Arc::new(Tap::new()),
@@ -125,6 +129,10 @@ impl<T> Shared<T> {
 
     pub(super) fn answers(&self) -> MutexGuard<'_, Vec<View<T>>> {
         self.answers.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(super) fn sync_notes(&self) -> MutexGuard<'_, Vec<SyncNote>> {
+        self.sync_notes.lock().unwrap_or_else(|p| p.into_inner())
     }
 }
 
@@ -231,7 +239,8 @@ pub(super) fn run<T: Item + Serialize>(
         // Every command's answer, one report each, in order (as engine 1).
         let answers: Vec<View<T>> = shared.answers().drain(..).collect();
         for mut v in answers {
-            let status = build(&mut v, &shared.common);
+            let mut status = build(&mut v, &shared.common);
+            status.sync_notes = std::mem::take(&mut *shared.sync_notes());
             said = Some(Said::of(&status));
             on_status(status);
         }
@@ -239,11 +248,12 @@ pub(super) fn run<T: Item + Serialize>(
             continue;
         }
         next_report = now + REPORT_NS;
-        let status = build(&mut shared.view(), &shared.common);
+        let mut status = build(&mut shared.view(), &shared.common);
+        status.sync_notes = std::mem::take(&mut *shared.sync_notes());
         // The regular report, when it would only repeat the last one, is not sent; a new
-        // queue always is.
+        // queue always is, and so does what was done to the music for a room.
         let s = Said::of(&status);
-        if status.queue.is_none() && said.as_ref() == Some(&s) {
+        if status.queue.is_none() && status.sync_notes.is_empty() && said.as_ref() == Some(&s) {
             continue;
         }
         said = Some(s);
