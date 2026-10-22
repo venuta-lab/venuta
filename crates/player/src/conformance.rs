@@ -4,11 +4,11 @@
 //!
 //! `run` drives an output through its whole life with a -6 dBFS tone: open; 10 s of a 1 kHz
 //! tone with render's `at` contiguous and periods no longer than promised; the presentation
-//! monotonic and within 1 ms of the frames rendered (never ahead of them, never more behind than
-//! the latency the output learned, which must be steady by the end of the tone), at the DAC's
-//! own pace; the tone's 30 ms fade and silence, then a stop that hands the renderer back, never
-//! calls it again, and lets the tail play; a restart from device frame 0 (600 Hz), another
-//! (1.5 kHz) straight after a stop; close, and open again.
+//! monotonic and within 1 ms of the frames rendered (never ahead of them, never more behind
+//! than the most of the latency the output learned and its band, steady by the end of the
+//! tone), at the DAC's own pace; the tone's 30 ms fade and silence, then a stop that hands
+//! the renderer back, never calls it again, and lets the tail play; a restart from device frame
+//! 0 (600 Hz), another (1.5 kHz) straight after a stop; close, and open again.
 //!
 //! What can only be heard is checked on the simulated output's tape by `check_tape`: every frame
 //! the DAC played is the frame rendered for that place (bit for bit, so nothing stale plays
@@ -71,6 +71,14 @@ impl ToneRender {
                 longest: AtomicU64::new(0),
             }),
         }
+    }
+
+    /// The tone as it was rendered in a run whose fade began at device frame `tail_from` (a
+    /// report's `tones`): to compare what an output played, or recorded, with it.
+    pub fn faded(freq: f64, fmt: DeviceFormat, tail_from: u64) -> ToneRender {
+        let t = ToneRender::new(freq, fmt);
+        t.s.tail_from.store(tail_from, Ordering::SeqCst);
+        t
     }
 
     /// The renderer to hand an output.
@@ -287,13 +295,14 @@ impl Watch {
         let behind = before - at_dac;
         self.worst_behind = self.worst_behind.max(behind);
         // Against the latency the output learned (the driver's own figure, `buffer_frames`,
-        // is often less than it holds), once it is steady.
+        // is often less than it holds), once it is steady: at most its most and its band (the
+        // fill-to-fill wobble, at least 1 ms).
         if let Some(l) = out.latency().filter(|l| l.settled)
-            && behind > f64::from(l.most) + self.tolerance
+            && behind > f64::from(l.most) + f64::from(l.band)
         {
             return Err(fail(format!(
-                "the DAC is {behind:.0} frames behind what was rendered, more than the most it learned ({}) and 1 ms",
-                l.most
+                "the DAC is {behind:.0} frames behind what was rendered, more than the most it learned ({}) and its band ({})",
+                l.most, l.band
             )));
         }
         Ok(())

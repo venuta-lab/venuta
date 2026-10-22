@@ -161,16 +161,21 @@ impl Presentation {
 /// The output's latency as it learned it while running (from its own presentation): how many
 /// frames handed over to the device were not yet at the DAC, right after each fill. The
 /// driver's own figure stays in `OutputInfo::buffer_frames`; many drivers say less than they
-/// hold (the owner's Realtek laptop: 50 ms said, 68 ms held in shared mode; 30 ms said, about
-/// 100 ms held in exclusive mode, a queue).
+/// hold (the owner's Realtek laptop: 50 ms said, 74 ms held in shared mode; 30 ms said, about
+/// 110 ms held in exclusive mode, a queue whose depth wobbles by about a buffer with the
+/// driver's uneven events).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Latency {
     /// The usual value: the median of the last `LATENCY_SAMPLES` fills, in frames.
     pub frames: u32,
     /// The most over those fills: the furthest the DAC is behind what was handed over.
     pub most: u32,
-    /// Enough fills seen, and steady: the upper quartile of the older half of them and of the
-    /// newer half within 1 ms of each other (dips from a driver's late events don't count).
+    /// How much it wobbles from fill to fill (the device's event jitter, in frames): the
+    /// interquartile range of those fills, at least 1 ms.
+    pub band: u32,
+    /// Enough fills seen, and steady: the middle halves (interquartile ranges) of the older
+    /// and of the newer half of them overlap, so the wobble has not moved (a ramp, a queue
+    /// filling, has its halves apart).
     pub settled: bool,
 }
 
@@ -210,32 +215,30 @@ impl LatencyTracker {
         for (i, slot) in all.iter_mut().take(k).enumerate() {
             *slot = self.v[(self.n - k + i) % LATENCY_SAMPLES];
         }
-        let median = |s: &mut [u32]| {
+        // (lower quartile, median, upper quartile) of a sorted copy.
+        let quartiles = |s: &mut [u32]| {
             s.sort_unstable();
-            s[s.len() / 2]
+            (s[s.len() / 4], s[s.len() / 2], s[s.len() * 3 / 4])
         };
         let most = all[..k].iter().copied().max().unwrap_or(0);
-        // Steady: the upper quartile (the queue or buffer full, just after a fill) of the older
-        // half and of the newer half within 1 ms; a driver's late event now and then dips a few
-        // fills without moving it.
-        let upper = |s: &mut [u32]| {
-            s.sort_unstable();
-            s[s.len() * 3 / 4]
-        };
         let settled = k == LATENCY_SAMPLES && {
             let (old, new) = all.split_at_mut(LATENCY_SAMPLES / 2);
-            upper(old).abs_diff(upper(new)) <= self.rate / 1_000
+            let ((lo_a, _, hi_a), (lo_b, _, hi_b)) = (quartiles(old), quartiles(new));
+            lo_a <= hi_b && lo_b <= hi_a
         };
-        let frames = median(&mut all[..k]);
+        let (lo, frames, hi) = quartiles(&mut all[..k]);
         Latency {
             frames,
             most,
+            band: (hi - lo).max(self.rate / 1_000).min(LATENCY_BAND_MAX),
             settled,
         }
     }
 }
 
-const LATENCY_MAX: u32 = (1 << 30) - 1;
+/// The largest figures one word holds: about 43 s and 21 s at 48 kHz.
+const LATENCY_MAX: u32 = (1 << 21) - 1;
+const LATENCY_BAND_MAX: u32 = (1 << 20) - 1;
 const LATENCY_KNOWN: u64 = 1 << 63;
 const LATENCY_SETTLED: u64 = 1 << 62;
 
@@ -248,7 +251,8 @@ impl LatencyCell {
     pub fn publish(&self, l: Latency) {
         let w = LATENCY_KNOWN
             | if l.settled { LATENCY_SETTLED } else { 0 }
-            | (u64::from(l.most.min(LATENCY_MAX)) << 31)
+            | (u64::from(l.band.min(LATENCY_BAND_MAX)) << 42)
+            | (u64::from(l.most.min(LATENCY_MAX)) << 21)
             | u64::from(l.frames.min(LATENCY_MAX));
         self.0.store(w, Ordering::Release);
     }
@@ -262,7 +266,8 @@ impl LatencyCell {
         let w = self.0.load(Ordering::Acquire);
         (w & LATENCY_KNOWN != 0).then(|| Latency {
             frames: (w & u64::from(LATENCY_MAX)) as u32,
-            most: ((w >> 31) & u64::from(LATENCY_MAX)) as u32,
+            most: ((w >> 21) & u64::from(LATENCY_MAX)) as u32,
+            band: ((w >> 42) & u64::from(LATENCY_BAND_MAX)) as u32,
             settled: w & LATENCY_SETTLED != 0,
         })
     }
@@ -295,9 +300,17 @@ mod tests {
             Latency {
                 frames: 4_870,
                 most: 4_890,
+                band: 48,
                 settled: true
             }
         );
+        // A queue whose depth wobbles by a buffer with uneven events: steady, its band the
+        // wobble.
+        for k in 0..64u64 {
+            l = t.push(5_400 - (k * 7 % 5) * 120);
+        }
+        assert!(l.settled, "{l:?}");
+        assert_eq!((l.most, l.band), (5_400, 240));
         t.restart();
         assert!(!t.push(10).settled);
         let c = LatencyCell::default();
