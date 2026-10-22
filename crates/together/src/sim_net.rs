@@ -501,6 +501,7 @@ impl Transport for SimTransport {
             Wait::until(tb.clone(), open_at).await;
             Ok(MediaStream {
                 total: Some(total),
+                mime: None,
                 body: Box::new(SimBody {
                     tb,
                     net: net2,
