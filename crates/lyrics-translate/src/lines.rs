@@ -53,6 +53,20 @@ pub fn wanted(from: &str, text: &str) -> bool {
     scripts_of(from).is_none_or(|s| s.contains(&script))
 }
 
+/// Whether a line has words at all (not only digits, signs and symbols such as ♪).
+pub fn has_words(text: &str) -> bool {
+    !matches!(
+        line_script(text),
+        Script::Zyyy | Script::Zinh | Script::Zzzz
+    )
+}
+
+/// Whether a translation is the line itself (letters compared, case ignored).
+pub fn same(src: &str, out: &str) -> bool {
+    let a: String = src.split_whitespace().map(bare).collect();
+    !a.is_empty() && a == out.split_whitespace().map(bare).collect::<String>()
+}
+
 /// A word as compared for repeats: its letters, in lower case.
 fn bare(word: &str) -> String {
     word.chars()
