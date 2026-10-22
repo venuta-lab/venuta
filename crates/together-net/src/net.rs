@@ -9,7 +9,7 @@
 //! - **Local only**: no relay and no address lookup, nothing online; the invite carries the
 //!   host's local addresses, so people on the same Wi-Fi connect directly.
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream};
 use iroh::{Endpoint, RelayMap, RelayMode, RelayUrl, endpoint::presets};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -92,6 +92,21 @@ fn key_in_room(mine: &[u8; 32], room_secret: &str) -> iroh::SecretKey {
     iroh::SecretKey::from_bytes(blake3::keyed_hash(mine, room_secret.as_bytes()).as_bytes())
 }
 
+/// A connection silent this long is lost (design 4.1; clock pings keep a live one busy).
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The QUIC settings rooms use: iroh's own, with this idle timeout, and datagrams received or
+/// not (`false` only to test a connection without them).
+pub fn transport_config(idle: Duration, datagrams: bool) -> QuicTransportConfig {
+    let mut b = QuicTransportConfig::builder().max_idle_timeout(Some(
+        idle.try_into().expect("an idle timeout QUIC can carry"),
+    ));
+    if !datagrams {
+        b = b.datagram_receive_buffer_size(None);
+    }
+    b.build()
+}
+
 /// An endpoint for a room (`host`: one that takes connections; `key`: who it is, else new).
 pub async fn endpoint(
     reach: &Reach,
@@ -121,6 +136,7 @@ pub async fn endpoint(
     if let Some(k) = key {
         b = b.secret_key(k);
     }
+    b = b.transport_config(transport_config(IDLE_TIMEOUT, true));
     b.bind()
         .await
         .map_err(|e| format!("Couldn't start listening together: {e}"))
