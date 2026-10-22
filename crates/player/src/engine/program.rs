@@ -1388,7 +1388,7 @@ pub(super) enum Program<T> {
     Own(OwnProgram<T>),
     /// A room plays; your own program waits, set aside (no voice of its own).
     Room {
-        room: RoomProgram<T>,
+        room: Box<RoomProgram<T>>,
         own: OwnProgram<T>,
     },
 }
@@ -1441,7 +1441,7 @@ impl<T: Item + Serialize> Program<T> {
                 // Set aside: what sounds fades out, and it waits paused where it was.
                 own.set_playing(false, deck);
                 *self = Program::Room {
-                    room: RoomProgram::new(clock, mode, status),
+                    room: Box::new(RoomProgram::new(clock, mode, status)),
                     own,
                 };
             }

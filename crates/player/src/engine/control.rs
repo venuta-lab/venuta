@@ -387,7 +387,7 @@ struct Running {
 
 enum Dev {
     #[cfg(windows)]
-    Wasapi(crate::wasapi_out::WasapiOutput),
+    Wasapi(Box<crate::wasapi_out::WasapiOutput>),
     Other(Box<dyn Output>),
 }
 
@@ -395,7 +395,7 @@ impl Dev {
     fn out(&mut self) -> &mut dyn Output {
         match self {
             #[cfg(windows)]
-            Dev::Wasapi(w) => w,
+            Dev::Wasapi(w) => w.as_mut(),
             Dev::Other(o) => o.as_mut(),
         }
     }
@@ -726,9 +726,9 @@ impl Deck {
     fn open_output(&mut self, want: &OpenRequest) -> Result<(), OutputError> {
         let mut dev = match &self.choice {
             #[cfg(windows)]
-            OutputChoice::Device { id, exclusive } => {
-                Dev::Wasapi(crate::wasapi_out::wasapi_output(id.as_deref(), *exclusive))
-            }
+            OutputChoice::Device { id, exclusive } => Dev::Wasapi(Box::new(
+                crate::wasapi_out::wasapi_output(id.as_deref(), *exclusive),
+            )),
             #[cfg(not(windows))]
             OutputChoice::Device { .. } => {
                 return Err(OutputError::Other(
