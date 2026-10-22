@@ -1,33 +1,13 @@
 import { useEffect, useMemo } from 'react'
 import { loadCovers, useCovers } from '../../lib/covers'
-import { lineAt, lineProgress, useSmoothPosition, useSongLyrics } from '../../lib/lyrics'
 import type { Ground, LyricColour } from '../../lib/lyricLook'
-import { current, isOnline, usePlayerValue } from '../../lib/player'
+import { isOnline } from '../../lib/player'
 import { artUrl } from '../RemoteArt'
 import { accentRoles } from '../../lib/themes'
-import { toLatin } from '../../lib/textsearch'
+import { useNowSong } from './NowLyrics'
 
-const INDIC = /[ऀ-ൿ]/
-
-/** The song playing, its words, the line being sung and how far through it, smoothly. */
-export function useNowLyrics() {
-  const song = usePlayerValue(current)
-  const root = usePlayerValue((s) => s.root ?? '')
-  const playing = usePlayerValue((s) => s.playing)
-  // Your file's words, else the lyrics services' (online songs too).
-  const lyrics = useSongLyrics(root, song ?? undefined)
-  const position = useSmoothPosition()
-  const at = lineAt(lyrics, position)
-  const progress = lineProgress(lyrics, at, position)
-  return { song, root, playing, lyrics, position, at, progress }
-}
-
-/** A line in Roman letters, when it is written in an Indian script and that was asked for. */
-export const latinOf = (line: string | undefined, want: boolean) =>
-  want && line && INDIC.test(line) ? toLatin(line) : undefined
-
-/** The words have any line in an Indian script (so the Roman letters switch means something). */
-export const hasIndic = (lines: [number, string][] | undefined) => !!lines?.some(([, l]) => INDIC.test(l))
+// The song, its words and the clock come from the window's one provider (NowLyrics.tsx).
+export { useNowLyrics, useNowSong } from './NowLyrics'
 
 /**
  * The colour lyrics are drawn in: the playing cover's own colour (made to read on what's behind
@@ -49,7 +29,7 @@ export function useLyricColour(choice: LyricColour, root: string, dir: string | 
 
 /** The playing song's cover, large: your file's, or the catalog's picture. */
 export function useWindowCover(): { src: string } | undefined {
-  const { song, root } = useNowLyrics()
+  const { song, root } = useNowSong()
   const localDir = song && !isOnline(song) ? song.dir : ''
   const local = useCovers(640)(localDir)
   useEffect(() => {

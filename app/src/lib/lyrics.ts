@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react'
 import { inApp, lyricsFind, type FoundLine, type LyricsAnswer, type LyricsAsk, type LyricsChoice } from './engine'
 import { isOnline, usePlayerValue, type QueueItem } from './player'
 import { useAwake } from './motion'
-import { shownLines } from './lyricsModel'
+import { modelOf, shownLines, type LyricsModel } from './lyricsModel'
+import { watchJapaneseDictionary } from './japaneseDictionary'
 
 export interface Lyrics {
   /** [ms, line], in order. Empty when the words have no times. */
@@ -21,6 +22,9 @@ export interface Lyrics {
   romanized?: (string | null)[]
   /** The song's language (BCP 47), when the source says. */
   lang?: string | null
+  /** The engine's lines with their second lines (pronunciation, translation, where each came
+   *  from), your offset applied: what the second-line views read (lib/lyricsModel.ts). */
+  model?: LyricsModel
   /** Found online: the source's id and name, who wrote them down, and what you chose. */
   found?: { key: string; source: string; label: string; credit: string | null; choice: LyricsChoice; instrumental: boolean }
 }
@@ -42,6 +46,9 @@ if (typeof window !== 'undefined')
     if (e.key !== CHANGED_KEY || !e.newValue) return
     heard(e.newValue.slice(e.newValue.indexOf('|') + 1))
   })
+// The Japanese dictionary has come: this window reads its lyrics again (every window hears the
+// engine itself), so their Japanese lines get a pronunciation.
+watchJapaneseDictionary(() => heard('*'))
 
 /** What a song is called for the lyrics services: `online:<provider>:<id>`, or its file. */
 export function lyricsKey(song: QueueItem | undefined): string {
@@ -70,6 +77,7 @@ export function lyricsOf(key: string, a: LyricsAnswer): Lyrics {
     ...shownLines(f.lines, a.choice.offset_ms ?? 0),
     text: f.text,
     lang: f.lang ?? null,
+    model: modelOf(f.lines, f.lang, a.choice.offset_ms ?? 0, f.version ?? 1),
     found: { key, source: f.source, label: a.label ?? f.source, credit: f.credit, choice: a.choice, instrumental: f.instrumental },
   }
 }
@@ -138,9 +146,10 @@ export function useLyrics(root: string, path: string | undefined): Lyrics | null
     }
     let live = true
     // Your file's lines come in the engine's shape, word times and translations and all.
-    invoke<{ lines: FoundLine[]; text: string }>('song_lyrics', { root, path })
+    invoke<{ lines: FoundLine[]; text: string; lang?: string | null }>('song_lyrics', { root, path })
       .then((read) => {
-        const value: Lyrics = { ...shownLines(read.lines ?? []), text: read.text ?? '' }
+        const lines = read.lines ?? []
+        const value: Lyrics = { ...shownLines(lines), text: read.text ?? '', lang: read.lang ?? null, model: modelOf(lines, read.lang) }
         kept.set(`${root}|${path}`, value)
         if (live) setLyrics({ path, value })
       })
@@ -167,9 +176,16 @@ export function useSongLyrics(root: string, song: QueueItem | undefined, enabled
   const fileless = !local || (file !== null && !hasWords(file))
   const found = useOnlineLyrics(song, enabled && !!song && fileless)
   if (!enabled || !song) return null
+  if (previewWords && !inApp()) return previewWords(song)
   if (local && file === null) return null
   if (local && hasWords(file)) return file
   return found
+}
+
+/** UI previews outside the app (dev only: lyrics-preview.html): the words a song shows. */
+let previewWords: ((song: QueueItem) => Lyrics | null) | null = null
+export function setPreviewLyrics(words: ((song: QueueItem) => Lyrics | null) | null) {
+  if (import.meta.env.DEV) previewWords = words
 }
 
 /**

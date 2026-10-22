@@ -1,0 +1,30 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "Morning comes in slowly",
+      "script": "Latn"
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "Coffee cooling on the window sill",
+      "script": "Latn"
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "We will find our way back home",
+      "script": "Latn"
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "Before the streetlights fade",
+      "script": "Latn"
+    }
+  ],
+  "lang": "en",
+  "version": 1
+}

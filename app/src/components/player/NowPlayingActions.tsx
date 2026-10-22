@@ -17,7 +17,7 @@ import { menuFromEvent } from '../../lib/menu'
 import { findOnlineArtist } from '../../screens/listen/onlineSearch'
 import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
-import { hasIndic, useLyricColour } from '../lyrics/useNowLyrics'
+import { useLyricColour } from '../lyrics/useNowLyrics'
 
 const spring = { type: 'spring', stiffness: 420, damping: 32 } as const
 
@@ -189,7 +189,7 @@ export function LyricsDock(props: { root: string; song: QueueItem; lyrics: Lyric
                 </button>
               ))}
             </div>
-            <LookPanel win={which} ground={groundOf(whichWindow)} tone="app" coverColour={colour} indic={hasIndic(props.lyrics?.lines)} lines={which === 'overlay'} />
+            <LookPanel win={which} ground={groundOf(whichWindow)} tone="app" coverColour={colour} lines={which === 'overlay'} />
           </Pop>
         )}
         {open === 'screens' && (

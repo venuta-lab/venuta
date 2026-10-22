@@ -13,8 +13,6 @@ export interface LyricLook {
   look: LookId
   size: LyricSize
   colour: LyricColour
-  /** Lines in Indian scripts shown in Roman letters too. */
-  latin: boolean
   /** Desktop lyrics: one line, or the next one under it. */
   lines: 1 | 2
 }
@@ -42,7 +40,8 @@ export type Ground = 'dark' | 'light'
 export type LyricWindow = 'stage' | 'overlay'
 export const LYRIC_WINDOWS: LyricWindow[] = ['stage', 'overlay']
 
-const DEFAULT: LyricLook = { look: 'karaoke', size: 'm', colour: 'cover', latin: false, lines: 2 }
+// (Its "Roman letters too" switch became Pronunciation, one choice for every view: lib/secondChoice.ts.)
+const DEFAULT: LyricLook = { look: 'karaoke', size: 'm', colour: 'cover', lines: 2 }
 /** The look when both windows shared one: where each begins. */
 const SHARED = 'lyric-look'
 const keyOf = (w: LyricWindow) => `lyric-look-${w}`

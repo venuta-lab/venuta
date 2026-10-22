@@ -1,0 +1,80 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "दिल ये मेरा, baby please stay",
+      "script": "Deva",
+      "roman": {
+        "text": "Dil ye mera, baby please stay",
+        "lang": "hi-Latn",
+        "source": {
+          "kind": "made"
+        }
+      },
+      "translation": {
+        "text": "This heart of mine, baby please stay",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "Hold me close tonight",
+      "script": "Latn"
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "तू ही मेरी dream girl है",
+      "script": "Deva",
+      "roman": {
+        "text": "Tu hi meri dream girl hai",
+        "lang": "hi-Latn",
+        "source": {
+          "kind": "made"
+        }
+      },
+      "translation": {
+        "text": "You alone are my dream girl",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "opus-mt"
+        }
+      }
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "We can dance until the morning light",
+      "script": "Latn"
+    },
+    {
+      "start_ms": 17000,
+      "end_ms": 21000,
+      "text": "धड़कन बोले बस तेरा नाम",
+      "script": "Deva",
+      "roman": {
+        "text": "Dhadkan bole bas tera naam",
+        "lang": "hi-Latn",
+        "source": {
+          "kind": "made"
+        }
+      },
+      "translation": {
+        "text": "My heartbeat says only your name",
+        "lang": "en",
+        "source": {
+          "kind": "corrected"
+        }
+      }
+    }
+  ],
+  "lang": "hi",
+  "version": 1
+}

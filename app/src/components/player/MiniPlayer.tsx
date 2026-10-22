@@ -10,6 +10,11 @@ import { artUrl, OnlineCover } from '../RemoteArt'
 import { SteadyArt } from '../SteadyArt'
 import { IconExpand, IconLyrics, IconMute, IconNext, IconPause, IconPlay, IconPrevious, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconVolume } from '../Icons'
 import { lineAt, useSongLyrics } from '../../lib/lyrics'
+import { keyAction } from '../../lib/secondChoice'
+import { useSecondLines, rowViewsAt, type SecondLinesView } from '../../lib/useSecondLines'
+import type { SecondRowView } from '../lyrics/LyricText'
+import { SECOND_NAMES } from '../../lib/secondChoice'
+import { useShrinkToFit } from '../lyrics/useShrinkToFit'
 import { ThemedTrack } from './NowPlayingBar'
 import { LcdSpectrum } from './Spectrum'
 import { useThemeInfo } from '../../lib/prefs'
@@ -184,11 +189,21 @@ export function MiniPlayer() {
   const lyrics = useSongLyrics(root, song ?? undefined, showLyrics)
   const at = lineAt(lyrics, s.position_ms)
   const line = at >= 0 ? lyrics?.lines[at]?.[1] || '♪' : ''
+  // Its pronunciation and translation, when switched on: the same rows for every line.
+  const seconds = useSecondLines(song, lyrics)
+  const rowsOn = showLyrics && (seconds.rows.roman || seconds.rows.translation)
+  const rows = rowsOn ? (rowViewsAt(seconds, at) ?? []) : []
+  const toggleRow = useRef(seconds.toggle)
+  useEffect(() => {
+    toggleRow.current = (kind) => showLyrics && seconds.offered[kind] && seconds.toggle(kind)
+  }, [seconds, showLyrics])
 
   // Space plays and pauses; arrows skip; Ctrl+M goes back.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (e.key === ' ') {
+      const row = keyAction(e)
+      if (row) toggleRow.current(row)
+      else if (e.key === ' ') {
         e.preventDefault()
         void toggle()
       } else if (e.key === 'ArrowRight' && e.ctrlKey) void next()
@@ -246,8 +261,13 @@ export function MiniPlayer() {
         <div className="relative flex h-full items-center gap-3.5 p-3 pb-4">
           <Art src={art?.src} title={song.album} seed={online ? song.album || song.title : undefined} className="aspect-square h-full rounded-[14px]" />
           <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 self-stretch">
-            <div className="min-w-0 pr-16">
-              <div className={`truncate text-[14.5px] font-semibold leading-tight ${retro ? 'title' : ''}`}>{song.title}</div>
+            <div className={`min-w-0 pr-16 ${rowsOn ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
+              {/* With rows under the line, the line takes the title's place (the card shows both). */}
+              {!rowsOn && <div className={`truncate text-[14.5px] font-semibold leading-tight ${retro ? 'title' : ''}`}>{song.title}</div>}
+              {rowsOn ? (
+                // The line and the rows under it, wrapped, made smaller rather than cut off.
+                <FittedLines lines={[{ text: line || '♪', now: true, rows }]} size={13.5} lang={seconds.lang} />
+              ) : (
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={showLyrics ? line : artist}
@@ -260,6 +280,7 @@ export function MiniPlayer() {
                   {showLyrics ? line || artist : artist}
                 </motion.div>
               </AnimatePresence>
+              )}
             </div>
             <Controls playing={s.playing} />
           </div>
@@ -269,6 +290,7 @@ export function MiniPlayer() {
             nextShape={nextShape}
             onShape={resize}
             lyrics={{ on: lyricsOn, toggle: () => setLyricsOn((o) => !o) }}
+            seconds={showLyrics ? seconds : null}
             pin={pin}
           />
           {retro ? <RetroTrack bar={info.seekBar} value={progress} /> : <Progress value={progress} duration={seekable} />}
@@ -287,7 +309,22 @@ export function MiniPlayer() {
               style={{ background: 'linear-gradient(to bottom, transparent 35%, color-mix(in oklab, var(--solid) 92%, transparent) 100%)' }}
             />
             <AnimatePresence>
-              {showLyrics && !queueOn && lyrics?.lines.length ? (
+              {rowsOn && !queueOn && lyrics?.lines.length ? (
+                // With pronunciation or translation: the lines wrap, the sung one with its rows
+                // under it, all made smaller as much as they must to fit over the cover.
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-x-0 bottom-0 top-[22%] flex flex-col justify-end px-4 pb-2">
+                  <FittedLines
+                    size={15}
+                    lang={seconds.lang}
+                    bottom
+                    lines={[
+                      { text: at > 0 ? lyrics.lines[at - 1][1] || '♪' : '', now: false, rows: [] },
+                      { text: at >= 0 ? lyrics.lines[at][1] || '♪' : '', now: true, rows },
+                      { text: lyrics.lines[at + 1]?.[1] ?? '', now: false, rows: [] },
+                    ]}
+                  />
+                </motion.div>
+              ) : showLyrics && !queueOn && lyrics?.lines.length ? (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -342,6 +379,7 @@ export function MiniPlayer() {
             nextShape={nextShape}
             onShape={resize}
             lyrics={!queueOn ? { on: lyricsOn, toggle: () => setLyricsOn((o) => !o) } : null}
+            seconds={showLyrics && !queueOn ? seconds : null}
             queue={{ on: queueOn, toggle: () => setQueueOn((o) => !o) }}
             pin={pin}
             onArt={!queueOn}
@@ -524,6 +562,8 @@ function WindowButtons(props: {
   nextShape: Shape
   onShape: (s: Shape) => void
   lyrics: { on: boolean; toggle: () => void } | null
+  /** The song's two switches, while its lyrics show. */
+  seconds?: SecondLinesView | null
   queue?: { on: boolean; toggle: () => void }
   pin: { on: boolean; toggle: () => void }
   compact?: boolean
@@ -556,6 +596,32 @@ function WindowButtons(props: {
           <IconLyrics width={15} height={15} />
         </button>
       )}
+      {(['roman', 'translation'] as const)
+        .filter((k) => props.seconds?.offered[k])
+        .map((k) => {
+          const on = !!props.seconds?.on[k]
+          const note = k === 'roman' ? (props.seconds?.notes.roman ?? props.seconds?.dictionary) : props.seconds?.notes.translation
+          return (
+            <button
+              key={k}
+              onClick={() => props.seconds?.toggle(k)}
+              aria-pressed={on}
+              aria-label={SECOND_NAMES[k].name}
+              title={`${SECOND_NAMES[k].name}: ${SECOND_NAMES[k].line.toLowerCase()} (${SECOND_NAMES[k].keys})${note ? `. ${note}` : ''}`}
+              className={`${btn} text-[11px] font-semibold ${on ? '!text-accent-ink' : ''}`}
+            >
+              {/* A for the words in English letters; a speech mark for their meaning. */}
+              {k === 'roman' ? (
+                <span aria-hidden>Ab</span>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 5h9M8.5 3v2M6 5c.5 3 2.5 5.5 5.5 7M11 5c-.8 3.5-3.2 6.5-6.5 8" />
+                  <path d="m13 21 4-9 4 9M14.5 18h5" />
+                </svg>
+              )}
+            </button>
+          )
+        })}
       {props.queue && (
         <button
           onClick={props.queue.toggle}
@@ -587,6 +653,34 @@ function WindowButtons(props: {
       <button onClick={() => void miniPlayer(false)} aria-label="Back to Venuta" title="Back to Venuta" className={btn}>
         <IconExpand width={14} height={14} />
       </button>
+    </div>
+  )
+}
+
+/**
+ * Lines in a slot of fixed height (the bar's one line, the card's three over the cover), each
+ * with its rows under it (pronunciation, then translation, smaller and dimmer): wrapped, never
+ * cut off, made smaller as much as they must to fit.
+ */
+function FittedLines(props: { lines: { text: string; now: boolean; rows: SecondRowView[] }[]; size: number; lang: string | null; bottom?: boolean; className?: string }) {
+  const key = props.lines.map((l) => `${l.text}|${l.rows.map((r) => r.text).join('|')}`).join('/')
+  const { box, inner, fit } = useShrinkToFit<HTMLDivElement, HTMLDivElement>(key)
+  return (
+    <div ref={box} data-fit-box className={`flex min-h-0 flex-1 flex-col overflow-hidden ${props.bottom ? 'justify-end' : 'justify-start'} ${props.className ?? ''}`}>
+      <div ref={inner} style={{ fontSize: props.size * fit, overflowWrap: 'anywhere' }} className="grid gap-0.5">
+        {props.lines.map((l, i) => (
+          <div key={i} className={l.now ? '' : 'text-ink/45'}>
+            <div lang={props.lang ?? undefined} className={`font-semibold leading-snug ${l.now ? 'text-accent-ink' : ''}`}>
+              {l.text || '\u00a0'}
+            </div>
+            {l.rows.map((r) => (
+              <div key={r.kind} data-second={r.kind} lang={r.lang} className={`leading-snug ${r.kind === 'roman' ? 'text-ink/70' : 'text-ink/55'}`} style={{ fontSize: r.kind === 'roman' ? '0.86em' : '0.8em' }}>
+                {r.text || '\u00a0'}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
