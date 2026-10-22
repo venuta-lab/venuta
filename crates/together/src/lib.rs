@@ -29,6 +29,7 @@ pub mod clock_map;
 pub mod conductor;
 pub mod fakes;
 pub mod invite;
+pub mod measure;
 pub mod proto;
 pub mod room;
 pub mod room_player;

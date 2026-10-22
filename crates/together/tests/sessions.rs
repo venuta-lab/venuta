@@ -18,15 +18,18 @@
 mod session_sim;
 
 use session_sim::*;
+use together::align::{Alignment, CopyClass};
 use together::anchor::{Anchor, EntryId, Transition};
 use together::fakes::Call;
 use together::proto::Role;
+use together::proto::Song;
 use together::proto::v3::{Action, Advice, DIFFERENT_VERSIONS, Phase, ToGuest};
 use together::room::v2::{HOST, HostNote, Opening};
 use together::room_player::{ListenMode, SubState, Suspension, SyncMode};
 use together::session::Stage;
 use together::sim_net::Way;
 use together::transport::{ControlMsg, Transport, TransportEvent};
+use together::view::{CopyKind, CopyView};
 
 fn internet() -> (Way, Way) {
     (Way::internet(25.0, 5.0), Way::internet(35.0, 5.0))
@@ -255,6 +258,7 @@ fn a9_a_0_3_host_says_different_versions_and_the_guest_shows_its_words() {
             proof: "cd".repeat(32),
             app: "Venuta test".into(),
             host_name: "Asha".into(),
+            mode: Some(ListenMode::Apart),
         },
     );
     w.net.connect(&t, &old_host, Way::LAN, Way::LAN);
@@ -925,6 +929,377 @@ fn i11_a_held_room_idle_for_an_hour_ends_and_lets_everyone_go() {
     w.run_ms(3_601_000);
     assert!(w.people[0].detached() && w.people[1].detached());
     assert!(w.people[0].host().ended());
+}
+
+// --- E. Copies and alignment (WP11) ------------------------------------------------------
+
+/// A song only the host has (its file, streamed to whoever asks).
+fn host_song(n: u32, secs: u64) -> Song {
+    Song {
+        key: Song::host_key(&format!("Album/{n:02}.flac")),
+        online_id: None,
+        host_file: true,
+        format: Some("flac".into()),
+        ..song(n, secs)
+    }
+}
+
+/// The copy someone's row shows in `viewer`'s window.
+fn copy_seen(w: &mut World, viewer: usize, of: usize) -> Option<CopyView> {
+    let id = if of == 0 {
+        HOST
+    } else {
+        w.people[of].guest().me().unwrap()
+    };
+    let v = match viewer {
+        0 => w.people[0].host().window(&Default::default()),
+        i => w.people[i].guest().window(&Default::default()),
+    };
+    v.room?.members.into_iter().find(|m| m.id == id)?.copy
+}
+
+/// Someone's first prepare: when it was made (the fake's clock) and its alignment.
+fn first_prepare(w: &mut World, i: usize) -> (u64, Alignment) {
+    assert!(w.run_until(|w| !w.people[i].prepares().is_empty(), 4_000));
+    let (at, c) = w.people[i]
+        .log
+        .calls()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Call::Prepare { .. }))
+        .unwrap();
+    match c {
+        Call::Prepare { align, .. } => (at, align),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn e1_d5_the_hosts_file_is_exact_with_nothing_to_measure_and_first_in_every_device() {
+    let mut w = World::open_measured(vec![host_song(1, 200), host_song(2, 200)], Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    let key = host_song(1, 200).key;
+    w.people[r].rules.lock().unwrap().host_copy.insert(key);
+    // Every device puts the host's file first (D5), asked for or not.
+    w.people[m]
+        .guest()
+        .conductor()
+        .set_mode(ListenMode::EveryDevice);
+    w.run_ms(1_500);
+    w.start();
+    for i in [r, m] {
+        let (_, a) = first_prepare(&mut w, i);
+        assert_eq!(a, Alignment::EXACT, "{}", w.people[i].name);
+    }
+    w.run_ms(2_000);
+    let seen = copy_seen(&mut w, 0, r).expect("the host sees Ravi's copy");
+    assert_eq!(
+        (seen.kind, seen.class),
+        (CopyKind::HostStream, CopyClass::Exact)
+    );
+    assert_eq!(seen.words(), "your file, streamed, matched");
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.class),
+        Some(CopyClass::Exact)
+    );
+    assert_eq!(
+        copy_seen(&mut w, m, m).map(|c| c.kind),
+        Some(CopyKind::HostStream)
+    );
+}
+
+#[test]
+fn e2_an_own_copy_that_decodes_the_same_is_exact() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Exact);
+    assert_eq!(a.offset_us, 0);
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, 0, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, matched")
+    );
+}
+
+#[test]
+fn e3_another_master_is_measured_then_refined_through_the_song_by_glides() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            offsets: vec![12_000, 14_000, 17_000, 21_000],
+            same_pcm: false,
+            ..Truth::default()
+        },
+    );
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Measured);
+    assert_eq!(a.offset_us, 12_000);
+    let e = w.entry(0);
+    // Each later window moves the offset when the room reaches it, never before.
+    for (window_s, offset) in [(60, 14_000), (120, 17_000), (180, 21_000)] {
+        assert!(w.run_until(|w| place(w) >= (window_s - 1) * S, 200_000));
+        assert!(
+            w.people[r]
+                .refines()
+                .iter()
+                .all(|x| x.2.offset_us != offset),
+            "not before {window_s} s"
+        );
+        assert!(w.run_until(|w| place(w) >= window_s * S + 100 * MS, 3_000));
+        let last = w.people[r].refines().last().cloned().expect("refined");
+        assert_eq!((last.1, last.2.offset_us), (e, offset));
+        assert_eq!(last.2.class, CopyClass::Measured);
+    }
+    // Every move a glide: never 20 ms or more at once.
+    let mut was = 12_000;
+    for (_, _, x) in w.people[r].refines() {
+        assert!(
+            (x.offset_us - was).abs() <= 20_000,
+            "{} to {}",
+            was,
+            x.offset_us
+        );
+        was = x.offset_us;
+    }
+}
+
+#[test]
+fn e4_a_catalog_copy_is_measured_with_its_encoder_delay() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(&song(1, 200).key, Truth::at(-25_000));
+    w.people[r].truth(&song(2, 200).key, Truth::at(-26_000));
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!((a.class, a.offset_us), (CopyClass::Measured, -25_000));
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, matched")
+    );
+    // The next song, armed ahead, measured too.
+    assert!(w.run_until(|w| !w.people[r].arms().is_empty(), 200_000));
+    let next = w.entry(1);
+    let arm = w.people[r]
+        .aligns()
+        .into_iter()
+        .find(|(e, _)| *e == next)
+        .expect("armed");
+    assert_eq!(
+        (arm.1.class, arm.1.offset_us),
+        (CopyClass::Measured, -26_000)
+    );
+}
+
+#[test]
+fn e5_d14_another_edit_turns_approximate_where_it_shows_for_its_listener_and_the_host_only() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            edit_ms: Some(120_000),
+            ..Truth::at(3_000)
+        },
+    );
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!((a.class, a.offset_us), (CopyClass::Measured, 3_000));
+    assert!(w.run_until(|w| place(w) >= 119 * S, 200_000));
+    assert!(
+        w.people[r].refines().is_empty(),
+        "the same offset: nothing to refine"
+    );
+    assert!(w.run_until(|w| place(w) >= 122 * S, 5_000));
+    let x = w.people[r].refines();
+    assert_eq!(x.len(), 1);
+    assert_eq!(
+        (x[0].2.class, x[0].2.offset_us),
+        (CopyClass::Approximate, 3_000),
+        "approximate from the edit, the offset kept (never a jump)"
+    );
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, 0, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, another version")
+    );
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.class),
+        Some(CopyClass::Approximate)
+    );
+    assert_eq!(copy_seen(&mut w, m, r), None, "nobody else sees it (D14)");
+}
+
+#[test]
+fn e6_a_song_the_host_cant_play_is_approximate_for_everyone_at_once() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    w.people[0]
+        .rules
+        .lock()
+        .unwrap()
+        .none
+        .insert(song(1, 200).key);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(&song(1, 200).key, Truth::at(40_000));
+    let t0 = w.sim_ns();
+    w.host_ask(Action::Play);
+    let (at, a) = first_prepare(&mut w, r);
+    assert_eq!(a, Alignment::APPROXIMATE);
+    assert!(
+        at - t0 < 400 * NS_MS,
+        "no waiting for a measure that can't come: {} ms",
+        (at - t0) / NS_MS
+    );
+}
+
+#[test]
+fn a_measure_too_slow_is_given_up_at_one_second_and_taken_later_only_within_a_glide() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    let key = song(1, 200).key;
+    let slow = |offset| Truth {
+        start_ms: 3_000,
+        whole_ms: 3_000,
+        ..Truth::at(offset)
+    };
+    w.people[r].truth(&key, slow(8_000));
+    w.people[m].truth(&key, slow(300_000));
+    let t0 = w.sim_ns();
+    w.host_ask(Action::Play);
+    for i in [r, m] {
+        let (at, a) = first_prepare(&mut w, i);
+        assert_eq!(a, Alignment::APPROXIMATE, "{}", w.people[i].name);
+        let ms = (at - t0) / NS_MS;
+        assert!((900..1_500).contains(&ms), "given up at 1 s: {ms} ms");
+    }
+    w.run_ms(4_000);
+    let x = w.people[r].refines();
+    assert_eq!(x.len(), 1, "within a glide: taken");
+    assert_eq!(
+        (x[0].2.class, x[0].2.offset_us),
+        (CopyClass::Measured, 8_000)
+    );
+    assert!(
+        w.people[m].refines().is_empty(),
+        "300 ms off: never jumped to for alignment alone"
+    );
+    // The next voice of the song opens with it.
+    w.host_ask(Action::Seek { content_us: 30 * S });
+    assert!(w.run_until(|w| w.people[m].prepares().len() == 2, 3_000));
+    let last = w.people[m]
+        .aligns()
+        .into_iter()
+        .rfind(|(_, a)| a.class == CopyClass::Measured)
+        .expect("measured");
+    assert_eq!(last.1.offset_us, 300_000);
+}
+
+#[test]
+fn e9_every_device_on_another_version_is_offered_the_hosts_copy_one_speaker_or_apart() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            edit_ms: Some(10_000),
+            ..Truth::at(0)
+        },
+    );
+    w.people[r]
+        .guest()
+        .conductor()
+        .set_mode(ListenMode::EveryDevice);
+    w.run_ms(1_500);
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Approximate);
+    w.run_ms(1_500);
+    let v = w.people[r].guest().window(&Default::default());
+    let choices = v.you.unwrap().choices;
+    let every = choices
+        .iter()
+        .find(|c| c.mode == ListenMode::EveryDevice)
+        .unwrap();
+    assert_eq!(
+        every.why_not.as_deref(),
+        Some("Your copy is another version: use Asha's copy, or listen apart")
+    );
+    for mode in [ListenMode::OneSpeaker, ListenMode::Apart] {
+        let c = choices.iter().find(|c| c.mode == mode).unwrap();
+        assert_eq!(c.why_not, None);
+    }
+}
+
+/// `key`'s reference as person `i` gets it on the `env:` stream (`None`: nothing served).
+fn fetch_reference(w: &mut World, i: usize, key: &str) -> Option<together::align::Reference> {
+    use std::task::Poll;
+    use together::sim_net::poll_once;
+    use together::transport::Get;
+    let mut f = w.people[i].t.open_media(
+        w.peer(0),
+        Get {
+            get: format!("env:{key}"),
+            from: 0,
+            to: None,
+        },
+    );
+    let mut s = loop {
+        if let Poll::Ready(s) = poll_once(&mut f) {
+            break s.ok()?;
+        }
+        w.run_ms(5);
+    };
+    let mut body = Vec::new();
+    loop {
+        let got = loop {
+            let mut c = s.body.read_chunk();
+            if let Poll::Ready(x) = poll_once(&mut c) {
+                break x;
+            }
+            drop(c);
+            w.run_ms(5);
+        };
+        match got.ok()? {
+            Some(b) => body.extend_from_slice(&b),
+            None => return together::align::decode_reference(&body).ok(),
+        }
+    }
+}
+
+#[test]
+fn references_go_to_members_only_and_are_made_when_first_asked_for() {
+    use together::align::Reference;
+    let mut w = World::open_measured(songs(3), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.run_ms(200);
+    // Never prepared yet: the first ask finds nothing, and the host makes it.
+    let key = song(3, 200).key;
+    assert_eq!(fetch_reference(&mut w, r, &key), None);
+    w.run_ms(100);
+    assert!(matches!(
+        fetch_reference(&mut w, r, &key),
+        Some(Reference::Whole(_))
+    ));
+    assert_eq!(
+        fetch_reference(&mut w, r, "online:songzzzzzzz"),
+        None,
+        "never a song not in the room"
+    );
+    w.people[0].host().set_let_in(false);
+    let x = w.arrive("Outsider", Way::LAN, Way::LAN, ListenMode::Apart);
+    assert!(w.run_until(|w| w.people[x].guest().stage() == Stage::AtTheDoor, 2_000));
+    assert_eq!(
+        fetch_reference(&mut w, x, &key),
+        None,
+        "not to someone at the door"
+    );
 }
 
 // --- J. Modes -----------------------------------------------------------------------------

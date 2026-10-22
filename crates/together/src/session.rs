@@ -12,14 +12,16 @@
 //! Pure and single-threaded: the app's runner owns a session, gives it commands, and steps it
 //! at least every 10 ms; a test steps it in simulated time. Nothing here blocks.
 
+use crate::align::CopyClass;
 use crate::anchor::{Anchor, EntryId};
 use crate::clock::{Clock, Steps};
 use crate::clock_link::{Pinger, answer};
 use crate::conductor::Conductor;
+use crate::measure::Shelf;
 use crate::proto::Song;
 use crate::proto::v3::{
-    self, Action, Advice, Member, Phase as WirePhase, RoomView as WireRoom, ToGuest, ToHost,
-    check_to_guest, check_to_host,
+    self, Action, Advice, CopyReport, Member, Phase as WirePhase, RoomView as WireRoom, ToGuest,
+    ToHost, check_to_guest, check_to_host,
 };
 use crate::room::v2::{Changes, HOST, HostNote, Knock, Room};
 use crate::room_player::{ListenMode, SubState, Suspension};
@@ -106,7 +108,10 @@ pub fn too_late(action: &Action) -> String {
 #[derive(Default)]
 struct Allowed {
     peers: HashSet<PeerId>,
+    /// The host's songs in the queue (their files and covers).
     keys: HashSet<String>,
+    /// Every song in the queue (their references, WP11).
+    all: HashSet<String>,
 }
 
 /// The host's media, gated: only members, only the host's songs in the room (their file, their
@@ -114,22 +119,34 @@ struct Allowed {
 struct Gate {
     allowed: Arc<Mutex<Allowed>>,
     inner: Arc<dyn MediaServer>,
+    /// The references of the room's songs, as the host's measure shelved them.
+    envelopes: Option<Shelf>,
 }
 
 impl Gate {
     fn lets(&self, from: PeerId, get: &Get) -> bool {
-        let key = get
-            .get
-            .strip_prefix("cover:")
-            .or_else(|| get.get.strip_prefix("env:"))
-            .unwrap_or(&get.get);
         let a = self.allowed.lock().unwrap_or_else(|e| e.into_inner());
-        a.peers.contains(&from) && a.keys.contains(key)
+        if !a.peers.contains(&from) {
+            return false;
+        }
+        match get.get.strip_prefix("env:") {
+            Some(key) => a.all.contains(key),
+            None => a
+                .keys
+                .contains(get.get.strip_prefix("cover:").unwrap_or(&get.get)),
+        }
     }
 }
 
 impl MediaServer for Gate {
     fn open(&self, from: PeerId, get: &Get) -> Option<Arc<[u8]>> {
+        if let Some(key) = get.get.strip_prefix("env:") {
+            // Every song's reference, made or not yet (then the guest asks again).
+            return match &self.envelopes {
+                Some(shelf) if self.lets(from, get) => shelf.serve(key),
+                _ => None,
+            };
+        }
         if self.lets(from, get) {
             self.inner.open(from, get)
         } else {
@@ -175,6 +192,8 @@ pub struct HostSession<I> {
     next_path_ns: u64,
     waking: bool,
     allowed: Arc<Mutex<Allowed>>,
+    /// The references of the room's songs (WP11), served on the `env:` stream.
+    envelopes: Option<Shelf>,
     now_ns: u64,
 }
 
@@ -215,10 +234,18 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             next_path_ns: now_ns,
             waking: false,
             allowed: Arc::default(),
+            envelopes: None,
             now_ns,
         };
         s.update_allowed();
         s
+    }
+
+    /// Serve the references the host's measure shelves (`measure::Measured::host`) on the
+    /// `env:` stream, to members, for every song in the queue (WP11).
+    pub fn with_envelopes(mut self, shelf: Shelf) -> Self {
+        self.envelopes = Some(shelf);
+        self
     }
 
     /// The room's time now (µs of the host's clock).
@@ -243,6 +270,7 @@ impl<I: Clone + Send + 'static> HostSession<I> {
         Arc::new(Gate {
             allowed: self.allowed.clone(),
             inner,
+            envelopes: self.envelopes.clone(),
         })
     }
 
@@ -341,6 +369,12 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             .queue()
             .iter()
             .filter(|e| e.song.host_file)
+            .map(|e| e.song.key.clone())
+            .collect();
+        a.all = self
+            .room
+            .queue()
+            .iter()
             .map(|e| e.song.key.clone())
             .collect();
     }
@@ -615,6 +649,7 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             slow: &self.slow,
             why: None,
             host_away: false,
+            copy: None,
             extras,
         })
     }
@@ -633,6 +668,10 @@ pub struct GuestConfig {
     pub app: String,
     /// The host's name, from the invite (until the room says it).
     pub host_name: String,
+    /// How they listen, when chosen before joining; `None`: by the network (A16, D15): on the
+    /// host's network a remote on the host's speaker (the join choice offers playing here
+    /// too), elsewhere apart.
+    pub mode: Option<ListenMode>,
 }
 
 struct Held {
@@ -663,7 +702,14 @@ pub struct GuestSession<I> {
     path: Option<PathInfo>,
     close_at: Option<u64>,
     last_queue: Option<u32>,
+    /// How they listen was settled at the first welcome.
+    settled: bool,
     now_ns: u64,
+}
+
+/// A direct path with a round trip under 8 ms: on the host's network (A16, F1).
+pub fn same_network(p: Option<PathInfo>) -> bool {
+    p.is_some_and(|p| p.direct && !p.relay && p.rtt_us.is_some_and(|r| r < 8_000))
 }
 
 impl<I: Clone + Send + 'static> GuestSession<I> {
@@ -699,8 +745,14 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             path: None,
             close_at: None,
             last_queue: None,
+            settled: false,
             now_ns,
         };
+        if let Some(m) = g.cfg.mode
+            && m != g.conductor.mode()
+        {
+            g.conductor.set_mode(m);
+        }
         g.hello();
         g
     }
@@ -933,6 +985,16 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
         match &m {
             ToGuest::Waiting => self.stage = Stage::AtTheDoor,
             ToGuest::Welcome { .. } => {
+                if !self.settled {
+                    // Not chosen before joining: one speaker first on the host's network (D15).
+                    self.settled = true;
+                    if self.cfg.mode.is_none()
+                        && !self.conductor.chosen()
+                        && same_network(self.path())
+                    {
+                        self.conductor.set_mode(ListenMode::OneSpeaker);
+                    }
+                }
                 self.stage = Stage::In;
                 self.lost_at = None;
                 self.conductor.message(&m, now_ns);
@@ -998,6 +1060,7 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             slow: &HashSet::new(),
             why: self.why.clone(),
             host_away: self.stage == Stage::Reconnecting,
+            copy: self.conductor.copy(),
             extras,
         })
     }
@@ -1056,6 +1119,8 @@ struct Window<'a> {
     slow: &'a HashSet<u32>,
     why: Option<String>,
     host_away: bool,
+    /// Your copy of the song playing (a guest's).
+    copy: Option<CopyReport>,
     extras: &'a WindowExtras,
 }
 
@@ -1197,9 +1262,10 @@ fn window(w: Window<'_>) -> View {
                 &host_name,
             ),
         };
-        let near = w
-            .path
-            .is_some_and(|p| p.direct && !p.relay && p.rtt_us.is_some_and(|r| r < 8_000));
+        let near = same_network(w.path);
+        // Every device needs a copy that lines up within a millisecond: another version can't
+        // take part (E9), and is offered the host's copy, the host's speaker or apart.
+        let other_version = w.copy.is_some_and(|c| c.class == CopyClass::Approximate);
         let choices = if !w.host && near {
             [
                 ListenMode::OneSpeaker,
@@ -1209,7 +1275,9 @@ fn window(w: Window<'_>) -> View {
             .into_iter()
             .map(|mode| view::ModeChoice {
                 mode,
-                why_not: None,
+                why_not: (mode == ListenMode::EveryDevice && other_version).then(|| {
+                    format!("Your copy is another version: use {host_name}'s copy, or listen apart")
+                }),
             })
             .collect()
         } else {

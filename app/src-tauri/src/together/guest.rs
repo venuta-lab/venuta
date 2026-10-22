@@ -91,6 +91,8 @@ pub async fn join(
             proof: invite.proof(&me),
             app: format!("Venuta {}", engine::VERSION),
             host_name: invite.host.clone(),
+            // One speaker first on the host's network, unless chosen (A16, D15).
+            mode: None,
         },
     );
     let live = Live {
