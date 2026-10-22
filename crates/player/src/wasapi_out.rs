@@ -405,6 +405,7 @@ impl Drop for ProAudio {
 
 // --- Output v2 ------------------------------------------------------------------------------
 
+use crate::devices::FormatTable;
 use crate::output::{
     DeviceNotes, EventSink, Fault, Kick, Opened, PositionMap, PullDevice, PullOpener, PullOutput,
     Space, Wake,
@@ -415,11 +416,11 @@ use together::time::{RealClock, Sleeper};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Media::Audio::{
     AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED, AUDCLNT_E_DEVICE_IN_USE, AUDCLNT_E_DEVICE_INVALIDATED,
-    AUDCLNT_E_SERVICE_NOT_RUNNING, AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_SHAREMODE_SHARED,
-    AUDCLNT_STREAMFLAGS_EVENTCALLBACK, DEVICE_STATE, DEVICE_STATE_ACTIVE, EDataFlow, ERole,
-    IAudioClient, IAudioClock, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator,
-    IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator, WAVEFORMATEX,
-    WAVEFORMATEXTENSIBLE, eConsole, eRender,
+    AUDCLNT_E_SERVICE_NOT_RUNNING, AUDCLNT_E_UNSUPPORTED_FORMAT, AUDCLNT_SHAREMODE_EXCLUSIVE,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, DEVICE_STATE, DEVICE_STATE_ACTIVE,
+    EDataFlow, ERole, IAudioClient, IAudioClock, IAudioRenderClient, IMMDevice,
+    IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator,
+    WAVEFORMATEX, WAVEFORMATEXTENSIBLE, eConsole, eRender,
 };
 use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
 use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT};
@@ -484,10 +485,10 @@ impl PullOpener for WasapiOpener {
 }
 
 /// COM on this thread (multithreaded), while it lasts.
-struct Com(bool);
+pub(crate) struct Com(bool);
 
 impl Com {
-    fn init() -> Com {
+    pub(crate) fn init() -> Com {
         // SAFETY: a plain call; S_OK and S_FALSE (already initialised) are each matched by one
         // CoUninitialize in drop, on this same thread.
         let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -505,7 +506,7 @@ impl Drop for Com {
 }
 
 /// An auto-reset Windows event.
-struct Event(HANDLE);
+pub(crate) struct Event(pub(crate) HANDLE);
 
 // SAFETY: an event is a kernel handle; any thread may signal it or wait on it, and it is
 // closed once, when the last owner drops it.
@@ -514,7 +515,7 @@ unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
 impl Event {
-    fn new() -> Result<Event, OutputError> {
+    pub(crate) fn new() -> Result<Event, OutputError> {
         // SAFETY: a plain call: no attributes, auto-reset, not signalled, unnamed.
         unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map(Event)
@@ -855,14 +856,14 @@ fn open_pull(
         let name = wasapi::Device::from_immdevice(device.clone())
             .and_then(|d| d.get_friendlyname())
             .unwrap_or_else(|_| "Speakers".into());
-        let init = if opener.exclusive {
-            match open_exclusive(&device, want) {
-                Ok(i) => i,
-                // Another app has it, or no format fits: share instead (H5).
-                Err(_) => open_shared(&device)?,
+        let (init, exclusive_formats, why_shared) = if opener.exclusive {
+            match open_exclusive(&device, endpoint_id.as_deref(), want) {
+                Ok((i, table)) => (i, table, None),
+                // Another app has it, or no format fits: share instead (H5), and say why.
+                Err((why, table)) => (open_shared(&device)?, table, Some(why)),
             }
         } else {
-            open_shared(&device)?
+            (open_shared(&device)?, None, None)
         };
         let client = init.client;
         let rate = init.format.rate;
@@ -930,6 +931,8 @@ fn open_pull(
             device_buffer_frames: buffer,
             stream_latency_frames: latency,
             pro_audio: pro.active(),
+            exclusive_formats,
+            why_shared,
         };
         Ok(Opened {
             device: WasapiPull {
@@ -1000,93 +1003,185 @@ unsafe fn open_shared(device: &IMMDevice) -> Result<Init, OutputError> {
     }
 }
 
-/// Exclusive mode, the formats best first, each with the drivers' quirks, a period near 10 ms
-/// aligned to 128 bytes, and the aligned-period retry.
+/// Why an exclusive open gave way to shared mode, in words, with the formats the device takes.
+type NotExclusive = (String, Option<Arc<FormatTable>>);
+
+/// The words for a device another app holds.
+const IN_USE: &str = "another app is using it in exclusive mode";
+
+/// Exclusive mode: the formats the device takes (asked once per device and channel count,
+/// `devices::ProbeCache`), planned best first for `want` (`devices::plan_exclusive`: its own
+/// rate and a container that carries it, then the nearest rate the device takes), each opened
+/// as the device answered the probe (the drivers' quirks), a period near 10 ms aligned to 128
+/// bytes, with the aligned-period retry.
 ///
 /// # Safety
 /// COM must be initialised on this thread.
-unsafe fn open_exclusive(device: &IMMDevice, want: &OpenRequest) -> Result<Init, String> {
-    let mut last = String::from("The device takes no format close to this song's.");
-    let mut channels = vec![want.channels.max(1)];
+unsafe fn open_exclusive(
+    device: &IMMDevice,
+    id: Option<&str>,
+    want: &OpenRequest,
+) -> Result<(Init, Option<Arc<FormatTable>>), NotExclusive> {
+    let mut chans = vec![want.channels.max(1)];
     if want.channels != 2 {
-        channels.push(2);
+        chans.push(2);
     }
-    for ch in channels {
-        for (store, valid, kind) in exclusive_candidates(want.bits) {
+    let mut table = FormatTable::default();
+    let mut refused: Option<String> = None;
+    for ch in chans {
+        let mut why = None;
+        let mut probe = || {
             // SAFETY: as the caller promised.
-            match unsafe { try_exclusive(device, want.rate, ch, store, valid, kind) } {
-                Ok(Some(i)) => return Ok(i),
-                Ok(None) => {}
-                Err(e) => last = e,
+            match unsafe { probe_exclusive(device, ch) } {
+                Ok(t) => Some(t),
+                Err(w) => {
+                    why = Some(w);
+                    None
+                }
+            }
+        };
+        let t = match id {
+            Some(id) => crate::devices::ProbeCache::global().get_or_probe(id, ch, probe),
+            None => probe().map(Arc::new),
+        };
+        match t {
+            Some(t) => table.formats.extend(t.formats.iter().cloned()),
+            None => refused = refused.or(why),
+        }
+    }
+    let table = Arc::new(table);
+    let plan = crate::devices::plan_exclusive(&table, want);
+    if plan.is_empty() {
+        let why = refused.unwrap_or_else(|| "it takes no exclusive format for this song".into());
+        return Err((why, Some(table)));
+    }
+    let mut last = String::from("it takes no exclusive format for this song");
+    for f in plan {
+        let Some(tag) = table.takes(&f) else {
+            continue;
+        };
+        let Some(wave) = wave_of(&f, tag) else {
+            continue;
+        };
+        // SAFETY: as the caller promised.
+        match unsafe { init_exclusive(device, &wave, &f) } {
+            Ok(init) => return Ok((init, Some(table))),
+            Err(e) if e.code() == AUDCLNT_E_DEVICE_IN_USE => {
+                return Err((IN_USE.into(), Some(table)));
+            }
+            Err(e) => {
+                if e.code() == AUDCLNT_E_UNSUPPORTED_FORMAT
+                    && let Some(id) = id
+                {
+                    // The probe's answer was wrong: asked again at the next open.
+                    crate::devices::ProbeCache::global().forget(id);
+                }
+                last = format!("it refused exclusive mode ({:#010x})", e.code().0 as u32);
             }
         }
     }
-    Err(last)
+    Err((last, Some(table)))
 }
 
-/// One exclusive format: `None` when the device doesn't take it.
+/// Every rate and container `devices::PROBE_RATES` and `PROBE_DEPTHS` list at `ch` channels,
+/// asked in exclusive mode, each as given, as a plain `WAVEFORMATEX` (1 or 2 channels) and with
+/// each standard channel mask (the drivers' quirks); the first way the device takes is kept as
+/// the format's tag (`wave_of`). An error when another app holds the device (its answers
+/// can't be trusted, so they are not kept).
 ///
 /// # Safety
 /// COM must be initialised on this thread.
-unsafe fn try_exclusive(
-    device: &IMMDevice,
-    rate: u32,
-    ch: u16,
-    store: u16,
-    valid: u16,
-    kind: SampleKind,
-) -> Result<Option<Init>, String> {
-    let st = match kind {
+unsafe fn probe_exclusive(device: &IMMDevice, ch: u16) -> Result<FormatTable, String> {
+    // SAFETY: as the caller promised; every format pointer is to a live WaveFormat.
+    unsafe {
+        let client: IAudioClient = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("it refused exclusive mode ({:#010x})", e.code().0 as u32))?;
+        let mut table = FormatTable::default();
+        for rate in crate::devices::PROBE_RATES {
+            for (store, valid, kind) in crate::devices::PROBE_DEPTHS {
+                let f = DeviceFormat {
+                    rate,
+                    channels: ch,
+                    container_bits: store,
+                    valid_bits: valid,
+                    kind,
+                };
+                for tag in 0..quirks(ch) {
+                    let Some(wave) = wave_of(&f, tag) else {
+                        continue;
+                    };
+                    let hr = client.IsFormatSupported(
+                        AUDCLNT_SHAREMODE_EXCLUSIVE,
+                        wave.as_waveformatex_ref(),
+                        None,
+                    );
+                    if hr == AUDCLNT_E_DEVICE_IN_USE {
+                        return Err(IN_USE.into());
+                    }
+                    if hr == windows::Win32::Foundation::S_OK {
+                        table.formats.push((f.clone(), tag));
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(table)
+    }
+}
+
+/// How many ways a format of `ch` channels is written to the driver (see `wave_of`).
+fn quirks(ch: u16) -> u32 {
+    2 + wasapi::make_channelmasks(usize::from(ch)).len() as u32
+}
+
+/// `f` written the way `tag` says: 0 as given (extensible, the default channel mask), 1 as a
+/// plain `WAVEFORMATEX` (1 or 2 channels only), 2 and on with each standard channel mask.
+fn wave_of(f: &DeviceFormat, tag: u32) -> Option<WaveFormat> {
+    let st = match f.kind {
         SampleKind::Int => SampleType::Int,
         SampleKind::Float => SampleType::Float,
     };
-    let asked = WaveFormat::new(
-        usize::from(store),
-        usize::from(valid),
-        &st,
-        rate as usize,
-        usize::from(ch),
-        None,
-    );
-    // SAFETY: as the caller promised; every format pointer is to a live WaveFormat.
+    let make = |mask| {
+        WaveFormat::new(
+            usize::from(f.container_bits),
+            usize::from(f.valid_bits),
+            &st,
+            f.rate as usize,
+            usize::from(f.channels),
+            mask,
+        )
+    };
+    match tag {
+        0 => Some(make(None)),
+        1 if f.channels <= 2 => make(None).to_waveformatex().ok(),
+        1 => None,
+        t => wasapi::make_channelmasks(usize::from(f.channels))
+            .get(t as usize - 2)
+            .map(|&m| make(Some(m))),
+    }
+}
+
+/// An exclusive stream at `wave` (the format `f`), a period near 10 ms aligned to 128 bytes,
+/// and the aligned-period retry.
+///
+/// # Safety
+/// COM must be initialised on this thread.
+unsafe fn init_exclusive(
+    device: &IMMDevice,
+    wave: &WaveFormat,
+    f: &DeviceFormat,
+) -> windows::core::Result<Init> {
+    // SAFETY: as the caller promised; the format pointer is to a live WaveFormat.
     unsafe {
-        let activate = || -> Result<IAudioClient, String> {
-            device.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())
-        };
-        let client = activate()?;
-        // The quirks: as given; as a plain WAVEFORMATEX for 1 or 2 channels; with each of the
-        // standard channel masks.
-        let mut tries = vec![asked.clone()];
-        if ch <= 2
-            && let Ok(plain) = asked.to_waveformatex()
-        {
-            tries.push(plain);
-        }
-        for mask in wasapi::make_channelmasks(usize::from(ch)) {
-            tries.push(WaveFormat::new(
-                usize::from(store),
-                usize::from(valid),
-                &st,
-                rate as usize,
-                usize::from(ch),
-                Some(mask),
-            ));
-        }
-        let Some(fmt) = tries.into_iter().find(|f| {
-            client.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, f.as_waveformatex_ref(), None)
-                == windows::Win32::Foundation::S_OK
-        }) else {
-            return Ok(None);
-        };
+        let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         let (mut _default, mut min) = (0i64, 0i64);
-        client
-            .GetDevicePeriod(Some(&mut _default), Some(&mut min))
-            .map_err(|e| e.to_string())?;
+        client.GetDevicePeriod(Some(&mut _default), Some(&mut min))?;
         let period = aligned_period(
             EXCLUSIVE_PERIOD_HNS,
             min,
-            fmt.get_blockalign(),
-            rate,
+            wave.get_blockalign(),
+            f.rate,
             ALIGN_BYTES,
         );
         let init = |c: &IAudioClient, p: i64| {
@@ -1095,53 +1190,36 @@ unsafe fn try_exclusive(
                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                 p,
                 p,
-                fmt.as_waveformatex_ref(),
+                wave.as_waveformatex_ref(),
                 None,
             )
         };
-        let format = DeviceFormat {
-            rate,
-            channels: ch,
-            container_bits: store,
-            valid_bits: valid,
-            kind,
+        let done = |client, p| Init {
+            client,
+            format: f.clone(),
+            exclusive: true,
+            again: Some((wave.clone(), p)),
         };
         match init(&client, period) {
-            Ok(()) => Ok(Some(Init {
-                client,
-                format,
-                exclusive: true,
-                again: Some((fmt.clone(), period)),
-            })),
+            Ok(()) => Ok(done(client, period)),
             Err(e) if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED => {
                 // The driver wants its own alignment: ask it, and try once more on a new client.
-                let frames = client.GetBufferSize().map_err(|e| e.to_string())?;
+                let frames = client.GetBufferSize()?;
                 drop(client);
-                let client = activate()?;
-                let p = hns_of_frames(frames, rate);
-                init(&client, p).map_err(|e| e.to_string())?;
-                Ok(Some(Init {
-                    client,
-                    format,
-                    exclusive: true,
-                    again: Some((fmt.clone(), p)),
-                }))
+                let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+                let p = hns_of_frames(frames, f.rate);
+                init(&client, p)?;
+                Ok(done(client, p))
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e),
         }
     }
 }
 
 /// Formats to offer for exclusive mode, best first, by the bits that carry the signal:
-/// (container bits, valid bits, kind).
+/// (container bits, valid bits, kind) (`devices::depth_order`).
 pub fn exclusive_candidates(bits: u16) -> Vec<(u16, u16, SampleKind)> {
-    use SampleKind::{Float, Int};
-    match bits {
-        16 => vec![(16, 16, Int), (32, 32, Int), (24, 24, Int)],
-        24 => vec![(32, 24, Int), (24, 24, Int), (32, 32, Int)],
-        // 32 bits (and decoded lossy audio): as deep as the device goes.
-        _ => vec![(32, 32, Int), (24, 24, Int), (32, 32, Float), (16, 16, Int)],
-    }
+    crate::devices::depth_order(bits)
 }
 
 /// A period near `desired` (100 ns units), at least the device's `min`, whose buffer is a

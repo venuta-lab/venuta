@@ -18,5 +18,7 @@ pub mod verify;
 pub mod voice;
 pub mod voice_api;
 #[cfg(windows)]
+pub mod wasapi_devices;
+#[cfg(windows)]
 pub mod wasapi_out;
 pub mod waveform;
