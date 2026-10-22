@@ -258,13 +258,22 @@ mod tests {
     fn a_body_that_isnt_a_reference_is_refused() {
         assert!(decode_reference(b"not deflate at all").is_err());
         let mut z = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
-        std::io::Write::write_all(&mut z, b"VENV\x01\x02\x0a\x00\x01\x00\x00\x00\x00\x00\xff\xff")
-            .unwrap();
+        std::io::Write::write_all(
+            &mut z,
+            b"VENV\x01\x02\x0a\x00\x01\x00\x00\x00\x00\x00\xff\xff",
+        )
+        .unwrap();
         let cut = z.finish().unwrap();
-        assert!(decode_reference(&cut).is_err(), "a window longer than its bytes");
+        assert!(
+            decode_reference(&cut).is_err(),
+            "a window longer than its bytes"
+        );
         let mut z = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut z, &vec![0u8; MAX_ENV_RAW + 10]).unwrap();
-        assert!(decode_reference(&z.finish().unwrap()).is_err(), "too big inflated");
+        assert!(
+            decode_reference(&z.finish().unwrap()).is_err(),
+            "too big inflated"
+        );
         assert!(decode_reference(&vec![0u8; MAX_ENV_BYTES + 1]).is_err());
     }
 }

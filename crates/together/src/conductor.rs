@@ -24,6 +24,11 @@ use std::sync::Arc;
 
 /// A catch-up expects to be ready this long after it is asked (plus `tl::CATCH_UP_MARGIN_US`).
 pub const CATCH_UP_READY_US: i64 = 700_000;
+/// A copy's alignment may take this long to measure for a prepare or a catch-up (4.4's
+/// "ready means": measured or given up on, at most 1 s), ns...
+pub const MEASURE_NS: u64 = 1_000_000_000;
+/// ... and an armed next's until this long before its boundary (armed 20 s ahead), ns.
+pub const ARM_MEASURE_BEFORE_NS: u64 = 5_000_000_000;
 /// A player that can't play the entry playing is tried again this often, ns.
 pub const RETRY_NS: u64 = 5_000_000_000;
 /// `State` goes at most this often when the sub-state, entry or copy changed, ns...
@@ -64,6 +69,22 @@ pub enum Lookup<I> {
 /// Never blocks: a slow look-up says `Looking` and runs on a thread of its own.
 pub trait Copies<I>: Send {
     fn find(&mut self, song: &Song) -> Lookup<I>;
+    /// `find`, the copy needed by `by_ns` (this computer's time, as `now_ns`): a copy whose
+    /// alignment is still being measured says `Looking` until then (WP11). By default `find`.
+    fn find_by(&mut self, song: &Song, now_ns: u64, by_ns: u64) -> Lookup<I> {
+        let _ = (now_ns, by_ns);
+        self.find(song)
+    }
+    /// How the person listens now: copies are looked for in that mode's order (D5).
+    fn set_mode(&mut self, _mode: ListenMode) {}
+    /// The alignment of the copy of `song` of `kind` (the one found last) as known for the
+    /// room's place `room_us`: the measure refined through the song (WP11). `None`: nothing
+    /// known beyond what `find` gave.
+    fn refined(&mut self, _song: &Song, _kind: CopyKind, _room_us: i64) -> Option<Alignment> {
+        None
+    }
+    /// Each step, with the room's queue as it is (a host makes the references asked for).
+    fn step(&mut self, _queue: &[Entry], _now_ns: u64) {}
     /// From now on, the lightest copy that will do (the host's advice, G7).
     fn lighter(&mut self) {}
     /// This song from the host's own file, streamed (E10: "use Asha's copy").
@@ -80,12 +101,15 @@ struct Prep {
     local: bool,
     told: bool,
     answered: bool,
+    /// When its copy was first looked for (the measure's time counts from then), ns.
+    since_ns: Option<u64>,
 }
 
 /// An entry to come in on, partway (a catch-up), or held silent (a joiner into a held room).
 #[derive(Debug, Clone, Copy)]
 struct Want {
     anchor: Anchor,
+    since_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +120,7 @@ struct Arm {
     asked: bool,
     told: bool,
     answered: bool,
+    since_ns: Option<u64>,
 }
 
 /// The last `State` sent: what it said, the line it made, and when.
@@ -164,6 +189,8 @@ impl<I: Clone + Send + 'static> Conductor<I> {
         copies: Box<dyn Copies<I>>,
         mode: ListenMode,
     ) -> Self {
+        let mut copies = copies;
+        copies.set_mode(mode);
         Conductor {
             player,
             clock,
@@ -222,6 +249,11 @@ impl<I: Clone + Send + 'static> Conductor<I> {
 
     pub fn mode(&self) -> ListenMode {
         self.mode
+    }
+
+    /// The person chose how they listen and the room hasn't said it back yet.
+    pub fn chosen(&self) -> bool {
+        self.mode_asked.is_some()
     }
 
     /// The room as last seen.
@@ -305,6 +337,7 @@ impl<I: Clone + Send + 'static> Conductor<I> {
                     local: false,
                     told: false,
                     answered: false,
+                    since_ns: None,
                 });
                 self.try_prepare();
             }
@@ -398,7 +431,10 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             let has = self.has(a.entry);
             if !has && self.given.is_none() && self.prep.is_none() {
                 // A joiner into a held room: the held place ready, silent (A12).
-                self.want = Some(Want { anchor: a });
+                self.want = Some(Want {
+                    anchor: a,
+                    since_ns: None,
+                });
                 self.try_want(now_ns);
             } else {
                 h.hold(a);
@@ -413,7 +449,10 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             return;
         }
         // Partway into an entry the player hasn't got: caught up where the room will be.
-        self.want = Some(Want { anchor: a });
+        self.want = Some(Want {
+            anchor: a,
+            since_ns: None,
+        });
         self.try_want(now_ns);
     }
 
@@ -436,15 +475,17 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             asked,
             told: false,
             answered: false,
+            since_ns: None,
         });
         self.try_arm();
     }
 
-    fn find(&mut self, entry: EntryId) -> Lookup<I> {
+    /// The copy of `entry`, needed by `by_ns` (a copy being measured may wait until then).
+    fn find(&mut self, entry: EntryId, by_ns: u64) -> Lookup<I> {
         let Some(song) = song_of(self.view.as_ref(), entry) else {
             return Lookup::NoCopy;
         };
-        let l = self.copies.find(&song);
+        let l = self.copies.find_by(&song, self.now_ns, by_ns);
         if let Lookup::Found(c) = &l {
             let diff = match (c.length_ms, song.duration_ms) {
                 (Some(mine), Some(stated)) => {
@@ -465,7 +506,12 @@ impl<I: Clone + Send + 'static> Conductor<I> {
         if self.handle.is_none() {
             return;
         }
-        match self.find(p.entry) {
+        let now = self.now_ns;
+        let since = self
+            .prep
+            .as_mut()
+            .map_or(now, |q| *q.since_ns.get_or_insert(now));
+        match self.find(p.entry, since + MEASURE_NS) {
             Lookup::Found(c) => {
                 if let Some(h) = &self.handle {
                     h.prepare(p.id, p.entry, c.item, p.content_us, c.align);
@@ -498,7 +544,17 @@ impl<I: Clone + Send + 'static> Conductor<I> {
         if self.handle.is_none() {
             return;
         }
-        match self.find(a.next.entry) {
+        let now = self.now_ns;
+        let since = self
+            .arm
+            .as_mut()
+            .map_or(now, |x| *x.since_ns.get_or_insert(now));
+        // Armed 20 s ahead: the measure may take until shortly before the boundary.
+        let before = (**self.clock.load()).map_or(0, |m| {
+            m.local_of(a.next.boundary_host_us)
+                .saturating_sub(ARM_MEASURE_BEFORE_NS)
+        });
+        match self.find(a.next.entry, before.max(since + MEASURE_NS)) {
             Lookup::Found(c) => {
                 if let Some(h) = &self.handle {
                     h.arm_next(
@@ -547,7 +603,11 @@ impl<I: Clone + Send + 'static> Conductor<I> {
         } else {
             a.content_us
         };
-        match self.find(a.entry) {
+        let since = self
+            .want
+            .as_mut()
+            .map_or(now_ns, |x| *x.since_ns.get_or_insert(now_ns));
+        match self.find(a.entry, since + MEASURE_NS) {
             Lookup::Found(c) => {
                 let id = self.local_prep();
                 if let Some(h) = &self.handle {
@@ -565,6 +625,7 @@ impl<I: Clone + Send + 'static> Conductor<I> {
                     local: true,
                     told: true,
                     answered: true,
+                    since_ns: None,
                 });
                 if a.playing {
                     self.given = Some(a.entry);
@@ -596,6 +657,9 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             return;
         }
         self.status = self.handle.as_ref().map(|h| h.status());
+        if let Some(v) = self.view.as_ref() {
+            self.copies.step(&v.queue, now_ns);
+        }
         self.try_prepare();
         self.try_arm();
         self.try_want(now_ns);
@@ -649,6 +713,7 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             }
         }
         self.retry(st, now_ns);
+        self.refine(st, now_ns);
         self.finish_step(st, now_ns);
         self.report(now_ns);
     }
@@ -670,8 +735,41 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             self.cannot = None;
             self.prep = None;
             self.given = None;
-            self.want = Some(Want { anchor: a });
+            self.want = Some(Want {
+                anchor: a,
+                since_ns: None,
+            });
             self.try_want(now_ns);
+        }
+    }
+
+    /// The copy heard, as its measure knows it for the room's place now (WP11): a later window
+    /// agreeing a little off moves the offset (the player takes it up by rate), an edit makes
+    /// the copy approximate from there.
+    fn refine(&mut self, st: RoomPlayStatus, now_ns: u64) {
+        let Some(a) = self.anchor.filter(|a| a.playing) else {
+            return;
+        };
+        if st.entry != Some(a.entry) {
+            return;
+        }
+        let (Some(&(kind, diff, align)), Some(map)) =
+            (self.kinds.get(&a.entry), **self.clock.load())
+        else {
+            return;
+        };
+        let Some(song) = song_of(self.view.as_ref(), a.entry) else {
+            return;
+        };
+        let room_us = a.content_at(map.host_of(now_ns));
+        let Some(now) = self.copies.refined(&song, kind, room_us) else {
+            return;
+        };
+        if now != align {
+            if let Some(h) = &self.handle {
+                h.refine(a.entry, now);
+            }
+            self.kinds.insert(a.entry, (kind, diff, now));
         }
     }
 
@@ -803,6 +901,7 @@ impl<I: Clone + Send + 'static> Conductor<I> {
     fn apply_mode(&mut self, mode: ListenMode, now_ns: u64) {
         let was = self.mode;
         self.mode = mode;
+        self.copies.set_mode(mode);
         match mode.sync() {
             None => {
                 // A remote plays nothing: the player is let go (a 1 s fade of the audio only).
@@ -861,7 +960,10 @@ impl<I: Clone + Send + 'static> Conductor<I> {
         h.rejoin();
         // The room moved to an entry the player hasn't got meanwhile: caught up on it.
         if let Some(a) = self.anchor.filter(|a| a.playing && !self.has(a.entry)) {
-            self.want = Some(Want { anchor: a });
+            self.want = Some(Want {
+                anchor: a,
+                since_ns: None,
+            });
         }
     }
 
@@ -911,7 +1013,10 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             // Into the same song at the room's place again, on the host's copy: a crossfade.
             self.prep = None;
             self.given = None;
-            self.want = Some(Want { anchor: a });
+            self.want = Some(Want {
+                anchor: a,
+                since_ns: None,
+            });
         }
     }
 
