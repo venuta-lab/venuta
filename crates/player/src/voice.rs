@@ -25,6 +25,7 @@ use crate::voice_api::{
     BLOCK_FRAMES, Block, Dropped, END_OF_SOURCE, FIRST_AFTER_SEEK, MAX_CH, VoiceFeed, VoiceId,
     VoiceTap, voice_ring,
 };
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -144,6 +145,22 @@ struct Shared {
     exited: AtomicBool,
     start: u64,
     meta: Mutex<Meta>,
+    /// The loudness of the blocks handed over, oldest first (the last `LOUDNESS_KEPT`), for the
+    /// room's quiet-moment search. Shared with the control thread only.
+    loud: Mutex<VecDeque<Loudness>>,
+}
+
+/// Blocks whose loudness a voice keeps: about 45 s at 48 kHz.
+const LOUDNESS_KEPT: usize = 2_100;
+
+/// One block's loudness, as the decode thread handed it over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Loudness {
+    /// Its first content frame and how many it has.
+    pub first_frame: u64,
+    pub frames: u16,
+    /// dBFS (`i8::MIN` for digital silence).
+    pub rms_db: i8,
 }
 
 #[derive(Default)]
@@ -208,12 +225,22 @@ impl Filler {
 
     fn push(&mut self, mut b: Box<Block>, shared: &Shared) {
         b.rms_db = rms_db(b.data());
+        let loud = Loudness {
+            first_frame: b.first_frame,
+            frames: b.frames,
+            rms_db: b.rms_db,
+        };
         let (end, frames) = (b.first_frame + u64::from(b.frames), u64::from(b.frames));
         if let Some(feed) = self.feed.as_ref()
             && feed.push(b).is_ok()
         {
             shared.in_ring.fetch_add(frames, Ordering::AcqRel);
             shared.decoded_to.store(end, Ordering::Release);
+            let mut l = shared.loud.lock().unwrap_or_else(|p| p.into_inner());
+            if l.len() == LOUDNESS_KEPT {
+                l.pop_front();
+            }
+            l.push_back(loud);
         }
     }
 
@@ -319,6 +346,7 @@ impl Voice {
             exited: AtomicBool::new(false),
             start,
             meta: Mutex::new(Meta::default()),
+            loud: Mutex::new(VecDeque::with_capacity(LOUDNESS_KEPT)),
         });
         let filler = Arc::new(Mutex::new(Filler {
             feed: None,
@@ -385,6 +413,16 @@ impl Voice {
             meta.tap_taken = true;
         }
         tap
+    }
+
+    /// The loudness of the blocks it handed over that end after content frame `from`, oldest
+    /// first (at most the last 45 s or so of them).
+    pub fn loudness(&self, from: u64) -> Vec<Loudness> {
+        let l = self.shared.loud.lock().unwrap_or_else(|p| p.into_inner());
+        l.iter()
+            .filter(|b| b.first_frame + u64::from(b.frames) > from)
+            .copied()
+            .collect()
     }
 
     pub fn status(&self) -> VoiceStatus {
@@ -791,6 +829,31 @@ mod tests {
             assert!(Instant::now() < until);
         }
         assert_eq!(last_flags, END_OF_SOURCE);
+    }
+
+    #[test]
+    fn a_voice_keeps_the_loudness_of_every_block_it_handed_over() {
+        let v = voice(4, file(fixture("seek-music.ogg")), 5_000);
+        let tap = tap_of(&v);
+        let mut seen = Vec::new();
+        let until = Instant::now() + Duration::from_secs(20);
+        while seen.len() < 40 {
+            if let Some(b) = tap.pop() {
+                seen.push((b.first_frame, b.frames, b.rms_db));
+                tap.give_back(b);
+            } else {
+                assert!(Instant::now() < until);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let kept: Vec<(u64, u16, i8)> = v
+            .loudness(0)
+            .iter()
+            .map(|l| (l.first_frame, l.frames, l.rms_db))
+            .collect();
+        assert_eq!(kept[..40], seen[..], "block by block, as handed over");
+        let later = v.loudness(seen[10].0 + 1);
+        assert_eq!(later[0].first_frame, seen[10].0, "from the block holding the frame");
     }
 
     #[test]
