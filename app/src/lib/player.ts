@@ -18,6 +18,7 @@ import { roomRoute } from './roomRoute'
 import { isLocalOnly } from './localOnly'
 import { isAwake, onAwake } from './motion'
 import { canSeekNow } from './streamWait'
+import type { DeviceKind, OutputChoices } from './outputPicker'
 import { oneAtATime } from './oneAtATime'
 import { songMenus, type TrackMenu } from './ytmSongMenu'
 import { learnLength } from './upNext'
@@ -105,6 +106,18 @@ export interface Signal {
   bit_perfect: boolean
   /** What does change them, in words ("Volume at 60%"). */
   steps: string[]
+  /** The endpoint it plays on (the key of its delay). */
+  endpoint?: string | null
+  /** What kind of output (null: not a sound device). */
+  kind?: DeviceKind | null
+  /** What was done about the choice: its stereo twin plays, the chosen device is away... */
+  note?: string | null
+  /** The extra delay set for this output, ms (null: not set). */
+  delay_ms?: number | null
+  /** A starting value to offer while it is not set (Bluetooth). */
+  suggested_delay_ms?: number | null
+  /** Following Windows' default output. */
+  follows_default?: boolean
 }
 
 export interface PlayerState {
@@ -704,24 +717,16 @@ export const current = (s: PlayerState) => (s.index >= 0 ? s.queue[s.index] : un
 
 export { clock, onlineQuality, songLength } from './onlineSong'
 
-export interface OutputDevice {
-  id: string
-  name: string
-  default: boolean
-}
-
-export interface OutputChoices {
-  devices: OutputDevice[]
-  /** The chosen device; null follows the Windows default. */
-  device: string | null
-  exclusive: boolean
-}
+export type { OutputChoices, OutputDevice } from './outputPicker'
 
 export const outputChoices = () =>
   inApp()
     ? invoke<OutputChoices>('player_devices')
-    : Promise.resolve<OutputChoices>({ devices: [], device: null, exclusive: true })
-export const setOutput = (device: string | null, exclusive: boolean) => call('player_output', { device, exclusive })
+    : Promise.resolve<OutputChoices>({ devices: [], device: null, exclusive: true, playing: null })
+/** Play through `device` (null: follow Windows' default), remembered with its `name` for when it is away. */
+export const setOutput = (device: string | null, exclusive: boolean, name?: string) => call('player_output', { device, name: name ?? null, exclusive })
+/** Set (or, null, clear) an output's extra delay, ms: lyrics and rooms follow it. */
+export const setOutputDelay = (endpoint: string, ms: number | null) => call('player_set_output_delay', { endpoint, ms: ms === null ? null : Math.round(ms) })
 
 /** "FLAC 24/96" for the badge. */
 export function sourceLabel(s: Signal['source']): string {

@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Segmented, Switch } from '../../components/ui'
-import { outputChoices, setOutput, setSound, usePlayer, type OutputChoices } from '../../lib/player'
-import { notify } from '../../lib/notify'
+import { Segmented } from '../../components/ui'
+import { OutputPicker } from '../../components/player/OutputPicker'
+import { setSound, usePlayer } from '../../lib/player'
 import { NeverOffered, StreamQualityRow, WhatPlaysRows } from './ListeningSettings'
 import { Group, PageHead, Row } from './parts'
 
@@ -11,38 +10,20 @@ import { Group, PageHead, Row } from './parts'
   Now Playing's Sound: these are the same settings.
 */
 
-/** The speakers or DAC Venuta plays on, and whether it has them to itself (bit-perfect). */
+/** The speakers, headphones or DAC Venuta plays on, whether it has them to itself
+ *  (bit-perfect), and each output's delay. */
 function Output() {
-  const [choices, setChoices] = useState<OutputChoices | null>(null)
-  useEffect(() => {
-    void outputChoices().then(setChoices)
-  }, [])
-  if (!choices) return null
-  const change = (device: string | null, exclusive: boolean) => {
-    setChoices({ ...choices, device, exclusive })
-    void setOutput(device, exclusive).catch((e) => notify(String(e)))
-  }
+  const s = usePlayer()
   return (
-    <>
-      <Row title="Play through" hint="The speakers, headphones or DAC Venuta plays on. Also in the quality badge beside the song.">
-        <select
-          value={choices.device ?? ''}
-          onChange={(e) => change(e.target.value || null, choices.exclusive)}
-          aria-label="Play through"
-          className="field h-9 max-w-[320px] rounded-full px-3 text-[13px]"
-        >
-          <option value="">Windows default</option>
-          {choices.devices.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-      </Row>
-      <Row title="Exclusive (bit-perfect)" hint="Each song at its own rate and depth, untouched. Other apps can't play sound meanwhile.">
-        <Switch label="Exclusive (bit-perfect)" on={choices.exclusive} onChange={(on) => change(choices.device, on)} />
-      </Row>
-    </>
+    <div className="border-b border-edge py-4 last:border-b-0">
+      <div className="text-[14px] font-medium">Play through</div>
+      <div className="mt-0.5 max-w-[68ch] text-[12.5px] leading-relaxed text-ink/55">
+        The speakers, headphones or DAC Venuta plays on, by kind. A chosen device that goes away (unplugged, switched off, a monitor asleep) hands over to Windows' default, and the music comes back to it when it returns. Also in the quality badge beside the song.
+      </div>
+      <div className="mt-3 max-w-[560px]">
+        <OutputPicker signal={s.signal} roomy />
+      </div>
+    </div>
   )
 }
 
