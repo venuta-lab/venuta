@@ -102,7 +102,7 @@ pub fn pair_roman(
             .filter(|o| (o.start_ms as i64 - at).abs() <= OFFSET_MS)
             .map(|o| (similarity(said, &o.text), o.start_ms as i64 - at))
             .max_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((s, d)) = best.filter(|(s, _)| *s >= ANCHOR_MIN) {
+        if let Some((_, d)) = best.filter(|(s, _)| *s >= ANCHOR_MIN) {
             shifts.push(d);
         }
     }

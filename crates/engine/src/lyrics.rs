@@ -380,7 +380,7 @@ pub(crate) fn timed_by_chars(
         let Some(first) = over.next() else {
             return Vec::new();
         };
-        let last = over.last().unwrap_or(first);
+        let last = over.next_back().unwrap_or(first);
         let mut text = text.clone();
         if k + 1 < joined.len() {
             text.push(' ');
