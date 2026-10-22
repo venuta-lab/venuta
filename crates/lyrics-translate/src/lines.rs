@@ -61,10 +61,16 @@ pub fn has_words(text: &str) -> bool {
     )
 }
 
-/// Whether a translation is the line itself (letters compared, case ignored).
+/// Whether a translation is the line itself, given back (its letters and digits the same;
+/// spaces and punctuation aside).
 pub fn same(src: &str, out: &str) -> bool {
-    let a: String = src.split_whitespace().map(bare).collect();
-    !a.is_empty() && a == out.split_whitespace().map(bare).collect::<String>()
+    let letters = |t: &str| {
+        t.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+    };
+    let a = letters(src);
+    !a.is_empty() && a == letters(out)
 }
 
 /// A word as compared for repeats: its letters, in lower case.

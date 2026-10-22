@@ -56,7 +56,7 @@ pub enum Error {
     NoModel { from: String, into: String },
     #[error("the {0} model isn't on this device")]
     NotInstalled(String),
-    #[error("the engine gave {got} lines for {expected}")]
+    #[error("The translation came back with {got} lines for {expected}, so it isn't shown.")]
     Lines { expected: usize, got: usize },
     #[error("the translation engine failed: {0}")]
     Engine(String),
