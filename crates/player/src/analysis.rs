@@ -390,35 +390,9 @@ pub fn envelope(decoded: &mut dyn Iterator<Item = &[i32]>, rate: u32, ch: u16) -
     out
 }
 
-/// What one stretch of envelope says about the offset known before it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Verdict {
-    /// The offset holds here, measured again (within 20 ms of it).
-    Agrees { offset_us: i64 },
-    /// A clear match at another offset, over 20 ms away: another edit.
-    Moved { offset_us: i64 },
-    /// Both copies have music here but not the same music at the offset, and no clear match
-    /// within reach: an edit longer than the search, or another version.
-    Lost,
-    /// Nothing to say: quiet, or too little in common to tell.
-    Unknown,
-}
-
-/// One later window's check of the offset.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WindowCheck {
-    pub start_ms: u32,
-    pub verdict: Verdict,
-}
-
-/// The whole comparison: the alignment, what each later window said (in song order), and
-/// where an edit first showed (the copy is approximate from there).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Track {
-    pub alignment: Alignment,
-    pub windows: Vec<WindowCheck>,
-    pub edit_at_ms: Option<u32>,
-}
+// The verdicts and the whole comparison are the contract's (`together::align`), so the room's
+// measure reads them without this crate.
+pub use together::align::{Track, Verdict, WindowCheck};
 
 /// Where my copy sits against the reference (contract 5.8). See [`align_track`].
 pub fn align(reference: &Envelope, mine: &Envelope) -> Alignment {
