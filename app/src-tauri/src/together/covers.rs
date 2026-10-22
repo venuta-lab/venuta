@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use together::proto::RoomView;
+use together::view::RoomView;
 
 /// The thumbnails' size (square, pixels): the same as the library's.
 pub const SIZE: u32 = 320;
@@ -43,7 +43,7 @@ impl Covers {
         let Ok(paths) = self.paths.lock() else {
             return;
         };
-        for s in &mut room.queue {
+        for s in room.queue.iter_mut().map(|e| &mut e.song) {
             if s.host_file
                 && s.artwork_url.is_none()
                 && let Some(p) = paths.get(&s.key)

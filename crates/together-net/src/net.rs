@@ -527,3 +527,11 @@ mod tests {
         host.close().await;
     }
 }
+
+/// The host's address in an invite's ticket.
+pub fn host_addr(ticket: &str) -> Result<iroh::EndpointAddr, String> {
+    let t: iroh_tickets::endpoint::EndpointTicket = ticket
+        .parse()
+        .map_err(|_| "That invite isn't readable.".to_owned())?;
+    Ok(t.endpoint_addr().clone())
+}

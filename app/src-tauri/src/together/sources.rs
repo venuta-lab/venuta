@@ -18,16 +18,17 @@ use media_access::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use together::proto::{Hearing, Song};
+use together::proto::Song;
+use together::view::CopyKind;
 
 /// The catalog's provider name (the songs the catalog plays).
 pub const CATALOG: &str = "remote_catalog";
 
-/// A copy to play: the queue item, its own way to the stream (the host's), and how it's heard.
+/// A copy to play: the queue item, its own way to the stream (the host's), and what it is.
 pub struct Copy {
     pub item: QueueItem,
     pub own: Option<Arc<dyn MediaAccess>>,
-    pub hearing: Hearing,
+    pub kind: CopyKind,
 }
 
 /// A library song as the player takes it.
@@ -175,53 +176,73 @@ pub fn close_online(song: &Song, catalog: &Arc<dyn MediaAccess>) -> Option<Strin
         .map(|t| t.track_id)
 }
 
-/// The best copy for a guest (see the module's order). `host_stream`: how to reach the host's
-/// files (none for the host itself).
-pub fn best_copy(
+/// How a person's copies are ordered: the module's order, with the host's file first (the
+/// person asked for the host's copy of a song), or last (a lighter copy: the host's advice).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Order {
+    #[default]
+    Usual,
+    HostFirst,
+    Lighter,
+}
+
+/// The best copy for a guest (see the module's order), in this `order`. `host_stream`: how to
+/// reach the host's files (none for the host itself).
+pub fn best_copy_in(
     song: &Song,
     lib: Option<&Library>,
     catalog: &Arc<dyn MediaAccess>,
     local_only: bool,
     host_stream: Option<Arc<HostStream>>,
+    order: Order,
 ) -> Option<Copy> {
+    let from_host = |hs: Option<Arc<HostStream>>| -> Option<Copy> {
+        let hs = hs.filter(|_| song.host_file)?;
+        let mut item = item_of_online(song, &song.key);
+        item.online = Some(media_access::PlayableId::Online {
+            provider: HOST_PROVIDER.into(),
+            track_id: song.key.clone(),
+        });
+        hs.know(song);
+        Some(Copy {
+            item,
+            own: Some(hs),
+            kind: CopyKind::HostStream,
+        })
+    };
+    if order == Order::HostFirst
+        && let Some(c) = from_host(host_stream.clone())
+    {
+        return Some(c);
+    }
     if let Some(t) = lib.and_then(|l| own_file(song, l)) {
         return Some(Copy {
             item: item_of_track(t),
             own: None,
-            hearing: Hearing::Local,
+            kind: CopyKind::OwnFile,
         });
     }
     if !local_only && let Some(id) = &song.online_id {
         return Some(Copy {
             item: item_of_online(song, id),
             own: None,
-            hearing: Hearing::Online,
+            kind: CopyKind::Catalog,
         });
     }
-    if song.host_file
-        && let Some(hs) = host_stream
+    if order != Order::Lighter
+        && let Some(c) = from_host(host_stream.clone())
     {
-        let mut item = item_of_online(song, &song.key);
-        // Not the catalog's: the item streams from the host, through this computer's server.
-        item.online = Some(media_access::PlayableId::Online {
-            provider: HOST_PROVIDER.into(),
-            track_id: song.key.clone(),
-        });
-        hs.know(song);
-        return Some(Copy {
-            item,
-            own: Some(hs),
-            hearing: Hearing::FromHost,
-        });
+        return Some(c);
     }
     if !local_only && let Some(id) = close_online(song, catalog) {
         return Some(Copy {
             item: item_of_online(song, &id),
             own: None,
-            hearing: Hearing::Online,
+            kind: CopyKind::CloseMatch,
         });
     }
-    None
+    // A lighter copy only if there is one: else the host's after all.
+    from_host(host_stream)
 }
 
 /// The provider name of songs streamed from the room's host.
@@ -366,6 +387,159 @@ impl HostFiles {
     }
     pub fn get(&self, key: &str) -> Option<(PathBuf, String)> {
         self.files.lock().ok()?.get(key).cloned()
+    }
+}
+
+/// A room song as a playlist line: the catalog's song by its id, else your own file of it;
+/// a song only the host has can't be one.
+pub fn playlist_item(song: &Song, lib: &Library) -> Option<engine::playlists::Item> {
+    if let Some(id) = &song.online_id {
+        return Some(engine::playlists::Item::online(
+            engine::playlists::OnlineEntry {
+                provider: CATALOG.into(),
+                track_id: id.clone(),
+                title: song.title.clone(),
+                artists: song.artists.clone(),
+                album: song.album.clone(),
+                duration_ms: song.duration_ms,
+                isrc: song.isrc.clone(),
+                artwork_url: song.artwork_url.clone(),
+            },
+        ));
+    }
+    own_file(song, lib).map(|t| engine::playlists::Item::track(t.path.clone()))
+}
+// --- A person's copies, for the conductor ---------------------------------------------------
+
+/// Binds an item to where it plays from under a library folder (`Playback::resolve`).
+pub type Resolver = Arc<dyn Fn(&str, QueueItem) -> QueueItem + Send + Sync>;
+
+/// What a look-up came to (on its own thread), kept by song and order.
+type Found = Arc<std::sync::Mutex<Option<Option<(QueueItem, CopyKind)>>>>;
+
+/// How the app finds a person's copies for the room (`together::conductor::Copies`): the host's
+/// own songs from the host's own items (exact); everyone else's by the module's order, looked up
+/// on a thread of its own (a catalog search can take seconds; the session never waits for it).
+pub struct AppCopies {
+    pub root: String,
+    pub lib: Option<Arc<Library>>,
+    pub catalog: Arc<dyn MediaAccess>,
+    pub local_only: bool,
+    /// A guest's way to the host's files.
+    pub host_stream: Option<Arc<HostStream>>,
+    /// The host's: its own songs in the room, as its queue had them, by key.
+    pub own: Arc<std::sync::Mutex<std::collections::HashMap<String, QueueItem>>>,
+    /// Binds an item to where it plays from (Playback::resolve).
+    pub resolve: Resolver,
+    pub order: Order,
+    pub host_first: std::collections::HashSet<String>,
+    found: std::collections::HashMap<(String, bool, bool), Found>,
+}
+
+impl AppCopies {
+    pub fn new(
+        root: String,
+        lib: Option<Arc<Library>>,
+        catalog: Arc<dyn MediaAccess>,
+        local_only: bool,
+        host_stream: Option<Arc<HostStream>>,
+        resolve: Resolver,
+    ) -> AppCopies {
+        AppCopies {
+            root,
+            lib,
+            catalog,
+            local_only,
+            host_stream,
+            own: Arc::default(),
+            resolve,
+            order: Order::Usual,
+            host_first: Default::default(),
+            found: Default::default(),
+        }
+    }
+
+    fn copy_of(&self, item: QueueItem, kind: CopyKind) -> together::conductor::Copy<QueueItem> {
+        use together::align::Alignment;
+        let length_ms = Some(item.duration_ms).filter(|d| *d > 0);
+        together::conductor::Copy {
+            item,
+            // Until WP11 measures copies against the host's: the host's own bytes are exact,
+            // anything else approximate at no offset.
+            align: if kind == CopyKind::HostStream {
+                Alignment::EXACT
+            } else {
+                Alignment::APPROXIMATE
+            },
+            kind,
+            length_ms,
+        }
+    }
+}
+
+impl together::conductor::Copies<QueueItem> for AppCopies {
+    fn find(&mut self, song: &Song) -> together::conductor::Lookup<QueueItem> {
+        use together::conductor::Lookup;
+        if let Some(it) = self.own.lock().ok().and_then(|m| m.get(&song.key).cloned()) {
+            let mut c = self.copy_of(it, CopyKind::OwnFile);
+            // The host's own file is the room's reference: exact by definition.
+            c.align = together::align::Alignment::EXACT;
+            return Lookup::Found(c);
+        }
+        let host_first = self.host_first.contains(&song.key);
+        let order = if host_first {
+            Order::HostFirst
+        } else {
+            self.order
+        };
+        let k = (song.key.clone(), host_first, order == Order::Lighter);
+        let slot = self.found.entry(k.clone()).or_insert_with(|| {
+            let slot: Found = Arc::default();
+            let (s2, song) = (slot.clone(), song.clone());
+            let (lib, catalog, local_only, hs) = (
+                self.lib.clone(),
+                self.catalog.clone(),
+                self.local_only,
+                self.host_stream.clone(),
+            );
+            let (root, resolve) = (self.root.clone(), self.resolve.clone());
+            std::thread::Builder::new()
+                .name("venuta-room-copy".into())
+                .spawn(move || {
+                    let c = best_copy_in(&song, lib.as_deref(), &catalog, local_only, hs, order)
+                        .map(|c| {
+                            let mut item = resolve(&root, c.item);
+                            if let Some(own) = c.own {
+                                item.media = crate::playback::MediaRef::new(own);
+                            }
+                            (item, c.kind)
+                        });
+                    if let Ok(mut s) = s2.lock() {
+                        *s = Some(c);
+                    }
+                })
+                .ok();
+            slot
+        });
+        let done = slot.lock().ok().and_then(|s| s.clone());
+        match done {
+            None => Lookup::Looking,
+            Some(None) => {
+                // Looked for afresh when asked again (the conductor tries every 5 s while the
+                // song plays: the catalog may answer then).
+                self.found.remove(&k);
+                Lookup::NoCopy
+            }
+            Some(Some((item, kind))) => Lookup::Found(self.copy_of(item, kind)),
+        }
+    }
+
+    fn lighter(&mut self) {
+        self.order = Order::Lighter;
+    }
+
+    fn prefer_host(&mut self, key: &str) {
+        self.host_first.insert(key.to_owned());
     }
 }
 
