@@ -133,6 +133,12 @@ pub fn clicks(x: &[i32], s1: f64, s3: f64) -> Vec<Click> {
     let edge = s1 * 0.5;
     let mut i = first;
     while i <= last {
+        if x[i] == 0 && on_the_line(x, i, s1, s3) {
+            // One exact zero where the music crosses zero (resampled music puts a crossing on a
+            // frame now and then): music, judged as any other frame.
+            i += 1;
+            continue;
+        }
         if x[i] == 0 {
             // A gap inside the music.
             let start = i;
@@ -163,4 +169,24 @@ pub fn clicks(x: &[i32], s1: f64, s3: f64) -> Vec<Click> {
         i += 1;
     }
     found
+}
+
+/// Frame `i` is a lone zero whose neighbours are music (three each side, none zero), and taken as
+/// a value it keeps the music's line: no step past the music's steepest and no third difference
+/// past its most, in every window that holds it. A frame zeroed where the music is away from
+/// zero breaks the line (by about three times its value in the third difference), so it is
+/// still a cut.
+fn on_the_line(x: &[i32], i: usize, s1: f64, s3: f64) -> bool {
+    if i < 3 || i + 3 >= x.len() {
+        return false;
+    }
+    let w = &x[i - 3..=i + 3];
+    if w.iter().enumerate().any(|(k, &v)| k != 3 && v == 0) {
+        return false;
+    }
+    let v: Vec<f64> = w.iter().map(|&s| f64::from(s)).collect();
+    let steps_ok = (2..4).all(|k| (v[k + 1] - v[k]).abs() <= s1 * 1.25);
+    let bends_ok =
+        (0..4).all(|k| (v[k + 3] - 3.0 * v[k + 2] + 3.0 * v[k + 1] - v[k]).abs() <= s3 * 1.25);
+    steps_ok && bends_ok
 }

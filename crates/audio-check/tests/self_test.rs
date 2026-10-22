@@ -113,6 +113,78 @@ fn the_music_detector_passes_clean_music_and_catches_each_fault() {
     }
 }
 
+/// The music at fractional frames: `frames` frames from `t0`, as 24-bit values (a resampler's
+/// output is the same music at another phase).
+fn music_from(t0: f64, frames: usize) -> Vec<i32> {
+    let p = Piece {
+        rate: RATE,
+        channels: 1,
+    };
+    (0..frames)
+        .map(|n| p.at(t0 + n as f64, 0).round() as i32)
+        .collect()
+}
+
+#[test]
+fn the_music_detector_reads_a_lone_zero_on_the_line_as_music() {
+    // Resampled music puts a zero crossing exactly on a frame now and then: one exact zero
+    // between two large values of opposite sign (as -217384, 0, 256673 heard in a room). It
+    // lies on the music's line, so it is music, not silence cut in.
+    let p = Piece {
+        rate: RATE,
+        channels: 1,
+    };
+    let (s1, s3) = p.limits();
+    let at = |t: f64| p.at(t, 0);
+    for k in places() {
+        // The steepest crossing near `k`, its exact time by bisection.
+        let i = (k..k + 2_000)
+            .filter(|&i| at(i as f64) <= 0.0 && at(i as f64 + 1.0) > 0.0)
+            .max_by(|&a, &b| {
+                (at(a as f64 + 1.0) - at(a as f64)).total_cmp(&(at(b as f64 + 1.0) - at(b as f64)))
+            })
+            .unwrap();
+        let (mut lo, mut hi) = (i as f64, i as f64 + 1.0);
+        for _ in 0..60 {
+            let mid = (lo + hi) / 2.0;
+            if at(mid) <= 0.0 { lo = mid } else { hi = mid }
+        }
+        // 40,000 frames with the crossing on frame 20,000.
+        let x = music_from(lo - 20_000.0, 40_000);
+        assert_eq!(x[20_000], 0);
+        assert!(
+            f64::from(x[19_999].abs().min(x[20_001].abs())) > s1 * 0.5,
+            "a steep crossing: {:?}",
+            &x[19_998..20_003]
+        );
+        assert_eq!(music::clicks(&x, s1, s3), [], "the crossing near {k}");
+    }
+}
+
+#[test]
+fn the_music_detector_still_catches_a_frame_zeroed_off_the_line() {
+    let p = Piece {
+        rate: RATE,
+        channels: 1,
+    };
+    let (s1, s3) = p.limits();
+    let clean = music_ints();
+    let mut tried = 0;
+    for k in places() {
+        // A frame where the music is well away from zero: zeroed, it leaves the line.
+        let at = (k..k + 2_000)
+            .find(|&i| f64::from(clean[i].abs()) > s1)
+            .unwrap();
+        let mut x = clean.clone();
+        x[at] = 0;
+        let found = music::clicks(&x, s1, s3);
+        assert!(!found.is_empty(), "a frame zeroed at {at} ({})", clean[at]);
+        assert!(found[0].at.abs_diff(at) < 4, "found at {}", found[0].at);
+        tried += 1;
+    }
+    assert_eq!(tried, 12);
+}
+
 // --- Detector 1: bit-exact with declared edits ---------------------------------------------
 
 #[test]
