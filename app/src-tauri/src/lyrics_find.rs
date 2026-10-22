@@ -92,15 +92,17 @@ pub async fn lyrics_find(
         let found = match cached {
             Some(f) => f,
             None => {
+                // Found before in an older answer format: asked for again, kept to fall back on.
+                let stale = kept.as_ref().and_then(|k| k.stale(&ask.key, &slot));
                 let answer = match from.as_deref() {
                     Some(s) => lo::ask(s, &req, &catalog),
                     None => lo::automatic(&req, &sources_on(), &catalog),
                 };
                 // A source that turned Venuta away or didn't answer isn't kept as "none".
-                if let Some(k) = &kept {
-                    lo::remember(k, &ask.key, &slot, &answer);
+                match &kept {
+                    Some(k) => lo::renewed(k, &ask.key, &slot, answer, stale),
+                    None => answer.ok().flatten().or(stale),
                 }
-                answer.ok().flatten()
             }
         };
         Ok(LyricsAnswer {

@@ -8,8 +8,9 @@
 //! lyrics) is turned away.
 //!
 //! "Automatic" asks every source in your order at once and takes the first timed answer in
-//! that order, else the first plain one. Answers are kept (a found answer for good, "none"
-//! for a day), so a song is asked about once.
+//! that order, else the first plain one. Answers are kept (a found answer until Venuta reads
+//! lyrics in a new way, `crate::lyrics::VERSION`; "none" for a day), so a song is asked about
+//! once.
 //!
 //! A source that turns Venuta away (401, 403: it wants a key, or answers only its own app) or
 //! can't be reached is not saying "no lyrics for this song": that is never kept as a miss. A
@@ -1551,6 +1552,30 @@ pub fn automatic(
     })
 }
 
+/// The answer to show after asking again about a song whose kept answer was in an older
+/// format (`stale`), and what is kept: a new answer replaces it; when the source now has
+/// nothing, the old one stays (in today's format, so it isn't asked about again); when the
+/// source didn't answer, the old one is shown and the song is asked about again next time.
+pub fn renewed(
+    kept: &Kept,
+    song: &str,
+    slot: &str,
+    answer: Result<Option<Found>, AskError>,
+    stale: Option<Found>,
+) -> Option<Found> {
+    match (answer, stale) {
+        (Ok(None), Some(old)) => {
+            kept.put(song, slot, Some(&old));
+            Some(old)
+        }
+        (Err(_), old) => old,
+        (answer, _) => {
+            remember(kept, song, slot, &answer);
+            answer.ok().flatten()
+        }
+    }
+}
+
 /// Keep an answer for a song (`slot`: the source, or "auto"): what was found, or that there
 /// is none. A source that turned Venuta away or didn't answer is not saying "none": nothing is
 /// kept, so the song is asked about again.
@@ -1716,10 +1741,8 @@ impl Kept {
         Ok(Kept { conn })
     }
 
-    /// Some(answer) when one is kept and still good.
-    pub fn get(&self, song: &str, source: &str) -> Option<Option<Found>> {
-        let row: Option<(Option<String>, i64)> = self
-            .conn
+    fn row(&self, song: &str, source: &str) -> Option<(Option<String>, i64)> {
+        self.conn
             .query_row(
                 "SELECT found, at FROM lyrics WHERE song = ?1 AND source = ?2",
                 params![song, source],
@@ -1727,16 +1750,42 @@ impl Kept {
             )
             .optional()
             .ok()
-            .flatten();
-        match row {
-            Some((Some(json), _)) => serde_json::from_str(&json).ok().map(Some),
-            Some((None, at)) if now_ms() - at < MISS_TTL_MS => Some(None),
+            .flatten()
+    }
+
+    /// A kept answer, read in today's shape (old rows get their line ends and scripts).
+    fn read(json: &str) -> Option<Found> {
+        let mut f: Found = serde_json::from_str(json).ok()?;
+        finish(&mut f.lyrics.lines);
+        Some(f)
+    }
+
+    /// Some(answer) when one is kept and still good: found in today's answer format
+    /// ([`crate::lyrics::VERSION`]), or "none" from the last day.
+    pub fn get(&self, song: &str, source: &str) -> Option<Option<Found>> {
+        match self.row(song, source)? {
+            (Some(json), _) => Self::read(&json)
+                .filter(|f| f.lyrics.version >= crate::lyrics::VERSION)
+                .map(Some),
+            (None, at) if now_ms() - at < MISS_TTL_MS => Some(None),
             _ => None,
         }
     }
 
+    /// A found answer kept in an older answer format: asked for again, and shown meanwhile or
+    /// when the source can't answer now.
+    pub fn stale(&self, song: &str, source: &str) -> Option<Found> {
+        let (json, _) = self.row(song, source)?;
+        Self::read(&json?).filter(|f| f.lyrics.version < crate::lyrics::VERSION)
+    }
+
+    /// Keep an answer (None: there is none), in today's answer format.
     pub fn put(&self, song: &str, source: &str, found: Option<&Found>) {
-        let json = found.and_then(|f| serde_json::to_string(f).ok());
+        let json = found.and_then(|f| {
+            let mut f = f.clone();
+            f.lyrics.version = crate::lyrics::VERSION;
+            serde_json::to_string(&f).ok()
+        });
         let _ = self.conn.execute(
             "INSERT OR REPLACE INTO lyrics (song, source, found, at) VALUES (?1, ?2, ?3, ?4)",
             params![song, source, json, now_ms()],
@@ -2217,5 +2266,53 @@ mod tests {
         assert_eq!(kg.lyrics.lines.len(), lrc.lyrics.lines.len());
         assert_eq!(kugou_language("日语").as_deref(), Some("ja"));
         assert_eq!(krc_text("not krc"), None);
+    }
+
+    #[test]
+    fn answers_kept_in_an_older_format_are_asked_for_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = Kept::open_at(&dir.path().join("cache.sqlite")).unwrap();
+        // A NetEase answer as version 1 kept it: `ms`, a translation as text, no version.
+        let old = r#"{"source":"netease","lines":[{"ms":273,"text":"無敵の笑顔で","translation":"露出无敌笑容"},{"ms":3283,"text":"知りたい"}],"text":"","instrumental":false,"credit":null}"#;
+        kept.conn
+            .execute(
+                "INSERT INTO lyrics (song, source, found, at) VALUES ('s', 'auto', ?1, 0)",
+                params![old],
+            )
+            .unwrap();
+        assert_eq!(kept.get("s", "auto"), None, "asked for again");
+        let stale = kept.stale("s", "auto").unwrap();
+        let first = &stale.lyrics.lines[0];
+        assert_eq!((first.start_ms, first.end_ms), (273, 3283));
+        assert_eq!(first.script, "Jpan");
+        assert_eq!(first.translation.as_ref().unwrap().lang, "zh-Hans");
+
+        // The source didn't answer: the old answer is shown, and asked for again next time.
+        let shown = renewed(
+            &kept,
+            "s",
+            "auto",
+            Err(AskError::Down("x".into())),
+            Some(stale.clone()),
+        );
+        assert_eq!(shown.as_ref(), Some(&stale));
+        assert_eq!(kept.get("s", "auto"), None);
+        // It has nothing now: the old answer stays, kept in today's format.
+        renewed(&kept, "s", "auto", Ok(None), Some(stale.clone()));
+        let now = kept.get("s", "auto").unwrap().unwrap();
+        assert_eq!(now.lyrics.version, crate::lyrics::VERSION);
+        assert_eq!(kept.stale("s", "auto"), None);
+        // A new answer replaces it.
+        let mut fresh = stale.clone();
+        fresh.lyrics.lines[0].text = "new".into();
+        assert_eq!(
+            renewed(&kept, "t", "auto", Ok(Some(fresh.clone())), None)
+                .map(|f| f.lyrics.lines[0].text.clone()),
+            Some("new".into())
+        );
+        assert_eq!(
+            kept.get("t", "auto").unwrap().unwrap().lyrics.lines[0].text,
+            "new"
+        );
     }
 }
