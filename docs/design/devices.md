@@ -98,7 +98,8 @@ The deck resolves at every open. Then:
   device that flaps is never switched to and from.
 - **Lost** (unplugged, `AUDCLNT_E_DEVICE_INVALIDATED`, no event for 2 s): the old device is gone,
   so nothing can fade on it. The renderer comes back, the output is closed, and the first reopen is
-  at once: resolved again, it lands on the same endpoint when it is still there (a format change, a
+  a quarter of a second later (Windows tells the stream at once and the list of devices a
+  moment after, once its burst of changes ends): resolved again, it lands on the same endpoint when it is still there (a format change, a
   driver restart, waking from sleep) or the fallback when it is not. The place starts where it was
   last heard, with the 15 ms fade-in (no burst, nothing old: every open is a fresh stream). Failed
   opens wait 0.5, 1, 2 and 5 s; a chosen device that fails them all is passed over until it changes,
@@ -193,6 +194,42 @@ picker is in the quality badge's popover and in Settings > Playback. `Signal` ga
 - Screenshots of the picker in headless Chrome from a dev preview page.
 
 The guided test on the owner's devices is [qa/devices-live.md](../qa/devices-live.md).
+
+## As built
+
+- **Where things are.** `devices.rs` (classification, entries, `resolve`, the exclusive plan, the
+  probe cache, the `Devices` trait), `wasapi_devices.rs` (`list_endpoints`, `WasapiDevices`),
+  `wasapi_out.rs` (the probe, the plan, the open by the probe's tag, `why_shared`), `sim_devices.rs`
+  (`SimDevices`), engine 2's deck in `engine/control.rs` (`adopt`, `resolve`, `recheck`, the
+  fallback in `failed_open`, `lose`, `OutputSide`, `heard_content_by_ear`), the signal in
+  `engine/program.rs`. Engine 1 takes `Cmd::OutputDelays` and ignores it; its signal leaves the new
+  fields empty.
+- **The choice in the engine.** `OutputChoice::Device { id, exclusive }` as before; on Windows the
+  deck makes `WasapiDevices` the first time a sound device is chosen (if Windows' devices can't be
+  listed, the endpoint is opened as chosen, as before). Tests pass `OutputChoice::SimDevices`,
+  which the deck keeps as the `Device` choice among those devices, so a later `Cmd::Output(Device)`
+  chooses among them.
+- **Timings.** A change is looked at 300 ms later; a device that has just come is played to once it
+  has stayed 1.5 s (so about 2 s after it appears); a lost device's place is opened again 250 ms
+  later. The place a lost output comes back at is never past what was rendered (after a sleep, the
+  presentation pair carried to now would be an hour on).
+- **A join into another rate is a song boundary.** The renderer starts the next song's resampler
+  afresh when its rate differs (WP3's design), so two songs of different rates that run into each
+  other without a gap of silence step at the join. Gapless albums are one rate, so this is only
+  seen with test music cut from one piece; the gate's songs at different rates rise and fall.
+- **The app.** Settings keep `player.output`, `player.output_name`, `player.exclusive` (on unless
+  turned off) and `player.output_delay_ms`; the choice is restored at start. `player_devices` lists
+  the entries with each one's delay, suggestion and probed formats; `player_output` takes the
+  device's name too; `player_set_output_delay` sets or clears a delay (the player is told, and a
+  room). The playback log gets a line whenever the music moves to another endpoint (`output: on
+  <device> (<kind>, <mode>, <rate> Hz): <note>`). Listen together's `my_delay` and
+  `together_set_delay` use the store, keyed by the endpoint the player is on.
+- **The picker** is `components/player/OutputPicker.tsx` over `lib/outputPicker.ts`, in the quality
+  badge's popover (which now scrolls when taller than the window) and in Settings > Playback. The
+  screenshots are in `docs/screenshots/devices` (`scripts/devices-shots.mjs`, headless Chrome on
+  `app/devices-preview.html`).
+- **The spectrum** still reads what the renderer made (ahead of the DAC by the output's lead);
+  putting it on the heard time is left with the rest of 4.8's "Heard time".
 
 ## 9. Open questions for the owner
 
