@@ -351,6 +351,20 @@ pub fn writable(dir: &Path) -> bool {
     ok
 }
 
+/// Whether the updater installed this version moments ago: its installer, downloaded into
+/// `Venuta-<version>-updater-*` in the temp folder, is newer than `within`.
+pub fn just_installed(temp: &Path, version: &str, within: Duration) -> bool {
+    let prefix = format!("Venuta-{version}-updater-");
+    std::fs::read_dir(temp).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            e.file_name().to_string_lossy().starts_with(&prefix)
+                && e.metadata()
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|t| t.elapsed().is_ok_and(|d| d < within))
+        })
+    })
+}
+
 /// Remove installers earlier updates left in the temp folder (`Venuta-<version>-updater-*`),
 /// once they are older than `age` (the newest may still be running).
 pub fn clean_old_installers(temp: &Path, age: Duration) -> usize {
@@ -813,5 +827,25 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["Other-0.1-updater-z", "Venuta-notes"]);
+    }
+
+    #[test]
+    fn a_version_the_updater_just_installed_knows_it() {
+        // 0.1.0 to 0.3.0 restart the new version with their own start's arguments (--in-tray when
+        // started with Windows); the installer they downloaded says it was just now.
+        let temp = tempfile::tempdir().unwrap();
+        let ten_minutes = Duration::from_secs(600);
+        assert!(!just_installed(temp.path(), "0.3.1", ten_minutes));
+        std::fs::create_dir(temp.path().join("Venuta-0.3.0-updater-Ab12")).unwrap();
+        assert!(
+            !just_installed(temp.path(), "0.3.1", ten_minutes),
+            "another version's"
+        );
+        std::fs::create_dir(temp.path().join("Venuta-0.3.1-updater-Cd34")).unwrap();
+        assert!(just_installed(temp.path(), "0.3.1", ten_minutes));
+        assert!(
+            !just_installed(temp.path(), "0.3.1", Duration::ZERO),
+            "not just now"
+        );
     }
 }

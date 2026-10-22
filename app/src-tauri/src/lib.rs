@@ -3052,8 +3052,11 @@ pub fn run() {
                 eprintln!("shortcut {} ({}): {}", p.action, p.keys, p.reason);
             }
             // Started with Windows: stay in the tray. Otherwise show the window (it starts
-            // hidden so it never flashes before this choice).
-            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG) {
+            // hidden so it never flashes before this choice). Just updated, show it anyway: an
+            // older version's updater passes on its own --in-tray.
+            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG)
+                || updates::just_installed(&app.package_info().version.to_string())
+            {
                 desktop::show_main(app.handle());
             }
             #[cfg(windows)]

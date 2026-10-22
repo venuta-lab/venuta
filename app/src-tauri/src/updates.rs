@@ -332,6 +332,12 @@ pub fn update_download_page(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Started by the installer an update just ran: show the window even when the version updated
+/// from passed on --in-tray (0.1.0 to 0.3.0 restart the new version with their own arguments).
+pub fn just_installed(version: &str) -> bool {
+    feed::just_installed(&std::env::temp_dir(), version, Duration::from_secs(600))
+}
+
 /// Installers earlier updates left in the temp folder, cleared at start.
 pub fn clean_old_installers() {
     feed::clean_old_installers(&std::env::temp_dir(), Duration::from_secs(3600));

@@ -90,5 +90,8 @@ pre-release; v0.1.1 is a tag without a release.
 
 Old versions keep their own behaviour (the once-a-day check, the toast, Settings' "Install and
 restart") but always find a valid update, as long as the release passes `update-feed.mjs`.
+Their updater still restarts the new version with their own arguments, so a new version that
+finds its own installer in the temp folder from the last ten minutes shows its window even when
+given --in-tray.
 From the next release on, an installed copy shows the update in the title bar until it is
 installed.
