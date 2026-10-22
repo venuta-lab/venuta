@@ -28,8 +28,11 @@ together = { path = "../together" }
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.19"
-# The player's thread scheduled as pro audio (MMCSS); the same version wasapi uses.
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Performance"] }
+# The same version wasapi uses: MMCSS for the player's threads, and the output's own WASAPI
+# client (wasapi_out.rs): audio interfaces, COM, events.
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Performance", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_System_Com", "Win32_Security"] }
+# The notification client's `implement` macro names this crate (the version wasapi uses).
+windows-core = "0.61"
 
 [dev-dependencies]
 media-access = { path = "../media-access" }
