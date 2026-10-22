@@ -621,9 +621,10 @@ impl Drop for Registration {
 /// registration and the COM objects first, then the events, MMCSS and COM itself.
 pub struct WasapiPull {
     _notify: Option<Registration>,
-    clock: IAudioClock,
-    render: IAudioRenderClient,
-    client: IAudioClient,
+    /// The stream (made anew at a start on a device that queues: see `renew`).
+    stream: Option<Stream>,
+    /// Exclusive mode: what it takes to make the stream anew.
+    again: Option<Again>,
     audio: Event,
     kick: Arc<Event>,
     bpf: usize,
@@ -635,6 +636,26 @@ pub struct WasapiPull {
     exclusive: bool,
     _pro: ProAudio,
     _com: Com,
+}
+
+/// An initialised stream's COM objects.
+struct Stream {
+    clock: IAudioClock,
+    render: IAudioRenderClient,
+    client: IAudioClient,
+}
+
+/// Exclusive mode: the endpoint, format and period to make the stream anew with.
+struct Again {
+    device: IMMDevice,
+    wave: WaveFormat,
+    period_hns: i64,
+}
+
+impl WasapiPull {
+    fn st(&self) -> Result<&Stream, Fault> {
+        self.stream.as_ref().ok_or(Fault::Lost)
+    }
 }
 
 /// A device call's error: a lost device, or anything else.
@@ -689,7 +710,7 @@ impl PullDevice for WasapiPull {
             });
         }
         // SAFETY: a plain call on an initialised client.
-        let held = unsafe { self.client.GetCurrentPadding() }.map_err(|e| fault(&e))?;
+        let held = unsafe { self.st()?.client.GetCurrentPadding() }.map_err(|e| fault(&e))?;
         Ok(Space {
             free: self.buffer.saturating_sub(held),
             held: Some(held),
@@ -697,15 +718,14 @@ impl PullDevice for WasapiPull {
     }
 
     fn write(&mut self, frames: u32, fill: &mut dyn FnMut(&mut [u8])) -> Result<(), Fault> {
+        let bytes = frames as usize * self.bpf;
+        let render = &self.st()?.render;
         // SAFETY: GetBuffer gives `frames` frames of the stream's format, ours until
         // ReleaseBuffer; the slice covers exactly them and is gone before the release.
         unsafe {
-            let p = self.render.GetBuffer(frames).map_err(|e| fault(&e))?;
-            fill(std::slice::from_raw_parts_mut(
-                p,
-                frames as usize * self.bpf,
-            ));
-            self.render.ReleaseBuffer(frames, 0).map_err(|e| fault(&e))
+            let p = render.GetBuffer(frames).map_err(|e| fault(&e))?;
+            fill(std::slice::from_raw_parts_mut(p, bytes));
+            render.ReleaseBuffer(frames, 0).map_err(|e| fault(&e))
         }
     }
 
@@ -713,13 +733,10 @@ impl PullDevice for WasapiPull {
         let (mut pos, mut qpc) = (0u64, 0u64);
         // Through the vtable, to see the HRESULT itself: only S_OK is a reading (S_FALSE and any
         // other success code are not).
+        let clock = &self.st()?.clock;
         // SAFETY: a valid IAudioClock and two valid out pointers.
         let hr = unsafe {
-            (Interface::vtable(&self.clock).GetPosition)(
-                Interface::as_raw(&self.clock),
-                &mut pos,
-                &mut qpc,
-            )
+            (Interface::vtable(clock).GetPosition)(Interface::as_raw(clock), &mut pos, &mut qpc)
         };
         if hr.is_err() {
             return Err(fault_of(hr, "reading the device's position failed"));
@@ -737,15 +754,60 @@ impl PullDevice for WasapiPull {
 
     fn start(&mut self) -> Result<(), Fault> {
         // SAFETY: a plain call on an initialised client.
-        unsafe { self.client.Start() }.map_err(|e| fault(&e))
+        unsafe { self.st()?.client.Start() }.map_err(|e| fault(&e))
     }
 
     fn halt(&mut self) -> Result<(), Fault> {
+        let s = self.st()?;
         // SAFETY: plain calls on an initialised client (Stop on a stopped stream is S_FALSE).
         unsafe {
-            self.client.Stop().map_err(|e| fault(&e))?;
-            self.client.Reset().map_err(|e| fault(&e))
+            s.client.Stop().map_err(|e| fault(&e))?;
+            s.client.Reset().map_err(|e| fault(&e))
         }
+    }
+
+    fn renew(&mut self) -> Result<(), Fault> {
+        let Some(again) = &self.again else {
+            return self.halt();
+        };
+        // The old stream lets go of the device first (exclusive mode: one stream at a time).
+        if let Some(s) = self.stream.take() {
+            // SAFETY: a plain call on an initialised client.
+            let _ = unsafe { s.client.Stop() };
+        }
+        // SAFETY: COM is initialised on this thread; the format lives in `again`; the event
+        // handle is ours and alive.
+        unsafe {
+            let client: IAudioClient = again
+                .device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e| fault(&e))?;
+            client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_EXCLUSIVE,
+                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                    again.period_hns,
+                    again.period_hns,
+                    again.wave.as_waveformatex_ref(),
+                    None,
+                )
+                .map_err(|e| fault(&e))?;
+            if client.GetBufferSize().map_err(|e| fault(&e))? != self.buffer {
+                return Err(Fault::Other(
+                    "the stream came back with another buffer".into(),
+                ));
+            }
+            client.SetEventHandle(self.audio.0).map_err(|e| fault(&e))?;
+            let render: IAudioRenderClient = client.GetService().map_err(|e| fault(&e))?;
+            let clock: IAudioClock = client.GetService().map_err(|e| fault(&e))?;
+            self.freq = clock.GetFrequency().map_err(|e| fault(&e))?.max(1);
+            self.stream = Some(Stream {
+                clock,
+                render,
+                client,
+            });
+        }
+        Ok(())
     }
 
     fn raw_clock(&self) -> (u64, u64) {
@@ -754,7 +816,9 @@ impl PullDevice for WasapiPull {
 
     fn probe_padding(&mut self) -> Option<u32> {
         // SAFETY: a plain call on an initialised client.
-        unsafe { self.client.GetCurrentPadding() }.ok()
+        let s = self.stream.as_ref()?;
+        // SAFETY: a plain call on an initialised client.
+        unsafe { s.client.GetCurrentPadding() }.ok()
     }
 }
 
@@ -763,6 +827,8 @@ struct Init {
     client: IAudioClient,
     format: DeviceFormat,
     exclusive: bool,
+    /// Exclusive mode: the format and period it was opened with (to make it anew).
+    again: Option<(WaveFormat, i64)>,
 }
 
 fn open_pull(
@@ -868,9 +934,16 @@ fn open_pull(
         Ok(Opened {
             device: WasapiPull {
                 _notify: notify,
-                clock,
-                render,
-                client,
+                stream: Some(Stream {
+                    clock,
+                    render,
+                    client,
+                }),
+                again: init.again.map(|(wave, period_hns)| Again {
+                    device: device.clone(),
+                    wave,
+                    period_hns,
+                }),
                 audio,
                 kick: kick.clone(),
                 bpf: init.format.bytes_per_frame(),
@@ -922,6 +995,7 @@ unsafe fn open_shared(device: &IMMDevice) -> Result<Init, OutputError> {
             client,
             format,
             exclusive: false,
+            again: None,
         })
     }
 }
@@ -1037,6 +1111,7 @@ unsafe fn try_exclusive(
                 client,
                 format,
                 exclusive: true,
+                again: Some((fmt.clone(), period)),
             })),
             Err(e) if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED => {
                 // The driver wants its own alignment: ask it, and try once more on a new client.
@@ -1049,6 +1124,7 @@ unsafe fn try_exclusive(
                     client,
                     format,
                     exclusive: true,
+                    again: Some((fmt.clone(), p)),
                 }))
             }
             Err(e) => Err(e.to_string()),

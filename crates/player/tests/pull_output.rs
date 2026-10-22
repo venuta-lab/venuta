@@ -707,33 +707,88 @@ fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
     }
 }
 
-/// The conformance suite on a queueing exclusive driver whose queue a stop and reset don't
-/// empty (what the owner's Realtek laptop did in the suite: the start straight after a stop took
-/// two buffers, then nothing for 20 ms while the position ran on, "the DAC is at frame 1016,
-/// past the 960 rendered"). Draining no longer fills the queue with silence, and a start of a
-/// known queue is settled against its depth before any pair: the suite passes, what played
-/// first at that start was the last run's silence, and nothing loud.
+/// The conformance suite's exclusive run on the owner's laptop (WP1d, `tests/fixtures`): three
+/// starts. The first (a fresh stream) took ten buffers in under a millisecond and its position
+/// stayed behind everything handed over all through the 10 s tone. The two after a stop and
+/// reset took one buffer per event and never filled: their position ran past everything handed
+/// over within a fifth of a second (by 1086 frames 65 ms in, 4305 at 182 ms; the third by 296
+/// at 118 ms), and at the end of the trace it stood at 30073 with 28320 rendered: the suite's
+/// "past the 28320 rendered". A device clock past every frame handed over has played silence.
 #[test]
-fn the_suite_passes_on_a_queue_that_keeps_what_it_held_over_a_reset() {
-    let (mut out, fake, clock) = sim_output(FakeCfg {
+fn the_laptops_exclusive_restarts_ran_past_what_was_handed_over() {
+    use player::output::TRACE_COLUMNS;
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/realtek-exclusive-restarts-trace.csv"),
+    )
+    .unwrap();
+    let col = |c: &str| TRACE_COLUMNS.iter().position(|x| *x == c).unwrap();
+    let rows: Vec<Vec<i64>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').map(|v| v.parse().unwrap()).collect())
+        .collect();
+    // Starts: where what was handed over goes back to one buffer.
+    let starts: Vec<usize> = (0..rows.len())
+        .filter(|&i| rows[i][col("state")] == 1 && rows[i][col("before")] == 480)
+        .collect();
+    assert_eq!(starts.len(), 3);
+    let run = |k: usize| {
+        let end = starts.get(k + 1).copied().unwrap_or(rows.len());
+        &rows[starts[k]..end]
+    };
+    let past = |r: &[Vec<i64>]| {
+        r.iter()
+            .filter(|x| x[col("state")] == 1)
+            .map(|x| x[col("raw")] - x[col("before")])
+            .max()
+            .unwrap()
+    };
+    // The fresh start: ten buffers in under a millisecond, never past what was handed over.
+    let a = run(0);
+    assert!(a[9][col("wake_ns")] - a[0][col("wake_ns")] < 1_000_000);
+    assert!(past(a) < 0, "{}", past(a));
+    // After a stop and reset: no burst, and the clock past everything handed over.
+    for k in [1, 2] {
+        let r = run(k);
+        assert!(
+            r[9][col("wake_ns")] - r[0][col("wake_ns")] > 50_000_000,
+            "start {k} filled at once"
+        );
+        assert!(past(r) > 2_000, "start {k}: {}", past(r));
+    }
+    let last = rows.last().unwrap();
+    assert_eq!(
+        last[col("after")],
+        28_320,
+        "what the suite said was rendered"
+    );
+    assert!(last[col("raw")] > last[col("after")]);
+}
+
+/// A queue that, after a stop and reset, takes one buffer at a time (as the laptop's did) with
+/// the driver's uneven events: the suite fails on it when the stream is only stopped and reset,
+/// and passes when every start of a queue makes the stream anew (as fresh as at the open).
+#[test]
+fn a_queue_is_made_anew_at_every_start() {
+    let cfg = |renew_works| FakeCfg {
         exclusive: true,
         queue: Some(10),
-        keeps_queue: true,
-        quiet_after_restart_ns: Some(40 * MS),
         latency: 48,
+        restart_starves: true,
+        renew_works,
+        // The driver's uneven events, now and then, all through the run.
+        late: (0..3_000).step_by(37).map(|k| (k, 30 * MS)).collect(),
         ..FakeCfg::default()
-    });
-    let report = conformance::run(&mut out, &clock, &want()).expect("conformance");
-    let f = fake.lock().unwrap();
-    assert!(
-        f.stale_played > 0,
-        "a start played what the queue held from before"
-    );
-    assert_eq!(f.stale_loud, 0, "and that was silence");
-    assert_eq!(f.errors, Vec::<String>::new());
-    eprintln!(
-        "learned {:?} gaps {:?} stale {} xruns {}",
-        report.latency, f.gaps, f.stale_played, report.xruns
-    );
+    };
+    let (mut out, _fake, clock) = sim_output(cfg(false));
+    let err = conformance::run(&mut out, &clock, &want()).expect_err("only stopped and reset");
+    eprintln!("stopped and reset: {err}");
+    let (mut out, fake, clock) = sim_output(cfg(true));
+    let report = conformance::run(&mut out, &clock, &want()).expect("made anew");
     assert_eq!(report.xruns, 0);
+    assert!(
+        fake.lock().unwrap().renewals >= 2,
+        "every start after the first"
+    );
 }

@@ -97,11 +97,11 @@ pub struct FakeCfg {
     /// Exclusive: a device that queues this many buffers (signals whenever it has room for
     /// one), its position running on through silence, instead of a double buffer.
     pub queue: Option<u32>,
-    /// A queue that a stop and reset do not empty (its device keeps playing what it held).
-    pub keeps_queue: bool,
-    /// A queue that began a start with what it held from before: one event, then none for
-    /// this long (what the laptop did in the suite).
-    pub quiet_after_restart_ns: Option<u64>,
+    /// A queue that, after a stop and reset, takes one buffer at a time and never fills (the
+    /// laptop in the suite); a stream made anew is as fresh as at the open.
+    pub restart_starves: bool,
+    /// Whether making the stream anew works (else it is only a stop and reset).
+    pub renew_works: bool,
     /// From this many device wakes on, the render thread's own work is watched.
     pub watch_from: Option<u64>,
 }
@@ -121,8 +121,8 @@ impl Default for FakeCfg {
             prime: 0,
             counts_partial: false,
             queue: None,
-            keeps_queue: false,
-            quiet_after_restart_ns: None,
+            restart_starves: false,
+            renew_works: true,
             watch_from: None,
         }
     }
@@ -167,16 +167,10 @@ pub struct Fake {
     pub uncounted: Vec<Range<u64>>,
     /// A queue: DAC ticks so far.
     pub q_ticks: u64,
-    /// A queue that keeps what it holds over a reset: frames at its front from before the
-    /// start, and how many such have played.
-    pub stale_left: u64,
-    pub stale_played: u64,
-    /// Samples of those that were not silence.
-    pub stale_loud: u64,
-    /// A queue: device wakes since the start.
-    pub since_start: u64,
-    /// This start began with what the queue held from before.
-    pub restarted_stale: bool,
+    /// A queue: buffers it takes now (after a stop and reset that starves it: 1).
+    pub capacity: Option<u32>,
+    /// Streams made anew.
+    pub renewals: u32,
     /// Shared: frames the engine read at this start, before its first pass.
     pub prime: u32,
     /// Shared: what the device held at the first wake after the first start.
@@ -271,24 +265,10 @@ impl Fake {
         let take = ((self.fifo.len() / 2) as u64).min(n);
         let tick = self.q_ticks;
         let mut played: Vec<i32> = Vec::new();
-        // What the queue held from before the start plays first (the position counts it).
-        let stale = take.min(self.stale_left);
-        if stale > 0 {
-            self.stale_left -= stale;
-            self.stale_played += stale;
-            self.stale_loud += self
-                .fifo
-                .iter()
-                .take(stale as usize * 2)
-                .filter(|v| **v != 0)
-                .count() as u64;
-            played.extend(self.fifo.drain(..stale as usize * 2));
-        }
-        let ours = take - stale;
-        if ours > 0 {
-            self.spans.push((self.taken, ours, tick + stale));
-            self.taken += ours;
-            played.extend(self.fifo.drain(..ours as usize * 2));
+        if take > 0 {
+            self.spans.push((self.taken, take, tick));
+            self.taken += take;
+            played.extend(self.fifo.drain(..take as usize * 2));
         }
         if take < n {
             self.gap(tick + take..tick + n);
@@ -438,18 +418,14 @@ impl PullDevice for FakeDevice {
                 // the DAC has made room.
                 let p = u64::from(f.cfg.period);
                 let queued = (f.fifo.len() / 2) as u64;
-                let full = u64::from(depth) * p;
+                let full = u64::from(f.capacity.unwrap_or(depth)) * p;
                 let t = if queued + p <= full {
                     now + 100_000
                 } else {
                     (f.heard_ns(f.q_ticks + queued + p - full) as u64).max(now)
                 };
-                // After a restart, as the laptop did in the suite: one event, then none for a
-                // while.
-                let t = match f.cfg.quiet_after_restart_ns {
-                    Some(q) if f.restarted_stale && f.since_start >= 1 => t.max(f.start_ns + q),
-                    _ => t,
-                };
+                // The driver's late events come with its queue at least half full (as traced).
+                let late = if 2 * queued >= full { late } else { 0 };
                 f.started.then_some(t + late)
             } else {
                 let t = f.pass_ns(k);
@@ -465,7 +441,6 @@ impl PullDevice for FakeDevice {
                 // The event fired once for every pass since the last wake (auto-reset).
                 if f.cfg.queue.is_some() {
                     f.seen += 1;
-                    f.since_start += 1;
                 } else {
                     f.seen = f.passes;
                 }
@@ -522,7 +497,8 @@ impl PullDevice for FakeDevice {
             // A queue: takes a buffer whenever it has room for one, once per event.
             let queued = (f.fifo.len() / 2) as u64;
             let ok = frames == f.cfg.period
-                && queued + u64::from(frames) <= u64::from(depth * f.cfg.period)
+                && queued + u64::from(frames)
+                    <= u64::from(f.capacity.unwrap_or(depth) * f.cfg.period)
                 && !(f.started && f.wrote_for_event);
             if !ok {
                 let e = format!("queue write of {frames} frames, {queued} queued");
@@ -601,8 +577,6 @@ impl PullDevice for FakeDevice {
         f.gaps.clear();
         f.uncounted.clear();
         f.q_ticks = 0;
-        f.since_start = 0;
-        f.restarted_stale = f.stale_left > 0;
         let tps = f.tps();
         let start = f.heard_ns(0).round() as u64;
         f.runs.push(Run {
@@ -652,17 +626,28 @@ impl PullDevice for FakeDevice {
         });
         f.started = false;
         WATCHED.with(|w| w.set(false));
-        if f.cfg.queue.is_some() && f.cfg.keeps_queue {
-            // A queue a reset doesn'"'"'t empty: what it holds plays first after the next start.
-            f.stale_left = (f.fifo.len() / 2) as u64;
-        } else {
-            f.fifo.clear();
-        }
+        f.fifo.clear();
         f.queue.clear();
         f.prefilled = false;
         f.written = 0;
         f.fresh = 0;
         f.taken = 0;
+        if f.cfg.restart_starves && f.starts > 0 {
+            // As the laptop's queue after a stop and reset: one buffer at a time from now on.
+            f.capacity = Some(1);
+        }
+        Ok(())
+    }
+
+    fn renew(&mut self) -> Result<(), Fault> {
+        let _in = InFake::enter();
+        self.halt()?;
+        let mut f = self.lock();
+        if f.cfg.renew_works {
+            // A new stream: as when it was opened.
+            f.capacity = None;
+            f.renewals += 1;
+        }
         Ok(())
     }
 }
@@ -723,8 +708,7 @@ impl PullOpener for FakeOpener {
                 runs,
                 halts,
                 errors,
-                stale_played: f.stale_played,
-                stale_loud: f.stale_loud,
+                renewals: f.renewals,
                 ..Fake::default()
             };
         }
