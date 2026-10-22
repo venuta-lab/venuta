@@ -458,9 +458,13 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         let mode = out.mode();
         out.close();
         let seen: Vec<OutputEvent> = events.try_iter().collect();
+        let (most_early, most_late) = (
+            early.iter().copied().fold(f64::MIN, f64::max),
+            late.iter().copied().fold(f64::MIN, f64::max),
+        );
         let (before, after) = (median(early), median(late));
         eprintln!(
-            "exclusive asked {exclusive}, ran {mode:?}: {seen:?}; lead {before:.2} ms before the gap, {after:.2} ms after"
+            "exclusive asked {exclusive}, ran {mode:?}: {seen:?}; lead {before:.2} ms before the gap, {after:.2} ms after; most {most_early:.2} ms before, {most_late:.2} ms after"
         );
         if let Some(t) = &trace {
             let name = format!("{mode:?}").to_lowercase();
@@ -477,10 +481,18 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
             "one xrun for the one late period"
         );
         assert!(!seen.contains(&OutputEvent::Lost));
+        // Shared mode: the engine's pipeline is steady, so is the usual lead. A queue (exclusive
+        // mode on the laptop): its usual depth sinks when the driver's events come more unevenly
+        // after a gap, but what it refills to does not: compare the most.
+        let (b, a, what) = if mode == Mode::Exclusive {
+            (most_early, most_late, "most")
+        } else {
+            (before, after, "usual")
+        };
         assert!(
-            (after - before).abs() < 2.0,
-            "the presentation moved by {:.1} ms over the gap",
-            after - before
+            (a - b).abs() < 2.0,
+            "the presentation moved by {:.1} ms over the gap (the {what} lead)",
+            a - b
         );
     }
 }

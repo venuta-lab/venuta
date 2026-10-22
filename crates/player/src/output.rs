@@ -712,6 +712,10 @@ impl Ring {
         v.sort_unstable();
         Some(v[n / 2])
     }
+
+    fn max(&self) -> Option<i64> {
+        self.v[..self.n.min(SAMPLES)].iter().copied().max()
+    }
 }
 
 /// Shared mode: a suspected gap, settled once the pipeline has refilled.
@@ -724,6 +728,8 @@ struct Watch {
     /// Pipeline samples from then on count.
     from_ns: u64,
     after: Ring,
+    /// The slip when it began.
+    slip_at: i64,
 }
 
 impl PositionMap {
@@ -788,6 +794,7 @@ impl PositionMap {
                 certain: false,
                 from_ns: now_ns + SETTLE_NS,
                 after: Ring::default(),
+                slip_at: self.slip,
             });
         }
     }
@@ -884,6 +891,7 @@ impl PositionMap {
                     certain: true,
                     from_ns: time_ns + SETTLE_NS,
                     after: Ring::default(),
+                    slip_at: self.slip,
                 });
             }
         }
@@ -910,14 +918,25 @@ impl PositionMap {
         }
         let w = *w;
         self.watch = None;
-        let shift = match (self.usual.median(), w.after.median()) {
-            (Some(u), Some(a)) if self.usual.full() => u - a,
-            _ => 0,
+        let shift = if self.queued {
+            // A queue: its depth wobbles with the driver's events, and after a gap the events
+            // can come more unevenly, so the usual depth moves without any more silence. What
+            // it refills to does not: the most of its depth before the gap less the most after
+            // is the silence counted meanwhile (never less than what the overrun proved).
+            match (self.usual.max(), w.after.max()) {
+                (Some(u), Some(a)) => (w.slip_at + u - a - self.slip).max(0),
+                _ => 0,
+            }
+        } else {
+            match (self.usual.median(), w.after.median()) {
+                (Some(u), Some(a)) if self.usual.full() => u - a,
+                _ => 0,
+            }
         };
         let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
         self.why.flags |= WHY_SETTLED;
         self.why.value = shift;
-        if counted {
+        if counted || (self.queued && shift > 0) {
             self.why.flags |= WHY_COUNTED;
             self.slip += shift;
         }
@@ -948,16 +967,9 @@ impl PositionMap {
         if lead <= 0 {
             self.why.flags |= WHY_PASSED;
             xrun = self.certain(before, time_ns);
-        } else if lead <= i64::from(self.period) / 8 {
-            self.why.flags |= WHY_NEAR;
-            if self.watch.is_none() {
-                self.watch = Some(Watch {
-                    at: before,
-                    certain: false,
-                    from_ns: time_ns + SETTLE_NS,
-                    after: Ring::default(),
-                });
-            }
+            // The position is past all that was handed over: at least that much of what it
+            // counted was silence. Taken off at once, so no pair claims a frame not handed over.
+            self.slip = raw as i64 - before as i64;
         }
         // The queue's depth by the device's own count (the slip apart): steady, less the
         // silence the position counts in a gap.
