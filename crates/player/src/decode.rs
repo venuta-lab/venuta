@@ -2,26 +2,41 @@
 //!
 //! Samples come out as left-justified `i32` (a 16-bit sample `s` is `s << 16`), the form
 //! symphonia uses, so a lossless source's exact values survive: shifting back recovers them.
+//!
+//! Places are content frames as a straight decode from the start counts them. A seek lands on
+//! its frame exactly, and a lossy codec is decoded from a little before it (its pre-roll), so
+//! what comes out is what a straight decode gives from there (design 4.6, the WP2 notes in 9.2).
+//!
+//! An online song downloads into a [`Download`] that every source of the song shares
+//! ([`Streams`]). A source either never waits for bytes ([`ByteWait::Yield`]: the old engine,
+//! which decodes on the sound's own thread) or waits inside its reader ([`ByteWait::Wait`]: a
+//! voice's decode thread), so a packet is never cut where the download stopped.
 
 use media_access::EphemeralAudio;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::sync::{
-    Arc, Condvar, Mutex,
+    Arc, Condvar, Mutex, MutexGuard, Weak,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Duration;
 use symphonia::core::codecs::CodecParameters;
-use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::codecs::audio::well_known::{
+    CODEC_ID_AAC, CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_VORBIS,
+};
+use symphonia::core::codecs::audio::{AudioCodecId, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{
     MediaSource as SymphoniaMediaSource, MediaSourceStream, MediaSourceStreamOptions,
 };
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::Time;
+use symphonia::core::packet::Packet;
+use symphonia::core::units::Timestamp;
+use together::time::Sleeper;
 
 /// Default bytes before the first open attempt (overridden per mime below).
 const OPEN_AFTER_DEFAULT: usize = 256 * 1024;
@@ -71,111 +86,210 @@ pub struct Source {
     reader: Option<Box<dyn FormatReader>>,
     decoder: Option<Box<dyn AudioDecoder>>,
     track_id: u32,
+    /// The codec as symphonia names it (what decides the pre-roll).
+    codec_id: Option<AudioCodecId>,
     pub format: SourceFormat,
     /// Length in frames, when the file says.
     pub frames: Option<u64>,
     pub info: FileInfo,
-    /// Frames to drop from the next decoded output (to land exactly on a seek target).
-    skip: u64,
     /// The track's clock (seconds per timestamp tick), when it is not one tick per frame: a WebM
-    /// stream counts in milliseconds. Seek answers come in these ticks.
+    /// stream counts in milliseconds.
     time_base: Option<(u64, u64)>,
+    /// The track's first timestamp and, when known, its last: a seek stays between them.
+    ts_range: (i64, Option<i64>),
     duration_hint_ms: Option<u64>,
     remote: Option<RemoteState>,
-    /// Progressive download body (cancel + wake blocked readers on Drop).
-    download_body: Option<Arc<GrowBody>>,
+    /// The song's download, for an online song (shared with its other sources).
+    download: Option<Arc<Download>>,
+    /// Where this source's reader is in the download's bytes.
+    read_pos: Option<Arc<AtomicU64>>,
+    /// Whether the reader waits for bytes or says it would have to.
+    wait: ByteWait,
     /// True once at least one decoded packet produced samples (UI may leave Opening…).
     primed: bool,
     /// The last decode found nothing more downloaded yet (the stream is behind playback).
     starved: bool,
     /// An online song's loudness as the catalog says it (see `EphemeralAudio::loudness_db`).
     pub loudness_db: Option<f64>,
+    /// The content frame after the last frame `next` gave (where the next one lies).
+    at: u64,
+    /// A container timestamp in frames, less this, is the place as the straight decode counts
+    /// it. Learned from the first packet that gives sound.
+    base: Option<i64>,
+    /// After a seek: the next packet with sound says where it lies.
+    anchor: bool,
+    /// Frames before this place are dropped (a seek's pre-roll).
+    drop_until: u64,
+    /// A packet read ahead (to learn the base), decoded next.
+    held: Option<Packet>,
+    /// Frames the first packet with sound gave (where the straight decode's packet grid lies).
+    first_sound: i64,
+    /// How to read the song again from its first byte.
+    reopen: Option<Reopen>,
+}
+
+/// Where a song's bytes come from, to read it again from the first (a seek near the start
+/// decodes from there: exactly the straight decode).
+#[derive(Clone)]
+enum Origin {
+    File(std::path::PathBuf),
+    Body(Arc<GrowBody>),
+}
+
+#[derive(Clone)]
+struct Reopen {
+    origin: Origin,
+    extension: Option<String>,
+    mime_type: Option<String>,
+    size_bytes: u64,
+    duration_hint_ms: Option<u64>,
+}
+
+/// Why no packet came.
+enum LocalError {
+    Pending,
+    Failed(String),
+}
+
+/// A seek asked of an online song before it has opened.
+#[derive(Debug, Clone, Copy)]
+enum PendingSeek {
+    Ms(u64),
+    Frame(u64),
 }
 
 struct RemoteState {
-    receiver: Receiver<RemoteEvent>,
-    cancelled: Arc<AtomicBool>,
+    download: Arc<Download>,
+    /// It failed (said why once); nothing more comes.
     finished: bool,
     /// Seek requested while the body was still downloading; applied on open.
-    pending_seek_ms: Option<u64>,
+    pending_seek: Option<PendingSeek>,
     /// Open attempt failed for want of bytes; retry when the body grows past this length.
-    retry_after: Option<usize>,
-    /// Last OpenReady payload kept for retry after a starved probe.
-    pending_open: Option<PendingOpen>,
+    retry_after: Option<u64>,
 }
 
-struct PendingOpen {
-    body: Arc<GrowBody>,
-    mime_type: Option<String>,
-    url_hint: String,
-    duration_hint_ms: Option<u64>,
-    size_hint: Option<u64>,
+/// What the media host said about a song, kept for every source that opens on its download.
+#[derive(Debug, Clone, Default)]
+pub struct OpenInfo {
+    pub mime_type: Option<String>,
+    /// The address's path (for its extension); never logged.
+    pub url_hint: String,
+    pub duration_hint_ms: Option<u64>,
+    pub size_hint: Option<u64>,
+    pub loudness_db: Option<f64>,
 }
 
-/// Worker downloads into a shared grow buffer; main opens once `OPEN_AFTER` bytes arrive.
-enum RemoteEvent {
-    OpenReady {
-        body: Arc<GrowBody>,
-        mime_type: Option<String>,
-        url_hint: String,
-        duration_hint_ms: Option<u64>,
-        size_hint: Option<u64>,
-        loudness_db: Option<f64>,
-    },
-    Error(String),
-}
+/// Bytes per piece of a download: appended to, never moved.
+pub const CHUNK: usize = 64 * 1024;
 
-/// Shared download buffer: the decoder reads while the worker appends.
+/// Shared download buffer: decoders read while the download appends.
 struct GrowBody {
-    data: Mutex<Vec<u8>>,
+    /// Pieces of `CHUNK` bytes, every one full but the last.
+    chunks: Mutex<Vec<Box<[u8]>>>,
+    /// Bytes in, set under the `chunks` lock after the bytes are.
+    len: AtomicU64,
     more: Condvar,
     finished: AtomicBool,
-    /// Same flag the Source Drop trips (wakes blocked readers).
-    cancelled: Arc<AtomicBool>,
+    /// Every holder let go: the download stops.
+    cancelled: AtomicBool,
     /// Known Content-Length when the host gave one; 0 if unknown.
     total: AtomicU64,
-    /// How far the decoder has read: what is downloaded past it is what playback has in hand.
-    read_at: AtomicU64,
+    /// Where each reader is: what is downloaded past the furthest is what playback has in hand.
+    readers: Mutex<Vec<Weak<AtomicU64>>>,
     /// Why the download stopped short, when it did: said once what arrived has played.
     failed: Mutex<Option<String>>,
+    /// Enough is in to open the song, and what the host said about it.
+    open: Mutex<Option<OpenInfo>>,
+    /// The thread filling it has finished, whatever came of it.
+    worker_done: AtomicBool,
 }
 
 impl GrowBody {
-    fn new(cancelled: Arc<AtomicBool>) -> Arc<Self> {
+    fn new() -> Arc<Self> {
         Arc::new(Self {
-            data: Mutex::new(Vec::with_capacity(OPEN_AFTER_DEFAULT)),
+            chunks: Mutex::new(Vec::new()),
+            len: AtomicU64::new(0),
             more: Condvar::new(),
             finished: AtomicBool::new(false),
-            cancelled,
+            cancelled: AtomicBool::new(false),
             total: AtomicU64::new(0),
-            read_at: AtomicU64::new(0),
+            readers: Mutex::new(Vec::new()),
             failed: Mutex::new(None),
+            open: Mutex::new(None),
+            worker_done: AtomicBool::new(false),
         })
     }
 
-    fn len(&self) -> usize {
-        self.data.lock().map(|g| g.len()).unwrap_or(0)
+    fn lock(&self) -> MutexGuard<'_, Vec<Box<[u8]>>> {
+        self.chunks.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn append(&self, chunk: &[u8]) {
-        if chunk.is_empty() {
+    fn len(&self) -> usize {
+        self.len.load(Ordering::Acquire) as usize
+    }
+
+    fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::Acquire)
+    }
+
+    /// Wake every reader waiting (under the lock, so none misses it).
+    fn wake(&self) {
+        let _g = self.lock();
+        self.more.notify_all();
+    }
+
+    fn append(&self, mut bytes: &[u8]) {
+        if bytes.is_empty() {
             return;
         }
-        if let Ok(mut g) = self.data.lock() {
-            g.extend_from_slice(chunk);
-            self.more.notify_all();
+        let mut chunks = self.lock();
+        let mut len = self.len.load(Ordering::Relaxed) as usize;
+        while !bytes.is_empty() {
+            let off = len % CHUNK;
+            if off == 0 && len / CHUNK == chunks.len() {
+                chunks.push(vec![0u8; CHUNK].into_boxed_slice());
+            }
+            let n = (CHUNK - off).min(bytes.len());
+            chunks[len / CHUNK][off..off + n].copy_from_slice(&bytes[..n]);
+            len += n;
+            bytes = &bytes[n..];
         }
+        self.len.store(len as u64, Ordering::Release);
+        self.more.notify_all();
+    }
+
+    /// Copy from `pos` into `buf` (at most to the end of one chunk); what was copied.
+    fn copy_at(&self, pos: u64, buf: &mut [u8]) -> usize {
+        let chunks = self.lock();
+        let len = self.len.load(Ordering::Acquire);
+        if pos >= len {
+            return 0;
+        }
+        let (i, off) = ((pos as usize) / CHUNK, (pos as usize) % CHUNK);
+        let n = ((len - pos) as usize).min(CHUNK - off).min(buf.len());
+        buf[..n].copy_from_slice(&chunks[i][off..off + n]);
+        n
+    }
+
+    /// Every byte in, as one piece (for checks).
+    #[cfg(test)]
+    fn to_vec(&self) -> Vec<u8> {
+        let chunks = self.lock();
+        let len = self.len();
+        let mut v: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
+        v.truncate(len);
+        v
     }
 
     fn finish(&self) {
         self.finished.store(true, Ordering::Release);
-        self.more.notify_all();
+        self.wake();
     }
 
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.finished.store(true, Ordering::Release);
-        self.more.notify_all();
+        self.wake();
     }
 
     fn is_cancelled(&self) -> bool {
@@ -200,19 +314,378 @@ impl GrowBody {
         self.failed.lock().ok().and_then(|f| f.clone())
     }
 
-    /// Bytes downloaded past where the decoder has read.
+    /// Enough is in to open: say so, once, with what the host said.
+    fn set_open(&self, info: OpenInfo) {
+        if let Ok(mut o) = self.open.lock() {
+            o.get_or_insert(info);
+        }
+        self.wake();
+    }
+
+    fn open_info(&self) -> Option<OpenInfo> {
+        self.open.lock().ok().and_then(|o| o.clone())
+    }
+
+    fn done_working(&self) {
+        self.worker_done.store(true, Ordering::Release);
+        self.wake();
+    }
+
+    fn worker_done(&self) -> bool {
+        self.worker_done.load(Ordering::Acquire)
+    }
+
+    /// A new reader's place, counted in `ahead` while it lives.
+    fn slot(&self) -> Arc<AtomicU64> {
+        let slot = Arc::new(AtomicU64::new(0));
+        if let Ok(mut r) = self.readers.lock() {
+            r.retain(|w| w.strong_count() > 0);
+            r.push(Arc::downgrade(&slot));
+        }
+        slot
+    }
+
+    /// Bytes downloaded past the furthest reader (all of them, with no reader).
     fn ahead(&self) -> u64 {
-        (self.len() as u64).saturating_sub(self.read_at.load(Ordering::Acquire))
+        let furthest = self
+            .readers
+            .lock()
+            .map(|r| {
+                r.iter()
+                    .filter_map(Weak::upgrade)
+                    .map(|s| s.load(Ordering::Acquire))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        (self.len() as u64).saturating_sub(furthest)
+    }
+
+    /// Wait (as `w` waits) until `ready` holds. Before waiting `w` is told (true), and after
+    /// (false). Ends early, with an error, when `w` is stopped.
+    fn wait_until(&self, w: &Waiter, ready: impl Fn(&GrowBody) -> bool) -> io::Result<()> {
+        if ready(self) {
+            return Ok(());
+        }
+        (w.hook)(true);
+        let r = loop {
+            if w.stopped() {
+                break Err(io::Error::other(STOPPED));
+            }
+            if ready(self) {
+                break Ok(());
+            }
+            match &w.sleeper {
+                None => {
+                    let g = self.lock();
+                    if !ready(self) && !w.stopped() {
+                        drop(
+                            self.more
+                                .wait_timeout(g, Duration::from_millis(20))
+                                .unwrap_or_else(|p| p.into_inner()),
+                        );
+                    }
+                }
+                Some(s) => s.sleep_until(s.now_ns() + 1_000_000),
+            }
+        };
+        (w.hook)(false);
+        r
     }
 }
 
-/// Reads from [`GrowBody`] without blocking the player thread.
+/// What a read or wait says when its voice was told to stop.
+const STOPPED: &str = "stopped";
+
+/// How a decode thread of its own waits for bytes that have not come yet.
+pub struct Waiter {
+    /// `None`: real time (a condition variable). Some: a clock's sleeper, polled each 1 ms.
+    sleeper: Option<Sleeper>,
+    stop: Arc<AtomicBool>,
+    /// Told `true` before each wait for bytes, `false` when they came.
+    hook: Box<dyn Fn(bool) + Send + Sync>,
+}
+
+impl Waiter {
+    /// Waits in real time, or on `sleeper` (made on the thread that starts the waiting one).
+    /// `stop` ends any wait; `hook` hears each wait begin (true) and end (false).
+    pub fn new(
+        sleeper: Option<Sleeper>,
+        stop: Arc<AtomicBool>,
+        hook: impl Fn(bool) + Send + Sync + 'static,
+    ) -> Arc<Waiter> {
+        Arc::new(Waiter {
+            sleeper,
+            stop,
+            hook: Box::new(hook),
+        })
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    /// Sleep `ms` on this waiter's clock (the decode thread's own polls).
+    pub fn sleep_ms(&self, ms: u64) {
+        match &self.sleeper {
+            None => std::thread::sleep(Duration::from_millis(ms)),
+            Some(s) => s.sleep_until(s.now_ns() + ms * 1_000_000),
+        }
+    }
+}
+
+/// What a stream's reader does when the bytes it needs have not come.
+#[derive(Clone, Default)]
+pub enum ByteWait {
+    /// Says so at once (`WouldBlock`), and decode reports `Pending`: for decoding on a thread
+    /// that must never wait (the old engine). A packet can be cut where the bytes stopped.
+    #[default]
+    Yield,
+    /// Waits, wherever the read falls: decode never reports `Pending`, and no packet is cut.
+    Wait(Arc<Waiter>),
+}
+
+/// One song's bytes as they download (or are fed). Shared by every source that plays the song:
+/// the download stops when the last holder lets go.
+pub struct Download {
+    body: Arc<GrowBody>,
+}
+
+impl Drop for Download {
+    fn drop(&mut self) {
+        self.body.cancel();
+    }
+}
+
+/// How much of a song's bytes are in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StreamBytes {
+    /// Bytes downloaded.
+    pub have: u64,
+    /// The whole length, when the host said.
+    pub total: Option<u64>,
+    /// Bytes downloaded past the furthest reader.
+    pub ahead: u64,
+    /// Every byte is in (the download finished and did not fail).
+    pub complete: bool,
+    pub failed: bool,
+}
+
+impl Download {
+    fn new(body: Arc<GrowBody>) -> Arc<Download> {
+        Arc::new(Download { body })
+    }
+
+    /// A download whose bytes the caller appends (a test, or a room's media stream): it opens
+    /// once enough are in for its type (or all).
+    pub fn fed(info: OpenInfo) -> (Arc<Download>, Feeder) {
+        let need = open_after_bytes(info.mime_type.as_deref(), &info.url_hint);
+        Download::fed_opening_after(info, need)
+    }
+
+    /// `fed`, opening once `open_after` bytes are in (or all).
+    pub fn fed_opening_after(info: OpenInfo, open_after: usize) -> (Arc<Download>, Feeder) {
+        let body = GrowBody::new();
+        if let Some(total) = info.size_hint {
+            body.set_total(total);
+        }
+        (
+            Download::new(body.clone()),
+            Feeder {
+                body,
+                info,
+                open_after,
+                opened: false,
+            },
+        )
+    }
+
+    pub fn bytes(&self) -> StreamBytes {
+        let b = &self.body;
+        let total = b.total.load(Ordering::Acquire);
+        let failed = b.failure().is_some();
+        StreamBytes {
+            have: b.len() as u64,
+            total: (total > 0).then_some(total),
+            ahead: b.ahead(),
+            complete: b.is_finished() && !failed && !b.is_cancelled(),
+            failed,
+        }
+    }
+}
+
+/// A look at an online source's bytes from another thread: how much is in, and where its
+/// reader is.
+#[derive(Clone)]
+pub struct StreamWatch {
+    download: Arc<Download>,
+    read: Arc<AtomicU64>,
+}
+
+impl StreamWatch {
+    pub fn bytes(&self) -> StreamBytes {
+        self.download.bytes()
+    }
+
+    /// Where the source's reader is in the bytes.
+    pub fn read(&self) -> u64 {
+        self.read.load(Ordering::Acquire)
+    }
+}
+
+/// The writing end of a fed [`Download`].
+pub struct Feeder {
+    body: Arc<GrowBody>,
+    info: OpenInfo,
+    open_after: usize,
+    opened: bool,
+}
+
+impl Feeder {
+    pub fn append(&mut self, bytes: &[u8]) {
+        self.body.append(bytes);
+        self.offer();
+    }
+
+    /// Every byte is in.
+    pub fn finish(&mut self) {
+        self.body.finish();
+        self.offer();
+        self.body.done_working();
+    }
+
+    /// No more will come: what arrived plays, then `why` is said.
+    pub fn fail(&mut self, why: &str) {
+        self.body.fail(why);
+        self.body.done_working();
+    }
+
+    /// Nobody holds the download any more.
+    pub fn is_cancelled(&self) -> bool {
+        self.body.is_cancelled()
+    }
+
+    fn offer(&mut self) {
+        if !self.opened && (self.body.len() >= self.open_after || self.body.is_finished()) {
+            self.opened = true;
+            self.body.set_open(self.info.clone());
+        }
+    }
+}
+
+impl Drop for Feeder {
+    fn drop(&mut self) {
+        // A feeder gone without finishing: nothing more comes.
+        if !self.body.is_finished() {
+            self.body.fail(STREAM_LOST);
+        }
+        self.body.done_working();
+    }
+}
+
+/// Every song's live download by its media key, so a song is downloaded once however many
+/// sources play it (a seek, a realign, a resume: a new voice on the same bytes).
+#[derive(Default)]
+pub struct Streams {
+    live: Mutex<HashMap<String, Weak<Download>>>,
+}
+
+impl Streams {
+    pub fn new() -> Streams {
+        Streams::default()
+    }
+
+    /// The song's live download, if any: holding it keeps it going with no source open.
+    pub fn hold(&self, key: &str) -> Option<Arc<Download>> {
+        self.live.lock().ok()?.get(key).and_then(Weak::upgrade)
+    }
+
+    /// Make `download` the song's (a fed one, say).
+    pub fn insert(&self, key: &str, download: &Arc<Download>) {
+        if let Ok(mut live) = self.live.lock() {
+            live.retain(|_, w| w.strong_count() > 0);
+            live.insert(key.to_owned(), Arc::downgrade(download));
+        }
+    }
+
+    fn get_or_start(
+        &self,
+        key: &str,
+        start: impl FnOnce() -> Result<Arc<Download>, String>,
+    ) -> Result<Arc<Download>, String> {
+        let mut live = self.live.lock().map_err(|_| "Streams lock".to_owned())?;
+        if let Some(d) = live.get(key).and_then(Weak::upgrade) {
+            return Ok(d);
+        }
+        live.retain(|_, w| w.strong_count() > 0);
+        let d = start()?;
+        live.insert(key.to_owned(), Arc::downgrade(&d));
+        Ok(d)
+    }
+
+    /// A source of the song `key`: on its live download, or a new download of `audio`.
+    pub fn open_remote(&self, key: &str, audio: EphemeralAudio) -> Result<Source, String> {
+        let duration = audio.duration_ms;
+        let d = self.get_or_start(key, || start_download(audio, None, WATCH, playback_log()))?;
+        Ok(Source::on_download(d, duration))
+    }
+
+    /// A source of the song `key`: on its live download, or one resolved through `access` (on
+    /// a worker thread) and downloaded.
+    pub fn open_remote_deferred(
+        &self,
+        key: &str,
+        access: Arc<dyn media_access::MediaAccess>,
+        track_id: impl Into<String>,
+        duration_hint_ms: Option<u64>,
+    ) -> Result<Source, String> {
+        let track_id = track_id.into();
+        let d = self.get_or_start(key, || start_deferred(access, track_id))?;
+        Ok(Source::on_download(d, duration_hint_ms))
+    }
+}
+
+/// Reads from [`GrowBody`] at its own place.
 ///
-/// When the decoder outruns the download, returns [`io::ErrorKind::WouldBlock`] so decode can
-/// yield [`DecodeState::Pending`] instead of freezing audio.
+/// When the decoder outruns the download it either says so ([`io::ErrorKind::WouldBlock`], so
+/// decode can yield [`DecodeState::Pending`] instead of freezing audio) or waits, as its
+/// [`ByteWait`] says.
 struct GrowReader {
     body: Arc<GrowBody>,
     pos: u64,
+    slot: Arc<AtomicU64>,
+    wait: ByteWait,
+    /// While a waiting reader is probed it says it can't seek, so the container is read forward
+    /// only and the song opens on its first bytes even where its index points at the end (a
+    /// WebM's tags, an Ogg's last page). Seeks work once it has opened.
+    probing: Arc<AtomicBool>,
+}
+
+impl GrowReader {
+    fn new(body: Arc<GrowBody>, wait: ByteWait) -> GrowReader {
+        let slot = body.slot();
+        let probing = Arc::new(AtomicBool::new(matches!(wait, ByteWait::Wait(_))));
+        GrowReader {
+            body,
+            pos: 0,
+            slot,
+            wait,
+            probing,
+        }
+    }
+
+    /// Bytes are not there: say so, or wait until `ready`.
+    fn short(&self, why: &'static str, ready: impl Fn(&GrowBody) -> bool) -> io::Result<()> {
+        match &self.wait {
+            ByteWait::Yield => Err(io::Error::new(io::ErrorKind::WouldBlock, why)),
+            ByteWait::Wait(w) => self.body.wait_until(w, ready),
+        }
+    }
+
+    fn moved(&mut self, pos: u64) {
+        self.pos = pos;
+        self.slot.store(pos, Ordering::Release);
+    }
 }
 
 impl Read for GrowReader {
@@ -220,85 +693,55 @@ impl Read for GrowReader {
         if buf.is_empty() {
             return Ok(0);
         }
-        let g = self
-            .body
-            .data
-            .lock()
-            .map_err(|_| io::Error::other("download buffer lock"))?;
-        if self.body.cancelled.load(Ordering::Acquire) {
-            return Ok(0);
+        loop {
+            if self.body.is_cancelled() {
+                return Ok(0);
+            }
+            let n = self.body.copy_at(self.pos, buf);
+            if n > 0 {
+                self.moved(self.pos + n as u64);
+                return Ok(n);
+            }
+            if self.body.is_finished() {
+                return Ok(0);
+            }
+            let pos = self.pos;
+            self.short("waiting for more of the stream", |b| {
+                b.len() as u64 > pos || b.is_finished()
+            })?;
         }
-        let len = g.len() as u64;
-        if self.pos < len {
-            let start = self.pos as usize;
-            let n = ((len - self.pos) as usize).min(buf.len());
-            buf[..n].copy_from_slice(&g[start..start + n]);
-            self.pos += n as u64;
-            self.body.read_at.store(self.pos, Ordering::Release);
-            return Ok(n);
-        }
-        if self.body.finished.load(Ordering::Acquire) {
-            return Ok(0);
-        }
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "waiting for more of the stream",
-        ))
     }
 }
 
 impl Seek for GrowReader {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let g = self
-            .body
-            .data
-            .lock()
-            .map_err(|_| io::Error::other("download buffer lock"))?;
-        let finished = self.body.finished.load(Ordering::Acquire);
-        let cancelled = self.body.cancelled.load(Ordering::Acquire);
-        let len = g.len() as u64;
-        // End-relative seeks need the finished length; until then, don't block — caller retries.
-        if matches!(pos, SeekFrom::End(_)) && !finished && !cancelled {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+        // End-relative seeks need the finished length.
+        if matches!(pos, SeekFrom::End(_)) && !self.body.is_finished() {
+            self.short(
                 "waiting for the full stream to seek from the end",
-            ));
+                GrowBody::is_finished,
+            )?;
         }
-        let mut target = match pos {
+        let len = self.body.len() as u64;
+        let target = match pos {
             SeekFrom::Start(p) => p,
-            SeekFrom::Current(p) => {
-                if p >= 0 {
-                    self.pos.saturating_add(p as u64)
-                } else {
-                    self.pos.saturating_sub((-p) as u64)
-                }
-            }
-            SeekFrom::End(p) => {
-                if p >= 0 {
-                    len.saturating_add(p as u64)
-                } else {
-                    len.saturating_sub((-p) as u64)
-                }
-            }
+            SeekFrom::Current(p) => self.pos.saturating_add_signed(p),
+            SeekFrom::End(p) => len.saturating_add_signed(p),
         };
-        if target > len && !finished && !cancelled {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "waiting for more of the stream to seek",
-            ));
+        if target > len && !self.body.is_finished() {
+            self.short("waiting for more of the stream to seek", |b| {
+                b.len() as u64 >= target || b.is_finished()
+            })?;
         }
-        if target > len {
-            target = len;
-        }
-        self.pos = target;
-        self.body.read_at.store(self.pos, Ordering::Release);
-        Ok(self.pos)
+        let target = target.min(self.body.len() as u64);
+        self.moved(target);
+        Ok(target)
     }
 }
 
 impl SymphoniaMediaSource for GrowReader {
     fn is_seekable(&self) -> bool {
-        true
+        !self.probing.load(Ordering::Acquire)
     }
 
     fn byte_len(&self) -> Option<u64> {
@@ -306,10 +749,7 @@ impl SymphoniaMediaSource for GrowReader {
         if total > 0 {
             return Some(total);
         }
-        if self.body.finished.load(Ordering::Acquire) {
-            return self.body.data.lock().ok().map(|g| g.len() as u64);
-        }
-        None
+        self.body.is_finished().then(|| self.body.len() as u64)
     }
 }
 
@@ -359,18 +799,41 @@ fn codec_name(extension: Option<&str>) -> String {
     .to_owned()
 }
 
+/// Frames decoded before a seek's target and dropped, so a lossy decoder's state is what a
+/// straight decode's is there (see the WP2 notes in the design, 9.2).
+fn preroll_frames(codec: Option<AudioCodecId>, rate: u32) -> u64 {
+    match codec {
+        // RFC 7845 asks for at least 80 ms, which converges to the ear; for the bits, the
+        // inter-frame energy prediction (a factor of 0.5 to 0.9 a frame) needs about a second.
+        Some(c) if c == CODEC_ID_OPUS => u64::from(rate),
+        // One packet: the overlap of the one before.
+        Some(c) if c == CODEC_ID_AAC => 1024,
+        // Eight MPEG-1 frames: the overlap of the one before, and seven to fill that one's bit
+        // reservoir (up to 511 bytes back: seven frames at 32 kbps; MPEG-2's 255 bytes, at its
+        // lowest rate, fit in as many of its half-length frames).
+        Some(c) if c == CODEC_ID_MP3 || c == CODEC_ID_MP2 || c == CODEC_ID_MP1 => 9216,
+        // The longest block: a whole packet before the target's (the first after a reset gives
+        // no sound).
+        Some(c) if c == CODEC_ID_VORBIS => 8192,
+        _ => 0,
+    }
+}
+
 impl Source {
     pub fn open(path: &Path) -> Result<Self, String> {
         let file =
             File::open(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
         let size_bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Self::from_media_source(
-            Box::new(file),
-            path.extension().and_then(|e| e.to_str()),
-            None,
+        let extension = path.extension().and_then(|e| e.to_str());
+        let mut s = Self::from_media_source(Box::new(file), extension, None, size_bytes, None)?;
+        s.reopen = Some(Reopen {
+            origin: Origin::File(path.to_owned()),
+            extension: extension.map(str::to_owned),
+            mime_type: None,
             size_bytes,
-            None,
-        )
+            duration_hint_ms: None,
+        });
+        Ok(s)
     }
 
     /// Open resolved direct audio without performing network I/O on the caller's thread.
@@ -386,18 +849,8 @@ impl Source {
         note: Note,
     ) -> Result<Self, String> {
         let duration_hint_ms = audio.duration_ms;
-        let (sender, receiver) = sync_channel(8);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = cancelled.clone();
-        std::thread::Builder::new()
-            .name("venuta-stream-decoder".into())
-            .spawn(move || decode_remote(audio, sender, worker_cancelled, refresh, watch, note))
-            .map_err(|_| "Could not start the remote stream decoder.")?;
-        Ok(Self::remote_placeholder(
-            receiver,
-            cancelled,
-            duration_hint_ms,
-        ))
+        let d = start_download(audio, refresh, watch, note)?;
+        Ok(Self::on_download(d, duration_hint_ms))
     }
 
     /// Resolve through MediaAccess on a worker thread, then download — never on the audio thread.
@@ -406,61 +859,17 @@ impl Source {
         track_id: impl Into<String>,
         duration_hint_ms: Option<u64>,
     ) -> Result<Self, String> {
-        let track_id = track_id.into();
-        let (sender, receiver) = sync_channel(8);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = cancelled.clone();
-        std::thread::Builder::new()
-            .name("venuta-stream-resolve".into())
-            .spawn(move || {
-                if worker_cancelled.load(Ordering::Acquire) {
-                    return;
-                }
-                let cancel = media_access::CancellationToken::default();
-                // If the player dropped us, cooperative cancel still helps long resolves.
-                let audio = match access.resolve_audio(&track_id, &cancel) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        let _ = sender.send(RemoteEvent::Error(e.to_string()));
-                        return;
-                    }
-                };
-                if worker_cancelled.load(Ordering::Acquire) {
-                    return;
-                }
-                // Partway failures ask the catalog again, past its memory of the old address.
-                let refresh: Refresh = Box::new(move || {
-                    access.forget(&track_id);
-                    access
-                        .resolve_audio(&track_id, &media_access::CancellationToken::default())
-                        .ok()
-                });
-                decode_remote(
-                    audio,
-                    sender,
-                    worker_cancelled,
-                    Some(refresh),
-                    WATCH,
-                    playback_log(),
-                );
-            })
-            .map_err(|_| "Could not start the remote stream resolver.")?;
-        Ok(Self::remote_placeholder(
-            receiver,
-            cancelled,
-            duration_hint_ms,
-        ))
+        let d = start_deferred(access, track_id.into())?;
+        Ok(Self::on_download(d, duration_hint_ms))
     }
 
-    fn remote_placeholder(
-        receiver: Receiver<RemoteEvent>,
-        cancelled: Arc<AtomicBool>,
-        duration_hint_ms: Option<u64>,
-    ) -> Self {
+    /// A source of the song `download` holds; it opens once enough of it is in.
+    pub fn on_download(download: Arc<Download>, duration_hint_ms: Option<u64>) -> Self {
         Self {
             reader: None,
             decoder: None,
             track_id: 0,
+            codec_id: None,
             format: SourceFormat {
                 rate: 44_100,
                 channels: 2,
@@ -470,21 +879,28 @@ impl Source {
             },
             frames: None,
             info: FileInfo::default(),
-            skip: 0,
             time_base: None,
+            ts_range: (0, None),
             duration_hint_ms,
             remote: Some(RemoteState {
-                receiver,
-                cancelled,
+                download,
                 finished: false,
-                pending_seek_ms: None,
+                pending_seek: None,
                 retry_after: None,
-                pending_open: None,
             }),
-            download_body: None,
+            download: None,
+            read_pos: None,
+            wait: ByteWait::Yield,
             primed: false,
             starved: false,
             loudness_db: None,
+            at: 0,
+            base: None,
+            anchor: false,
+            drop_until: 0,
+            held: None,
+            first_sound: 0,
+            reopen: None,
         }
     }
 
@@ -535,11 +951,21 @@ impl Source {
                 .duration
                 .map(|d| ticks_to_frames(d.get(), numer, denom, rate_of_track))
         });
+        let start_ts = track.start_ts.get();
+        // The duration is in ticks; a frame count only serves when a tick is a frame.
+        let last_ts = track
+            .duration
+            .map(|d| d.get())
+            .or(if time_base.is_none() {
+                track.num_frames
+            } else {
+                None
+            })
+            .map(|n| start_ts.saturating_add(i64::try_from(n).unwrap_or(i64::MAX)));
         let decoder = codecs()
             .make_audio_decoder(&params, &AudioDecoderOptions::default())
             .map_err(|e| format!("Venuta can't decode this file ({e})."))?;
-        let mut codec = if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS
-        {
+        let mut codec = if params.codec == CODEC_ID_OPUS {
             "Opus".to_owned()
         } else {
             codec_name(extension)
@@ -584,19 +1010,35 @@ impl Source {
             reader: Some(reader),
             decoder: Some(decoder),
             track_id,
+            codec_id: Some(params.codec),
             format,
             frames,
             info,
-            skip: 0,
             time_base,
+            ts_range: (start_ts, last_ts),
             duration_hint_ms,
             remote: None,
-            download_body: None,
+            download: None,
+            read_pos: None,
+            wait: ByteWait::Yield,
             // Local files are ready immediately; progressive sets this after first samples.
             primed: true,
             starved: false,
             loudness_db: None,
+            at: 0,
+            base: None,
+            anchor: false,
+            drop_until: 0,
+            held: None,
+            first_sound: 0,
+            reopen: None,
         })
+    }
+
+    /// How this source's reader meets bytes that have not come (online songs; set it before
+    /// the first decode). Files never wait for bytes.
+    pub fn set_byte_wait(&mut self, wait: ByteWait) {
+        self.wait = wait;
     }
 
     /// True when the UI may leave Opening…: local always; remote only after first samples.
@@ -604,10 +1046,42 @@ impl Source {
         if self.remote.is_some() {
             return false;
         }
-        if self.download_body.is_some() {
+        if self.download.is_some() {
             return self.primed;
         }
         true
+    }
+
+    /// Whether this is an online song (downloading, or downloaded).
+    pub fn is_stream(&self) -> bool {
+        self.remote.is_some() || self.download.is_some()
+    }
+
+    /// Whether it has opened (an online song opens once enough of it is in).
+    pub fn is_open(&self) -> bool {
+        self.reader.is_some()
+    }
+
+    /// For an online song, how much of its bytes are in.
+    pub fn stream_bytes(&self) -> Option<StreamBytes> {
+        let d = self
+            .download
+            .as_ref()
+            .or_else(|| self.remote.as_ref().map(|r| &r.download))?;
+        Some(d.bytes())
+    }
+
+    /// Where this source's reader is in its song's bytes.
+    pub fn bytes_read(&self) -> Option<u64> {
+        self.read_pos.as_ref().map(|p| p.load(Ordering::Acquire))
+    }
+
+    /// A look at this (opened) online song's bytes from another thread.
+    pub fn stream_watch(&self) -> Option<StreamWatch> {
+        Some(StreamWatch {
+            download: Arc::clone(self.download.as_ref()?),
+            read: Arc::clone(self.read_pos.as_ref()?),
+        })
     }
 
     /// Length in milliseconds, when known.
@@ -617,8 +1091,20 @@ impl Source {
             .or(self.duration_hint_ms)
     }
 
+    /// The content frame after the last frame `next` gave: where the next one lies (after a
+    /// seek, the frame it landed on).
+    pub fn position(&self) -> u64 {
+        self.at.max(self.drop_until)
+    }
+
+    /// The frames a seek decodes before its target and drops.
+    pub fn preroll(&self) -> u64 {
+        preroll_frames(self.codec_id, self.format.rate)
+    }
+
     /// Decode the next stretch into `out` (cleared first), or report that a remote chunk is
-    /// not ready yet. This never waits for network I/O.
+    /// not ready yet. With [`ByteWait::Yield`] this never waits for network I/O; with
+    /// [`ByteWait::Wait`] it waits for the bytes instead and never reports `Pending`.
     pub fn next(&mut self, out: &mut Vec<i32>) -> Result<DecodeState, String> {
         let state = if self.remote.is_some() {
             self.next_remote(out)
@@ -637,7 +1123,7 @@ impl Source {
         // A stream that stopped short: once what arrived has played, say why (not the end of
         // the song, and not "damaged" for bytes that never came).
         if !matches!(state, Ok(DecodeState::Samples | DecodeState::Pending))
-            && let Some(why) = self.download_body.as_ref().and_then(|b| b.failure())
+            && let Some(why) = self.download.as_ref().and_then(|d| d.body.failure())
         {
             return Err(why);
         }
@@ -649,145 +1135,198 @@ impl Source {
         self.starved
     }
 
+    /// Open an online song once enough of it is in. With [`ByteWait::Wait`] this waits for
+    /// that (or for the download to fail); otherwise it says `Pending` (false) until then.
+    pub fn open_now(&mut self) -> Result<bool, String> {
+        while self.remote.is_some() {
+            if !self.step_open()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// One try at opening: `false` when it must wait (only with `ByteWait::Yield`).
+    fn step_open(&mut self) -> Result<bool, String> {
+        loop {
+            let remote = self.remote.as_mut().expect("remote source");
+            if remote.finished {
+                return Err("This song has already finished.".into());
+            }
+            let body = Arc::clone(&remote.download.body);
+            let retry = remote.retry_after;
+            let info = body.open_info();
+            let short = |b: &GrowBody| retry.is_some_and(|need| (b.len() as u64) < need);
+            let has_info = info.is_some();
+            if let Some(info) = info
+                && !(short(&body) && !body.is_finished())
+            {
+                return self.finish_open(info);
+            }
+            if !has_info {
+                if let Some(why) = body.failure() {
+                    remote.finished = true;
+                    return Err(why);
+                }
+                if body.worker_done() {
+                    remote.finished = true;
+                    return Err("The remote stream ended before audio could be decoded.".into());
+                }
+            }
+            match &self.wait {
+                ByteWait::Yield => return Ok(false),
+                ByteWait::Wait(w) => body
+                    .wait_until(w, |b| {
+                        (b.open_info().is_some() && !(short(b) && !b.is_finished()))
+                            || b.failure().is_some()
+                            || b.worker_done()
+                    })
+                    .map_err(|e| e.to_string())?,
+            }
+        }
+    }
+
     fn next_remote(&mut self, out: &mut Vec<i32>) -> Result<DecodeState, String> {
         out.clear();
-        // Retry a previous open that starved for bytes.
-        if let Some(state) = self.try_pending_open(out)? {
-            return Ok(state);
+        if self.remote.as_ref().is_some_and(|r| r.finished) {
+            return Ok(DecodeState::End);
         }
-        let event = {
-            let remote = self.remote.as_ref().expect("remote source");
-            if remote.finished {
-                return Ok(DecodeState::End);
-            }
-            remote.receiver.try_recv()
-        };
-        match event {
-            Ok(RemoteEvent::OpenReady {
-                body,
-                mime_type,
-                url_hint,
-                duration_hint_ms,
-                size_hint,
-                loudness_db,
-            }) => {
-                self.loudness_db = loudness_db;
-                self.finish_open(
-                    PendingOpen {
-                        body,
-                        mime_type,
-                        url_hint,
-                        duration_hint_ms,
-                        size_hint,
-                    },
-                    out,
-                )
-            }
-            Ok(RemoteEvent::Error(error)) => {
-                let remote = self.remote.as_mut().expect("remote source");
-                remote.finished = true;
-                Err(error)
-            }
-            Err(TryRecvError::Empty) => Ok(DecodeState::Pending),
-            Err(TryRecvError::Disconnected) => {
-                let remote = self.remote.as_mut().expect("remote source");
-                if remote.pending_open.is_some() {
-                    return self
-                        .try_pending_open(out)?
-                        .map(Ok)
-                        .unwrap_or(Ok(DecodeState::Pending));
-                }
-                remote.finished = true;
-                Err("The remote stream ended before audio could be decoded.".into())
-            }
+        if !self.open_now()? {
+            return Ok(DecodeState::Pending);
         }
+        // Opened: decoding goes on as for any source.
+        self.next(out)
     }
 
-    fn try_pending_open(&mut self, out: &mut Vec<i32>) -> Result<Option<DecodeState>, String> {
-        let Some(remote) = self.remote.as_ref() else {
-            return Ok(None);
-        };
-        let Some(pending) = remote.pending_open.as_ref() else {
-            return Ok(None);
-        };
-        let len = pending.body.len();
-        if let Some(need) = remote.retry_after
-            && len < need
-            && !pending.body.finished.load(Ordering::Acquire)
-        {
-            return Ok(Some(DecodeState::Pending));
-        }
-        let pending = self
-            .remote
-            .as_mut()
-            .and_then(|r| r.pending_open.take())
-            .expect("pending_open");
-        if let Some(r) = self.remote.as_mut() {
-            r.retry_after = None;
-        }
-        self.finish_open(pending, out).map(Some)
-    }
-
-    fn finish_open(
-        &mut self,
-        pending: PendingOpen,
-        out: &mut Vec<i32>,
-    ) -> Result<DecodeState, String> {
-        let pending_seek = self.remote.as_ref().and_then(|r| r.pending_seek_ms);
-        let size_bytes = pending
+    /// Open on the download now that enough is in; `false` if the probe ran short of bytes
+    /// (only with `ByteWait::Yield`: a waiting reader never runs short).
+    fn finish_open(&mut self, info: OpenInfo) -> Result<bool, String> {
+        let remote = self.remote.as_ref().expect("remote source");
+        let download = Arc::clone(&remote.download);
+        let pending_seek = remote.pending_seek;
+        let body = Arc::clone(&download.body);
+        let size_bytes = info
             .size_hint
             .filter(|n| *n > 0)
-            .unwrap_or_else(|| pending.body.len() as u64);
+            .unwrap_or_else(|| body.len() as u64);
+        let reader = GrowReader::new(Arc::clone(&body), self.wait.clone());
+        let read_pos = Arc::clone(&reader.slot);
+        let probing = Arc::clone(&reader.probing);
+        let extension = media_extension(info.mime_type.as_deref(), &info.url_hint);
+        let duration_hint_ms = info.duration_hint_ms.or(self.duration_hint_ms);
         let open = Self::from_media_source(
-            Box::new(GrowReader {
-                body: Arc::clone(&pending.body),
-                pos: 0,
-            }),
-            media_extension(pending.mime_type.as_deref(), &pending.url_hint).as_deref(),
-            pending.mime_type.as_deref(),
+            Box::new(reader),
+            extension.as_deref(),
+            info.mime_type.as_deref(),
             size_bytes,
-            pending.duration_hint_ms.or(self.duration_hint_ms),
+            duration_hint_ms,
         );
+        probing.store(false, Ordering::Release);
         match open {
             Ok(mut opened) => {
-                opened.download_body = Some(pending.body);
+                opened.download = Some(download);
+                opened.read_pos = Some(read_pos);
+                opened.wait = self.wait.clone();
                 opened.primed = false;
                 opened.duration_hint_ms = opened.duration_hint_ms.or(self.duration_hint_ms);
-                // Drop remote handle without cancelling the shared body.
-                if let Some(r) = self.remote.as_ref() {
-                    // Keep cancelled flag shared via body.
-                    let _ = r;
-                }
-                let _ = self.remote.take();
+                opened.loudness_db = info.loudness_db;
+                opened.reopen = Some(Reopen {
+                    origin: Origin::Body(Arc::clone(&body)),
+                    extension,
+                    mime_type: info.mime_type.clone(),
+                    size_bytes,
+                    duration_hint_ms,
+                });
                 *self = opened;
-                if let Some(ms) = pending_seek {
-                    match self.seek(ms) {
-                        Ok(_) => {}
-                        Err(e) if e.contains("waiting") => {}
-                        Err(e) => return Err(e),
-                    }
+                match pending_seek {
+                    Some(PendingSeek::Ms(ms)) => self.seek_or_wait(|s| s.seek(ms))?,
+                    Some(PendingSeek::Frame(f)) => self.seek_or_wait(|s| s.seek_frame(f))?,
+                    None => {}
                 }
-                match self.next_local(out)? {
-                    LocalDecode::Samples => {
-                        self.primed = true;
-                        Ok(DecodeState::Samples)
-                    }
-                    LocalDecode::Pending => Ok(DecodeState::Pending),
-                    LocalDecode::End => Ok(DecodeState::End),
-                }
+                Ok(true)
             }
             Err(e) => {
-                // Incomplete body / starved probe: keep downloading and retry. Finished body = real error.
-                if pending.body.finished.load(Ordering::Acquire) {
-                    return Err(pending.body.failure().unwrap_or(e));
+                // A probe starved for bytes (only a reader that never waits): keep downloading
+                // and retry. A finished body, or a reader that waited, is a real error.
+                if body.is_finished() || matches!(self.wait, ByteWait::Wait(_)) {
+                    return Err(body.failure().unwrap_or(e));
                 }
-                let retry = pending.body.len().saturating_add(128 * 1024);
+                let retry = body.len() as u64 + 128 * 1024;
                 if let Some(remote) = self.remote.as_mut() {
                     remote.retry_after = Some(retry);
-                    remote.pending_open = Some(pending);
-                    return Ok(DecodeState::Pending);
                 }
-                Err(e)
+                Ok(false)
+            }
+        }
+    }
+
+    /// A seek asked before the song opened, made now. One that is short of bytes (only a
+    /// reader that never waits) is let go: playback starts from the top instead.
+    fn seek_or_wait(
+        &mut self,
+        seek: impl FnOnce(&mut Self) -> Result<u64, String>,
+    ) -> Result<(), String> {
+        match seek(self) {
+            Ok(_) => Ok(()),
+            Err(e) if e.contains("waiting") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A container timestamp (in the track's ticks) as frames.
+    fn ts_frames(&self, ts: i128) -> i128 {
+        let rate = i128::from(self.format.rate.max(1));
+        match self.time_base {
+            Some((numer, denom)) => {
+                (ts * i128::from(numer) * rate).div_euclid(i128::from(denom.max(1)))
+            }
+            None => ts,
+        }
+    }
+
+    /// The packet grid of an Opus track whose container counts coarser than a frame (WebM's
+    /// milliseconds): every Opus packet is a whole number of 2.5 ms, and a tick is less than
+    /// half of that, so the grid point nearest the container's place is the place.
+    fn grid(&self) -> Option<i64> {
+        let (numer, denom) = self.time_base?;
+        let rate = u64::from(self.format.rate);
+        let per_tick = numer * rate / denom.max(1);
+        let grid = rate / 400;
+        (self.codec_id == Some(CODEC_ID_OPUS) && per_tick > 1 && per_tick * 2 < grid)
+            .then_some(grid as i64)
+    }
+
+    /// Frames as a container timestamp, rounded down (so a seek lands at or before them).
+    fn frames_ts(&self, frames: i128) -> i128 {
+        let rate = i128::from(self.format.rate.max(1));
+        match self.time_base {
+            Some((numer, denom)) => {
+                (frames * i128::from(denom)).div_euclid(i128::from(numer.max(1)) * rate)
+            }
+            None => frames,
+        }
+    }
+
+    /// The next packet of this source's track (one held back first).
+    fn next_packet(&mut self) -> Result<Option<Packet>, LocalError> {
+        if let Some(p) = self.held.take() {
+            return Ok(Some(p));
+        }
+        loop {
+            match self.reader.as_mut().expect("local reader").next_packet() {
+                Ok(Some(p)) if p.track_id != self.track_id => continue,
+                Ok(p) => return Ok(p),
+                Err(symphonia::core::errors::Error::IoError(ref e)) if is_starved(e) => {
+                    return Err(LocalError::Pending);
+                }
+                Err(symphonia::core::errors::Error::IoError(ref e)) if e.to_string() == STOPPED => {
+                    return Err(LocalError::Failed(STOPPED.into()));
+                }
+                Err(e) => {
+                    return Err(LocalError::Failed(format!(
+                        "The file is damaged here ({e})."
+                    )));
+                }
             }
         }
     }
@@ -795,17 +1334,16 @@ impl Source {
     fn next_local(&mut self, out: &mut Vec<i32>) -> Result<LocalDecode, String> {
         let channels = usize::from(self.format.channels);
         loop {
-            let packet = match self.reader.as_mut().expect("local reader").next_packet() {
+            let packet = match self.next_packet() {
                 Ok(Some(p)) => p,
                 Ok(None) => return Ok(LocalDecode::End),
-                Err(symphonia::core::errors::Error::IoError(ref e)) if is_starved(e) => {
-                    return Ok(LocalDecode::Pending);
-                }
-                Err(e) => return Err(format!("The file is damaged here ({e}).")),
+                Err(LocalError::Pending) => return Ok(LocalDecode::Pending),
+                Err(LocalError::Failed(e)) => return Err(e),
             };
-            if packet.track_id != self.track_id {
-                continue;
-            }
+            // Where the packet's valid frames start, in frames of the container's count.
+            let start = self
+                .ts_frames(i128::from(packet.pts.get()) + i128::from(packet.trim_start.get()))
+                as i64;
             let buf = match self
                 .decoder
                 .as_mut()
@@ -822,11 +1360,47 @@ impl Source {
             };
             out.clear();
             buf.copy_to_vec_interleaved::<i32>(out);
-            if self.skip > 0 {
-                let frames = (out.len() / channels) as u64;
-                let drop = self.skip.min(frames);
-                out.drain(..drop as usize * channels);
-                self.skip -= drop;
+            let n = (out.len() / channels) as i64;
+            if n == 0 {
+                continue;
+            }
+            let first = if self.base.is_none() {
+                // The first packet with sound is frame 0 of the straight decode. Its sound ends
+                // where the next packet starts (a decoder that trims more than the container
+                // says, as the libopus adapter does with the pre-skip once, trims the start).
+                let end = match self.next_packet() {
+                    Ok(Some(next)) => {
+                        let end = self.ts_frames(i128::from(next.pts.get())) as i64;
+                        self.held = Some(next);
+                        end
+                    }
+                    _ => start + n,
+                };
+                self.base = Some(end - n);
+                self.first_sound = n;
+                self.at as i64
+            } else if std::mem::take(&mut self.anchor) {
+                // After a seek: where the container says, as the straight decode counts.
+                let first = start - self.base.unwrap_or(0);
+                match self.grid() {
+                    // To a tick, in a container counting coarser than frames: Opus packets are
+                    // whole 2.5 ms, so the place is the grid point within that tick.
+                    Some(g) => {
+                        let phase = self.first_sound;
+                        phase + (first - phase + g / 2).div_euclid(g) * g
+                    }
+                    None => first,
+                }
+            } else {
+                self.at as i64
+            };
+            self.at = (first + n).max(0) as u64;
+            // Frames before the song's first (a packet the straight decode trimmed more of) or
+            // before a seek's target are dropped.
+            let keep_from = (self.drop_until as i64).max(0);
+            if first < keep_from {
+                let drop = (keep_from - first).min(n) as usize;
+                out.drain(..drop * channels);
                 if out.is_empty() {
                     continue;
                 }
@@ -835,8 +1409,57 @@ impl Source {
         }
     }
 
-    /// Go to `ms`, exactly: the container seeks to the nearest point before it, and the frames
-    /// in between are decoded and dropped. Returns the frame now playing from.
+    /// Learn the base (see `base`) from the first packet with sound, when nothing has been
+    /// decoded yet. A stream short of bytes that can't wait counts from 0.
+    fn learn_base(&mut self) -> Result<(), String> {
+        let mut out = Vec::new();
+        while self.base.is_none() {
+            match self.next_local(&mut out)? {
+                LocalDecode::Samples => {}
+                LocalDecode::End | LocalDecode::Pending => self.base = Some(0),
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the song again from its first byte, with a fresh decoder: what comes next is the
+    /// straight decode from its start. `false` when it can't be read again.
+    fn rewind(&mut self) -> Result<bool, String> {
+        let Some(r) = self.reopen.clone() else {
+            return Ok(false);
+        };
+        let mut probing = None;
+        let media: Box<dyn SymphoniaMediaSource> = match &r.origin {
+            Origin::File(path) => Box::new(
+                File::open(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?,
+            ),
+            Origin::Body(body) => {
+                let reader = GrowReader::new(Arc::clone(body), self.wait.clone());
+                self.read_pos = Some(Arc::clone(&reader.slot));
+                probing = Some(Arc::clone(&reader.probing));
+                Box::new(reader)
+            }
+        };
+        let fresh = Self::from_media_source(
+            media,
+            r.extension.as_deref(),
+            r.mime_type.as_deref(),
+            r.size_bytes,
+            r.duration_hint_ms,
+        );
+        if let Some(p) = probing {
+            p.store(false, Ordering::Release);
+        }
+        let fresh = fresh?;
+        self.reader = fresh.reader;
+        self.decoder = fresh.decoder;
+        self.held = None;
+        self.anchor = false;
+        self.at = 0;
+        Ok(true)
+    }
+
+    /// Go to `ms`, exactly: see [`Source::seek_frame`]. Returns the frame now playing from.
     ///
     /// Remote songs open after the first download window; seek waits for bytes if needed.
     /// A seek asked before open is remembered and applied as soon as decode starts.
@@ -845,61 +1468,85 @@ impl Source {
             if remote.finished {
                 return Err("This song has already finished.".into());
             }
-            remote.pending_seek_ms = Some(ms);
+            remote.pending_seek = Some(PendingSeek::Ms(ms));
             let rate = u64::from(self.format.rate.max(1));
             return Ok(ms.saturating_mul(rate) / 1000);
         }
         let rate = u64::from(self.format.rate.max(1));
-        let mut target = ms * rate / 1000;
+        self.seek_frame(ms.saturating_mul(rate) / 1000)
+    }
+
+    /// Go to content frame `frame`, exactly: the container seeks to the nearest point before
+    /// it, less the codec's pre-roll, and the frames in between are decoded and dropped. So what
+    /// comes next is what a straight decode gives from `frame`. Returns the frame it landed on
+    /// (`frame`, or the last frame of a song that is shorter).
+    pub fn seek_frame(&mut self, frame: u64) -> Result<u64, String> {
+        if let Some(remote) = self.remote.as_mut() {
+            if remote.finished {
+                return Err("This song has already finished.".into());
+            }
+            remote.pending_seek = Some(PendingSeek::Frame(frame));
+            return Ok(frame);
+        }
+        let mut target = frame;
         if let Some(total) = self.frames {
             target = target.min(total.saturating_sub(1));
         }
-        let time = Time::try_new(
-            (target / rate) as i64,
-            ((target % rate) * 1_000_000_000 / rate) as u32,
-        )
-        .unwrap_or(Time::ZERO);
-        let seeked = self
-            .reader
-            .as_mut()
-            .expect("local reader")
-            .seek(
+        if self.base.is_none() {
+            self.learn_base()?;
+        }
+        let base = self.base.unwrap_or(0);
+        let mut from = target.saturating_sub(self.preroll());
+        // Within the pre-roll of the start: decode from the first byte (containers differ in
+        // how they seek to their very start; this is the straight decode itself).
+        if from == 0 && self.rewind()? {
+            self.drop_until = target;
+            return Ok(target);
+        }
+        let (first_ts, last_ts) = self.ts_range;
+        // A container that can't seek to a place (symphonia's WebM, in the last cluster) is
+        // sought earlier, and decoded forward from there.
+        let mut back = u64::from(self.format.rate.max(1)) * 10;
+        let mut at_first = false;
+        loop {
+            let mut ts = self.frames_ts(i128::from(from) + i128::from(base)) as i64;
+            ts = ts.max(first_ts);
+            if at_first {
+                ts = first_ts;
+            }
+            if let Some(last) = last_ts {
+                ts = ts.min(last);
+            }
+            let tried = self.reader.as_mut().expect("local reader").seek(
                 SeekMode::Accurate,
-                SeekTo::Time {
-                    time,
-                    track_id: Some(self.track_id),
+                SeekTo::Timestamp {
+                    ts: Timestamp::new(ts),
+                    track_id: self.track_id,
                 },
-            )
-            .map_err(|e| match e {
-                symphonia::core::errors::Error::IoError(ref io) if is_starved(io) => {
-                    "waiting for more of the stream to seek".to_owned()
+            );
+            match tried {
+                Ok(_) => break,
+                Err(symphonia::core::errors::Error::IoError(ref io)) if is_starved(io) => {
+                    return Err("waiting for more of the stream to seek".to_owned());
                 }
-                other => format!("Could not move there ({other})."),
-            })?;
+                Err(symphonia::core::errors::Error::SeekError(_)) if ts > first_ts => {
+                    at_first = from == 0;
+                    from = from.saturating_sub(back);
+                    back = back.saturating_mul(2);
+                    if from == 0 && self.rewind()? {
+                        self.drop_until = target;
+                        return Ok(target);
+                    }
+                }
+                Err(other) => return Err(format!("Could not move there ({other}).")),
+            }
+        }
+        self.held = None;
         self.decoder.as_mut().expect("local decoder").reset();
-        let to_frames = |ts: u64| match self.time_base {
-            Some((numer, denom)) => ticks_to_frames(ts, numer, denom, rate),
-            None => ts,
-        };
-        let actual = u64::try_from(seeked.actual_ts.get())
-            .map(to_frames)
-            .unwrap_or(0);
-        let required = u64::try_from(seeked.required_ts.get())
-            .map(to_frames)
-            .unwrap_or(target);
-        self.skip = required.saturating_sub(actual);
-        Ok(required)
-    }
-}
-
-impl Drop for Source {
-    fn drop(&mut self) {
-        if let Some(body) = self.download_body.take() {
-            body.cancel();
-        }
-        if let Some(remote) = self.remote.as_ref() {
-            remote.cancelled.store(true, Ordering::Release);
-        }
+        self.anchor = true;
+        self.drop_until = target;
+        self.at = target;
+        Ok(target)
     }
 }
 
@@ -913,30 +1560,88 @@ fn playback_log() -> Note {
     Arc::new(media_access::note_timing)
 }
 
+/// Marks the body's worker finished however its thread ends (a panic too).
+struct WorkerDone(Arc<GrowBody>);
+
+impl Drop for WorkerDone {
+    fn drop(&mut self) {
+        self.0.done_working();
+    }
+}
+
+/// Start downloading `audio` on a thread of its own.
+fn start_download(
+    audio: EphemeralAudio,
+    refresh: Option<Refresh>,
+    watch: Watch,
+    note: Note,
+) -> Result<Arc<Download>, String> {
+    let body = GrowBody::new();
+    let worker = Arc::clone(&body);
+    std::thread::Builder::new()
+        .name("venuta-stream-decoder".into())
+        .spawn(move || {
+            let _done = WorkerDone(Arc::clone(&worker));
+            decode_remote(audio, &worker, refresh, watch, note);
+        })
+        .map_err(|_| "Could not start the remote stream decoder.")?;
+    Ok(Download::new(body))
+}
+
+/// Resolve `track_id` through `access` on a thread of its own, then download it there.
+fn start_deferred(
+    access: Arc<dyn media_access::MediaAccess>,
+    track_id: String,
+) -> Result<Arc<Download>, String> {
+    let body = GrowBody::new();
+    let worker = Arc::clone(&body);
+    std::thread::Builder::new()
+        .name("venuta-stream-resolve".into())
+        .spawn(move || {
+            let _done = WorkerDone(Arc::clone(&worker));
+            if worker.is_cancelled() {
+                return;
+            }
+            let cancel = media_access::CancellationToken::default();
+            // If the player dropped us, cooperative cancel still helps long resolves.
+            let audio = match access.resolve_audio(&track_id, &cancel) {
+                Ok(a) => a,
+                Err(e) => {
+                    worker.fail(&e.to_string());
+                    return;
+                }
+            };
+            if worker.is_cancelled() {
+                return;
+            }
+            // Partway failures ask the catalog again, past its memory of the old address.
+            let refresh: Refresh = Box::new(move || {
+                access.forget(&track_id);
+                access
+                    .resolve_audio(&track_id, &media_access::CancellationToken::default())
+                    .ok()
+            });
+            decode_remote(audio, &worker, Some(refresh), WATCH, playback_log());
+        })
+        .map_err(|_| "Could not start the remote stream resolver.")?;
+    Ok(Download::new(body))
+}
+
 fn decode_remote(
     audio: EphemeralAudio,
-    sender: SyncSender<RemoteEvent>,
-    cancelled: Arc<AtomicBool>,
+    body: &Arc<GrowBody>,
     refresh: Option<Refresh>,
     watch: Watch,
     note: Note,
 ) {
-    let body = GrowBody::new(cancelled.clone());
-    let result: Result<(), String> = (|| {
-        if cancelled.load(Ordering::Acquire) {
-            body.cancel();
-            return Ok(());
-        }
-        fill_grow_body(audio, &body, &sender, refresh, &watch, &*note)?;
-        Ok(())
-    })();
-    if let Err(error) = result
-        && !cancelled.load(Ordering::Acquire)
+    if body.is_cancelled() {
+        return;
+    }
+    if let Err(error) = fill_grow_body(audio, body, refresh, &watch, &*note)
+        && !body.is_cancelled()
     {
-        // What did arrive still plays; then the song says why it stopped (an opened song no
-        // longer listens for the event, so the body carries it too).
+        // What did arrive still plays; then the song says why it stopped.
         body.fail(&error);
-        let _ = sender.send(RemoteEvent::Error(error));
     }
 }
 
@@ -1114,7 +1819,7 @@ fn kb_per_s(bytes: u64, took: Duration) -> String {
     )
 }
 
-/// Download into `body`, signalling [`RemoteEvent::OpenReady`] once enough bytes (or the whole
+/// Download into `body`, saying it can open (`GrowBody::set_open`) once enough bytes (or the whole
 /// short body) are present so decode can start while the rest arrives.
 ///
 /// Bytes are added as they arrive, not a whole request at a time, so the song opens as soon as
@@ -1130,7 +1835,6 @@ fn kb_per_s(bytes: u64, took: Duration) -> String {
 fn fill_grow_body(
     mut audio: EphemeralAudio,
     body: &Arc<GrowBody>,
-    sender: &SyncSender<RemoteEvent>,
     mut refresh: Option<Refresh>,
     watch: &Watch,
     note: &dyn Fn(&str),
@@ -1148,7 +1852,7 @@ fn fill_grow_body(
         }
         let need = open_after_bytes(mime.as_deref(), &url_hint);
         // Open once we have enough bytes, or the download already finished (short tracks).
-        if body.len() < need && !body.finished.load(Ordering::Acquire) {
+        if body.len() < need && !body.is_finished() {
             return;
         }
         opened = true;
@@ -1157,8 +1861,7 @@ fn fill_grow_body(
             media_access::ms_since(started),
             body.len() / 1024
         ));
-        let _ = sender.send(RemoteEvent::OpenReady {
-            body: Arc::clone(body),
+        body.set_open(OpenInfo {
             mime_type: mime.clone(),
             url_hint: url_hint.clone(),
             duration_hint_ms,
@@ -1697,19 +2400,240 @@ mod tests {
     }
 
     fn body() -> Arc<GrowBody> {
-        GrowBody::new(Arc::new(AtomicBool::new(false)))
+        GrowBody::new()
     }
 
     /// Plays as the bytes come: the decoder always at the edge of what has arrived, so nothing
     /// is ever ahead of it (what decides whether a slow stream will run dry).
     fn listen_at_the_edge(body: &Arc<GrowBody>) {
         let body = Arc::clone(body);
+        let slot = body.slot();
         std::thread::spawn(move || {
-            while !body.finished.load(Ordering::Acquire) {
-                body.read_at.store(body.len() as u64, Ordering::Release);
+            while !body.is_finished() {
+                slot.store(body.len() as u64, Ordering::Release);
                 std::thread::sleep(Duration::from_millis(5));
             }
         });
+    }
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    fn straight(path: &Path) -> Vec<i32> {
+        let mut s = Source::open(path).unwrap();
+        let (mut all, mut out) = (Vec::new(), Vec::new());
+        while let DecodeState::Samples = s.next(&mut out).unwrap() {
+            all.extend_from_slice(&out);
+        }
+        all
+    }
+
+    fn info(mime: &str, ext: &str) -> OpenInfo {
+        OpenInfo {
+            mime_type: Some(mime.into()),
+            url_hint: format!("song.{ext}"),
+            ..OpenInfo::default()
+        }
+    }
+
+    #[test]
+    fn a_body_keeps_its_bytes_in_chunks_and_reads_them_from_anywhere() {
+        let body = GrowBody::new();
+        let bytes: Vec<u8> = (0..(3 * CHUNK + 777)).map(|i| (i % 253) as u8).collect();
+        // Pieces that straddle the chunk boundaries.
+        for piece in bytes.chunks(CHUNK / 3 + 5) {
+            body.append(piece);
+        }
+        assert_eq!(body.len(), bytes.len());
+        assert_eq!(
+            body.lock().len(),
+            4,
+            "64 KiB chunks, never one growing buffer"
+        );
+        assert!(body.to_vec() == bytes);
+        let mut r = GrowReader::new(Arc::clone(&body), ByteWait::Yield);
+        for at in [
+            0u64,
+            1,
+            CHUNK as u64 - 1,
+            CHUNK as u64,
+            2 * CHUNK as u64 + 3,
+        ] {
+            r.seek(SeekFrom::Start(at)).unwrap();
+            let mut buf = vec![0u8; CHUNK + 10];
+            let mut got = Vec::new();
+            while got.len() < buf.len() {
+                let n = r.read(&mut buf[got.len()..]).unwrap();
+                if n == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buf[got.len()..got.len() + n]);
+            }
+            let end = (at as usize + buf.len()).min(bytes.len());
+            assert!(got == bytes[at as usize..end], "from {at}");
+        }
+        // Past what has come: a reader that never waits says so.
+        r.seek(SeekFrom::Start(bytes.len() as u64)).unwrap();
+        let e = r.read(&mut [0u8; 4]).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    fn a_waiting_reader_waits_for_the_bytes_and_says_so() {
+        let body = GrowBody::new();
+        body.append(&[1, 2, 3]);
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let t = Arc::clone(&told);
+        let w = Waiter::new(None, Arc::new(AtomicBool::new(false)), move |waiting| {
+            t.lock().unwrap().push(waiting)
+        });
+        let mut r = GrowReader::new(Arc::clone(&body), ByteWait::Wait(w));
+        let mut buf = [0u8; 8];
+        assert_eq!(r.read(&mut buf).unwrap(), 3);
+        let feeder = Arc::clone(&body);
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            feeder.append(&[4, 5]);
+        });
+        let started = Instant::now();
+        assert_eq!(
+            r.read(&mut buf).unwrap(),
+            2,
+            "the read waited for the bytes"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(90));
+        assert_eq!(&buf[..2], &[4, 5]);
+        assert_eq!(*told.lock().unwrap(), vec![true, false]);
+        late.join().unwrap();
+        body.finish();
+        assert_eq!(r.read(&mut buf).unwrap(), 0, "the end once all is in");
+    }
+
+    #[test]
+    fn a_stopped_waiter_ends_the_wait() {
+        let body = GrowBody::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        let w = Waiter::new(None, Arc::clone(&stop), |_| {});
+        let mut r = GrowReader::new(Arc::clone(&body), ByteWait::Wait(w));
+        let s = Arc::clone(&stop);
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            s.store(true, Ordering::Release);
+        });
+        let e = r.read(&mut [0u8; 4]).unwrap_err();
+        assert_eq!(e.to_string(), STOPPED);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn readers_at_their_own_places_and_the_bytes_ahead_of_the_furthest() {
+        let body = GrowBody::new();
+        body.append(&[0u8; 1000]);
+        assert_eq!(body.ahead(), 1000, "nobody reading: all of it");
+        let mut a = GrowReader::new(Arc::clone(&body), ByteWait::Yield);
+        let mut b = GrowReader::new(Arc::clone(&body), ByteWait::Yield);
+        a.seek(SeekFrom::Start(300)).unwrap();
+        b.seek(SeekFrom::Start(700)).unwrap();
+        assert_eq!(body.ahead(), 300);
+        drop(b);
+        assert_eq!(body.ahead(), 700, "a reader gone counts no more");
+        let _ = a.read(&mut [0u8; 100]).unwrap();
+        assert_eq!(body.ahead(), 600);
+    }
+
+    #[test]
+    fn a_fed_download_opens_once_enough_is_in_and_is_shared_by_key() {
+        let bytes = std::fs::read(fixture("seek-music.mp3")).unwrap();
+        let (d, mut feeder) = Download::fed(info("audio/mpeg", "mp3"));
+        let streams = Streams::new();
+        streams.insert("k", &d);
+        let mut s = Source::on_download(Arc::clone(&d), Some(6_000));
+        let mut out = Vec::new();
+        feeder.append(&bytes[..32 * 1024]);
+        assert_eq!(
+            s.next(&mut out).unwrap(),
+            DecodeState::Pending,
+            "an MP3 opens at 64 KiB"
+        );
+        feeder.append(&bytes[32 * 1024..]);
+        feeder.finish();
+        assert_eq!(s.next(&mut out).unwrap(), DecodeState::Samples);
+        assert!(d.bytes().complete);
+        let held = streams.hold("k").expect("live while held");
+        drop((d, s));
+        assert!(!feeder.is_cancelled(), "a hold keeps the download");
+        drop(held);
+        assert!(
+            feeder.is_cancelled(),
+            "the last holder gone: the download stops"
+        );
+        assert!(streams.hold("k").is_none());
+    }
+
+    /// The catalog's loudness reaches the opened song (it was lost when the placeholder was
+    /// replaced by the opened source).
+    #[test]
+    fn an_online_song_keeps_the_catalog_s_loudness_once_open() {
+        let bytes = std::fs::read(fixture("seek-music.mp3")).unwrap();
+        let mut i = info("audio/mpeg", "mp3");
+        i.loudness_db = Some(-7.5);
+        let (d, mut feeder) = Download::fed(i);
+        feeder.append(&bytes);
+        feeder.finish();
+        let mut s = Source::on_download(d, None);
+        let mut out = Vec::new();
+        assert_eq!(s.next(&mut out).unwrap(), DecodeState::Samples);
+        assert_eq!(s.loudness_db, Some(-7.5));
+    }
+
+    /// What the gate in `voice` closes: a reader that never waits, fed in pieces that end inside
+    /// packets, against the straight decode of the same file. A record of the old engine's reader
+    /// (on 2026-10-22 it gave 290398 of an MP3's 528040 samples; M4A and WebM came through).
+    #[test]
+    #[ignore = "a record of the reader that never waits; run by hand with --nocapture"]
+    fn a_reader_that_never_waits_on_pieces_ending_inside_packets() {
+        for (name, mime, ext) in [
+            ("seek-music.mp3", "audio/mpeg", "mp3"),
+            ("seek-music.m4a", "audio/mp4", "m4a"),
+            ("seek-music.webm", "audio/webm", "webm"),
+        ] {
+            let bytes = std::fs::read(fixture(name)).unwrap();
+            let want = straight(&fixture(name));
+            let (d, mut feeder) = Download::fed_opening_after(info(mime, ext), 16 * 1024);
+            let mut s = Source::on_download(d, None);
+            let (mut got, mut out) = (Vec::new(), Vec::new());
+            let mut at = 0;
+            let mut ended = false;
+            while !ended {
+                match s.next(&mut out) {
+                    Ok(DecodeState::Samples) => got.extend_from_slice(&out),
+                    Ok(DecodeState::Pending) if at < bytes.len() => {
+                        let end = (at + 997).min(bytes.len());
+                        feeder.append(&bytes[at..end]);
+                        at = end;
+                        if at == bytes.len() {
+                            feeder.finish();
+                        }
+                    }
+                    Ok(DecodeState::Pending) => panic!("{name}: waiting with every byte in"),
+                    Ok(DecodeState::End) | Err(_) => ended = true,
+                }
+            }
+            println!(
+                "{name}: a reader that never waits gave {} of {} samples, {}",
+                got.len(),
+                want.len(),
+                if got == want {
+                    "the same"
+                } else {
+                    "not the same"
+                }
+            );
+        }
     }
 
     fn has(lines: &[String], words: &str) -> bool {
@@ -1727,13 +2651,11 @@ mod tests {
             }
         });
         let body = body();
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         let started = Instant::now();
         fill_grow_body(
             audio(&host.url, song.len(), 36_000),
             &body,
-            &tx,
             None,
             &quick_watch(400),
             &*note,
@@ -1749,10 +2671,7 @@ mod tests {
             vec![0, 128 * 1024],
             "asked again from the last byte"
         );
-        assert!(
-            *body.data.lock().unwrap() == *song,
-            "the song arrived whole"
-        );
+        assert!(body.to_vec() == *song, "the song arrived whole");
         let lines = lines.lock().unwrap();
         assert!(
             has(
@@ -1786,19 +2705,17 @@ mod tests {
             }
         });
         let body = body();
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         fill_grow_body(
             audio(&host.url, song.len(), 30_000),
             &body,
-            &tx,
             None,
             &quick_watch(400),
             &*note,
         )
         .unwrap();
         assert_eq!(host.asked(), vec![0, 100 * 1024]);
-        assert!(*body.data.lock().unwrap() == *song);
+        assert!(body.to_vec() == *song);
         let lines = lines.lock().unwrap();
         assert!(has(&lines, "connection broke"), "{lines:?}");
         assert_private(&lines);
@@ -1820,12 +2737,10 @@ mod tests {
         let len = song.len();
         let refresh: Refresh = Box::new(move || Some(audio(&fresh_url, len, 30_000)));
         let body = body();
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         fill_grow_body(
             audio(&old.url, song.len(), 30_000),
             &body,
-            &tx,
             Some(refresh),
             &quick_watch(400),
             &*note,
@@ -1837,7 +2752,7 @@ mod tests {
             vec![200 * 1024],
             "then a fresh address, same byte"
         );
-        assert!(*body.data.lock().unwrap() == *song);
+        assert!(body.to_vec() == *song);
         let lines = lines.lock().unwrap();
         assert!(
             has(&lines, "refused with HTTP 403 at byte 204800"),
@@ -1865,13 +2780,11 @@ mod tests {
             Some(audio(&url, len, 30_000))
         });
         let body = body();
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         let started = Instant::now();
         let result = fill_grow_body(
             audio(&host.url, song.len(), 30_000),
             &body,
-            &tx,
             Some(refresh),
             &quick_watch(300),
             &*note,
@@ -1901,10 +2814,7 @@ mod tests {
         let body = body();
         body.append(&[1, 2, 3]);
         body.fail(STREAM_LOST);
-        let mut reader = GrowReader {
-            body: Arc::clone(&body),
-            pos: 0,
-        };
+        let mut reader = GrowReader::new(Arc::clone(&body), ByteWait::Yield);
         let mut buf = [0_u8; 8];
         assert_eq!(
             reader.read(&mut buf).unwrap(),
@@ -1927,19 +2837,17 @@ mod tests {
         });
         let body = body();
         listen_at_the_edge(&body);
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         fill_grow_body(
             audio(&host.url, song.len(), 3_000),
             &body,
-            &tx,
             None,
             &quick_watch(400),
             &*note,
         )
         .unwrap();
         assert_eq!(host.asked(), vec![0], "one request, never given up");
-        assert!(*body.data.lock().unwrap() == *song);
+        assert!(body.to_vec() == *song);
         let lines = lines.lock().unwrap();
         assert!(
             !has(&lines, "trickling") && !has(&lines, "stalled"),
@@ -1964,12 +2872,10 @@ mod tests {
         });
         let body = body();
         listen_at_the_edge(&body);
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         fill_grow_body(
             audio(&host.url, song.len(), 3_000),
             &body,
-            &tx,
             None,
             &quick_watch(400),
             &*note,
@@ -1978,7 +2884,7 @@ mod tests {
         let asked = host.asked();
         assert_eq!(asked.len(), 2, "{asked:?}");
         assert!(asked[1] > 0, "carried on from where the trickle got to");
-        assert!(*body.data.lock().unwrap() == *song);
+        assert!(body.to_vec() == *song);
         let lines = lines.lock().unwrap();
         assert!(has(&lines, "trickling at"), "{lines:?}");
         assert!(has(&lines, "the song needs 100.0 KB/s"), "{lines:?}");
@@ -1996,19 +2902,17 @@ mod tests {
             every_ms: 100,
         });
         let body = body();
-        let (tx, _rx) = sync_channel(8);
         let (note, lines) = log();
         fill_grow_body(
             audio(&host.url, song.len(), 7_000),
             &body,
-            &tx,
             None,
             &quick_watch(400),
             &*note,
         )
         .unwrap();
         assert_eq!(host.asked(), vec![0]);
-        assert!(*body.data.lock().unwrap() == *song);
+        assert!(body.to_vec() == *song);
         assert!(!has(&lines.lock().unwrap(), "trickling"));
     }
 }

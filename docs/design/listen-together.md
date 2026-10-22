@@ -480,7 +480,7 @@ Each voice is a `Source` (as today), a start place, and a ring of preallocated b
 
 ```rust
 struct Block {
-    voice: VoiceId, epoch: u32,     // a seek gives a new epoch; old blocks are skipped
+    voice: VoiceId, epoch: u32,     // older epochs are skipped (a voice never seeks, so 0: WP2)
     first_frame: u64,               // content frame of the block's first sample
     frames: u16,                    // up to 1024
     rms_db: i8,                     // loudness of the block, for quiet-moment search
@@ -495,7 +495,7 @@ Blocks go from the decode thread to the render thread on one SPSC queue and come
 
 - **One per slot.** It may block on its own source (a file read, a download that is behind), which is now harmless: the render thread never waits for it.
 - **Depth:** local files 2 s decoded ahead; streams 3 s decoded; downloads continue as today (the whole song, progressively).
-- **Lossy seeks pre-roll:** decode from 80 ms before the target for Opus, from one packet before it for AAC, Vorbis and MP3, and drop that part (fixes `decode.rs:862-891`).
+- **Lossy seeks pre-roll:** decode from before the target and drop that part, so a seek is bit-exact with a straight decode: Opus 1 s (80 ms converges only to the ear), AAC and Vorbis one packet, MP3 eight frames (the bit reservoir); fixes `decode.rs:862-891`. The values and the measurements are in the WP2 notes in 9.2.
 - **No packet lost on a stall:** the decode thread decodes a packet only once the bytes for it are downloaded (it waits on the download's condition variable, with its cancel flag), so `GrowReader` never returns `WouldBlock` in the middle of a packet (closes the possible loss in `decode.rs:795-822` with `218-247`).
 - **Downloads in chunks:** `GrowBody` keeps an append-only list of 64 KiB chunks instead of one growing `Vec` under a mutex (no 2x copies of a 30 MB song, short locks).
 - **One download per song, shared:** voices that play the same media key (a seek, a realign, a resume) read the same `GrowBody`, so a seek on a stream never downloads again. Today this is true only by the follower's care (`follow.rs:284`).
@@ -1458,6 +1458,41 @@ From `app/src-tauri/src/together/net.rs` (kept: `Reach`, `endpoint`, `ticket`, `
 
 WP8's first step (moving `net.rs` and the networking halves of `host.rs` and `guest.rs` into `crates/together-net`, behaviour unchanged, with characterisation tests first) can also start in Phase 1.
 
+#### WP2 notes: voices and decode threads (the plan, as built)
+
+**A voice's life.** `voice::Voice::start(VoiceSpec { id, open, start, depth, pace })` starts the voice's decode thread (above normal priority) and returns at once: nothing is opened on the control thread. The thread runs the opener (a file open, or a stream on its song's shared download), seeks to `start` with pre-roll, makes the ring from the format (`ceil(depth x rate / 1024)` blocks; depth 2 s for files and 3 s for streams unless given) and publishes the tap. `Voice::take_tap()` hands the tap over once (for `StartAt` or `SwitchAt`). `Voice::status()` reads atomics and a few fields set once: the phase (opening, decoding, full, waiting for bytes, ended, failed, stopped), the format and length, `start`, `decoded_to` (the content frame after the last frame handed over), the frames in the ring, the stalls so far, the error, and for a stream its bytes (in, total, read, complete). Dropping the `Voice` tells the thread to stop at its next look; it is never joined (in simulated time it may be asleep). A tap the renderer returned and the control thread dropped stops it too.
+
+**A voice never seeks.** It plays forward from one place. A seek, a realign or a new prepare is a new voice in the spare slot, opened on the same download, so every block of a voice has epoch 0 and the renderer never meets an old block. (An in-voice seek would need the renderer to learn the new epoch before the old blocks queued ahead of it, which a plain queue can't give.)
+
+**The decode thread.** It decodes a packet, copies its frames into blocks taken empty from the ring, filling each to 1024 frames across packets and pushing it as it fills, and sets each block's `rms_db`. The first block has `FIRST_AFTER_SEEK` when the voice starts partway; the last has `END_OF_SOURCE` (on an empty block, `frames == 0`, when the song ends on a block boundary or fails). With no empty block it sleeps 10 ms on its pace. It waits on nothing the render thread holds.
+
+**Pace.** `Pace::Real`: plain sleeps, and a condition variable for bytes. `Pace::Clock(timebase)`: every wait goes through a `Sleeper` made before the thread starts, bytes polled each 1 ms, so a voice runs in a `SimClock`'s lockstep (decoding takes no virtual time) and simulated-time tests can use real decoding.
+
+**The ring.** WP0's `voice_ring`: two bounded lock-free queues (std's array channel), every block made by the decode thread when it opens. The renderer only calls `pop` and `give_back`, which never allocate or lock (the counting allocator gate). The renderer gives blocks back as they came (it reads them, never writes): the decode thread reads a returned block's `frames` to count what is in the ring.
+
+**A stall.** The decode thread waits for bytes only inside the stream's reader, wherever symphonia's read falls (between packets or within one). Before it waits it hands over its partly filled block, so nothing decoded is held back, sets its phase to waiting for bytes and counts a stall; when the bytes come the same read carries on. No `WouldBlock` reaches symphonia, so no packet is ever cut (the possible loss in the old `next_local`). The renderer sees the ring run down and fades by the guard; the control thread reads the phase (`Suspended(Buffering)`). The old engine keeps the reader that never waits (`ByteWait::Yield`) until WP13.
+
+**Lossy seeks.** `Source::seek_frame(target)` seeks the container to `target - pre-roll` (accurate mode lands at or before it), resets the decoder, decodes, and drops the frames before `target`. A target within the pre-roll of the song's start reads the song again from its first byte with a fresh decoder instead (that is the straight decode itself; containers differ in how they seek to their very start). A place a container can't seek to (symphonia's WebM, in the last cluster) is sought 10 s earlier, then 20, 40 and so on, and decoded forward. Pre-roll, at the source's rate, each one measured on the gate's fixtures:
+
+| Codec | Pre-roll | Why |
+|---|---|---|
+| Opus | 1 s | Each frame's band energies are predicted from the frame before (a factor of 0.5 to 0.9 a frame), so a reset state converges geometrically. RFC 7845's 80 ms converges to the ear, not to the bit: after 80 ms a seek still differed from the straight decode by up to 4e-2 of full scale for half a second, after 400 ms by 6e-7, after 1 s not at all (119 of 119 seeks) |
+| AAC | 1024 frames | One packet: the overlap of the one before |
+| MP3 | 9216 frames | Eight MPEG-1 frames: the overlap of the frame before, and seven to fill that frame's bit reservoir (up to 511 bytes back, seven frames at 32 kbps; symphonia's own rewind of up to four frames misses it). Two frames failed at 32 kbps by up to 0.16 of full scale. MPEG-2's 255-byte reservoir fits in as many of its half-length frames |
+| Vorbis | 8192 frames | The longest block: a whole packet before the target's (the first packet after a reset gives no sound) |
+| Lossless | none | Frames stand alone |
+
+Where the first frame after a seek lies is taken from the first packet that gives sound: its `pts + trim_start`, in frames, less the base the straight decode set. (A packet's `dur` can't be used: symphonia 0.6.1's `trimmed_dur` leaves it at the whole block.) The base is learned from the first packet that gives sound after opening, decoded first if a seek comes before any: where the next packet starts, less what the first gave. So positions after a seek count exactly as a straight decode does even where a decoder trims its very first packet itself (the libopus adapter's pre-skip, which it applies to the first packet it ever decodes, wherever that is) or gives nothing for the first packet after a reset (Vorbis). In a container that counts coarser than a frame (WebM's milliseconds, whose block times ffmpeg rounds either way), an Opus place is snapped to the packet grid: every Opus packet is a whole number of 2.5 ms and a tick is under half of that, so the grid point nearest the container's place is the place. With these, every seek on the gate's fixtures is bit-exact with the straight decode: MP3 at 128 and 32 kbps, AAC, Vorbis, Opus in Ogg and in WebM. One case can't be, by its nature: AAC's noise substitution draws other noise after a seek (a different draw of the same noise; the AAC fixture is encoded without it). Vorbis or AAC in a millisecond container would be placed to within the millisecond.
+
+**Opening a stream.** While a waiting reader is probed it says it can't seek, so the container is read forward only: a WebM whose seek head points at tags after the music, or an Ogg whose last page gives its length, opens on its first bytes instead of after the whole download. (Without this both waited for the end, in the old engine too, which retried its probe until the download finished.) Seeks work once it has opened.
+
+**The old reader, measured.** Fed in pieces of 997 bytes, the reader that never waits gave 290398 of an MP3's 528040 samples (the MP3 demuxer resyncs after a cut packet and drops what it skipped); M4A and WebM came through whole. The voice's reader gives every sample of all three (the stall gate). The test that measured it is kept, ignored, in `decode.rs`.
+
+
+**Downloads.** `GrowBody` keeps 64 KiB chunks, appended and never moved (a short lock per read or append, its length in an atomic). A song's download is a `Download`, shared: `decode::Streams` maps a media key to the live download (held weakly), so every voice of a song reads the same bytes and a seek never downloads again; the download is cancelled when its last holder goes, and a `StreamHold` keeps it across a gap with no voice. The download keeps what the host said (type, length, hints), so a later voice opens without asking again. `Download::fed` makes one whose bytes the caller appends (tests, and the room's media stream in WP8). Kept as they were: the watched range requests, the stall and trickle watch, fresh addresses up to `MAX_REFRESHES`, the playback log lines, `mock_host`, and their tests.
+
+**Left to others.** The alignment envelope and PCM hash need the song from its start, which a voice starting partway never sees: WP11 runs `analysis::envelope` over a `Source` of its own. The readiness rule (2 s or 3 s decoded, 10 s of bytes ahead or all) is WP4's, read from `VoiceStatus`.
+
 #### Phase 2
 
 | WP | Size | Depends on | Owns | Tests written first |
@@ -1619,7 +1654,7 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Alignment confidence | peak 8 robust sd (1.4826 MAD) over the median and 1.3 x the next local peak 50 ms away; two 10 s parts of the first window agreeing within 20 ms | 4.5 |
 | Offset refinement | under 20 ms change: glide; over, or matching under half as well as the start where both have music: approximate | 4.5 |
 | Voice slots | 3 | 4.6 |
-| Lossy seek pre-roll | Opus 80 ms; AAC, Vorbis, MP3 one packet | 4.6 |
+| Lossy seek pre-roll | Opus 1 s; AAC 1024 frames; MP3 9216 frames; Vorbis 8192 frames; lossless none | 4.6, 9.2 (WP2) |
 | Download chunks | 64 KiB | 4.6 |
 | Shared-mode buffer | 10 ms period, 50 ms buffer | 4.8 |
 | Output delay | -500 to +500 ms, per output endpoint, remembered; Bluetooth suggestion 170 ms (SBC, measured) | 4.8, 4.14 |
