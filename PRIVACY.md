@@ -18,6 +18,8 @@ Only for something you asked for, or the update check you can switch off:
 | Bringing in a playlist from a link | The site of that link: Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer, ListenBrainz | When you paste the link and bring it in |
 | Finding your songs on a service (Send out) | Deezer, iTunes, ListenBrainz, MusicBrainz | When you send a playlist out to a service |
 | Checking for updates | GitHub (venuta-lab/venuta releases) | At most once a day, and only if **Check for updates when Venuta starts** is on (**Settings › About**); or when you click **Check for updates** |
+| Translation models (optional) | Mozilla (storage.googleapis.com, the Firefox Translations models) | When you click **Download** for a model; translating with it then happens on your PC |
+| Translating lyrics with your own key (optional) | The service you chose in **Settings › Lyrics**: DeepL, Microsoft Translator, Google Cloud Translation or Anthropic (Claude), with the key you entered (kept in the system's secret store) | When you press **Translate** for a song, or for each song with Translation on if you turned on **Translate automatically with my key**; never in Local only. The song's lyric lines are sent |
 | The stream tool (yt-dlp) | GitHub (yt-dlp releases) | When the online catalog needs it and it isn't installed |
 | YouTube's security check (only with **Count plays**) | YouTube and Google (www.youtube.com, www.google.com, jnn-pa.googleapis.com), never as your account | When Venuta first tells a play, then about twice a day while it keeps telling them |
 
