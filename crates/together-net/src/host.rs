@@ -7,7 +7,7 @@
 //! host's files are) comes in through [`HostHooks`].
 
 use crate::net::{self, Clock, Lines, News};
-use crate::pace::Pacer;
+use crate::pace::Downloads;
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ pub struct HostSession {
     /// Each guest's last few round trips (ms), for whether same room can stay on.
     trips: Mutex<HashMap<u32, Vec<u32>>>,
     /// Each person's download of each host song: its pacing, and where it has got to.
-    pacing: Mutex<HashMap<(u32, String), (Pacer, u64)>>,
+    downloads: Downloads,
     waiting: Mutex<HashMap<u32, (Out, Connection)>>,
     pub invite: Invite,
     hooks: Arc<dyn HostHooks>,
@@ -75,7 +75,7 @@ impl HostSession {
             conns: Mutex::default(),
             waiting: Mutex::default(),
             trips: Mutex::default(),
-            pacing: Mutex::default(),
+            downloads: Downloads::default(),
             invite,
             hooks,
             rt: Handle::current(),
@@ -472,7 +472,7 @@ impl HostSession {
 
     /// Someone out of the room: their downloads' pacing goes.
     fn forget_downloads(&self, id: u32) {
-        self.pacing.lock().unwrap().retain(|(who, _), _| *who != id);
+        self.downloads.forget(u64::from(id));
     }
 
     /// Whether everyone is on this network (same room can work).
@@ -559,52 +559,30 @@ impl HostSession {
         if file.seek(std::io::SeekFrom::Start(from)).await.is_err() {
             return;
         }
-        // A song's file goes out paced, one bucket for each person's download of each song:
-        // reading on from where the last range ended shares it, a range anywhere else (a
-        // seek) starts with a full burst. A cover goes as it is.
-        let paced = (id, key.to_owned());
-        let mut chunk = 64 * 1024;
-        if cover.is_none() {
-            let mut pacing = self.pacing.lock().unwrap();
-            let reading_on = pacing.get(&paced).is_some_and(|(_, next)| *next == from);
-            if !reading_on {
-                match Pacer::for_song(size, duration_ms, Instant::now()) {
-                    Some(p) => {
-                        pacing.insert(paced.clone(), (p, from));
-                    }
-                    None => {
-                        pacing.remove(&paced);
-                    }
-                }
-            }
-            if let Some((p, _)) = pacing.get(&paced) {
-                chunk = p.chunk();
-            }
-        }
+        // A song's file goes out paced (pace::Downloads); a cover as it is.
+        let who = u64::from(id);
+        let chunk = if cover.is_none() {
+            self.downloads
+                .begin(who, key, from, size, duration_ms, Instant::now())
+        } else {
+            None
+        };
         let mut left = to - from + 1;
         let mut at = from;
-        let mut buf = vec![0u8; chunk];
+        let mut buf = vec![0u8; chunk.unwrap_or(64 * 1024)];
         while left > 0 {
             let want = (left as usize).min(buf.len());
             let n = match file.read(&mut buf[..want]).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
-            let wait = if cover.is_none() {
-                self.pacing
-                    .lock()
-                    .unwrap()
-                    .get_mut(&paced)
-                    .map(|(p, next)| {
-                        *next = at + n as u64;
-                        p.take(n, Instant::now())
-                    })
-                    .unwrap_or_default()
-            } else {
-                Duration::ZERO
-            };
-            if !wait.is_zero() {
-                tokio::time::sleep(wait).await;
+            if chunk.is_some() {
+                let wait = self
+                    .downloads
+                    .take(who, key, n, at + n as u64, Instant::now());
+                if !wait.is_zero() {
+                    tokio::time::sleep(wait).await;
+                }
             }
             if net::send_line(&mut send, &buf[..n]).await.is_err() {
                 return;

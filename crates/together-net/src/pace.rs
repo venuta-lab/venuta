@@ -59,6 +59,60 @@ impl Pacer {
     }
 }
 
+/// Every person's downloads of the host's songs, paced: one bucket for each person and song.
+/// Reading on from where their last range of it ended shares the bucket; a range anywhere
+/// else (a seek) starts with a full burst.
+#[derive(Debug, Default)]
+pub struct Downloads {
+    open: std::sync::Mutex<std::collections::HashMap<(u64, String), (Pacer, u64)>>,
+}
+
+impl Downloads {
+    /// A range of `who`'s from byte `from` of song `key` (`size` bytes, `duration_ms` long)
+    /// begins: how much to send at a time, or `None` when it goes unpaced.
+    pub fn begin(
+        &self,
+        who: u64,
+        key: &str,
+        from: u64,
+        size: u64,
+        duration_ms: Option<u64>,
+        now: Instant,
+    ) -> Option<usize> {
+        let mut open = self.open.lock().unwrap();
+        let k = (who, key.to_owned());
+        if !open.get(&k).is_some_and(|(_, next)| *next == from) {
+            match Pacer::for_song(size, duration_ms, now) {
+                Some(p) => {
+                    open.insert(k.clone(), (p, from));
+                }
+                None => {
+                    open.remove(&k);
+                }
+            }
+        }
+        open.get(&k).map(|(p, _)| p.chunk())
+    }
+
+    /// `n` bytes of the range ending at byte `end` (exclusive) are about to go: how long to
+    /// wait first.
+    pub fn take(&self, who: u64, key: &str, n: usize, end: u64, now: Instant) -> Duration {
+        let mut open = self.open.lock().unwrap();
+        match open.get_mut(&(who, key.to_owned())) {
+            Some((p, next)) => {
+                *next = end;
+                p.take(n, now)
+            }
+            None => Duration::ZERO,
+        }
+    }
+
+    /// Someone out of the room: their downloads go.
+    pub fn forget(&self, who: u64) {
+        self.open.lock().unwrap().retain(|(w, _), _| *w != who);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
