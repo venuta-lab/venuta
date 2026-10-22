@@ -1944,6 +1944,7 @@ dependencies = [
  "image",
  "keyring",
  "lofty",
+ "lyrics-text",
  "media-access",
  "rayon",
  "realfft",
@@ -3998,6 +3999,15 @@ name = "lru-slab"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
+
+[[package]]
+name = "lyrics-text"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "mac-addr"
