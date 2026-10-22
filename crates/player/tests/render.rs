@@ -914,6 +914,65 @@ fn a_new_chain_takes_over_and_the_old_one_comes_back() {
     assert_eq!(heard[s(2.5) as usize], src[s(2.5) as usize]);
 }
 
+/// Sound tools changed while a song sounds glide over 50 ms (engine 2 makes every such chain
+/// with `Chain::gliding`): clean by every detector, on music and on sines, the old chain kept
+/// inside the new one until that one comes back. The same change made at once steps, and the
+/// sine lock hears it (so a chain that didn't glide would be caught).
+#[test]
+fn a_change_of_the_sound_tools_glides_and_is_clean() {
+    let quiet = || Sound {
+        preamp_db: -6.0,
+        limiter: false,
+        ..Sound::default()
+    };
+    let chain = |sound: &Sound, glide: bool| {
+        let c = Chain::new(sound, &Replay::default(), R, 2, 32);
+        Box::new(if glide {
+            c.gliding(ms(R, 50) as u32)
+        } else {
+            c
+        })
+    };
+    row("sound tools", |sig, rig| {
+        let v = rig.start(&sig.piece(0, s(30.0)), s(1.0), 0, F15);
+        rig.run(s(1.0));
+        rig.send(RenderCmd::Chain {
+            voice: v,
+            chain: chain(&quiet(), true),
+        });
+        rig.run(s(1.0));
+        rig.send(RenderCmd::Chain {
+            voice: v,
+            chain: chain(&Sound::default(), true),
+        });
+        rig.run(s(1.0));
+        // The first glided from no chain at all, the second keeps the first inside it: nothing
+        // came back yet.
+        assert!(
+            !rig.returned
+                .iter()
+                .any(|r| matches!(r, Returned::Chain(_)))
+        );
+        plain()
+    });
+    let song = Song::sine(1_000.0, R, 2, 0, s(30.0));
+    let mut rig = Rig::new(R, 2, P);
+    let v = rig.start(&song, s(1.0), 0, F15);
+    rig.run(s(1.0));
+    rig.send(RenderCmd::Chain {
+        voice: v,
+        chain: chain(&quiet(), false),
+    });
+    rig.run(s(1.0));
+    let declared = rig.declared(&[]);
+    let heard = rig.channel(0);
+    let r = song.channel(0, 0, song.frames);
+    let flagged = judge_sine(&heard, &r, 1_000.0, R, &declared)
+        .iter()
+        .any(|v| !v.flags.is_empty());
+    assert!(flagged, "a chain swapped at once steps, and the detectors hear it");
+}
+
 #[test]
 fn a_newer_epoch_while_sounding_dips_out_and_back_at_the_new_place() {
     let song = Song::music(R, 2, 0, s(30.0));
