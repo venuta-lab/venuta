@@ -935,6 +935,8 @@ pub(crate) enum RoomMsg<T> {
     SetExtraLatency(i32),
     StepOut,
     Rejoin,
+    Suspend(Suspension),
+    Resume,
     Detach,
 }
 
@@ -1032,6 +1034,12 @@ impl<T: Send> RoomHandle<T> for RoomLink<T> {
     }
     fn rejoin(&self) {
         let _ = self.tx.send(Msg::Room(RoomMsg::Rejoin));
+    }
+    fn suspend(&self, why: Suspension) {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Suspend(why)));
+    }
+    fn resume(&self) {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Resume));
     }
     fn status(&self) -> RoomPlayStatus {
         *self.status.lock().unwrap_or_else(|p| p.into_inner())
@@ -1177,6 +1185,8 @@ pub(super) struct RoomProgram<T> {
     known: Option<(EntryId, T, i64, CopyClass)>,
     suspended: Option<Suspension>,
     stepped_out: bool,
+    /// Faded out for a reason of the platform's (audio focus, a sleep) until it is over.
+    away: Option<Suspension>,
     /// A voice is on its way in at the room's place (an output switch, a realign): until it
     /// sounds, the person is realigning.
     switching: bool,
@@ -1255,6 +1265,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             known: None,
             suspended: None,
             stepped_out: false,
+            away: None,
             switching: false,
             cant_hold: false,
             over_since: None,
@@ -1271,6 +1282,11 @@ impl<T: Item + Serialize> RoomProgram<T> {
 
     fn map(&self) -> Option<ClockMap> {
         **self.clock.load()
+    }
+
+    /// Out of the room's sound: stepped out, or away for the platform's reason.
+    fn out(&self) -> bool {
+        self.stepped_out || self.away.is_some()
     }
 
     /// The device frame that must be at the DAC at the host's time `host_us`, so it is heard
@@ -1390,7 +1406,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
                 self.drop_spare(deck);
                 self.realign_since = None;
                 self.known = Some((entry, item.clone(), align.offset_us, align.class));
-                if self.stepped_out {
+                if self.out() {
                     return;
                 }
                 let hint = self.rate_hint(entry);
@@ -1477,6 +1493,26 @@ impl<T: Item + Serialize> RoomProgram<T> {
             RoomMsg::Rejoin => {
                 if self.stepped_out {
                     self.stepped_out = false;
+                    if self.away.is_none() {
+                        self.way_back(deck, ENTRANCE_MS, None);
+                    }
+                }
+            }
+            RoomMsg::Suspend(why) => {
+                // As stepping out, with its own reason: what sounds fades out and every
+                // buffered sample goes with its voice.
+                let was_out = self.out();
+                self.away = Some(why);
+                if !was_out {
+                    self.commit = None;
+                    self.realign_since = None;
+                    self.drop_spare(deck);
+                    self.drop_armed(deck);
+                    self.fade_out(deck, SKIP_FADE_MS, Fading::Out);
+                }
+            }
+            RoomMsg::Resume => {
+                if self.away.take().is_some() && !self.stepped_out {
                     self.way_back(deck, ENTRANCE_MS, None);
                 }
             }
@@ -1490,7 +1526,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             self.hold(a, deck);
             return;
         }
-        if self.stepped_out {
+        if self.out() {
             return;
         }
         let prepared = matches!(
@@ -1711,7 +1747,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
         let Some(n) = self.armed.as_ref() else {
             return;
         };
-        if n.given || self.stepped_out || self.suspended.is_some() {
+        if n.given || self.out() || self.suspended.is_some() {
             return;
         }
         let Some(a) = self.anchor.filter(|a| a.playing) else {
@@ -2058,7 +2094,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             let spaced = self
                 .last_realign
                 .is_none_or(|t| now >= t + col.realign_every_ns);
-            if spaced && self.spare.is_none() && self.suspended.is_none() && !self.stepped_out {
+            if spaced && self.spare.is_none() && self.suspended.is_none() && !self.out() {
                 self.realign_since = Some(now);
             }
         }
@@ -2277,7 +2313,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
         self.known = Some((p.entry, p.song.item.clone(), p.offset_us, p.class));
         deck.retire(p.song.lane, Retire::Now);
         let why = self.fading.take();
-        if self.stepped_out || matches!(why, Some(Fading::Out | Fading::CantHold)) {
+        if self.out() || matches!(why, Some(Fading::Out | Fading::CantHold)) {
             return;
         }
         if ev.lost_at.is_some() {
@@ -2362,7 +2398,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             || self.realign_since.is_some();
         let sub_state = if self.stepped_out {
             SubState::SteppedOut
-        } else if let Some(s) = self.suspended {
+        } else if let Some(s) = self.away.or(self.suspended) {
             SubState::Suspended(s)
         } else if cannot {
             SubState::CannotPlay
@@ -2394,6 +2430,14 @@ impl<T: Item + Serialize> RoomProgram<T> {
         };
         st.heard = self.heard;
         st.cant_hold = self.cant_hold;
+        st.length_us = sounding.and_then(|p| {
+            let s = p.song.lane.status();
+            let rate = s.format.as_ref()?.rate;
+            let frames = s
+                .frames
+                .or((s.phase == Phase::Ended).then_some(s.decoded_to))?;
+            Some(us_of(frames as f64, rate).round() as i64)
+        });
     }
 
     /// The room lets go: what sounds fades out over a second, on the deck's own; the renderer
