@@ -92,6 +92,19 @@ pub enum OutputChoice {
     PacedMemory(std::sync::Arc<std::sync::Mutex<output::Captured>>),
     /// Engine 2 only: an output a test makes, on the test's simulated clock (see [`SimChoice`]).
     Sim(SimChoice),
+    /// Engine 2 only: a sound device chosen as `Device` is, among a test's simulated devices
+    /// (see [`SimDevicesChoice`]). A later `Cmd::Output(Device { .. })` chooses among them.
+    SimDevices(SimDevicesChoice),
+}
+
+/// Sound devices a test simulates (`sim_devices::SimDevices`), on its clock, and the choice
+/// among them (`id: None` follows the default, as `Device` does).
+#[derive(Clone)]
+pub struct SimDevicesChoice {
+    pub clock: SimClock,
+    pub devices: Arc<dyn crate::devices::Devices>,
+    pub id: Option<String>,
+    pub exclusive: bool,
 }
 
 /// An output on a simulated clock that the test moves (`pass`): engine 2 runs every thread of
@@ -186,6 +199,10 @@ pub enum Cmd<T> {
     /// before shuffling.
     RestoreOrder(Vec<usize>),
     Output(OutputChoice),
+    /// The extra delay set for each output, ms, by endpoint id (the store in Settings; an
+    /// output not in it has none set): what you hear is the frame at the DAC that long ago.
+    /// Engine 2 puts it into the place it reports; engine 1 ignores it.
+    OutputDelays(std::collections::BTreeMap<String, i32>),
     /// The sound tools (equalizer, levelling…).
     Sound(Sound),
     /// Stop when the playing song ends, instead of going on.
@@ -216,6 +233,18 @@ pub struct Signal {
     pub bit_perfect: bool,
     /// What changes the samples, in words ("Volume at 60%").
     pub steps: Vec<String>,
+    /// The endpoint it plays on (the key of its delay), for a sound device.
+    pub endpoint: Option<String>,
+    /// What kind of output it is (`None`: not a sound device, or engine 1).
+    pub kind: Option<crate::devices::Kind>,
+    /// What was done about the choice: its stereo twin plays, the chosen device is away...
+    pub note: Option<String>,
+    /// The extra delay set for this output, ms (`None`: not set).
+    pub delay_ms: Option<i32>,
+    /// A starting value to offer while it is not set (Bluetooth).
+    pub suggested_delay_ms: Option<i32>,
+    /// Following Windows' default output.
+    pub follows_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -367,6 +396,7 @@ impl<T: Item + Serialize> Player<T> {
             EngineKind::Two => {
                 let sim = match &output {
                     OutputChoice::Sim(s) => Some(s.clock.clone()),
+                    OutputChoice::SimDevices(s) => Some(s.clock.clone()),
                     _ => None,
                 };
                 let spawned = control::spawn(output, Box::new(on_status), watch);
@@ -816,6 +846,8 @@ impl<T: Item + Serialize> Engine<T> {
                 self.release();
                 self.choice = choice;
             }
+            // Engine 2's (the place it reports is the one heard through the output's delay).
+            Cmd::OutputDelays(_) => {}
             Cmd::Sound(s) => {
                 self.sound = s;
                 // Every song makes its tools again with the new settings.
@@ -1057,7 +1089,7 @@ impl<T: Item + Serialize> Engine<T> {
                 OutputChoice::Device { .. } => {
                     return Err("Playing to a sound device needs Windows for now.".into());
                 }
-                OutputChoice::Sim(_) => {
+                OutputChoice::Sim(_) | OutputChoice::SimDevices(_) => {
                     return Err("A simulated output plays only with engine 2.".into());
                 }
             });
@@ -2164,6 +2196,12 @@ impl<T: Item + Serialize> Engine<T> {
             source: src,
             output: dev_fmt,
             steps,
+            endpoint: None,
+            kind: None,
+            note: None,
+            delay_ms: None,
+            suggested_delay_ms: None,
+            follows_default: matches!(self.choice, OutputChoice::Device { id: None, .. }),
         })
     }
 

@@ -252,6 +252,7 @@ impl<T: Item + Serialize> OwnProgram<T> {
             | Cmd::SleepIn(_)
             | Cmd::Spectrum(_)
             | Cmd::Output(_)
+            | Cmd::OutputDelays(_)
             | Cmd::Sync(_)
             | Cmd::Quit => {}
         }
@@ -899,6 +900,12 @@ impl<T: Item + Serialize> OwnProgram<T> {
             source: src,
             output: out,
             steps,
+            endpoint: deck.endpoint.clone(),
+            kind: None,
+            note: None,
+            delay_ms: None,
+            suggested_delay_ms: None,
+            follows_default: false,
         })
     }
 }

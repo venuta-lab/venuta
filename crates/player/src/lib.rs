@@ -12,6 +12,7 @@ pub mod queue;
 pub mod remote;
 pub mod render;
 pub mod sim;
+pub mod sim_devices;
 pub mod spectrum;
 pub mod sync;
 pub mod verify;

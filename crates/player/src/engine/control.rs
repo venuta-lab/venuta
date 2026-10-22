@@ -69,13 +69,17 @@ pub(super) fn spawn<T: Item + Serialize>(
     // The clock everything waits on; sleepers made here, before the threads start.
     let (tb, own_clock): (Arc<dyn Timebase>, Option<SimClock>) = match &output {
         OutputChoice::Sim(s) => (Arc::new(s.clock.clone()), None),
+        OutputChoice::SimDevices(s) => (Arc::new(s.clock.clone()), None),
         OutputChoice::Memory(_) => {
             let c = SimClock::new(RealClock.now_ns());
             (Arc::new(c.clone()), Some(c))
         }
         _ => (Arc::new(RealClock), None),
     };
-    let virtual_time = matches!(output, OutputChoice::Sim(_) | OutputChoice::Memory(_));
+    let virtual_time = matches!(
+        output,
+        OutputChoice::Sim(_) | OutputChoice::SimDevices(_) | OutputChoice::Memory(_)
+    );
     let pacer = |tb: &Arc<dyn Timebase>| {
         if virtual_time {
             Pacer::Virtual(tb.sleeper())
@@ -790,6 +794,9 @@ impl Deck {
                 true,
             ))),
             OutputChoice::Sim(s) => Dev::Other((s.output)()),
+            OutputChoice::SimDevices(_) => {
+                return Err(OutputError::Other("not yet".into()));
+            }
         };
         let info = dev.out().open(want)?;
         let events = dev.out().events();
