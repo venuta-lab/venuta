@@ -179,12 +179,24 @@ fn the_wrong_order_is_refused() {
 // --- Running dry ----------------------------------------------------------------------------
 
 /// For `steps` periods of 10 ms: every published pair says when its frame was heard (within one
-/// frame), the presentation never goes back, and it keeps moving.
+/// frame), the presentation never goes back, and it keeps moving (pairs are held back while a
+/// suspected gap settles, about a quarter of a second).
 fn pairs_are_true(
     out: &PullOutput<FakeOpener>,
     fake: &Arc<Mutex<Fake>>,
     clock: &SimClock,
     steps: u32,
+) {
+    pairs_within(out, fake, clock, steps, 1.0);
+}
+
+/// As `pairs_are_true`, within `frames` frames.
+fn pairs_within(
+    out: &PullOutput<FakeOpener>,
+    fake: &Arc<Mutex<Fake>>,
+    clock: &SimClock,
+    steps: u32,
+    frames: f64,
 ) {
     let mut last = None;
     let mut fresh = 0;
@@ -199,7 +211,7 @@ fn pairs_are_true(
             .unwrap_or_else(|| panic!("frame {} at the DAC was never one of ours", p.frame));
         let off = p.time_ns as f64 - heard;
         assert!(
-            off.abs() <= 1e9 / f64::from(RATE) + 1.0,
+            off.abs() <= frames * 1e9 / f64::from(RATE) + 1.0,
             "frame {} said at {} but heard at {heard:.0} ({off:.0} ns)",
             p.frame,
             p.time_ns
@@ -213,7 +225,7 @@ fn pairs_are_true(
         last = Some(p.frame);
     }
     assert!(
-        fresh * 10 > steps * 9,
+        fresh * 10 > steps * 8,
         "only {fresh} new pairs in {steps} periods"
     );
 }
@@ -417,4 +429,224 @@ fn exclusive_mode_counts_two_buffers_played_again_and_a_second_gap() {
     assert_eq!(xruns, 2, "one xrun for each gap");
     out.stop();
     out.close();
+}
+
+/// What the owner's laptop showed (shared mode, Realtek with Nahimic): the engine reads a burst
+/// at a start, filling its pipeline, so at the first wake the device holds less than a period
+/// with no gap at all. That is no xrun; the one late period is one.
+#[test]
+fn a_start_whose_engine_reads_a_burst_is_no_xrun_and_a_late_period_is_one() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        // 2400 handed over before the start; the engine takes 1500 at once and 480 at its
+        // first pass: 420 held at the first wake. Then a render call 150 ms late, 2 s in.
+        prime: 1_500,
+        late: vec![(200, 150 * MS)],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    pairs_are_true(&out, &fake, &clock, 400);
+    let f = fake.lock().unwrap();
+    assert_eq!(
+        f.gaps.len(),
+        1,
+        "one gap, the late period's, none at the start"
+    );
+    let gap_at = f.gap_at.expect("the late period ran the DAC dry");
+    drop(f);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen: Vec<OutputEvent> = events.try_iter().collect();
+    assert_eq!(
+        seen,
+        [OutputEvent::Xrun { at: gap_at }],
+        "no xrun at the start"
+    );
+    out.stop();
+    out.close();
+}
+
+/// A position that counts the silence of a pass that found part of a period as the stream's
+/// frames (the other way a shared stream's position can behave in a gap): the slip is measured
+/// from the engine's pipeline and taken off, so the pairs stay true after the gap.
+#[test]
+fn silence_the_position_counts_in_a_gap_is_taken_off() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        // A buffer that isn't whole periods, so the last pass before the gap finds part of one.
+        buffer: 2_200,
+        counts_partial: true,
+        late: vec![(100, 80 * MS)],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    pairs_are_true(&out, &fake, &clock, 400);
+    {
+        let f = fake.lock().unwrap();
+        let gap: u64 = f.gaps.iter().map(|g| g.end - g.start).sum();
+        let uncounted: u64 = f.uncounted.iter().map(|g| g.end - g.start).sum();
+        assert!(gap > uncounted, "the position counted some silence");
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let xruns = events
+        .try_iter()
+        .filter(|e| matches!(e, OutputEvent::Xrun { .. }))
+        .count();
+    assert_eq!(xruns, 1);
+    out.stop();
+    out.close();
+}
+
+#[test]
+fn a_trace_has_a_row_for_every_device_event_with_the_decisions() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        late: vec![(100, 80 * MS)],
+        ..FakeCfg::default()
+    });
+    let trace = out.trace(1_000);
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    clock.pass(3_000 * MS);
+    out.stop();
+    clock.pass(200 * MS);
+    out.close();
+    let rows = trace.rows();
+    let col = |name: &str| {
+        player::output::TRACE_COLUMNS
+            .iter()
+            .position(|c| *c == name)
+            .unwrap()
+    };
+    // About one row per 10 ms pass; times rising; frames handed over never going back.
+    assert!(rows.len() > 250 && rows.len() < 320, "{} rows", rows.len());
+    for w in rows.windows(2) {
+        assert!(w[1][col("wake_ns")] > w[0][col("wake_ns")]);
+        assert!(w[1][col("before")] >= w[0][col("before")]);
+    }
+    assert!(
+        rows.iter()
+            .all(|r| r[col("held")] >= 0 && r[col("pos_ok")] == 1)
+    );
+    // The one xrun is in the trace, where the event says, and the gap where the fake had it.
+    let xruns: Vec<i64> = rows
+        .iter()
+        .map(|r| r[col("xrun_at")])
+        .filter(|&a| a >= 0)
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    let said: Vec<i64> = events
+        .try_iter()
+        .filter_map(|e| match e {
+            OutputEvent::Xrun { at } => Some(at as i64),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(xruns, said);
+    assert_eq!(xruns, [fake.lock().unwrap().gap_at.unwrap() as i64]);
+    let csv = trace.csv();
+    assert_eq!(csv.lines().count(), rows.len() + 1);
+    assert!(csv.starts_with("wake_ns,filled_ns,free,held,padding,"));
+}
+
+/// The exclusive stream of the owner's Realtek laptop, as traced (WP1c): the device takes ten
+/// 10 ms buffers at once at the start (wakes 0.1 ms apart), then signals whenever it has room
+/// for one, unevenly, with stretches of 30 to 75 ms between events, keeping about 100 ms
+/// queued; its position runs on through silence. None of that is a gap. A wake 150 ms late
+/// (more than the queue) is one: one xrun, at where the frames ran out, and the presentation
+/// true after it, the silence the position counted taken off.
+#[test]
+fn a_queueing_exclusive_device_as_traced_says_one_xrun_for_the_one_real_gap() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        exclusive: true,
+        queue: Some(10),
+        latency: 48,
+        // The driver's own uneven events (as in the trace: 59, 37, 53, 75 ms early on, then
+        // about every 30th event 31 to 35 ms), and the late period, 2 s in.
+        late: vec![
+            (14, 50 * MS),
+            (23, 27 * MS),
+            (27, 43 * MS),
+            (44, 65 * MS),
+            (120, 24 * MS),
+            (150, 25 * MS),
+            (180, 22 * MS),
+            (205, 150 * MS),
+            (260, 25 * MS),
+            (300, 23 * MS),
+            (340, 26 * MS),
+        ],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    // Within two frames: the queue's depth is sampled at the device's own uneven events, so the
+    // silence it measures can be a frame out (20 µs).
+    pairs_within(&out, &fake, &clock, 450, 2.0);
+    let f = fake.lock().unwrap();
+    assert_eq!(f.errors, Vec::<String>::new());
+    assert_eq!(f.gaps.len(), 1, "one real gap: {:?}", f.gaps);
+    let gap_at = f.gap_at.unwrap();
+    drop(f);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen: Vec<OutputEvent> = events.try_iter().collect();
+    assert_eq!(seen, [OutputEvent::Xrun { at: gap_at }]);
+    out.stop();
+    out.close();
+}
+
+/// The two traces of the owner's Realtek laptop speakers (WP1c, `tests/fixtures`), played back
+/// through the position map wake by wake as the render thread saw them: shared mode and
+/// exclusive mode each say one xrun, for the one 150 ms render call (at 96000), and nothing at
+/// the start or for the exclusive driver's uneven events. In exclusive mode the position ran
+/// on 2399 frames past what was handed over, and more until the frames came back; the slip
+/// taken off is that silence.
+#[test]
+fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
+    use player::output::{PositionMap, TRACE_COLUMNS};
+    for (name, exclusive) in [
+        ("realtek-shared-trace.csv", false),
+        ("realtek-exclusive-trace.csv", true),
+    ] {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap();
+        let col = |c: &str| TRACE_COLUMNS.iter().position(|x| *x == c).unwrap();
+        let mut m = if exclusive {
+            PositionMap::exclusive(RATE, 480)
+        } else {
+            PositionMap::shared(RATE, 480)
+        };
+        let mut xruns = Vec::new();
+        for line in text.lines().skip(1) {
+            let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
+            if r[col("state")] != 1 {
+                continue;
+            }
+            let held = u32::try_from(r[col("held")]).ok();
+            let before = r[col("before")] as u64;
+            m.space(held, before, r[col("wake_ns")] as u64);
+            m.filled(r[col("filled_ns")] as u64);
+            if r[col("pos_ok")] == 1 {
+                let rd = m.reading(
+                    r[col("raw")] as u64,
+                    r[col("pos_ns")] as u64,
+                    before,
+                    r[col("after")] as u64,
+                );
+                xruns.extend(rd.xrun);
+            }
+        }
+        assert_eq!(xruns, [96_000], "{name}");
+        if exclusive {
+            let s = m.slip();
+            eprintln!("{name}: slip {s} frames");
+            assert!((2_399..2_600).contains(&s), "the silence counted: {s}");
+        }
+    }
 }

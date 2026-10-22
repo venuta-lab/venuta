@@ -148,6 +148,9 @@ pub trait RoomHandle<I>: Send {
         transition: Transition,
         align: Alignment,
     );
+    /// The armed next is withdrawn (the queue changed and nothing follows the playing entry
+    /// now): drop its voice if it hasn't started. Arming another entry replaces it instead.
+    fn disarm(&self);
     /// Start, switch or resume so the anchor holds (a no-op when already there).
     fn commit(&self, anchor: Anchor);
     /// A scheduled pause: fade out from the frame heard at `anchor.host_us`, then hold at

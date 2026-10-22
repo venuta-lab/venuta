@@ -77,6 +77,8 @@ fn the_render_thread_allocates_nothing_while_it_streams() {
         );
         let fake = opener.fake.clone();
         let mut out = PullOutput::new(opener, Arc::new(clock.clone()));
+        // Traced too: a trace only stores into rows made before the run.
+        let trace = out.trace(2_000);
         out.open(&want()).unwrap();
         let events = out.events();
         let c = Counts::default();
@@ -93,6 +95,7 @@ fn the_render_thread_allocates_nothing_while_it_streams() {
             Ok(OutputEvent::Xrun { .. })
         ));
         out.close();
+        assert!(trace.rows().len() > 200, "the trace has its rows");
         assert_eq!(
             (
                 ALLOCS.load(Ordering::Relaxed),

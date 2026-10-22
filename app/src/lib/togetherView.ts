@@ -1,7 +1,8 @@
 /*
   Listen together v2: the shape of the view the app sends the window (contract 5.9 of
   docs/design/listen-together.md), as crates/together/src/view.rs serialises it. Nothing uses it
-  yet; the room panel moves to it with protocol 3. tests/fixtures/together-views.json holds every
+  yet in the live app: the room panel v2 (components/together/RoomPanel.tsx) is built on it and
+  shown once the app sends it (WP9). tests/fixtures/together-views.json holds every
   state the panel draws, made from the Rust types, so the window is built and tested against it.
 */
 
@@ -60,6 +61,10 @@ export interface MemberView {
   copy: CopyView | null
   error_ms: number | null
   bound_ms: number | null
+  /** Missed three prepares in a row (the host's view). */
+  slow: boolean
+  /** Null: can't take the room over; else how many people would lose songs only the host has. */
+  hand_over: number | null
 }
 
 export interface EntryView {
@@ -81,6 +86,25 @@ export interface RoomViewV2 {
   starting: string[] | null
   /** The host is reconnecting: room controls are greyed. */
   host_away: boolean
+  phase: Phase
+  /** What people without the role asked (shown to whoever controls). */
+  requests: RequestView[]
+  /** The host hasn't chosen the role for new people (control up to 4 people, add above). */
+  auto_roles: boolean
+  /** Remotes may change the host's speaker's volume. */
+  guests_volume: boolean
+  /** The host's speaker's volume, 0 to 100 (for the host, and remotes allowed to change it). */
+  volume: number | null
+}
+
+/** Where the room's playback is. */
+export type Phase = 'resting' | 'queue_ended' | 'playing' | 'held'
+
+/** Something asked of whoever controls ("Ravi asks to skip"). */
+export interface RequestView {
+  id: number
+  from: number
+  words: string
 }
 
 export interface You {
@@ -90,7 +114,29 @@ export interface You {
   /** A press on its way to the room ("Pausing...", "Moving to 1:35..."), until it is committed. */
   pressing: string | null
   joining_pct: number | null
+  /** The modes you may take now, in the order offered (one speaker first on the host's network). */
+  choices: ModeChoice[]
+  /** Why you stepped out, while you are. */
+  stepped_out: StepOut | null
 }
+
+export interface ModeChoice {
+  mode: ListenMode
+  /** Why it can't be had now, in words; null: it can. */
+  why_not: string | null
+}
+
+export type StepOut = 'chosen' | 'sleep_timer' | 'unplugged'
+
+/** A room open on this network. */
+export interface NearbyView {
+  id: number
+  host: string
+  listening: number
+}
+
+/** A room to go back to after a crash or restart. */
+export type Resume = { kind: 'rejoin'; host: string } | { kind: 'reopen' }
 
 export interface OutputView {
   name: string
@@ -112,4 +158,12 @@ export interface TogetherViewV2 {
   let_in: boolean
   you: You | null
   output: OutputView
+  /** The host's time when this view was made, from your clock line (null before it is ready). */
+  host_now_us: number | null
+  nearby: NearbyView[]
+  /** The host's room can be seen on this network. */
+  visible: boolean
+  resume: Resume | null
+  /** After a room: how many songs its queue had (to save it as a playlist). */
+  last_queue: number | null
 }

@@ -36,6 +36,40 @@ fn device() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// `VENUTA_HW_TRACE`: a path stem. A test that traces writes `<stem>-<mode>.csv` (one row per
+/// device event, the columns `output::TRACE_COLUMNS`) and `<stem>-<mode>.txt` (what the
+/// device said, the events, the leads, what the flags mean).
+fn trace_path() -> Option<String> {
+    std::env::var("VENUTA_HW_TRACE")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+fn write_trace(
+    t: &player::output::Trace,
+    mode: &str,
+    info: &player::output_api::OutputInfo,
+    notes: Option<player::output::DeviceNotes>,
+    events: &[OutputEvent],
+    lead_ms: (f64, f64),
+) {
+    let stem = trace_path().expect("a trace path");
+    let csv = format!("{stem}-{mode}.csv");
+    std::fs::write(&csv, t.csv()).expect("write the trace");
+    let about = format!(
+        "{info:?}\n{notes:?}\nrows {} (dropped {})\nevents {events:?}\nlead before the gap {:.2} ms, after {:.2} ms\n\
+         flags: near 1, passed 2, suspect 4, certain 8, settled 16, counted 32, dry 64, watching 128\n\
+         state: 1 running, 2 draining; value: exclusive lead / shared pipeline (or the shift when settled); \
+         delta: exclusive frames later than usual / shared lag behind time; -1: none\n",
+        t.rows().len(),
+        t.dropped(),
+        lead_ms.0,
+        lead_ms.1
+    );
+    std::fs::write(format!("{stem}-{mode}.txt"), about).expect("write the notes");
+    eprintln!("trace written to {csv}");
+}
+
 fn want() -> OpenRequest {
     OpenRequest {
         rate: 48_000,
@@ -196,14 +230,15 @@ fn median(mut v: Vec<f64>) -> f64 {
 /// the frames made are ahead of the DAC (by the presentation) is the same before the gap and
 /// after it. Only silence is written, so nothing is heard.
 ///
-/// If that lead changes by about the gap, the device's position counted the gap's silence as
-/// frames (in shared mode the fake and the design assume it stalls instead): then shared mode
-/// needs its slips measured as exclusive mode's are. Report it to the integrator.
+/// Shared mode takes off silence the position counted (the pipeline between the engine's
+/// read and the DAC is steady): the first run of WP1, without that, saw the lead move 9.8 ms.
+/// Whether the corrected presentation is the sound's truth is the loopback test's to say.
 #[test]
 #[ignore = "opens a real output (silence only); run by hand"]
 fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
     for exclusive in [false, true] {
         let mut out = wasapi_output(device().as_deref(), exclusive);
+        let trace = trace_path().map(|_| out.trace(20_000));
         let info = out.open(&want()).expect("open");
         let rate = f64::from(info.format.rate);
         let events = out.events();
@@ -212,13 +247,14 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         out.start(Box::new(r)).expect("start");
         let t0 = Instant::now();
         let mut last = 0;
+        let mut went_back = false;
         let (mut early, mut late) = (Vec::new(), Vec::new());
         while t0.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
             let made_now = made.load(Ordering::SeqCst) as f64;
             let now = RealClock.now_ns();
             if let Some(p) = out.presentation().read() {
-                assert!(p.frame >= last, "the presentation went back");
+                went_back |= p.frame < last;
                 last = p.frame;
                 let at_dac = p.frame as f64 + now.saturating_sub(p.time_ns) as f64 * rate / 1e9;
                 let lead_ms = (made_now - at_dac) * 1000.0 / rate;
@@ -238,6 +274,11 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         eprintln!(
             "exclusive asked {exclusive}, ran {mode:?}: {seen:?}; lead {before:.2} ms before the gap, {after:.2} ms after"
         );
+        if let Some(t) = &trace {
+            let name = format!("{mode:?}").to_lowercase();
+            write_trace(t, &name, &info, out.notes(), &seen, (before, after));
+        }
+        assert!(!went_back, "the presentation went back");
         assert_eq!(
             seen.iter()
                 .filter(|e| matches!(e, OutputEvent::Xrun { .. }))
@@ -293,4 +334,171 @@ fn wasapi_device_change_events_fire() {
     );
     assert!(out.stop().is_some());
     out.close();
+}
+
+/// Short tone bursts (5 ms of 1 kHz under a Hann window, -20 dBFS) every 250 ms, and once,
+/// in the silence between two of them, a render call 150 ms late. Counts its calls.
+struct Bursts {
+    fmt: player::output::DeviceFormat,
+    every: u64,
+    len: u64,
+    stall_after: u64,
+    stalled: bool,
+    scratch: Vec<i32>,
+    made: Arc<AtomicU64>,
+}
+
+impl Bursts {
+    fn value(&self, frame: u64) -> f64 {
+        let k = frame % self.every;
+        if k >= self.len {
+            return 0.0;
+        }
+        let x = k as f64 / self.len as f64;
+        let w = (std::f64::consts::PI * x).sin().powi(2);
+        0.1 * w * (std::f64::consts::TAU * 1_000.0 * k as f64 / f64::from(self.fmt.rate)).sin()
+    }
+}
+
+impl Render for Bursts {
+    fn render(&mut self, out: &mut [u8], frames: u32, at: u64) {
+        let ch = usize::from(self.fmt.channels);
+        self.scratch.clear();
+        for k in 0..u64::from(frames) {
+            let v = (self.value(at + k) * 2_147_483_647.0) as i32;
+            self.scratch.extend(std::iter::repeat_n(v, ch));
+        }
+        player::render::encode_into(&self.scratch, &self.fmt, out);
+        self.made.store(at + u64::from(frames), Ordering::SeqCst);
+        if !self.stalled && at >= self.stall_after {
+            self.stalled = true;
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+}
+
+/// The energy centroid of each burst in `x` (sample index, fractional).
+fn centroids(x: &[f32], rate: u32) -> Vec<f64> {
+    let mut out = Vec::new();
+    for b in bursts(x, rate) {
+        let (mut num, mut den) = (0.0, 0.0);
+        for i in b.clone() {
+            let e = f64::from(x[i]) * f64::from(x[i]);
+            num += i as f64 * e;
+            den += e;
+        }
+        if den > 0.0 {
+            out.push(num / den);
+        }
+    }
+    out
+}
+
+/// The truth of the presentation across a gap, by the loopback: for every burst, when the
+/// presentation said its frames would be at the DAC against when the loopback had them. The
+/// difference is the path between the two (constant for an output); it must not change across
+/// the late period. This is what settles how a shared stream's position behaves in a gap: if
+/// the presentation were off after it, the bursts after the gap would be off by the same
+/// amount. Plays 18 quiet beeps over 4.5 s; the late period falls in silence.
+#[test]
+#[ignore = "plays quiet beeps on a real output; run by hand"]
+fn wasapi_the_presentation_matches_the_loopback_across_a_gap() {
+    let mut out = wasapi_output(device().as_deref(), false);
+    let info = out.open(&want()).expect("open");
+    assert_eq!(out.mode(), Mode::Shared);
+    let rate = info.format.rate;
+    let captured = Arc::new(Mutex::new(Vec::<f32>::new()));
+    let c = captured.clone();
+    let rec = Recorder::start(
+        Source::Loopback(device()),
+        Box::new(move |s: &[f32]| c.lock().unwrap().extend_from_slice(s)),
+    )
+    .expect("the loopback recorder");
+    assert_eq!(rec.rate, rate, "the output runs at the mix format");
+    let channels = usize::from(rec.channels);
+    let events = out.events();
+    let every = u64::from(rate) / 4;
+    let made = Arc::new(AtomicU64::new(0));
+    out.start(Box::new(Bursts {
+        fmt: info.format.clone(),
+        every,
+        len: u64::from(rate) / 200,
+        // In the silence after the ninth burst (2 s in).
+        stall_after: 8 * every + u64::from(rate) / 20,
+        stalled: false,
+        scratch: Vec::with_capacity(16_384 * usize::from(info.format.channels)),
+        made: made.clone(),
+    }))
+    .expect("start");
+    let mut pairs = Vec::new();
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(4_600) {
+        std::thread::sleep(Duration::from_millis(5));
+        if let Some(p) = out.presentation().read()
+            && pairs.last() != Some(&p)
+        {
+            pairs.push(p);
+        }
+    }
+    out.stop();
+    std::thread::sleep(Duration::from_millis(300));
+    out.close();
+    let timeline = rec.stop().expect("the recording");
+    let seen: Vec<OutputEvent> = events.try_iter().collect();
+    eprintln!("events {seen:?}; {} pairs", pairs.len());
+
+    // When the loopback had each burst's centre, by the capture's anchors (performance
+    // counter, 100 ns units).
+    let all = captured.lock().unwrap();
+    let x: Vec<f32> = all.iter().step_by(channels).copied().collect();
+    let heard: Vec<f64> = centroids(&x, rate)
+        .into_iter()
+        .map(|i| {
+            let (f, q) = timeline
+                .anchors
+                .iter()
+                .rev()
+                .find(|(f, _)| (*f as f64) <= i)
+                .copied()
+                .unwrap_or(timeline.anchors[0]);
+            (q as f64 + (i - f as f64) * 1e7 / f64::from(rate)) * 100.0
+        })
+        .collect();
+    // When the presentation said each burst's centre is at the DAC, from the pair nearest to it.
+    let centre = (u64::from(rate) / 400) as f64;
+    let said: Vec<f64> = (0..heard.len() as u64)
+        .map(|k| {
+            let f = (k * every) as f64 + centre;
+            let p = pairs
+                .iter()
+                .min_by(|a, b| {
+                    (a.frame as f64 - f)
+                        .abs()
+                        .total_cmp(&(b.frame as f64 - f).abs())
+                })
+                .expect("pairs");
+            p.time_ns as f64 + (f - p.frame as f64) * 1e9 / f64::from(rate)
+        })
+        .collect();
+    let offsets: Vec<f64> = heard
+        .iter()
+        .zip(&said)
+        .map(|(h, s)| (h - s) / 1e6)
+        .collect();
+    eprintln!("loopback minus presentation, ms, per burst: {offsets:.2?}");
+    assert!(heard.len() >= 17, "found {} bursts", heard.len());
+    assert_eq!(
+        seen.iter()
+            .filter(|e| matches!(e, OutputEvent::Xrun { .. }))
+            .count(),
+        1
+    );
+    let (lo, hi) = offsets
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), &o| (lo.min(o), hi.max(o)));
+    assert!(
+        hi - lo < 1.0,
+        "the presentation moved against the loopback by {:.2} ms",
+        hi - lo
+    );
 }

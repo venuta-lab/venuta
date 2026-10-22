@@ -50,6 +50,22 @@ test('presses under way, transitions and outputs are all there', () => {
   assert.ok(cases.some((c) => c.view.you?.joining_pct != null), 'joining, with how much is in')
 })
 
+test('the panel has every phase, choice, step out, request and offer to draw', () => {
+  const phases = new Set(cases.map((c) => c.view.room?.phase).filter(Boolean))
+  for (const p of ['resting', 'queue_ended', 'playing', 'held']) assert.ok(phases.has(p as never), p)
+  const outs = new Set(cases.map((c) => c.view.you?.stepped_out).filter(Boolean))
+  for (const o of ['chosen', 'sleep_timer', 'unplugged']) assert.ok(outs.has(o as never), o)
+  assert.ok(cases.some((c) => c.view.state === 'joining' && c.view.you?.choices[0]?.mode === 'one_speaker'), 'the join choice, one speaker first')
+  assert.ok(cases.some((c) => c.view.you?.choices.some((m) => m.why_not)), 'a mode greyed with why')
+  assert.ok(cases.some((c) => c.view.room?.requests.length), 'a request to answer')
+  assert.ok(cases.some((c) => c.view.room?.members.some((m) => m.slow)), 'a slow guest')
+  assert.ok(cases.some((c) => c.view.room?.members.some((m) => m.hand_over != null && m.hand_over > 0)), 'a hand-over that loses songs')
+  assert.ok(cases.some((c) => c.view.nearby.length), 'rooms nearby')
+  assert.ok(cases.some((c) => c.view.resume?.kind === 'rejoin') && cases.some((c) => c.view.resume?.kind === 'reopen'), 'rejoin and reopen')
+  assert.ok(cases.some((c) => c.view.last_queue), 'a room queue to save')
+  assert.ok(cases.some((c) => c.view.you?.sub_state.state === 'remote' && c.view.host_now_us != null), 'a remote with the host time')
+})
+
 test('no em dashes in anything a person reads', () => {
   assert.ok(!JSON.stringify(cases).includes('\u2014'))
 })
