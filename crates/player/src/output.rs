@@ -374,6 +374,8 @@ pub struct RenderCell {
     slot: UnsafeCell<Option<Box<dyn Render>>>,
     /// The generation of the renderer in the slot (or of the last one): written only while busy.
     generation: AtomicU64,
+    /// A take is waiting for the call running to end.
+    taking: AtomicBool,
 }
 
 // SAFETY: `slot` is read or written only by the thread that moved `state` from empty or held to
@@ -396,6 +398,7 @@ impl RenderCell {
             state: AtomicU8::new(CELL_EMPTY),
             slot: UnsafeCell::new(None),
             generation: AtomicU64::new(0),
+            taking: AtomicBool::new(false),
         }
     }
 
@@ -419,6 +422,8 @@ impl RenderCell {
     /// Take the renderer out: at once, or after the render call running now. `None` if empty.
     /// Once this returns, `render` is never called on it again.
     pub fn take(&self) -> Option<Box<dyn Render>> {
+        // Asked first, so the real-time side starts no new call; then the running one ends.
+        self.taking.store(true, Ordering::Release);
         let mut spins = 0u32;
         loop {
             match self.state.compare_exchange(
@@ -431,9 +436,13 @@ impl RenderCell {
                     // SAFETY: the state is busy: this thread alone has the slot.
                     let r = unsafe { (*self.slot.get()).take() };
                     self.state.store(CELL_EMPTY, Ordering::Release);
+                    self.taking.store(false, Ordering::Release);
                     return r;
                 }
-                Err(CELL_EMPTY) => return None,
+                Err(CELL_EMPTY) => {
+                    self.taking.store(false, Ordering::Release);
+                    return None;
+                }
                 // A render call (well under a millisecond), or another install or take.
                 Err(_) => {
                     spins += 1;
@@ -451,6 +460,10 @@ impl RenderCell {
     /// Never waits: an empty cell, another generation, or one being taken this instant gives
     /// `false` and nothing is called.
     pub fn render(&self, generation: u64, out: &mut [u8], frames: u32, at: u64) -> bool {
+        // A take waiting: no new call (so it waits for the one running at most).
+        if self.taking.load(Ordering::Acquire) {
+            return false;
+        }
         if self
             .state
             .compare_exchange(
@@ -570,19 +583,33 @@ pub struct Reading {
 
 /// Turns a device's readings into presentation pairs, and finds where the DAC ran dry.
 ///
-/// Shared mode (an engine that reads the buffer a period at a time): the device ran dry when
-/// it had taken everything handed over (`space` finds nothing held), or when a fill took
-/// longer than what it held could last (`filled`); either way the gap began at the frames
-/// handed over before that fill. It can count a near miss (all taken, but refilled before the
-/// engine's next pass), never misses a gap. Its positions are not used for this.
+/// Shared mode (an engine that reads the buffer about a period at a time and never stops: it
+/// mixes silence for a stream with nothing to give). Two clocks of the stream's own frames
+/// are read at every wake: what the engine has read (frames handed over less what the device
+/// still holds) and what is at the DAC (the position). Between them is the engine's pipeline,
+/// which the stream's own gaps don't change, so their difference, taken at the same point of
+/// every period, is steady (the usual pipeline: the median of 16 samples, once the DAC has run
+/// for 100 ms).
+///
+/// - A gap is suspected when, at a wake, the device holds less than a period (its next pass
+///   can come short), or a fill took nearly as long as what it held. Only a suspect: an engine
+///   that reads a burst (as at a start, filling its pipeline) leaves little held without any
+///   gap, and at a start there is no usual pipeline yet, so suspects are not taken then.
+/// - A gap is certain when the position falls behind the time passed by more than 1 ms (the
+///   DAC sat in silence), or when, after a suspect, the pipeline differs from the usual by more
+///   than a quarter of a millisecond (the position counted silence as the stream's frames, as
+///   for a pass that found less than a period). That difference is the slip taken off later
+///   positions. A suspect that shows neither is a near miss, and nothing is said.
+/// - From a suspect until it is settled (100 ms for the pipeline to refill, then 16 samples) no
+///   pair is published, and none afterwards for frames up to where the gap began.
 ///
 /// Exclusive mode (a double buffer the hardware plays on over when it isn't refilled): how
 /// far what was handed over before this fill is ahead of the DAC (the lead) is steady from
 /// period to period, less only the wake's own delay; a wake a whole buffer later than the
-/// usual (the median of the last on-time leads) found the hardware already playing on over the
-/// next buffer. That is a gap (as is a position past what was handed over); a wake within an
-/// eighth of a buffer of it counts as a near miss. The buffers played again are counted as a
-/// slip, in whole buffers, and taken off later positions, so a pair keeps meaning the device
+/// usual (the median of the last 16 on-time leads) found the hardware already playing on over
+/// the next buffer. That is a gap (as is a position past what was handed over); a wake within
+/// an eighth of a buffer of it counts as a near miss. The buffers played again are counted as
+/// a slip, in whole buffers, and taken off later positions, so a pair keeps meaning the device
 /// frames `render` was given. The count can only come short (by a wake's usual delay), and a
 /// short count shows as a lead a buffer short at the next period, which adds it.
 ///
@@ -594,20 +621,71 @@ pub struct PositionMap {
     rate: u32,
     period: u32,
     exclusive: bool,
-    slip: u64,
+    /// Frames the position counted that were not the stream's (positive) or the other way.
+    slip: i64,
     last: Option<PresentationPair>,
     dry: bool,
     /// After a gap: pairs only for frames above this.
     trust_above: Option<u64>,
     /// Shared: what the device held at this period's wake, of what had been handed over, when.
     pending: Option<(u32, u64, u64)>,
-    /// Exclusive: the last on-time leads, and how many there are.
-    leads: [i64; LEADS],
-    lead_count: usize,
+    /// Shared: frames the engine had read at this period's wake.
+    read: Option<u64>,
+    /// Shared: the last reading (raw position, time), and since when the DAC moves.
+    prev: Option<(u64, u64)>,
+    moving_since: Option<u64>,
+    /// Shared: the usual pipeline; exclusive: the last on-time leads.
+    usual: Ring,
+    /// Shared: a suspect being settled.
+    watch: Option<Watch>,
 }
 
-/// On-time leads kept for exclusive mode's usual lead.
-const LEADS: usize = 16;
+/// Samples kept for a usual value.
+const SAMPLES: usize = 16;
+/// Shared mode: the DAC moves this long before the pipeline counts as usual, and after a
+/// suspect the pipeline has this long to refill before it is judged.
+const SETTLE_NS: u64 = 100_000_000;
+
+/// The last `SAMPLES` values, and their median.
+#[derive(Debug, Clone, Copy, Default)]
+struct Ring {
+    v: [i64; SAMPLES],
+    n: usize,
+}
+
+impl Ring {
+    fn push(&mut self, x: i64) {
+        self.v[self.n % SAMPLES] = x;
+        self.n += 1;
+    }
+
+    fn full(&self) -> bool {
+        self.n >= SAMPLES
+    }
+
+    fn median(&self) -> Option<i64> {
+        let n = self.n.min(SAMPLES);
+        if n == 0 {
+            return None;
+        }
+        let mut v = self.v;
+        let v = &mut v[..n];
+        v.sort_unstable();
+        Some(v[n / 2])
+    }
+}
+
+/// Shared mode: a suspected gap, settled once the pipeline has refilled.
+#[derive(Debug, Clone, Copy)]
+struct Watch {
+    /// Frames handed over when it was suspected (where a gap would have begun).
+    at: u64,
+    /// Already certain (the position fell behind).
+    certain: bool,
+    /// Pipeline samples from then on count.
+    from_ns: u64,
+    after: Ring,
+}
 
 impl PositionMap {
     /// Shared mode at `rate`, with the engine's period.
@@ -639,6 +717,10 @@ impl PositionMap {
         };
     }
 
+    fn frames_of_ns(&self, ns: u64) -> f64 {
+        ns as f64 * f64::from(self.rate) / 1e9
+    }
+
     fn gap(&mut self, at: u64) -> Option<u64> {
         self.trust_above = Some(self.trust_above.map_or(at, |t| t.max(at)));
         if self.dry {
@@ -648,64 +730,135 @@ impl PositionMap {
         Some(at)
     }
 
+    /// Shared mode: a gap may have begun at `at`.
+    fn suspect(&mut self, at: u64, now_ns: u64) {
+        if !self.usual.full() {
+            // No usual pipeline yet (a start): only the position can tell.
+            return;
+        }
+        if self.watch.is_none() {
+            self.watch = Some(Watch {
+                at,
+                certain: false,
+                from_ns: now_ns + SETTLE_NS,
+                after: Ring::default(),
+            });
+        }
+    }
+
     /// A wake, before the fill: the device still held `held` frames unread (shared mode; `None`
-    /// in exclusive mode) of the `before` handed over, at mono time `now_ns`.
-    pub fn space(&mut self, held: Option<u32>, before: u64, now_ns: u64) -> Option<u64> {
+    /// in exclusive mode) of the `before` handed over, at mono time `now_ns`. Shared mode's
+    /// gaps are said by the readings that settle what this suspects.
+    pub fn space(&mut self, held: Option<u32>, before: u64, now_ns: u64) {
         self.pending = None;
-        let held = held?;
+        let Some(held) = held else {
+            return;
+        };
+        self.read = Some(before.saturating_sub(u64::from(held)));
         if before == 0 {
-            return None;
+            return;
         }
-        if held == 0 {
-            return self.gap(before);
+        if held < self.period {
+            self.suspect(before, now_ns);
+        } else {
+            self.pending = Some((held, before, now_ns));
         }
-        self.dry = false;
-        self.pending = Some((held, before, now_ns));
-        None
     }
 
-    /// The fill handed over, at mono time `now_ns`. A gap when the fill took long enough for
-    /// the engine to come to a pass with less than a period left: it takes a whole period at
-    /// each pass, so what it held lasts `held / period` passes, and a fill of that many periods
-    /// can meet one more.
-    pub fn filled(&mut self, now_ns: u64) -> Option<u64> {
-        let (held, before, since) = self.pending.take()?;
-        let used = now_ns.saturating_sub(since) as f64 * f64::from(self.rate) / 1e9;
-        let lasts = f64::from(held / self.period * self.period);
-        (used >= lasts).then(|| self.gap(before)).flatten()
-    }
-
-    /// Exclusive mode's usual lead: the median of the last on-time ones.
-    fn usual_lead(&self) -> Option<i64> {
-        let n = self.lead_count.min(LEADS);
-        if n == 0 {
-            return None;
+    /// The fill handed over, at mono time `now_ns`: a fill that took nearly as long as what the
+    /// device held could last is a suspect.
+    pub fn filled(&mut self, now_ns: u64) {
+        if let Some((held, before, since)) = self.pending.take() {
+            let used = self.frames_of_ns(now_ns.saturating_sub(since));
+            if used + f64::from(self.period) > f64::from(held) {
+                self.suspect(before, since);
+            }
         }
-        let mut v = self.leads;
-        let v = &mut v[..n];
-        v.sort_unstable();
-        Some(v[n / 2])
-    }
-
-    fn on_time(&mut self, lead: i64) {
-        self.leads[self.lead_count % LEADS] = lead;
-        self.lead_count += 1;
     }
 
     /// Exclusive mode: the buffers the hardware played again since the last reading, and
     /// whether this wake was (nearly) too late.
-    fn replays(&mut self, raw: u64, before: u64) -> (u64, bool) {
+    fn replays(&mut self, raw: u64, before: u64) -> (i64, bool) {
         let p = i64::from(self.period);
-        let lead = before as i64 - raw.saturating_sub(self.slip) as i64;
+        let lead = before as i64 - (raw as i64 - self.slip);
         // Past what it held: certainly played on.
         let passed = if lead <= 0 { (-lead) / p + 1 } else { 0 };
-        let late = self.usual_lead().map_or(0, |u| (u - lead).max(0));
+        let late = self.usual.median().map_or(0, |u| (u - lead).max(0));
         let replayed = (late / p).max(passed);
         let near = late + p / 8 >= p;
         if replayed == 0 && !near {
-            self.on_time(lead);
+            self.usual.push(lead);
         }
-        (replayed as u64, replayed > 0 || near)
+        (replayed, replayed > 0 || near)
+    }
+
+    /// Shared mode: what this reading says of gaps and the pipeline.
+    fn shared_reading(&mut self, raw: u64, time_ns: u64) -> Option<u64> {
+        let mut xrun = None;
+        // The position against the time passed since the last reading.
+        if let Some((pr, pt)) = self.prev
+            && pr > 0
+            && time_ns > pt
+        {
+            let lag = pr as f64 + self.frames_of_ns(time_ns - pt) - raw as f64;
+            if lag > f64::from(self.rate) / 1_000.0 {
+                let at = self.watch.map_or(raw, |w| w.at);
+                xrun = self.gap(at);
+                match &mut self.watch {
+                    Some(w) => w.certain = true,
+                    None => {
+                        self.watch = Some(Watch {
+                            at,
+                            certain: true,
+                            from_ns: time_ns + SETTLE_NS,
+                            after: Ring::default(),
+                        });
+                    }
+                }
+            }
+        }
+        if raw > 0 && self.moving_since.is_none() {
+            self.moving_since = Some(time_ns);
+        }
+        self.prev = Some((raw, time_ns));
+        // The pipeline, sampled at this wake.
+        let Some(read) = self.read.take() else {
+            return xrun;
+        };
+        let pipeline = read as i64 - raw as i64;
+        match &mut self.watch {
+            None => {
+                if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
+                    self.usual.push(pipeline);
+                }
+            }
+            Some(w) => {
+                if time_ns >= w.from_ns {
+                    w.after.push(pipeline);
+                }
+                if w.after.full() {
+                    let w = *w;
+                    self.watch = None;
+                    let shift = match (self.usual.median(), w.after.median()) {
+                        (Some(u), Some(a)) if self.usual.full() => u - a,
+                        _ => 0,
+                    };
+                    let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
+                    if counted {
+                        self.slip += shift;
+                    }
+                    if (counted || w.certain)
+                        && let Some(at) = self.gap(w.at)
+                    {
+                        xrun = Some(at);
+                    }
+                    // Settled: the pipeline from now on is the usual one; a new gap is new.
+                    self.usual = w.after;
+                    self.dry = false;
+                }
+            }
+        }
+        xrun
     }
 
     /// A reading after the fill: `raw` frames have reached the DAC (the device's count since the
@@ -713,31 +866,41 @@ impl PositionMap {
     /// fill, `after` after it.
     pub fn reading(&mut self, raw: u64, time_ns: u64, before: u64, after: u64) -> Reading {
         let mut xrun = None;
-        if self.exclusive && before > 0 {
-            let (replayed, dry) = self.replays(raw, before);
-            if dry {
-                xrun = self.gap(before);
-                self.slip += u64::from(self.period) * replayed;
-            } else {
-                self.dry = false;
+        if self.exclusive {
+            if before > 0 {
+                let (replayed, dry) = self.replays(raw, before);
+                if dry {
+                    xrun = self.gap(before);
+                    self.slip += i64::from(self.period) * replayed;
+                } else {
+                    self.dry = false;
+                }
             }
+        } else {
+            xrun = self.shared_reading(raw, time_ns);
         }
-        let frame = raw.saturating_sub(self.slip);
-        let valid = raw > self.slip
-            && frame < before.min(after)
-            && self.trust_above.is_none_or(|t| frame > t)
+        let frame = raw as i64 - self.slip;
+        let valid = raw > 0
+            && frame >= 0
+            && (frame as u64) < before.min(after)
+            && self.watch.is_none()
+            && self.trust_above.is_none_or(|t| frame as u64 > t)
             && self
                 .last
-                .is_none_or(|l| frame >= l.frame && time_ns >= l.time_ns);
-        let pair = valid.then_some(PresentationPair { frame, time_ns });
+                .is_none_or(|l| frame as u64 >= l.frame && time_ns >= l.time_ns);
+        let pair = valid.then_some(PresentationPair {
+            frame: frame as u64,
+            time_ns,
+        });
         if pair.is_some() {
             self.last = pair;
         }
         Reading { pair, xrun }
     }
 
-    /// Frames the device played that were never ours (exclusive mode's replayed buffers).
-    pub fn slip(&self) -> u64 {
+    /// Frames the position counted that were never the stream's (exclusive mode's replayed
+    /// buffers; shared mode's silence counted as frames), taken off every position.
+    pub fn slip(&self) -> i64 {
         self.slip
     }
 }
@@ -1416,15 +1579,15 @@ impl<D: PullDevice> Loop<D> {
             }
         };
         let before = self.pump.written();
-        if !draining && let Some(at) = self.map.space(space.held, before, sleeper.now_ns()) {
-            self.xrun(at);
+        if !draining {
+            self.map.space(space.held, before, sleeper.now_ns());
         }
         if let Err(f) = self.fill(space.free, !draining) {
             self.fault(f);
             return;
         }
-        if !draining && let Some(at) = self.map.filled(sleeper.now_ns()) {
-            self.xrun(at);
+        if !draining {
+            self.map.filled(sleeper.now_ns());
         }
         let after = self.pump.written();
         match self.dev.position() {
@@ -1436,7 +1599,7 @@ impl<D: PullDevice> Loop<D> {
                 if !draining && let Some(at) = r.xrun {
                     self.xrun(at);
                 }
-                if draining && raw.saturating_sub(self.map.slip()) >= self.drain_until {
+                if draining && raw as i64 - self.map.slip() >= self.drain_until as i64 {
                     self.drained();
                     return;
                 }
@@ -1664,7 +1827,7 @@ mod tests {
     #[test]
     fn positions_become_pairs_only_when_they_mean_a_frame_at_the_dac() {
         let mut m = PositionMap::shared(48_000, 480);
-        assert_eq!(m.space(Some(1_920), 2_400, 0), None);
+        m.space(Some(1_920), 2_400, 0);
         // Nothing at the DAC yet.
         assert_eq!(m.reading(0, 1_000, 2_400, 2_880).pair, None);
         assert_eq!(m.reading(100, 2_000, 2_400, 2_880).pair, pair(100, 2_000));
@@ -1682,31 +1845,128 @@ mod tests {
         );
     }
 
+    /// A shared engine as the position map sees it, one wake per 10 ms pass of 480 frames:
+    /// the engine has read `480 k - lost`, the device holds `held` more, and the DAC is 1440
+    /// frames behind what the engine read, plus `extra` the position counted that was silence.
+    struct Engine {
+        m: PositionMap,
+        k: u64,
+        lost: u64,
+        extra: u64,
+    }
+
+    impl Engine {
+        fn new() -> Engine {
+            Engine {
+                m: PositionMap::shared(48_000, 480),
+                k: 0,
+                lost: 0,
+                extra: 0,
+            }
+        }
+
+        /// The next wake; `stall`: a pass found nothing (the engine read nothing, the DAC
+        /// stopped).
+        fn wake(&mut self, held: u32, stall: bool) -> (Reading, u64) {
+            self.k += 1;
+            if stall {
+                self.lost += 480;
+            }
+            let t = self.k * 10_000_000;
+            let read = (480 * self.k).saturating_sub(self.lost);
+            let before = read + u64::from(held);
+            self.m.space(Some(held), before, t);
+            self.m.filled(t);
+            let raw = (read + self.extra).saturating_sub(1_440);
+            (self.m.reading(raw, t, before, before + 480), before)
+        }
+    }
+
     #[test]
-    fn shared_mode_runs_dry_when_the_engine_took_everything() {
-        let mut m = PositionMap::shared(48_000, 480);
-        assert_eq!(
-            m.space(Some(0), 0, 0),
-            None,
-            "before anything was handed over"
-        );
-        assert_eq!(m.space(Some(480), 2_400, 0), None);
-        assert_eq!(
-            m.space(Some(0), 4_800, 0),
-            Some(4_800),
-            "all taken: dry at 4800"
-        );
-        assert_eq!(m.space(Some(0), 4_800, 0), None, "once per dry stretch");
-        // Pairs up to where it ran dry are no longer trusted (the DAC may be in the gap).
-        assert_eq!(m.reading(4_700, 9_000, 4_800, 7_200).pair, None);
-        assert_eq!(m.reading(4_800, 9_500, 4_800, 7_200).pair, None);
-        assert_eq!(
-            m.reading(4_900, 12_000, 7_200, 7_680).pair,
-            pair(4_900, 12_000)
-        );
-        assert_eq!(m.space(Some(2_000), 7_680, 0), None);
-        assert_eq!(m.space(Some(0), 9_000, 0), Some(9_000), "a second stretch");
-        assert_eq!(m.slip(), 0, "shared mode never slips");
+    fn shared_mode_takes_no_suspect_before_it_knows_the_usual_pipeline() {
+        // The engine reads a burst at a start (here all but 300 frames by the first wake):
+        // little held, but no gap, and nothing to compare with yet.
+        let mut e = Engine::new();
+        for k in 1..=60 {
+            let (r, _) = e.wake(if k == 1 { 300 } else { 1_920 }, false);
+            assert_eq!(r.xrun, None, "wake {k}");
+        }
+        assert_eq!(e.m.slip(), 0);
+    }
+
+    #[test]
+    fn shared_mode_settles_a_near_miss_without_an_xrun() {
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        // Nothing held at a wake, but the engine found what it needed: the position kept
+        // time and the pipeline is as usual.
+        let (r, _) = e.wake(0, false);
+        assert_eq!((r.xrun, r.pair), (None, None), "withheld while it settles");
+        let mut first = None;
+        for k in 42..=80 {
+            let (r, _) = e.wake(1_920, false);
+            assert_eq!(r.xrun, None, "wake {k}");
+            if r.pair.is_some() && first.is_none() {
+                first = Some(k);
+            }
+        }
+        // 100 ms to refill, then 16 samples: pairs again from wake 66.
+        assert_eq!(first, Some(66));
+        assert_eq!(e.m.slip(), 0);
+    }
+
+    #[test]
+    fn shared_mode_takes_off_silence_the_position_counted() {
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        // A pass found 280 frames of a period: the engine played 200 frames of silence, and
+        // the position counted them as the stream's.
+        e.extra = 200;
+        let (r, at) = e.wake(0, false);
+        assert_eq!(r.xrun, None, "only a suspect so far");
+        let mut said = None;
+        for k in 42..=70 {
+            let (r, _) = e.wake(1_920, false);
+            if let Some(x) = r.xrun {
+                said = Some((k, x));
+            }
+            if k >= 66 {
+                let p = r.pair.expect("pairs again once settled");
+                assert_eq!(p.frame, 480 * k - 1_440, "the true frame at the DAC");
+            }
+        }
+        assert_eq!(said, Some((66, at)), "the gap, where it began");
+        assert_eq!(e.m.slip(), 200);
+    }
+
+    #[test]
+    fn shared_mode_says_a_gap_at_once_when_the_position_falls_behind_time() {
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        // Nothing held, and a pass found nothing: the DAC sat 10 ms in silence.
+        let (r, at) = e.wake(0, true);
+        assert_eq!(r.xrun, Some(at), "certain at once");
+        let mut more = 0;
+        for k in 42..=80 {
+            let (r, _) = e.wake(1_920, false);
+            more += usize::from(r.xrun.is_some());
+            if k >= 66 {
+                assert!(r.pair.is_some(), "wake {k}");
+            }
+        }
+        assert_eq!(more, 0, "one xrun for one gap");
+        assert_eq!(e.m.slip(), 0, "a position that stalls needs no slip");
+        // Exclusive mode judges by its positions alone.
+        let mut x = PositionMap::exclusive(48_000, 480);
+        x.space(None, 960, 0);
+        x.filled(500_000_000);
+        assert_eq!(x.slip(), 0);
     }
 
     #[test]
@@ -1716,7 +1976,7 @@ mod tests {
         // j x 480 - 48: a lead of 528.
         const P: u64 = 480;
         let mut m = PositionMap::exclusive(48_000, 480);
-        assert_eq!(m.space(None, P, 0), None);
+        m.space(None, P, 0);
         assert_eq!(
             m.reading(0, 0, P, 2 * P).pair,
             None,
@@ -1734,7 +1994,7 @@ mod tests {
         // and the buffer this fill writes plays at pass 13.
         let r = m.reading(11 * P - 48 + 720, 115_000, 12 * P, 13 * P);
         assert_eq!(r.xrun, Some(12 * P));
-        assert_eq!(m.slip(), P, "one buffer played again");
+        assert_eq!(m.slip() as u64, P, "one buffer played again");
         assert_eq!(r.pair, None, "the DAC is in the stale buffer");
         // Pass 13: the DAC is still in the stale buffer (our frames up to the gap are not at
         // the DAC): no pair. Pass 14: our frames again, a buffer later than they would be.
@@ -1749,7 +2009,7 @@ mod tests {
         // counted, but nothing slipped.
         let r = m.reading(20 * P - 48 + 446, 209_300, 20 * P, 21 * P);
         assert_eq!(r.xrun, Some(20 * P));
-        assert_eq!(m.slip(), P);
+        assert_eq!(m.slip() as u64, P);
         let r = m.reading(21 * P - 48, 210_000, 21 * P, 22 * P);
         assert_eq!(r.xrun, None);
         assert_eq!(r.pair, None, "up to the near miss, not trusted");
@@ -1761,39 +2021,17 @@ mod tests {
         // A replay that looked like a near miss (470 frames late): counted short, and the next
         // period's lead, a buffer short, adds the buffer without a second xrun.
         let r = m.reading(30 * P - 48 + 470, 309_800, 30 * P, 31 * P);
-        assert_eq!((r.xrun, m.slip()), (Some(30 * P), P));
+        assert_eq!((r.xrun, m.slip() as u64), (Some(30 * P), P));
         let r = m.reading(31 * P - 48 + P, 310_000, 31 * P, 32 * P);
-        assert_eq!((r.xrun, m.slip()), (None, 2 * P));
+        assert_eq!((r.xrun, m.slip() as u64), (None, 2 * P));
         // Two buffers late at once: two slipped.
         for j in 32..=40 {
             m.reading(j * P - 48 + P, j * 10_000, j * P, (j + 1) * P);
         }
         let r = m.reading(41 * P - 48 + P + 1_200, 425_000, 41 * P, 42 * P);
-        assert_eq!((r.xrun, m.slip()), (Some(41 * P), 4 * P));
+        assert_eq!((r.xrun, m.slip() as u64), (Some(41 * P), 4 * P));
         m.restart();
-        assert_eq!(m.slip(), 0);
-    }
-
-    #[test]
-    fn shared_mode_runs_dry_when_a_fill_outlasts_what_the_device_held() {
-        let mut m = PositionMap::shared(48_000, 480);
-        // 1920 frames held (four 10 ms periods): the engine's four passes in a fill of 39 ms
-        // find a whole period each; in one of 40 ms a fifth pass can come and find nothing.
-        assert_eq!(m.space(Some(1_920), 2_400, 1_000_000), None);
-        assert_eq!(m.filled(40_000_000), None);
-        assert_eq!(m.filled(99_000_000), None, "one fill, one judgement");
-        assert_eq!(m.space(Some(1_920), 2_880, 100_000_000), None);
-        assert_eq!(m.filled(140_000_000), Some(2_880));
-        // The next wake finds what was just handed over: not dry any more.
-        assert_eq!(m.space(Some(480), 3_360, 141_000_000), None);
-        assert_eq!(m.filled(141_100_000), None);
-        // Less than a period held: the engine's next pass, if it comes during the fill, starves.
-        assert_eq!(m.space(Some(300), 3_840, 150_000_000), None);
-        assert_eq!(m.filled(150_000_001), Some(3_840));
-        // Exclusive mode judges by its positions instead.
-        let mut x = PositionMap::exclusive(48_000, 480);
-        assert_eq!(x.space(None, 960, 0), None);
-        assert_eq!(x.filled(500_000_000), None);
+        assert_eq!(m.slip() as u64, 0);
     }
 
     #[test]

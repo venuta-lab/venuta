@@ -179,7 +179,8 @@ fn the_wrong_order_is_refused() {
 // --- Running dry ----------------------------------------------------------------------------
 
 /// For `steps` periods of 10 ms: every published pair says when its frame was heard (within one
-/// frame), the presentation never goes back, and it keeps moving.
+/// frame), the presentation never goes back, and it keeps moving (pairs are held back while a
+/// suspected gap settles, about a quarter of a second).
 fn pairs_are_true(
     out: &PullOutput<FakeOpener>,
     fake: &Arc<Mutex<Fake>>,
@@ -213,7 +214,7 @@ fn pairs_are_true(
         last = Some(p.frame);
     }
     assert!(
-        fresh * 10 > steps * 9,
+        fresh * 10 > steps * 8,
         "only {fresh} new pairs in {steps} periods"
     );
 }
@@ -415,6 +416,73 @@ fn exclusive_mode_counts_two_buffers_played_again_and_a_second_gap() {
         .filter(|e| matches!(e, OutputEvent::Xrun { .. }))
         .count();
     assert_eq!(xruns, 2, "one xrun for each gap");
+    out.stop();
+    out.close();
+}
+
+/// What the owner's laptop showed (shared mode, Realtek with Nahimic): the engine reads a burst
+/// at a start, filling its pipeline, so at the first wake the device holds less than a period
+/// with no gap at all. That is no xrun; the one late period is one.
+#[test]
+fn a_start_whose_engine_reads_a_burst_is_no_xrun_and_a_late_period_is_one() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        // 2400 handed over before the start; the engine takes 1500 at once and 480 at its
+        // first pass: 420 held at the first wake. Then a render call 150 ms late, 2 s in.
+        prime: 1_500,
+        late: vec![(200, 150 * MS)],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    pairs_are_true(&out, &fake, &clock, 400);
+    let f = fake.lock().unwrap();
+    assert_eq!(
+        f.gaps.len(),
+        1,
+        "one gap, the late period's, none at the start"
+    );
+    let gap_at = f.gap_at.expect("the late period ran the DAC dry");
+    drop(f);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen: Vec<OutputEvent> = events.try_iter().collect();
+    assert_eq!(
+        seen,
+        [OutputEvent::Xrun { at: gap_at }],
+        "no xrun at the start"
+    );
+    out.stop();
+    out.close();
+}
+
+/// A position that counts the silence of a pass that found part of a period as the stream's
+/// frames (the other way a shared stream's position can behave in a gap): the slip is measured
+/// from the engine's pipeline and taken off, so the pairs stay true after the gap.
+#[test]
+fn silence_the_position_counts_in_a_gap_is_taken_off() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        // A buffer that isn't whole periods, so the last pass before the gap finds part of one.
+        buffer: 2_200,
+        counts_partial: true,
+        late: vec![(100, 80 * MS)],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    pairs_are_true(&out, &fake, &clock, 400);
+    {
+        let f = fake.lock().unwrap();
+        let gap: u64 = f.gaps.iter().map(|g| g.end - g.start).sum();
+        let uncounted: u64 = f.uncounted.iter().map(|g| g.end - g.start).sum();
+        assert!(gap > uncounted, "the position counted some silence");
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let xruns = events
+        .try_iter()
+        .filter(|e| matches!(e, OutputEvent::Xrun { .. }))
+        .count();
+    assert_eq!(xruns, 1);
     out.stop();
     out.close();
 }

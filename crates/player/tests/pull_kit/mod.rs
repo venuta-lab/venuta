@@ -89,6 +89,11 @@ pub struct FakeCfg {
     pub silent_after: Option<u64>,
     /// Every n-th position reading can't be given (`S_FALSE`); 0: never.
     pub no_reading_every: u32,
+    /// Shared: frames the engine reads at once at a start (filling its pipeline), before its
+    /// first pass.
+    pub prime: u32,
+    /// Shared: the position counts the silence of a pass that found part of a period.
+    pub counts_partial: bool,
     /// From this many device wakes on, the render thread's own work is watched.
     pub watch_from: Option<u64>,
 }
@@ -105,6 +110,8 @@ impl Default for FakeCfg {
             lost_after: None,
             silent_after: None,
             no_reading_every: 0,
+            prime: 0,
+            counts_partial: false,
             watch_from: None,
         }
     }
@@ -145,6 +152,12 @@ pub struct Fake {
     pub spans: Vec<(u64, u64, u64)>,
     /// Ticks of each start that played no frame of ours (silence, or a stale buffer).
     pub gaps: Vec<Range<u64>>,
+    /// Shared: ticks the position does not count (silence).
+    pub uncounted: Vec<Range<u64>>,
+    /// Shared: frames the engine read at this start, before its first pass.
+    pub prime: u32,
+    /// Shared: what the device held at the first wake after the first start.
+    pub first_held: Option<u32>,
     /// Frames handed over when the first gap began.
     pub gap_at: Option<u64>,
     pub readings: u32,
@@ -212,7 +225,7 @@ impl Fake {
 
     pub fn pass(&mut self, k: u64) {
         let p = u64::from(self.cfg.period);
-        let tick = k * p;
+        let tick = u64::from(self.prime) + k * p;
         let mut played: Vec<i32> = Vec::new();
         if self.cfg.exclusive {
             let half = (k % 2) as usize;
@@ -237,6 +250,9 @@ impl Fake {
             }
             if n < p {
                 self.gap(tick + n..tick + p);
+                if n == 0 || !self.cfg.counts_partial {
+                    self.uncounted.push(tick + n..tick + p);
+                }
                 played.resize(p as usize * 2, 0);
             }
         }
@@ -265,23 +281,27 @@ impl Fake {
             return 0;
         }
         let t = (now - self.start_ns) as f64 * self.tps() / 1e9 - f64::from(self.cfg.latency);
-        ((t.floor() as u64) + 1).min(self.passes * u64::from(self.cfg.period))
+        ((t.floor() as u64) + 1)
+            .min(u64::from(self.prime) + self.passes * u64::from(self.cfg.period))
     }
 
-    /// What the device reports: shared, the frames of ours at the DAC (it stalls in a gap);
-    /// exclusive, every frame the hardware played (it runs on over a stale buffer).
+    /// What the device reports: shared, the frames at the DAC less the passes that found
+    /// nothing (it stalls in a gap; with `counts_partial`, the silence of a pass that found
+    /// part of a period is counted as frames); exclusive, every frame the hardware played (it
+    /// runs on over a stale buffer).
     pub fn raw(&self, now: u64) -> u64 {
         let ticks = self.ticks_heard(now);
         if self.cfg.exclusive {
             return ticks;
         }
-        self.spans
+        let silent: u64 = self
+            .uncounted
             .iter()
-            .map(|&(_, n, tick)| ticks.saturating_sub(tick).min(n))
-            .sum()
+            .map(|r| ticks.min(r.end).saturating_sub(r.start))
+            .sum();
+        ticks - silent
     }
 }
-
 pub struct FakeDevice {
     pub fake: Arc<Mutex<Fake>>,
     pub clock: SimOrReal,
@@ -370,6 +390,9 @@ impl PullDevice for FakeDevice {
             });
         }
         let held = (f.written - f.taken) as u32;
+        if f.started && f.first_held.is_none() {
+            f.first_held = Some(held);
+        }
         Ok(Space {
             free: f.cfg.buffer - held,
             held: Some(held),
@@ -456,6 +479,7 @@ impl PullDevice for FakeDevice {
         f.starts += 1;
         f.spans.clear();
         f.gaps.clear();
+        f.uncounted.clear();
         let tps = f.tps();
         let start = f.heard_ns(0).round() as u64;
         f.runs.push(Run {
@@ -470,6 +494,22 @@ impl PullDevice for FakeDevice {
         f.fresh = 0;
         if let Some(r) = f.runs.last_mut() {
             r.stale = stale;
+        }
+        // The engine fills its pipeline at the start: a burst read before its first pass.
+        let burst = if f.cfg.exclusive {
+            0
+        } else {
+            (f.fifo.len() as u64 / 2).min(u64::from(f.cfg.prime))
+        };
+        f.prime = burst as u32;
+        if burst > 0 {
+            let taken = f.taken;
+            f.spans.push((taken, burst, 0));
+            f.taken += burst;
+            let s: Vec<i32> = f.fifo.drain(..burst as usize * 2).collect();
+            if let Some(r) = f.runs.last_mut() {
+                r.samples.extend_from_slice(&s);
+            }
         }
         f.advance(now);
         Ok(())
@@ -574,8 +614,8 @@ impl PullOpener for FakeOpener {
         } else {
             (
                 PositionMap::shared(RATE, c.period),
-                c.buffer + c.period + c.latency,
-                c.period + c.latency,
+                c.buffer + c.period + c.latency + c.prime,
+                c.period + c.latency + c.prime,
             )
         };
         Ok(Opened {
