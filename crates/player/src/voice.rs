@@ -853,7 +853,10 @@ mod tests {
             .collect();
         assert_eq!(kept[..40], seen[..], "block by block, as handed over");
         let later = v.loudness(seen[10].0 + 1);
-        assert_eq!(later[0].first_frame, seen[10].0, "from the block holding the frame");
+        assert_eq!(
+            later[0].first_frame, seen[10].0,
+            "from the block holding the frame"
+        );
     }
 
     #[test]
