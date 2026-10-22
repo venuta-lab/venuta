@@ -613,6 +613,14 @@ pub struct Reading {
 /// frames `render` was given. The count can only come short (by a wake's usual delay), and a
 /// short count shows as a lead a buffer short at the next period, which adds it.
 ///
+/// Exclusive mode on a device that queues what it is given (three events in a row less than
+/// half a buffer apart: the owner's Realtek laptop takes ten buffers at a start, then signals
+/// unevenly, 0.1 to 75 ms apart, keeping about 100 ms queued): the lead says nothing of
+/// lateness, only of the queue. The DAC runs dry when it reaches what was handed over (the
+/// position at or past it is certain; within an eighth of a buffer, a suspect), and the
+/// position runs on through the silence, which the settle (as shared mode's, on the queue's
+/// depth by the device's count) measures as a slip.
+///
 /// Pairs: none while nothing is at the DAC yet (position 0), none going back, none at or past
 /// what was handed over before this fill, and after a gap none for frames up to it (the DAC
 /// may be in the gap, or in a stale buffer, then).
@@ -640,6 +648,11 @@ pub struct PositionMap {
     watch: Option<Watch>,
     /// Why the last reading decided as it did.
     why: Why,
+    /// Exclusive mode: the device queues what it is given (see `note_wake`), and the wakes
+    /// that tell.
+    queued: bool,
+    short_wakes: u32,
+    last_wake_ns: Option<u64>,
 }
 
 /// Samples kept for a usual value.
@@ -667,6 +680,7 @@ pub const WHY_SETTLED: u32 = 16;
 pub const WHY_COUNTED: u32 = 32;
 pub const WHY_DRY: u32 = 64;
 pub const WHY_WATCHING: u32 = 128;
+pub const WHY_QUEUED: u32 = 256;
 /// Shared mode: the DAC moves this long before the pipeline counts as usual, and after a
 /// suspect the pipeline has this long to refill before it is judged.
 const SETTLE_NS: u64 = 100_000_000;
@@ -804,8 +818,8 @@ impl PositionMap {
         }
     }
 
-    /// Exclusive mode: the buffers the hardware played again since the last reading, and
-    /// whether this wake was (nearly) too late.
+    /// Exclusive mode, a double buffer: the buffers the hardware played again since the last
+    /// reading, and whether this wake was (nearly) too late.
     fn replays(&mut self, raw: u64, before: u64) -> (i64, bool) {
         let p = i64::from(self.period);
         let lead = before as i64 - (raw as i64 - self.slip);
@@ -829,6 +843,121 @@ impl PositionMap {
         (replayed, replayed > 0 || near)
     }
 
+    /// Exclusive mode: a device whose events come three times in a row less than half a buffer
+    /// apart queues what it is given (a double buffer can't: each of its events is a buffer
+    /// played). From then on it is judged as a queue.
+    fn note_wake(&mut self, time_ns: u64) {
+        let half_ns = u64::from(self.period) * 500_000_000 / u64::from(self.rate);
+        if let Some(lt) = self.last_wake_ns {
+            if time_ns.saturating_sub(lt) < half_ns {
+                self.short_wakes += 1;
+            } else {
+                self.short_wakes = 0;
+            }
+        }
+        self.last_wake_ns = Some(time_ns);
+        if !self.queued && self.short_wakes >= 3 {
+            self.queued = true;
+            // The double buffer's usual lead means nothing for a queue.
+            self.usual = Ring::default();
+        }
+    }
+
+    /// A gap that is certain, beginning at `at`: said once per dry stretch, and watched until
+    /// the device's steady value (pipeline or queue) settles.
+    fn certain(&mut self, at: u64, time_ns: u64) -> Option<u64> {
+        self.why.flags |= WHY_CERTAIN;
+        let at = self.watch.map_or(at, |w| w.at);
+        let xrun = self.gap(at);
+        match &mut self.watch {
+            Some(w) => w.certain = true,
+            None => {
+                self.watch = Some(Watch {
+                    at,
+                    certain: true,
+                    from_ns: time_ns + SETTLE_NS,
+                    after: Ring::default(),
+                });
+            }
+        }
+        xrun
+    }
+
+    /// A sample of the steady value (shared mode: the pipeline; a queue: frames handed over
+    /// ahead of the DAC): kept as the usual, or, while a gap is watched, taken until it settles.
+    /// Settled, the difference from the usual is silence the position counted: a slip.
+    fn settle(&mut self, sample: i64, time_ns: u64) -> Option<u64> {
+        self.why.value = sample;
+        self.why.usual = self.usual.median().unwrap_or(i64::MIN);
+        let Some(w) = &mut self.watch else {
+            if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
+                self.usual.push(sample);
+            }
+            return None;
+        };
+        if time_ns >= w.from_ns {
+            w.after.push(sample);
+        }
+        if !w.after.full() {
+            return None;
+        }
+        let w = *w;
+        self.watch = None;
+        let shift = match (self.usual.median(), w.after.median()) {
+            (Some(u), Some(a)) if self.usual.full() => u - a,
+            _ => 0,
+        };
+        let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
+        self.why.flags |= WHY_SETTLED;
+        self.why.value = shift;
+        if counted {
+            self.why.flags |= WHY_COUNTED;
+            self.slip += shift;
+        }
+        let xrun = if counted || w.certain {
+            self.gap(w.at)
+        } else {
+            None
+        };
+        // Settled: the value from now on is the usual one; a new gap is new.
+        self.usual = w.after;
+        self.dry = false;
+        xrun
+    }
+
+    /// Exclusive mode, a queue: the DAC runs dry only when it reaches what was handed over
+    /// (the position at or past it: certain; within an eighth of a buffer of it: a suspect).
+    /// What it counts past that is silence: the settle measures it as a slip.
+    fn queue_reading(&mut self, raw: u64, time_ns: u64, before: u64) -> Option<u64> {
+        let mut xrun = None;
+        if raw > 0 && self.moving_since.is_none() {
+            self.moving_since = Some(time_ns);
+        }
+        if before == 0 {
+            return None;
+        }
+        let lead = before as i64 - (raw as i64 - self.slip);
+        self.why.delta = lead;
+        if lead <= 0 {
+            self.why.flags |= WHY_PASSED;
+            xrun = self.certain(before, time_ns);
+        } else if lead <= i64::from(self.period) / 8 {
+            self.why.flags |= WHY_NEAR;
+            if self.watch.is_none() {
+                self.watch = Some(Watch {
+                    at: before,
+                    certain: false,
+                    from_ns: time_ns + SETTLE_NS,
+                    after: Ring::default(),
+                });
+            }
+        }
+        // The queue's depth by the device's own count (the slip apart): steady, less the
+        // silence the position counts in a gap.
+        let settled = self.settle(before as i64 - raw as i64, time_ns);
+        xrun.or(settled)
+    }
+
     /// Shared mode: what this reading says of gaps and the pipeline.
     fn shared_reading(&mut self, raw: u64, time_ns: u64) -> Option<u64> {
         let mut xrun = None;
@@ -840,22 +969,7 @@ impl PositionMap {
             let lag = pr as f64 + self.frames_of_ns(time_ns - pt) - raw as f64;
             self.why.delta = lag.round() as i64;
             if lag > f64::from(self.rate) / 1_000.0 {
-                self.why.flags |= WHY_CERTAIN;
-            }
-            if lag > f64::from(self.rate) / 1_000.0 {
-                let at = self.watch.map_or(raw, |w| w.at);
-                xrun = self.gap(at);
-                match &mut self.watch {
-                    Some(w) => w.certain = true,
-                    None => {
-                        self.watch = Some(Watch {
-                            at,
-                            certain: true,
-                            from_ns: time_ns + SETTLE_NS,
-                            after: Ring::default(),
-                        });
-                    }
-                }
+                xrun = self.certain(raw, time_ns);
             }
         }
         if raw > 0 && self.moving_since.is_none() {
@@ -866,45 +980,8 @@ impl PositionMap {
         let Some(read) = self.read.take() else {
             return xrun;
         };
-        let pipeline = read as i64 - raw as i64;
-        self.why.value = pipeline;
-        self.why.usual = self.usual.median().unwrap_or(i64::MIN);
-        match &mut self.watch {
-            None => {
-                if self.moving_since.is_some_and(|m| time_ns >= m + SETTLE_NS) {
-                    self.usual.push(pipeline);
-                }
-            }
-            Some(w) => {
-                if time_ns >= w.from_ns {
-                    w.after.push(pipeline);
-                }
-                if w.after.full() {
-                    let w = *w;
-                    self.watch = None;
-                    let shift = match (self.usual.median(), w.after.median()) {
-                        (Some(u), Some(a)) if self.usual.full() => u - a,
-                        _ => 0,
-                    };
-                    let counted = (shift.unsigned_abs() as f64) * 4_000.0 > f64::from(self.rate);
-                    self.why.flags |= WHY_SETTLED;
-                    self.why.value = shift;
-                    if counted {
-                        self.why.flags |= WHY_COUNTED;
-                        self.slip += shift;
-                    }
-                    if (counted || w.certain)
-                        && let Some(at) = self.gap(w.at)
-                    {
-                        xrun = Some(at);
-                    }
-                    // Settled: the pipeline from now on is the usual one; a new gap is new.
-                    self.usual = w.after;
-                    self.dry = false;
-                }
-            }
-        }
-        xrun
+        let settled = self.settle(read as i64 - raw as i64, time_ns);
+        xrun.or(settled)
     }
 
     /// A reading after the fill: `raw` frames have reached the DAC (the device's count since the
@@ -917,7 +994,11 @@ impl PositionMap {
         };
         let mut xrun = None;
         if self.exclusive {
-            if before > 0 {
+            self.note_wake(time_ns);
+            if self.queued {
+                self.why.flags |= WHY_QUEUED;
+                xrun = self.queue_reading(raw, time_ns, before);
+            } else if before > 0 {
                 let (replayed, dry) = self.replays(raw, before);
                 if dry {
                     xrun = self.gap(before);
@@ -2218,52 +2299,52 @@ mod tests {
             "nothing at the DAC yet"
         );
         for j in 1..=10 {
-            let r = m.reading(j * P - 48, j * 10_000, (j + 1) * P, (j + 2) * P);
+            let r = m.reading(j * P - 48, j * 10_000_000, (j + 1) * P, (j + 2) * P);
             assert_eq!(
                 (r.pair, r.xrun),
-                (pair(j * P - 48, j * 10_000), None),
+                (pair(j * P - 48, j * 10_000_000), None),
                 "pass {j}"
             );
         }
         // The wake for pass 11 comes 15 ms (720 frames) late: pass 12 played a stale buffer
         // and the buffer this fill writes plays at pass 13.
-        let r = m.reading(11 * P - 48 + 720, 115_000, 12 * P, 13 * P);
+        let r = m.reading(11 * P - 48 + 720, 115_000_000, 12 * P, 13 * P);
         assert_eq!(r.xrun, Some(12 * P));
         assert_eq!(m.slip() as u64, P, "one buffer played again");
         assert_eq!(r.pair, None, "the DAC is in the stale buffer");
         // Pass 13: the DAC is still in the stale buffer (our frames up to the gap are not at
         // the DAC): no pair. Pass 14: our frames again, a buffer later than they would be.
-        let r = m.reading(13 * P - 48, 130_000, 13 * P, 14 * P);
+        let r = m.reading(13 * P - 48, 130_000_000, 13 * P, 14 * P);
         assert_eq!((r.pair, r.xrun), (None, None));
-        let r = m.reading(14 * P - 48, 140_000, 14 * P, 15 * P);
-        assert_eq!((r.pair, r.xrun), (pair(13 * P - 48, 140_000), None));
+        let r = m.reading(14 * P - 48, 140_000_000, 14 * P, 15 * P);
+        assert_eq!((r.pair, r.xrun), (pair(13 * P - 48, 140_000_000), None));
         for j in 15..=19 {
-            m.reading(j * P - 48, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48, j * 10_000_000, j * P, (j + 1) * P);
         }
         // Pass 20, 446 frames late (within an eighth of a buffer of a replay): a near miss is
         // counted, but nothing slipped.
-        let r = m.reading(20 * P - 48 + 446, 209_300, 20 * P, 21 * P);
+        let r = m.reading(20 * P - 48 + 446, 209_300_000, 20 * P, 21 * P);
         assert_eq!(r.xrun, Some(20 * P));
         assert_eq!(m.slip() as u64, P);
-        let r = m.reading(21 * P - 48, 210_000, 21 * P, 22 * P);
+        let r = m.reading(21 * P - 48, 210_000_000, 21 * P, 22 * P);
         assert_eq!(r.xrun, None);
         assert_eq!(r.pair, None, "up to the near miss, not trusted");
-        let r = m.reading(22 * P - 48, 220_000, 22 * P, 23 * P);
-        assert_eq!(r.pair, pair(21 * P - 48, 220_000));
+        let r = m.reading(22 * P - 48, 220_000_000, 22 * P, 23 * P);
+        assert_eq!(r.pair, pair(21 * P - 48, 220_000_000));
         for j in 23..=29 {
-            m.reading(j * P - 48, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48, j * 10_000_000, j * P, (j + 1) * P);
         }
         // A replay that looked like a near miss (470 frames late): counted short, and the next
         // period's lead, a buffer short, adds the buffer without a second xrun.
-        let r = m.reading(30 * P - 48 + 470, 309_800, 30 * P, 31 * P);
+        let r = m.reading(30 * P - 48 + 470, 309_800_000, 30 * P, 31 * P);
         assert_eq!((r.xrun, m.slip() as u64), (Some(30 * P), P));
-        let r = m.reading(31 * P - 48 + P, 310_000, 31 * P, 32 * P);
+        let r = m.reading(31 * P - 48 + P, 310_000_000, 31 * P, 32 * P);
         assert_eq!((r.xrun, m.slip() as u64), (None, 2 * P));
         // Two buffers late at once: two slipped.
         for j in 32..=40 {
-            m.reading(j * P - 48 + P, j * 10_000, j * P, (j + 1) * P);
+            m.reading(j * P - 48 + P, j * 10_000_000, j * P, (j + 1) * P);
         }
-        let r = m.reading(41 * P - 48 + P + 1_200, 425_000, 41 * P, 42 * P);
+        let r = m.reading(41 * P - 48 + P + 1_200, 425_000_000, 41 * P, 42 * P);
         assert_eq!((r.xrun, m.slip() as u64), (Some(41 * P), 4 * P));
         m.restart();
         assert_eq!(m.slip() as u64, 0);

@@ -187,6 +187,17 @@ fn pairs_are_true(
     clock: &SimClock,
     steps: u32,
 ) {
+    pairs_within(out, fake, clock, steps, 1.0);
+}
+
+/// As `pairs_are_true`, within `frames` frames.
+fn pairs_within(
+    out: &PullOutput<FakeOpener>,
+    fake: &Arc<Mutex<Fake>>,
+    clock: &SimClock,
+    steps: u32,
+    frames: f64,
+) {
     let mut last = None;
     let mut fresh = 0;
     for _ in 0..steps {
@@ -200,7 +211,7 @@ fn pairs_are_true(
             .unwrap_or_else(|| panic!("frame {} at the DAC was never one of ours", p.frame));
         let off = p.time_ns as f64 - heard;
         assert!(
-            off.abs() <= 1e9 / f64::from(RATE) + 1.0,
+            off.abs() <= frames * 1e9 / f64::from(RATE) + 1.0,
             "frame {} said at {} but heard at {heard:.0} ({off:.0} ns)",
             p.frame,
             p.time_ns
@@ -537,4 +548,105 @@ fn a_trace_has_a_row_for_every_device_event_with_the_decisions() {
     let csv = trace.csv();
     assert_eq!(csv.lines().count(), rows.len() + 1);
     assert!(csv.starts_with("wake_ns,filled_ns,free,held,padding,"));
+}
+
+/// The exclusive stream of the owner's Realtek laptop, as traced (WP1c): the device takes ten
+/// 10 ms buffers at once at the start (wakes 0.1 ms apart), then signals whenever it has room
+/// for one, unevenly, with stretches of 30 to 75 ms between events, keeping about 100 ms
+/// queued; its position runs on through silence. None of that is a gap. A wake 150 ms late
+/// (more than the queue) is one: one xrun, at where the frames ran out, and the presentation
+/// true after it, the silence the position counted taken off.
+#[test]
+fn a_queueing_exclusive_device_as_traced_says_one_xrun_for_the_one_real_gap() {
+    let (mut out, fake, clock) = sim_output(FakeCfg {
+        exclusive: true,
+        queue: Some(10),
+        latency: 48,
+        // The driver's own uneven events (as in the trace: 59, 37, 53, 75 ms early on, then
+        // about every 30th event 31 to 35 ms), and the late period, 2 s in.
+        late: vec![
+            (14, 50 * MS),
+            (23, 27 * MS),
+            (27, 43 * MS),
+            (44, 65 * MS),
+            (120, 24 * MS),
+            (150, 25 * MS),
+            (180, 22 * MS),
+            (205, 150 * MS),
+            (260, 25 * MS),
+            (300, 23 * MS),
+            (340, 26 * MS),
+        ],
+        ..FakeCfg::default()
+    });
+    out.open(&want()).unwrap();
+    let events = out.events();
+    out.start(Counts::default().render()).unwrap();
+    // Within two frames: the queue's depth is sampled at the device's own uneven events, so the
+    // silence it measures can be a frame out (20 µs).
+    pairs_within(&out, &fake, &clock, 450, 2.0);
+    let f = fake.lock().unwrap();
+    assert_eq!(f.errors, Vec::<String>::new());
+    assert_eq!(f.gaps.len(), 1, "one real gap: {:?}", f.gaps);
+    let gap_at = f.gap_at.unwrap();
+    drop(f);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen: Vec<OutputEvent> = events.try_iter().collect();
+    assert_eq!(seen, [OutputEvent::Xrun { at: gap_at }]);
+    out.stop();
+    out.close();
+}
+
+/// The two traces of the owner's Realtek laptop speakers (WP1c, `tests/fixtures`), played back
+/// through the position map wake by wake as the render thread saw them: shared mode and
+/// exclusive mode each say one xrun, for the one 150 ms render call (at 96000), and nothing at
+/// the start or for the exclusive driver's uneven events. In exclusive mode the position ran
+/// on 2399 frames past what was handed over, and more until the frames came back; the slip
+/// taken off is that silence.
+#[test]
+fn the_traces_of_the_owners_laptop_say_one_xrun_each() {
+    use player::output::{PositionMap, TRACE_COLUMNS};
+    for (name, exclusive) in [
+        ("realtek-shared-trace.csv", false),
+        ("realtek-exclusive-trace.csv", true),
+    ] {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap();
+        let col = |c: &str| TRACE_COLUMNS.iter().position(|x| *x == c).unwrap();
+        let mut m = if exclusive {
+            PositionMap::exclusive(RATE, 480)
+        } else {
+            PositionMap::shared(RATE, 480)
+        };
+        let mut xruns = Vec::new();
+        for line in text.lines().skip(1) {
+            let r: Vec<i64> = line.split(',').map(|v| v.parse().unwrap()).collect();
+            if r[col("state")] != 1 {
+                continue;
+            }
+            let held = u32::try_from(r[col("held")]).ok();
+            let before = r[col("before")] as u64;
+            m.space(held, before, r[col("wake_ns")] as u64);
+            m.filled(r[col("filled_ns")] as u64);
+            if r[col("pos_ok")] == 1 {
+                let rd = m.reading(
+                    r[col("raw")] as u64,
+                    r[col("pos_ns")] as u64,
+                    before,
+                    r[col("after")] as u64,
+                );
+                xruns.extend(rd.xrun);
+            }
+        }
+        assert_eq!(xruns, [96_000], "{name}");
+        if exclusive {
+            let s = m.slip();
+            eprintln!("{name}: slip {s} frames");
+            assert!((2_399..2_600).contains(&s), "the silence counted: {s}");
+        }
+    }
 }
