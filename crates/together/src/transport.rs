@@ -64,6 +64,9 @@ pub struct Get {
 pub struct MediaStream {
     /// The whole length of what was asked for, when the other side said it.
     pub total: Option<u64>,
+    /// The whole thing's size (the file's, not the range's), when the other side said it: a
+    /// player reading by ranges needs it.
+    pub size: Option<u64>,
     /// Its type, when the other side said it ("audio/flac", "image/jpeg").
     pub mime: Option<String>,
     pub body: Box<dyn MediaRead>,

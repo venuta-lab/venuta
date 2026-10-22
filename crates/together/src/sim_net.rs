@@ -502,15 +502,17 @@ impl Transport for SimTransport {
                 chunks.push((at, c.to_vec()));
             }
             let live = (back.key, back.generation);
-            Ok::<_, Gone>((open_at, (end - from) as u64, chunks, live, mime))
+            let size = body.len() as u64;
+            Ok::<_, Gone>((open_at, (end - from) as u64, chunks, live, mime, size))
         })();
         let tb = self.net.tb.clone();
         let net2 = self.net.clone();
         Box::pin(async move {
-            let (open_at, total, chunks, live, mime) = opened?;
+            let (open_at, total, chunks, live, mime, size) = opened?;
             Wait::until(tb.clone(), open_at).await;
             Ok(MediaStream {
                 total: Some(total),
+                size: Some(size),
                 mime,
                 body: Box::new(SimBody {
                     tb,

@@ -654,6 +654,7 @@ async fn open_media(conn: Connection, get: Get) -> Result<MediaStream, Gone> {
     if get.to.is_some_and(|t| t <= get.from) {
         return Ok(MediaStream {
             total: Some(0),
+            size: None,
             mime: None,
             body: Box::new(Empty),
         });
@@ -677,6 +678,7 @@ async fn open_media(conn: Connection, get: Get) -> Result<MediaStream, Gone> {
     let end = get.to.unwrap_or(size).clamp(from, size);
     Ok(MediaStream {
         total: Some(end - from),
+        size: Some(size),
         mime: head.get("mime").and_then(|m| m.as_str()).map(str::to_owned),
         body: Box::new(Body {
             r: lines.into_inner(),
