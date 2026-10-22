@@ -35,6 +35,7 @@ pub enum Call<I> {
         transition: Transition,
         align: Alignment,
     },
+    Disarm,
     Commit(Anchor),
     Hold(Anchor),
     SetMode(SyncMode),
@@ -192,6 +193,9 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
             align,
         });
     }
+    fn disarm(&self) {
+        self.record(Call::Disarm);
+    }
     fn commit(&self, anchor: Anchor) {
         self.record(Call::Commit(anchor));
     }
@@ -230,6 +234,7 @@ impl<I: Clone + Send + 'static> RoomHandle<I> for FakeRoomHandle<I> {
                         && !s.unable.contains(entry))
                     .then_some(*entry);
                 }
+                Call::Disarm => st.next_ready = None,
                 Call::Commit(a) => {
                     st.entry = Some(a.entry);
                     playing = a.playing;
@@ -295,6 +300,7 @@ pub enum Step<I> {
         transition: Transition,
         align: Alignment,
     },
+    Disarm,
     Commit(Anchor),
     Hold(Anchor),
     SetMode(SyncMode),
@@ -355,6 +361,7 @@ impl<I: Clone + Send + 'static> RoomScript<I> {
                     transition,
                     align,
                 } => h.arm_next(entry, item, boundary_host_us, transition, align),
+                Step::Disarm => h.disarm(),
                 Step::Commit(a) => h.commit(a),
                 Step::Hold(a) => h.hold(a),
                 Step::SetMode(m) => h.set_mode(m),
@@ -458,6 +465,24 @@ mod tests {
     }
 
     const S: u64 = 1_000_000_000;
+
+    #[test]
+    fn a_disarmed_next_is_no_longer_ready() {
+        let clock = SimClock::new(0);
+        let (player, log) = FakeRoomPlayer::<u32>::new(Arc::new(clock.clone()), Script::default());
+        let h = player.attach(clock_map::handle(), SyncMode::Apart);
+        h.arm_next(
+            EntryId(5),
+            5,
+            S as i64,
+            Transition::Gapless,
+            Alignment::EXACT,
+        );
+        assert_eq!(h.status().next_ready, Some(EntryId(5)));
+        h.disarm();
+        assert_eq!(h.status().next_ready, None);
+        assert_eq!(log.just_calls()[2], Call::Disarm);
+    }
 
     #[test]
     fn a_script_plays_its_calls_at_their_host_times_and_watches() {

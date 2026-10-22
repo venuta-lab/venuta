@@ -113,3 +113,131 @@ mod tests {
         assert_eq!(pos, 72_300, "60 s in, plus its 2.3 s to get ready");
     }
 }
+
+/// Protocol 3's timeline arithmetic (section 4.4): leads in µs, an anchor's end and the next
+/// entry's boundary, and where a late joiner comes in. `Anchor` and `Next` replace `Timeline`.
+pub mod v3 {
+    use crate::anchor::{Anchor, Transition};
+
+    /// A start's lead when everyone plays on the host's network, and otherwise.
+    pub const START_FLOOR_ONE_NETWORK_US: i64 = 300_000;
+    pub const START_FLOOR_US: i64 = 500_000;
+    /// A start is never set further ahead than this.
+    pub const START_LEAD_MAX_US: i64 = 2_000_000;
+    /// A pause's lead on one network; otherwise twice the round trip, within these.
+    pub const PAUSE_LEAD_ONE_NETWORK_US: i64 = 150_000;
+    pub const PAUSE_LEAD_MAX_US: i64 = 400_000;
+    /// The next entry is armed this long before its boundary.
+    pub const ARM_AHEAD_US: i64 = 20_000_000;
+    /// A late joiner comes in this much after it expects to be ready (room for the message).
+    pub const CATCH_UP_MARGIN_US: i64 = 300_000;
+
+    /// How far ahead a start, resume, seek or skip is committed: `max(floor, 2 x p95 round trip
+    /// + 50 ms)`, at most 2 s.
+    pub fn start_lead_us(p95_rtt_us: i64, one_network: bool) -> i64 {
+        let floor = if one_network {
+            START_FLOOR_ONE_NETWORK_US
+        } else {
+            START_FLOOR_US
+        };
+        (2 * p95_rtt_us.max(0) + 50_000).clamp(floor, START_LEAD_MAX_US)
+    }
+
+    /// How far ahead a pause is scheduled, so speakers fall silent together (decision D9).
+    pub fn pause_lead_us(rtt_us: i64, one_network: bool) -> i64 {
+        if one_network {
+            PAUSE_LEAD_ONE_NETWORK_US
+        } else {
+            (2 * rtt_us.max(0)).clamp(PAUSE_LEAD_ONE_NETWORK_US, PAUSE_LEAD_MAX_US)
+        }
+    }
+
+    /// How long a transition overlaps the end of a song of `length_us` (at most half of it).
+    pub fn overlap_us(t: Transition, length_us: i64) -> i64 {
+        match t {
+            Transition::Crossfade { ms } => (i64::from(ms) * 1_000).min(length_us.max(0) / 2),
+            Transition::Gapless | Transition::Cut => 0,
+        }
+    }
+
+    /// The host time a playing anchor's entry ends, its reference copy `length_us` long.
+    pub fn end_us(a: &Anchor, length_us: i64) -> Option<i64> {
+        a.playing.then(|| a.host_us + (length_us - a.content_us))
+    }
+
+    /// The host time the next entry begins (or its crossfade begins).
+    pub fn boundary_us(a: &Anchor, length_us: i64, t: Transition) -> Option<i64> {
+        end_us(a, length_us).map(|end| end - overlap_us(t, length_us))
+    }
+
+    /// A late joiner (or one catching up) that needs `ready_in_us` to get ready: the room's
+    /// content place and the host time it comes in at.
+    pub fn catch_up(a: &Anchor, now_us: i64, ready_in_us: i64) -> (i64, i64) {
+        let at = now_us + ready_in_us.max(0) + CATCH_UP_MARGIN_US;
+        (a.content_at(at), at)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::anchor::EntryId;
+
+        fn playing() -> Anchor {
+            Anchor {
+                entry: EntryId(4),
+                content_us: 10_000_000,
+                host_us: 1_000_000,
+                playing: true,
+                seq: 1,
+            }
+        }
+
+        #[test]
+        fn starts_lead_by_the_slowest_round_trip_within_their_floor_and_cap() {
+            assert_eq!(start_lead_us(2_000, true), 300_000, "one Wi-Fi: the floor");
+            assert_eq!(start_lead_us(2_000, false), 500_000);
+            assert_eq!(start_lead_us(300_000, false), 650_000, "2 x 300 ms + 50 ms");
+            assert_eq!(start_lead_us(5_000_000, false), 2_000_000, "never over 2 s");
+        }
+
+        #[test]
+        fn pauses_lead_less() {
+            assert_eq!(pause_lead_us(90_000, true), 150_000);
+            assert_eq!(pause_lead_us(40_000, false), 150_000);
+            assert_eq!(pause_lead_us(120_000, false), 240_000);
+            assert_eq!(pause_lead_us(900_000, false), 400_000);
+        }
+
+        #[test]
+        fn the_boundary_is_the_reference_end_less_the_crossfade() {
+            let a = playing();
+            // 200 s long, 10 s in at 1 s: it ends at 191 s.
+            assert_eq!(end_us(&a, 200_000_000), Some(191_000_000));
+            assert_eq!(
+                boundary_us(&a, 200_000_000, Transition::Gapless),
+                Some(191_000_000)
+            );
+            assert_eq!(
+                boundary_us(&a, 200_000_000, Transition::Crossfade { ms: 4_000 }),
+                Some(187_000_000)
+            );
+            assert_eq!(
+                overlap_us(Transition::Crossfade { ms: 8_000 }, 6_000_000),
+                3_000_000,
+                "never more than half a short song"
+            );
+            let held = Anchor {
+                playing: false,
+                ..a
+            };
+            assert_eq!(end_us(&held, 200_000_000), None, "a held song doesn't end");
+        }
+
+        #[test]
+        fn a_late_joiner_lands_where_the_room_will_be() {
+            let (content, at) = catch_up(&playing(), 61_000_000, 2_000_000);
+            assert_eq!(at, 63_300_000);
+            assert_eq!(content, 72_300_000, "60 s in, plus its 2.3 s to get ready");
+        }
+    }
+}

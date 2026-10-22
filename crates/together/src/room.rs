@@ -10,6 +10,9 @@
 //! Pure: the time is passed in (the host's clock, microseconds), and what changed is returned
 //! for the app to send.
 
+/// Room v2, on protocol 3, beside this one until the live sessions move to it (R2).
+pub mod v2;
+
 use crate::MAX_PEOPLE;
 use crate::invite::proof_ok;
 use crate::proto::{Action, Activity, Hearing, MAX_QUEUE, Member, Role, RoomView, Song};
@@ -254,6 +257,18 @@ impl Room {
             prep.waiting.remove(&id);
         }
         Changes::room()
+    }
+
+    /// Heard from again on the same connection (their pings came back after 5 s of silence):
+    /// no longer away. A reconnect comes back through `knock` instead.
+    pub fn back(&mut self, id: u32) -> Changes {
+        match self.person(id) {
+            Some(p) if p.away => {
+                p.away = false;
+                Changes::room()
+            }
+            _ => Changes::default(),
+        }
     }
 
     pub fn set_role(&mut self, id: u32, role: Role) -> Changes {
@@ -1341,6 +1356,20 @@ mod tests {
             "nothing after: the room rests"
         );
         assert!(r.ask(HOST, Action::Next, ends).unwrap().prepare.is_none());
+    }
+
+    #[test]
+    fn someone_shown_away_for_silence_is_back_when_heard_again() {
+        let mut r = room();
+        let ravi = join(&mut r, "k1", "Ravi");
+        // Their pings stopped for 5 s (the connection still open): shown away.
+        assert!(r.away(ravi).room);
+        assert!(r.view(false).members.iter().any(|m| m.id == ravi && m.away));
+        // A ping again: back, the same person, with no knock.
+        assert!(r.back(ravi).room);
+        assert!(r.view(false).members.iter().all(|m| !m.away));
+        assert!(!r.back(ravi).room, "already back: nothing to send");
+        assert!(!r.back(77).room, "nobody by that id");
     }
 
     #[test]
