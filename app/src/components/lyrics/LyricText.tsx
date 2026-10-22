@@ -41,14 +41,31 @@ function Sung(props: { text: string; progress: number; colour: string; dim: stri
   )
 }
 
+/** A row under a line: its pronunciation or its translation ('' keeps the row, empty, so every
+ *  line of a song has the same rows). `progress`: the pronunciation's own karaoke fill. */
+export interface SecondRowView {
+  kind: 'roman' | 'translation'
+  text: string
+  progress?: number
+  /** Its language (BCP 47), for the type and for screen readers. */
+  lang?: string
+}
+
+/** The second rows' sizes and gaps, as a share of the line's size (lib/lyricRows.ts counts them),
+ *  never under a size that still reads (the windows' fit then makes room), never over the line's. */
+const SECOND = { roman: { size: 0.52, gap: 0.22 }, translation: { size: 0.46, gap: 0.16 } }
+const SECOND_MIN_PX = 11
+
 /**
  * One line of lyrics in a look. `now` is the line being sung; `progress` (0 to 1) how far through
- * it the song is (the karaoke fill); `colour` the look's colour as CSS. `latin`, when given, is
- * the same line in Roman letters, shown under it.
+ * it the song is (the karaoke fill); `colour` the look's colour as CSS. `seconds`, when given,
+ * are the rows under it, in order: pronunciation, then translation, smaller and dimmer, wrapped.
  */
 export function LyricText(props: {
   text: string
-  latin?: string
+  seconds?: SecondRowView[]
+  /** The line's language (BCP 47). */
+  lang?: string
   look: LookId
   now: boolean
   progress?: number
@@ -59,6 +76,8 @@ export function LyricText(props: {
   className?: string
   /** What's behind the words (dark unless said). */
   ground?: Ground
+  /** Break inside words where nothing else fits (a line already as small as it may be). */
+  breakAnywhere?: boolean
 }) {
   const { look, now, colour } = props
   const g = props.ground ?? 'dark'
@@ -69,6 +88,7 @@ export function LyricText(props: {
     lineHeight: 1.18,
     textAlign: props.align ?? 'center',
     textWrap: 'balance',
+    overflowWrap: props.breakAnywhere ? 'anywhere' : undefined,
     letterSpacing: '-0.01em',
     fontWeight: 700,
     fontFamily: 'var(--font-ui)',
@@ -117,22 +137,36 @@ export function LyricText(props: {
   }
   return (
     <div className={props.className}>
-      <div style={style}>{look === 'karaoke' && now && props.text ? <Sung text={props.text} progress={p / 100} colour={colour} dim={dim} /> : props.text || '♪'}</div>
-      {props.latin && (
-        <div
-          style={{
-            ...base,
-            fontSize: props.px * 0.52,
-            fontWeight: 500,
-            marginTop: props.px * 0.22,
-            color: g === 'dark' ? (now ? 'rgb(255 255 255 / 0.85)' : 'rgb(255 255 255 / 0.4)') : now ? 'rgb(0 0 0 / 0.72)' : 'rgb(0 0 0 / 0.36)',
-            WebkitTextStroke: look === 'outline' ? `${Math.max(1.5, props.px / 26)}px rgb(0 0 0 / 0.8)` : undefined,
-            paintOrder: 'stroke fill',
-          }}
-        >
-          {props.latin}
-        </div>
-      )}
+      <div style={style} lang={props.lang}>
+        {look === 'karaoke' && now && props.text ? <Sung text={props.text} progress={p / 100} colour={colour} dim={dim} /> : props.text || '♪'}
+      </div>
+      {props.seconds?.map((r) => {
+        const roman = r.kind === 'roman'
+        const { size, gap } = SECOND[r.kind]
+        // Pronunciation a little brighter than the translation; both dimmer than the line.
+        const tone = g === 'dark' ? (now ? (roman ? 0.85 : 0.66) : roman ? 0.4 : 0.32) : now ? (roman ? 0.72 : 0.58) : roman ? 0.36 : 0.3
+        const ink = g === 'dark' ? `rgb(255 255 255 / ${tone})` : `rgb(0 0 0 / ${tone})`
+        const fill = roman && look === 'karaoke' && now && !!r.text && r.progress !== undefined
+        return (
+          <div
+            key={r.kind}
+            data-second={r.kind}
+            lang={r.lang}
+            style={{
+              ...base,
+              fontSize: Math.min(props.px * 0.9, Math.max(SECOND_MIN_PX, props.px * size)),
+              fontWeight: 500,
+              marginTop: props.px * gap,
+              color: ink,
+              WebkitTextStroke: look === 'outline' ? `${Math.max(1.5, props.px / 26)}px rgb(0 0 0 / 0.8)` : undefined,
+              paintOrder: 'stroke fill',
+            }}
+          >
+            {/* An empty row keeps its height: the song's lines all have the same rows. */}
+            {fill ? <Sung text={r.text} progress={r.progress ?? 0} colour={colour} dim={ink} /> : r.text || ' '}
+          </div>
+        )
+      })}
     </div>
   )
 }

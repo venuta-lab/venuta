@@ -1,0 +1,350 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "夜空に星が光る",
+      "script": "Jpan",
+      "words": [
+        {
+          "start_ms": 1000,
+          "end_ms": 1720,
+          "text": "夜空"
+        },
+        {
+          "start_ms": 1720,
+          "end_ms": 2440,
+          "text": "に"
+        },
+        {
+          "start_ms": 2440,
+          "end_ms": 3160,
+          "text": "星"
+        },
+        {
+          "start_ms": 3160,
+          "end_ms": 3880,
+          "text": "が"
+        },
+        {
+          "start_ms": 3880,
+          "end_ms": 4600,
+          "text": "光る"
+        }
+      ],
+      "roman": {
+        "text": "yozora ni hoshi ga hikaru",
+        "words": [
+          {
+            "start_ms": 1000,
+            "end_ms": 1720,
+            "text": "yozora"
+          },
+          {
+            "start_ms": 1720,
+            "end_ms": 2440,
+            "text": "ni"
+          },
+          {
+            "start_ms": 2440,
+            "end_ms": 3160,
+            "text": "hoshi"
+          },
+          {
+            "start_ms": 3160,
+            "end_ms": 3880,
+            "text": "ga"
+          },
+          {
+            "start_ms": 3880,
+            "end_ms": 4600,
+            "text": "hikaru"
+          }
+        ],
+        "lang": "ja-Latn",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      },
+      "translation": {
+        "text": "夜空中星星闪耀",
+        "lang": "zh-Hans",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      }
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "君の声が聞こえる",
+      "script": "Jpan",
+      "words": [
+        {
+          "start_ms": 5000,
+          "end_ms": 5720,
+          "text": "君"
+        },
+        {
+          "start_ms": 5720,
+          "end_ms": 6440,
+          "text": "の"
+        },
+        {
+          "start_ms": 6440,
+          "end_ms": 7160,
+          "text": "声"
+        },
+        {
+          "start_ms": 7160,
+          "end_ms": 7880,
+          "text": "が"
+        },
+        {
+          "start_ms": 7880,
+          "end_ms": 8600,
+          "text": "聞こえる"
+        }
+      ],
+      "roman": {
+        "text": "kimi no koe ga kikoeru",
+        "words": [
+          {
+            "start_ms": 5000,
+            "end_ms": 5720,
+            "text": "kimi"
+          },
+          {
+            "start_ms": 5720,
+            "end_ms": 6440,
+            "text": "no"
+          },
+          {
+            "start_ms": 6440,
+            "end_ms": 7160,
+            "text": "koe"
+          },
+          {
+            "start_ms": 7160,
+            "end_ms": 7880,
+            "text": "ga"
+          },
+          {
+            "start_ms": 7880,
+            "end_ms": 8600,
+            "text": "kikoeru"
+          }
+        ],
+        "lang": "ja-Latn",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      },
+      "translation": {
+        "text": "我听见你的声音",
+        "lang": "zh-Hans",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      }
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "明日もまた会おう",
+      "script": "Jpan",
+      "words": [
+        {
+          "start_ms": 9000,
+          "end_ms": 9900,
+          "text": "明日"
+        },
+        {
+          "start_ms": 9900,
+          "end_ms": 10800,
+          "text": "も"
+        },
+        {
+          "start_ms": 10800,
+          "end_ms": 11700,
+          "text": "また"
+        },
+        {
+          "start_ms": 11700,
+          "end_ms": 12600,
+          "text": "会おう"
+        }
+      ],
+      "roman": {
+        "text": "ashita mo mata aou",
+        "words": [
+          {
+            "start_ms": 9000,
+            "end_ms": 9900,
+            "text": "ashita"
+          },
+          {
+            "start_ms": 9900,
+            "end_ms": 10800,
+            "text": "mo"
+          },
+          {
+            "start_ms": 10800,
+            "end_ms": 11700,
+            "text": "mata"
+          },
+          {
+            "start_ms": 11700,
+            "end_ms": 12600,
+            "text": "aou"
+          }
+        ],
+        "lang": "ja-Latn",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      },
+      "translation": {
+        "text": "明天也再见面吧",
+        "lang": "zh-Hans",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      }
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "遠くまで歩いていこう、二人で手をつないで",
+      "script": "Jpan",
+      "words": [
+        {
+          "start_ms": 13000,
+          "end_ms": 13360,
+          "text": "遠く"
+        },
+        {
+          "start_ms": 13360,
+          "end_ms": 13720,
+          "text": "まで"
+        },
+        {
+          "start_ms": 13720,
+          "end_ms": 14080,
+          "text": "歩いて"
+        },
+        {
+          "start_ms": 14080,
+          "end_ms": 14440,
+          "text": "いこう"
+        },
+        {
+          "start_ms": 14440,
+          "end_ms": 14800,
+          "text": "、"
+        },
+        {
+          "start_ms": 14800,
+          "end_ms": 15160,
+          "text": "二人"
+        },
+        {
+          "start_ms": 15160,
+          "end_ms": 15520,
+          "text": "で"
+        },
+        {
+          "start_ms": 15520,
+          "end_ms": 15880,
+          "text": "手"
+        },
+        {
+          "start_ms": 15880,
+          "end_ms": 16240,
+          "text": "を"
+        },
+        {
+          "start_ms": 16240,
+          "end_ms": 16600,
+          "text": "つないで"
+        }
+      ],
+      "roman": {
+        "text": "tooku made aruite ikou, futari de te wo tsunaide",
+        "words": [
+          {
+            "start_ms": 13000,
+            "end_ms": 13360,
+            "text": "tooku"
+          },
+          {
+            "start_ms": 13360,
+            "end_ms": 13720,
+            "text": "made"
+          },
+          {
+            "start_ms": 13720,
+            "end_ms": 14080,
+            "text": "aruite"
+          },
+          {
+            "start_ms": 14080,
+            "end_ms": 14440,
+            "text": "ikou"
+          },
+          {
+            "start_ms": 14440,
+            "end_ms": 14800,
+            "text": ","
+          },
+          {
+            "start_ms": 14800,
+            "end_ms": 15160,
+            "text": "futari"
+          },
+          {
+            "start_ms": 15160,
+            "end_ms": 15520,
+            "text": "de"
+          },
+          {
+            "start_ms": 15520,
+            "end_ms": 15880,
+            "text": "te"
+          },
+          {
+            "start_ms": 15880,
+            "end_ms": 16240,
+            "text": "wo"
+          },
+          {
+            "start_ms": 16240,
+            "end_ms": 16600,
+            "text": "tsunaide"
+          }
+        ],
+        "lang": "ja-Latn",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      },
+      "translation": {
+        "text": "牵着手，我们一起走向远方",
+        "lang": "zh-Hans",
+        "source": {
+          "kind": "lyrics",
+          "by": "netease"
+        }
+      }
+    }
+  ],
+  "lang": "ja",
+  "version": 1
+}

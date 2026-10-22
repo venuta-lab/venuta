@@ -24,6 +24,7 @@ mod clear_screen;
 mod clipboard;
 mod desktop;
 mod hotkeys;
+mod japanese_dictionary;
 mod libcache;
 mod listening;
 mod lyric_windows;
@@ -944,13 +945,14 @@ async fn undo_edit(journal: String, jobs: State<'_, Jobs>) -> CmdResult<usize> {
     .await
 }
 
-/// Save lyrics timed by tapping along as the song's .lrc (`lines`: ms and words), undoable in
-/// Activity (returns the journal, for Undo). The song's own file is never touched.
+/// Save lyrics timed by tapping along as the song's .lrc (`lines`: when each begins and its
+/// words, with the word times and translation of lyrics being re-timed), undoable in Activity
+/// (returns the journal, for Undo). The song's own file is never touched.
 #[tauri::command]
 async fn save_synced_lyrics(
     root: String,
     path: String,
-    lines: Vec<(u64, String)>,
+    lines: Vec<engine::lrc::Timed>,
     jobs: State<'_, Jobs>,
 ) -> CmdResult<String> {
     files_settled(&jobs)?;
@@ -3002,6 +3004,7 @@ pub fn run() {
         .manage(playback::Playback::default())
         .manage(together::Together::default())
         .manage(lyric_windows::Locks::default())
+        .manage(lyric_windows::Shelf::default())
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
@@ -3121,6 +3124,7 @@ pub fn run() {
             lyric_windows::desktop_lyrics_lock,
             lyric_windows::desktop_lyrics_open,
             lyric_windows::lyrics_window,
+            lyric_windows::lyrics_window_toggle,
             lyric_windows::lyrics_window_set,
             lyric_windows::lyrics_window_open,
             lyric_windows::lyrics_window_frost,
@@ -3263,6 +3267,7 @@ pub fn run() {
             restart_app,
             desktop::song_notification,
             lyrics_find::lyrics_forget_all,
+            lyrics_find::lyrics_sources_health,
             desktop::set_ui_zoom,
             updates::update_check,
             accounts::spotify_status,

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "app/src-tauri"]
+members = ["crates/engine", "crates/player", "crates/media-access", "crates/ytmusic", "crates/cli", "crates/phone-server", "crates/together", "crates/lyrics-text", "app/src-tauri"]
 
 [workspace.package]
 version = "0.3.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/venuta-lab/venuta"
 [workspace.dependencies]
 engine = { path = "crates/engine" }
 media-access = { path = "crates/media-access" }
+lyrics-text = { path = "crates/lyrics-text" }
 lofty = "=0.25.4"  # pinned: re-run spike S1 before upgrading (docs/decisions/0001)
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 blake3 = "1.8.7"
@@ -52,4 +53,8 @@ codegen-units = 1
 opt-level = 3
 
 [profile.dev.package.player]
+opt-level = 3
+
+# Second lines are worked out when a song's lyrics arrive: keep that quick in debug builds too.
+[profile.dev.package.lyrics-text]
 opt-level = 3

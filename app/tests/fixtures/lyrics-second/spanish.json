@@ -1,0 +1,62 @@
+{
+  "lines": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "Bajo la luna bailamos otra vez",
+      "script": "Latn",
+      "translation": {
+        "text": "Under the moon we dance again",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "firefox-translations"
+        }
+      }
+    },
+    {
+      "start_ms": 5000,
+      "end_ms": 9000,
+      "text": "Tu sonrisa ilumina la ciudad",
+      "script": "Latn",
+      "translation": {
+        "text": "Your smile lights up the city",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "firefox-translations"
+        }
+      }
+    },
+    {
+      "start_ms": 9000,
+      "end_ms": 13000,
+      "text": "Y aunque la noche sea larga, no tengo miedo de perderme contigo",
+      "script": "Latn",
+      "translation": {
+        "text": "And even if the night is long, I am not afraid to get lost with you",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "firefox-translations"
+        }
+      }
+    },
+    {
+      "start_ms": 13000,
+      "end_ms": 17000,
+      "text": "Quédate conmigo hasta el amanecer",
+      "script": "Latn",
+      "translation": {
+        "text": "Stay with me until dawn",
+        "lang": "en",
+        "source": {
+          "kind": "translated",
+          "by": "firefox-translations"
+        }
+      }
+    }
+  ],
+  "lang": "es",
+  "version": 1
+}

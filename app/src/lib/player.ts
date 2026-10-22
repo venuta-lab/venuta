@@ -670,6 +670,8 @@ export const jumpTo = (i: number) => call('player_jump', { index: i })
 
 // For checking playback from the inspector (development only).
 if (import.meta.env.DEV) (window as unknown as { __venutaPlayer: () => PlayerState }).__venutaPlayer = () => state
+/** UI previews outside the app (dev only: lyrics-preview.html): a player state to show. */
+if (import.meta.env.DEV) (window as unknown as { __venutaSetPlayer: (s: Partial<PlayerState>) => void }).__venutaSetPlayer = (s) => set({ ...state, ...s })
 
 export function usePlayer(): PlayerState {
   return useSyncExternalStore(

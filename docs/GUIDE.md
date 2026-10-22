@@ -63,7 +63,9 @@ tray, the windows and the shortcuts that open Venuta; the program file keeps Dus
 - **Big screen** (F11): the lyrics filling a TV or a second monitor, with the next line coming
   in. While it shows, the other windows on that screen are minimized, and they come back as they
   were when it closes. Move the mouse for its controls; Esc closes it, Space plays and pauses,
-  the arrows skip through the song, T adds Roman letters to lines in Indian scripts.
+  the arrows skip through the song, T shows the pronunciation under each line and Shift+T its
+  translation (Now Playing, the desktop lyrics and the mini player have the same two switches;
+  each song language keeps its own choice).
 - **Desktop lyrics** (Ctrl+Shift+D, from anywhere, or the tray): the lines in a strip over every
   window. Unlocked, point at them to move them, size them from any edge and change them; **Lock**
   lets clicks pass through. Locked, point at them and a small lock appears to open them again.

@@ -1,5 +1,7 @@
 import { motion } from 'motion/react'
 import { LOOKS, SIZES, setLyricLook, useLyricLook, type Ground, type LookId, type LyricColour, type LyricWindow } from '../../lib/lyricLook'
+import { SECOND_NAMES } from '../../lib/secondChoice'
+import type { SecondLinesView } from '../../lib/useSecondLines'
 import { LyricText } from './LyricText'
 
 const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
@@ -24,8 +26,8 @@ export function LookPanel(props: {
   tone: 'app' | 'dark'
   /** The playing cover's colour, for its swatch and the tiles' light. */
   coverColour: string
-  /** The words are in an Indian script: offer them in Roman letters too. */
-  indic: boolean
+  /** The playing song's second lines: its two switches (remembered per song language). */
+  seconds?: SecondLinesView
   /** The desktop lyrics: one line, or the next under it. */
   lines?: boolean
 }) {
@@ -148,27 +150,37 @@ export function LookPanel(props: {
           </>
         )}
 
-        {props.indic && (
+        {props.seconds && (props.seconds.offered.roman || props.seconds.offered.translation) && (
           <>
-            <span className={quiet}>Script</span>
-            <button
-              role="switch"
-              aria-checked={look.latin}
-              onClick={() => set({ latin: !look.latin })}
-              className="flex w-max items-center gap-2.5"
-              title="Lines in an Indian script also shown in Roman letters (T on the big screen)"
-            >
-              <span
-                className={`relative h-5 w-9 rounded-full transition-colors ${look.latin ? (dark ? 'bg-white' : 'accent-fill') : dark ? 'bg-white/20' : 'bg-ink/[0.16]'}`}
-              >
-                <motion.span
-                  animate={{ x: look.latin ? 16 : 0 }}
-                  transition={spring}
-                  className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full shadow ${look.latin && dark ? 'bg-black' : 'bg-white'}`}
-                />
-              </span>
-              <span className={look.latin ? ink : quiet}>Roman letters too</span>
-            </button>
+            <span className={`${quiet} self-start pt-0.5`}>Under each line</span>
+            <div className="grid gap-2">
+              {(['roman', 'translation'] as const)
+                .filter((k) => props.seconds?.offered[k])
+                .map((k) => {
+                  const on = !!props.seconds?.on[k]
+                  return (
+                    <button
+                      key={k}
+                      role="switch"
+                      aria-checked={on}
+                      onClick={() => props.seconds?.toggle(k)}
+                      className="flex w-max items-center gap-2.5"
+                      title={`${SECOND_NAMES[k].line} (${SECOND_NAMES[k].keys} on the big screen). Kept for songs in this language.`}
+                    >
+                      <span className={`relative h-5 w-9 rounded-full transition-colors ${on ? (dark ? 'bg-white' : 'accent-fill') : dark ? 'bg-white/20' : 'bg-ink/[0.16]'}`}>
+                        <motion.span animate={{ x: on ? 16 : 0 }} transition={spring} className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full shadow ${on && dark ? 'bg-black' : 'bg-white'}`} />
+                      </span>
+                      <span className={on ? ink : quiet}>{SECOND_NAMES[k].name}</span>
+                      <span className={`text-[11px] ${quiet}`}>{SECOND_NAMES[k].keys}</span>
+                    </button>
+                  )
+                })}
+              {[props.seconds.notes.roman, props.seconds.notes.translation, props.seconds.dictionary].filter(Boolean).map((n) => (
+                <span key={n} className={`text-[11.5px] ${quiet}`}>
+                  {n}
+                </span>
+              ))}
+            </div>
           </>
         )}
       </div>
@@ -180,7 +192,7 @@ export function LookPanel(props: {
  * The same choices in one row, for the desktop lyrics (a short window): the look stepped
  * through, the colour, the size, one line or two.
  */
-export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColour: string; indic: boolean }) {
+export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColour: string; seconds?: SecondLinesView }) {
   const look = useLyricLook(props.win)
   const set = (change: Parameters<typeof setLyricLook>[1]) => setLyricLook(props.win, change)
   const plain = plainOf(props.ground ?? 'dark')
@@ -227,16 +239,24 @@ export function LookStrip(props: { win: LyricWindow; ground?: Ground; coverColou
       <button onClick={() => set({ lines: look.lines === 1 ? 2 : 1 })} className={`${btn} px-2.5`} title="One line, or the next one under it">
         {look.lines === 1 ? '1 line' : '2 lines'}
       </button>
-      {props.indic && (
-        <button
-          onClick={() => set({ latin: !look.latin })}
-          aria-pressed={look.latin}
-          className={`${btn} px-2.5 ${look.latin ? 'bg-white/20 text-white' : ''}`}
-          title="Also in Roman letters"
-        >
-          Abc
-        </button>
-      )}
+      {(['roman', 'translation'] as const)
+        .filter((k) => props.seconds?.offered[k])
+        .map((k) => {
+          const on = !!props.seconds?.on[k]
+          const note = props.seconds?.notes[k]
+          return (
+            <button
+              key={k}
+              onClick={() => props.seconds?.toggle(k)}
+              aria-pressed={on}
+              className={`${btn} px-2.5 ${on ? 'bg-white/20 text-white' : ''}`}
+              title={`${SECOND_NAMES[k].line} (${SECOND_NAMES[k].keys}). Kept for songs in this language.${note ? ` ${note}.` : ''}`}
+            >
+              {SECOND_NAMES[k].name}
+            </button>
+          )
+        })}
+      {props.seconds?.dictionary && <span className="px-2 text-[11.5px] text-white/60">{props.seconds.dictionary}</span>}
     </div>
   )
 }

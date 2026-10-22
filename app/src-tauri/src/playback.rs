@@ -1404,51 +1404,48 @@ pub fn player_output(
 }
 
 /// A song's words: timed lines (from a synced .lrc or LYRICS tag), or plain text.
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug, PartialEq)]
 pub struct Lyrics {
-    /// `[ms, line]`, in order. Empty when the lyrics have no times.
-    pub lines: Vec<(u64, String)>,
+    /// The lines in order, each with its words' times and its translation when the file has
+    /// them (the lyrics model, `engine::lyrics::LyricLine`). Empty when the lyrics have no times.
+    pub lines: Vec<engine::lyrics::LyricLine>,
     /// Lyrics without times, as written.
     pub text: String,
 }
 
-/// `[01:02.34]words` (several stamps on one line allowed) → timed lines; headers like
-/// `[ar:…]` are skipped.
-fn parse_lrc(text: &str) -> Vec<(u64, String)> {
-    let mut out = Vec::new();
-    for raw in text.lines() {
-        let mut rest = raw.trim();
-        let mut stamps = Vec::new();
-        while let Some(body) = rest.strip_prefix('[') {
-            let Some(end) = body.find(']') else { break };
-            let tag = &body[..end];
-            let ms = tag.split_once(':').and_then(|(m, s)| {
-                let m: u64 = m.trim().parse().ok()?;
-                let s: f64 = s.trim().replace(',', ".").parse().ok()?;
-                Some(m * 60_000 + (s * 1000.0).round() as u64)
-            });
-            match ms {
-                Some(ms) => stamps.push(ms),
-                None if stamps.is_empty() => {
-                    // A header ([ar:…], [offset:…]).
-                    rest = "";
-                    break;
-                }
-                None => break,
-            }
-            rest = &body[end + 1..];
-        }
-        for ms in stamps {
-            out.push((ms, rest.trim().to_owned()));
+/// A song's lyrics text (its .lrc, or its tag) as lyrics to show: word times and translations
+/// kept all the way to the screen.
+fn lyrics_of(text: String) -> Lyrics {
+    let mut lines = engine::lyrics::read_lrc(&text).lines;
+    engine::lyrics::mark_source(&mut lines, "file");
+    engine::lyrics::add_pronunciation_lines(&mut lines, None);
+    if lines.is_empty() {
+        Lyrics { lines, text }
+    } else {
+        Lyrics {
+            lines,
+            text: String::new(),
         }
     }
-    out.sort_by_key(|(ms, _)| *ms);
-    out
+}
+
+/// Timed lines `[ms, line]`, read the way Venuta reads lyrics everywhere (`engine::lyrics`):
+/// word stamps are timing, not words; headers and the offset are understood.
+fn parse_lrc(text: &str) -> Vec<(u64, String)> {
+    engine::lyrics::read_lrc(text)
+        .lines
+        .into_iter()
+        .map(|l| (l.start_ms, l.text))
+        .collect()
 }
 
 /// The words of a song in the open folder.
 #[tauri::command]
-pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
+pub async fn song_lyrics(
+    app: tauri::AppHandle,
+    root: String,
+    path: String,
+) -> Result<Lyrics, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let file = PathBuf::from(&root).join(&path);
         let lrc = file.with_extension("lrc");
@@ -1467,15 +1464,9 @@ pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
         let Some(text) = text else {
             return Ok(Lyrics::default());
         };
-        let lines = parse_lrc(&text);
-        Ok(if lines.is_empty() {
-            Lyrics { lines, text }
-        } else {
-            Lyrics {
-                lines,
-                text: String::new(),
-            }
-        })
+        let lyrics = lyrics_of(text);
+        crate::japanese_dictionary::fetch_if_waiting(&app, &lyrics.lines, None);
+        Ok(lyrics)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1543,7 +1534,7 @@ pub async fn all_lyrics(root: String) -> Result<Vec<SongWords>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueueItem, parse_lrc, words_of};
+    use super::{QueueItem, lyrics_of, parse_lrc, words_of};
 
     // An online song's album rides with it through the queue (the window sends it, the queue
     // sends it back), so the queue's Go to album can open it. Older queues without one still read.
@@ -1577,6 +1568,54 @@ mod tests {
         );
         assert_eq!(w, vec!["Kesariya tera", "ishq hai piya"]);
         assert_eq!(words_of("one\n\ntwo\none"), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn your_word_timed_lrc_shows_words_not_stamps() {
+        let l = parse_lrc("[00:05.00]<00:05.00>Word <00:05.40>by <00:05.90>word");
+        assert_eq!(l, vec![(5000, "Word by word".into())]);
+    }
+
+    #[test]
+    fn your_word_timed_lrc_keeps_its_word_times_and_translations() {
+        let l = lyrics_of(
+            "[00:05.00]<00:05.00>Word <00:05.40>by <00:05.90>word
+[00:05.00]Palabra
+[00:09.00]Next"
+                .into(),
+        );
+        assert_eq!(l.text, "");
+        assert_eq!(l.lines.len(), 2);
+        let words: Vec<(u64, u64, &str)> = l.lines[0]
+            .words
+            .iter()
+            .map(|w| (w.start_ms, w.end_ms, w.text.as_str()))
+            .collect();
+        assert_eq!(
+            words,
+            [
+                (5000, 5400, "Word "),
+                (5400, 5900, "by "),
+                (5900, 8900, "word")
+            ]
+        );
+        let t = l.lines[0].translation.as_ref().unwrap();
+        assert_eq!(t.text, "Palabra");
+        assert_eq!(
+            t.source,
+            engine::lyrics::SecondSource::Lyrics("file".into())
+        );
+        // Plain words stay as written.
+        assert_eq!(
+            lyrics_of(
+                "One
+Two"
+                .into()
+            )
+            .text,
+            "One
+Two"
+        );
     }
 
     #[test]
