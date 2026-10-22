@@ -7,9 +7,10 @@ use common::*;
 
 /// How fast each guest takes the host's file in the load test (bytes a second): five times what
 /// hi-res FLAC needs (about 1 MB/s), and over twice what the host's pacing lets a song go at.
-/// (At 20 MB/s each, three pulls of a debug build's QUIC kept every core of a busy machine
-/// encrypting, and the pings then waited for a thread, not behind the file bytes: the CPU, not
-/// the priorities this test is about.)
+/// (At 20 MB/s each, three debug-build QUIC pulls are CPU-heavy: in one full-suite run on a machine
+/// other builds kept busy the gate failed, never alone or beside 40 busy threads, most likely
+/// the pings waiting for a thread rather than behind the file bytes, which is the CPU, not the
+/// priorities this test is about.)
 const PULL_RATE: f64 = 5e6;
 
 /// The `p` quantile of some durations.
