@@ -59,6 +59,8 @@ export function LyricText(props: {
   className?: string
   /** What's behind the words (dark unless said). */
   ground?: Ground
+  /** Break inside words where nothing else fits (a line already as small as it may be). */
+  breakAnywhere?: boolean
 }) {
   const { look, now, colour } = props
   const g = props.ground ?? 'dark'
@@ -69,6 +71,7 @@ export function LyricText(props: {
     lineHeight: 1.18,
     textAlign: props.align ?? 'center',
     textWrap: 'balance',
+    overflowWrap: props.breakAnywhere ? 'anywhere' : undefined,
     letterSpacing: '-0.01em',
     fontWeight: 700,
     fontFamily: 'var(--font-ui)',

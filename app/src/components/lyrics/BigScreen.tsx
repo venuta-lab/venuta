@@ -1,6 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { MIN_FIT, nextFit, shrinkFor } from '../../lib/lyricFit'
 import { scaleOf, setLyricLook, useLyricLook } from '../../lib/lyricLook'
+import { usePrefs } from '../../lib/prefs'
 import { clock, songLength, connectPlayer, next as nextSong, previous, seek, toggle, usePlayerValue } from '../../lib/player'
 import { LyricText } from './LyricText'
 import { LyricsWindow, type Frame } from './LyricsWindow'
@@ -52,7 +54,7 @@ function Stage({ frame }: { frame: Frame }) {
     window.addEventListener('resize', r)
     return () => window.removeEventListener('resize', r)
   }, [])
-  const px = Math.min(view.w * 0.05, view.h * 0.085) * scaleOf(look.size)
+  const chosen = Math.min(view.w * 0.05, view.h * 0.085) * scaleOf(look.size)
 
   const lines = lyrics?.lines ?? []
   const timed = lines.length > 0
@@ -61,30 +63,65 @@ function Stage({ frame }: { frame: Frame }) {
   const prev = timed && at > 0 ? lines[at - 1][1] : undefined
   const quiet = look.look === 'karaoke' ? 'clean' : look.look
 
+  // The lines always fit the screen, with its margins, in every theme. Each row is as wide as the
+  // screen allows (a grid column sized to its widest line once let one line with nowhere to wrap,
+  // even the next one, push every line off the right edge), and the words wrap where they can.
+  // The line being sung that still doesn't fit (a run with nowhere to wrap, a wide theme font), or
+  // lines too tall together, make them all smaller, as much as they must; only past the smallest
+  // size does a word break. The lines around it, smaller and dim, break inside a word rather than
+  // shrink the line being sung. The song at the bottom keeps its room: the lines stay clear of it.
+  const stack = useRef<HTMLDivElement>(null)
+  const prefs = usePrefs()
+  const [fonts, setFonts] = useState(0)
+  useEffect(() => {
+    const f = () => setFonts((n) => n + 1)
+    document.fonts?.addEventListener('loadingdone', f)
+    return () => document.fonts?.removeEventListener('loadingdone', f)
+  }, [])
+  const room = view.h * (song && !clear ? 0.72 : 0.9)
+  const [fit, setFit] = useState(1)
+  const measureKey = JSON.stringify([at, now, next, prev, chosen, view, room, look.look, look.latin, prefs.style, prefs.pack, fonts])
+  const [measured, setMeasured] = useState(measureKey)
+  if (measured !== measureKey) {
+    setMeasured(measureKey)
+    setFit(1)
+  }
+  useLayoutEffect(() => {
+    const s = stack.current
+    if (!s) return
+    const rows = [...s.querySelectorAll<HTMLElement>('[data-fit]')].map((r) => ({ scroll: r.scrollWidth, client: r.clientWidth }))
+    const want = nextFit(fit, shrinkFor({ rows, height: s.scrollHeight, room }))
+    if (want !== fit) setFit(want)
+  }, [fit, measureKey, room])
+  const px = chosen * fit
+  const breakAnywhere = fit <= MIN_FIT
+
   return (
     <div className="relative h-full w-full">
       <div className="relative flex h-full flex-col items-center justify-center px-[7vw]">
         {timed ? (
-          <div className="grid w-full max-w-[min(92vw,1600px)] justify-items-center gap-[3vh]">
-            <div className="min-h-[1.2em] opacity-40" style={{ fontSize: px * 0.55 }}>
+          <div ref={stack} className="flex w-full min-w-0 max-w-[min(92vw,1600px)] flex-col items-stretch gap-[3vh]">
+            <div data-row className="min-h-[1.2em] w-full min-w-0 opacity-40" style={{ fontSize: px * 0.55 }}>
               <AnimatePresence mode="popLayout" initial={false}>
                 {prev !== undefined && (
                   <motion.div key={`p${at}`} initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -30 }} transition={{ duration: 0.45 }}>
-                    <LyricText text={prev} look={quiet} now={false} colour={colour} px={px * 0.55} ground={ground} />
+                    <LyricText text={prev} look={quiet} now={false} colour={colour} px={px * 0.55} ground={ground} breakAnywhere />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.div key={`n${at}`} initial={{ opacity: 0, y: 50, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -50 }} transition={{ type: 'spring', stiffness: 170, damping: 24 }}>
-                <LyricText text={at < 0 ? '' : now} latin={latinOf(now, look.latin)} look={look.look} now progress={progress} colour={colour} px={px} ground={ground} />
-              </motion.div>
-            </AnimatePresence>
-            <div className="min-h-[1.2em]">
+            <div data-row data-fit className="w-full min-w-0">
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.div key={`n${at}`} initial={{ opacity: 0, y: 50, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -50 }} transition={{ type: 'spring', stiffness: 170, damping: 24 }}>
+                  <LyricText text={at < 0 ? '' : now} latin={latinOf(now, look.latin)} look={look.look} now progress={progress} colour={colour} px={px} ground={ground} breakAnywhere={breakAnywhere} />
+                </motion.div>
+              </AnimatePresence>
+            </div>
+            <div data-row className="min-h-[1.2em] w-full min-w-0">
               <AnimatePresence mode="popLayout" initial={false}>
                 {next !== undefined && (
                   <motion.div key={`x${at}`} initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.45 }}>
-                    <LyricText text={next} latin={latinOf(next, look.latin)} look={quiet} now={false} colour={colour} px={px * 0.62} ground={ground} />
+                    <LyricText text={next} latin={latinOf(next, look.latin)} look={quiet} now={false} colour={colour} px={px * 0.62} ground={ground} breakAnywhere />
                   </motion.div>
                 )}
               </AnimatePresence>
