@@ -15,7 +15,10 @@
 //! What a session needs of the app around it comes in through [`host::HostHooks`] and
 //! [`guest::GuestHooks`].
 
-pub mod clock_link;
+/// The clock's pings live beside the clock now (`together::clock_link`); kept here by name.
+pub mod clock_link {
+    pub use together::clock_link::*;
+}
 pub mod guest;
 pub mod host;
 pub mod net;

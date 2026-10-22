@@ -5,7 +5,8 @@
 //! This crate is the room's logic, kept free of networking and audio so all of it is tested:
 //! - [`proto`]: every message, versioned and checked strictly (peers are never trusted).
 //! - [`room`]: the room the host keeps: people, roles, the queue, the timeline, the activity.
-//! - [`clock`]: the shared clock, from pings (the NTP four-timestamp method).
+//! - [`clock`]: the shared clock, from pings (the NTP four-timestamp method); [`clock_link`]
+//!   times the pings on any transport.
 //! - [`timeline`]: where the song should be at any moment, for starting and catching up.
 //! - [`invite`]: the invite people share: who hosts, a secret, and when it ends.
 //!
@@ -23,6 +24,7 @@
 pub mod align;
 pub mod anchor;
 pub mod clock;
+pub mod clock_link;
 pub mod clock_map;
 pub mod fakes;
 pub mod invite;
