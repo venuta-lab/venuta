@@ -385,7 +385,6 @@ pub fn true_delay(decoded: &[i32], ch: u16, rate: u32) -> i64 {
     best.1
 }
 
-
 pub fn write_wav(path: &Path, samples: &[i32], rate: u32, ch: u16) {
     let data: Vec<u8> = samples
         .iter()

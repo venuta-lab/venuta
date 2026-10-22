@@ -100,9 +100,8 @@ fn make<T: Item>(item: &T, streams: Option<&Streams>, stop: &Arc<AtomicBool>, ma
         }
         match src.next(&mut buf) {
             Ok(DecodeState::Samples) => {
-                let e = e.get_or_insert_with(|| {
-                    Enveloper::new(src.format.rate, src.format.channels)
-                });
+                let e =
+                    e.get_or_insert_with(|| Enveloper::new(src.format.rate, src.format.channels));
                 e.feed(&buf);
                 if !said_start && e.start_done() {
                     said_start = true;

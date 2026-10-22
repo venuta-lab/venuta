@@ -105,14 +105,7 @@ pub(super) fn spawn<T: Item + Serialize>(
     let thread = std::thread::Builder::new()
         .name("venuta-player".into())
         .spawn(move || {
-            let deck = Deck::new(
-                tb,
-                pace,
-                output,
-                shared.common.clone(),
-                watch,
-                deck_streams,
-            );
+            let deck = Deck::new(tb, pace, output, shared.common.clone(), watch, deck_streams);
             let mut control = Control {
                 shared: shared.clone(),
                 pacer: control_pacer,

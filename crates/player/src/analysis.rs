@@ -411,7 +411,10 @@ impl Enveloper {
     /// The first window and the hash are done (the song is longer than its first window).
     pub fn start_done(&self) -> bool {
         self.maker.as_ref().is_some_and(|m| !m.windows.is_empty())
-            && self.hash.as_ref().is_some_and(|h| h.samples >= h.samples_max)
+            && self
+                .hash
+                .as_ref()
+                .is_some_and(|h| h.samples >= h.samples_max)
     }
 
     /// What it has so far: the windows done and the hash (once its 10 s are in).
