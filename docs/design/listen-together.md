@@ -227,7 +227,7 @@ One iroh QUIC connection per guest, guest to host (a star). The ALPN stays `venu
 
 **Timestamps where they belong.** The host stamps `t2` in the datagram task as `read_datagram` returns, and `t3` immediately before `send_datagram`, on the same task, with nothing queued between. The guest stamps `t4` as its `read_datagram` returns. No channel or JSON encoding sits between a stamp and the wire.
 
-**Pacing of host files.** Each range stream gets a token bucket on the host: a first burst worth 10 s of the song's average bitrate, then 2 times that bitrate. With priorities, the control stream and datagrams are never queued behind file bytes. The guest's reader already asks in 2 MiB ranges; it keeps asking (the whole song still downloads), only more evenly.
+**Pacing of host files.** Each person's download of each song gets one token bucket on the host: a first burst worth 10 s of the song's average bitrate (its file size over its length), then 2 times that bitrate. A range that starts where that person's last range of the song ended (the reader reading on) shares the bucket; a range anywhere else (a seek) starts with a full burst. A bucket per range stream would give every 2 MiB range a new burst, about one a song's 10 s apart, which fills a home upload's queue again and again (measured in `together-net`'s slow-link test). Paced bytes go out in chunks of about 20 ms of the rate (4 to 64 KiB), never a 64 KiB lump. A song of unknown length and covers are not paced. With priorities, the control stream and datagrams are never queued behind file bytes. The guest's reader already asks in 2 MiB ranges; it keeps asking (the whole song still downloads), only more evenly.
 
 **Liveness.** Clock pings at 1 Hz double as a heartbeat. The host shows a member as away after 5 s with no ping; the QUIC idle timeout is 15 s. A guest whose connection closes tries again every 2 s for 2 minutes (backing off to 5 s), keeping its per-room key so the host knows it is the same person (as now). Two minutes covers a Wi-Fi roam or a phone screen sleeping, and is short enough that the host's member list stays honest (note 07 C4.8; Metrolist allows 15 minutes, Jellyfin 60 s). Meanwhile the guest plays on (rule 4).
 
@@ -236,6 +236,18 @@ One iroh QUIC connection per guest, guest to host (a star). The ALPN stays `venu
 **Path changes.** The transport watches `Connection::paths_stream()` and tells the clock service when the selected path changes (relay to direct, direct to relay, one address to another), so the clock can re-measure quickly (4.2).
 
 **Where it lives.** A new crate `crates/together-net` (iroh, tokio, no Tauri, no app types): endpoint and reach settings (from today's `net.rs`), the host's accept loop and per-person serving, the guest's connect and reconnect, the 127.0.0.1 proxy for host files, the datagram clock tasks, pacing. It exposes a `Transport` trait so sessions run against a simulated network in tests. This matches the Android plan, which moves these files out of the Tauri crate anyway.
+
+**The iroh transport (`together_net::transport::IrohTransport`).** The real `Transport` (5.6), one per session, made on an endpoint and a `MonoClock`:
+
+- *Peers.* The guest's one peer is the host. The host gives each remote key a `PeerId` and keeps it for the session, so a guest that reconnects with its per-room key is the same peer (and the same member).
+- *Control.* The guest opens the first bidirectional stream and writes the session's first line on it (the `Hello`: no transport preface, so a host of another version still reads the hello and refuses by name). The host tells `Joined` when that stream arrives. Lines are read with today's `Lines` (over `MAX_MESSAGE` closes the connection); each `Message` is stamped with the `MonoClock` as the line is read. Priority 100 both ways.
+- *Clock datagrams.* `send_datagram` and `Datagram` events, stamped as `read_datagram` returns. The host passes on at most 50 pings a second from one peer (a token bucket; the rest are dropped). When a side can't send datagrams (`max_datagram_size()` is `None`, or the send is refused because the other side has them off), the same 29-byte frames go on a clock stream, which the guest opens on every connection with the line `{"get":"clock:","from":0}`; nothing else changes for the session. An answer sent before that stream reaches the host is lost, as a datagram may be.
+- *Media.* `open_media` opens a stream per request with today's `Get` line (on the wire `to` stays inclusive; the contract's is exclusive). The host's built-in serving asks its `MediaServer` (`describe` for a file on disk, its type and the song's length; `open` for bytes in memory), cuts the range, sends a `{"size","mime"}` header, then the bytes at the stream's priority (files 0, covers -10, envelopes 50), a song's file paced as above. A request the server doesn't know gets `{"error"}`, which the guest's `open_media` gives back as `Gone`. `MediaStream::total` is the length of the range.
+- *Lost and back.* The QUIC idle timeout is 15 s: then both sides tell `Lost`. The guest's transport dials again after 2 s, 2 s, 2 s, then 3, 4 and 5 s apart, for 2 minutes from the loss, with the same key; on success it tells `Joined` again (the session sends its hello again). The host tells `Joined` for the new connection; an older connection of the same peer closing later is not told `Lost`.
+- *Path changes.* Each connection's `paths_stream()` is watched; when the selected path is another (another address, relay to direct or back), `PathChanged` is told with the new `PathInfo`. The session then calls the clock's `path_changed` and sends a burst. (On one computer with no relay iroh opens one path only, so a real change is tested with a relay on the live matrix; the rule is unit-tested and sessions are tested on the simulated network's path change.)
+- *Pings.* `together_net::clock_link` times them on any `Transport`: the guest's `Pinger` (a burst of 20, 50 ms apart, at the start, on `Joined` after a loss and on `PathChanged`, each after telling the clock `reconnected` or `path_changed`; then one a second; `t1` its `MonoClock` as it sends, `t4` the transport's stamp) and the host's `answer` (`t2` the transport's stamp, `t3` its clock as it answers). Plain state driven by events and time, so the same code runs on iroh and on the simulated network.
+
+**What the live sessions take from WP8 now (protocol 2).** Rooms still speak protocol 2 until WP7 and WP9 land protocol 3 (R2), and a 0.3 host answers pings only on the control stream, so today's sessions keep their pings there and only take: priorities, pacing, the 15 s idle timeout, the 2-minute reconnect above with the host keeping an away member as long, held presses only while fresh (D10), the clock told of reconnects and path changes, and the burst of 20 pings 50 ms apart on connect, reconnect and path change, then one a second. Datagram pings come with the move of the sessions onto `IrohTransport` (WP9).
 
 ### 4.2 Clock service
 
@@ -960,6 +972,7 @@ pub trait Transport: Send + Sync {
 ```
 
 `SimTransport` grows from `room_check.rs`'s `Link`: delay, jitter, asymmetry, loss, bufferbloat episodes, a path change (a step in delay and asymmetry), and cuts.
+The host's transport serves media through a `MediaServer`: `open` gives bytes in memory (the simulation, small things), and `describe` (by default nothing) a `MediaInfo { file, mime, duration_ms }`, so a song's file is read from disk as it goes (never whole in memory, gate 7.5) and paced by its length. A `MediaStream` carries the `mime` the host gave, for the guest's player (WP8 added both).
 
 Settled in WP0:
 
@@ -1297,7 +1310,7 @@ As built in WP0 (`crates/audio-check`, self-tests in its `tests/self_test.rs`):
 | App CPU in a room against solo | at most 2 percentage points of one core more |
 | Memory in a room against solo | at most 40 MB more |
 | Allocations on the render thread | 0 (counting allocator in tests) |
-| Control message one-way time while the host streams to 3 guests | p99 under RTT / 2 + 20 ms |
+| Control message one-way time while the host streams to 3 guests | p99 under RTT / 2 + 20 ms, outside the first second of a burst (a burst can briefly fill a slow upload's queue; it is 10 s of one song, once per download and per seek) |
 
 ### 7.6 After a room
 
@@ -1600,7 +1613,7 @@ None. Every decision above is taken; a measurement in WP14 or WP17 that contradi
 | Slow member note | three prepares missed in a row | 4.10 |
 | One speaker re-anchor | when the host's heard place moves 20 ms from the anchor | 4.13 |
 | Every device: can't hold | over 5 ms for 30 s, fades out alone | 4.9 |
-| Host file pacing | 10 s burst, then 2 x the song's bitrate | 4.1 |
+| Host file pacing | 10 s burst, then 2 x the song's bitrate; one bucket per person and song, a new burst only for a seek; chunks of 20 ms of the rate | 4.1 |
 | Stream priorities | control 100, envelopes 50, files 0, covers -10 | 4.1 |
 | Envelope | 10 ms hop, 4 bands, first 30 s then 10 s every 60 s | 4.5 |
 | Alignment confidence | peak 8 robust sd (1.4826 MAD) over the median and 1.3 x the next local peak 50 ms away; two 10 s parts of the first window agreeing within 20 ms | 4.5 |

@@ -64,6 +64,8 @@ pub struct Get {
 pub struct MediaStream {
     /// The whole length of what was asked for, when the other side said it.
     pub total: Option<u64>,
+    /// Its type, when the other side said it ("audio/flac", "image/jpeg").
+    pub mime: Option<String>,
     pub body: Box<dyn MediaRead>,
 }
 
@@ -73,11 +75,26 @@ pub trait MediaRead: Send {
     fn read_chunk(&mut self) -> BoxFuture<'_, Result<Option<Vec<u8>>, Gone>>;
 }
 
+/// What the host serves for a request, beyond bytes in memory: a file read from disk as it
+/// goes (a song's file is never held whole in memory), its type, and the song's length (a song's
+/// file is paced by it; covers and envelopes have none).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MediaInfo {
+    pub file: Option<std::path::PathBuf>,
+    pub mime: Option<String>,
+    pub duration_ms: Option<u64>,
+}
+
 /// What the host serves when a guest asks for a stream (built into the host's transport).
 pub trait MediaServer: Send + Sync {
     /// The bytes asked for, whole (the transport cuts the range and paces it), or `None` when
     /// there is no such thing.
     fn open(&self, from: PeerId, get: &Get) -> Option<std::sync::Arc<[u8]>>;
+    /// The same thing described, for a transport that streams from disk and paces: `None`
+    /// (the default) means take `open`'s bytes as they are.
+    fn describe(&self, _from: PeerId, _get: &Get) -> Option<MediaInfo> {
+        None
+    }
 }
 
 /// How a connection reaches its peer now.
