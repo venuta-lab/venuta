@@ -394,6 +394,67 @@ pub(crate) fn timed_by_chars(
     out
 }
 
+// --- Translations made on this device ------------------------------------------------------
+
+/// Translations made on this device, kept per song (`<app data>/translations`;
+/// `lyrics_translate`).
+pub fn translation_cache() -> lyrics_translate::cache::SongCache {
+    lyrics_translate::cache::SongCache::new(crate::paths::app_data_dir().join("translations"))
+}
+
+/// A song's sung lines, as a translation is kept for them.
+pub fn sung_texts(lines: &[LyricLine]) -> Vec<&str> {
+    lines.iter().map(|l| l.text.as_str()).collect()
+}
+
+/// The language part of a BCP 47 tag ("en" of "en-GB").
+fn lang_base(tag: &str) -> &str {
+    tag.split(['-', '_']).next().unwrap_or(tag)
+}
+
+/// A translation made on this device (`t`, one entry per line) put on the lines it was made
+/// for: source `Translated(engine)`, in `t.into`. A translation the lyrics carried in that
+/// language stays (it was made by people); one in another language gives way. Lines it wasn't
+/// made for (another number of lines) get nothing.
+pub fn apply_translation(lines: &mut [LyricLine], t: &lyrics_translate::cache::Entry) {
+    if t.lines.len() != lines.len() {
+        return;
+    }
+    for (l, text) in lines.iter_mut().zip(&t.lines) {
+        let Some(text) = text else { continue };
+        let carried_here = l.translation.as_ref().is_some_and(|c| {
+            !matches!(c.source, SecondSource::Translated(_))
+                && lang_base(&c.lang).eq_ignore_ascii_case(lang_base(&t.into))
+        });
+        if carried_here {
+            continue;
+        }
+        l.translation = Some(Second {
+            text: text.clone(),
+            words: Vec::new(),
+            lang: t.into.clone(),
+            source: SecondSource::Translated(t.engine.clone()),
+        });
+    }
+}
+
+/// The song's latest translation made on this device, if any, put on its lines (read from
+/// `cache`; see [`add_translation`]).
+pub fn add_translation_from(cache: &lyrics_translate::cache::SongCache, lines: &mut [LyricLine]) {
+    if lines.is_empty() {
+        return;
+    }
+    if let Some(t) = cache.latest(&sung_texts(lines)) {
+        apply_translation(lines, &t);
+    }
+}
+
+/// The song's latest translation made on this device, if any, put on its lines: what the
+/// lyrics views show once a song has been translated here.
+pub fn add_translation(lines: &mut [LyricLine]) {
+    add_translation_from(&translation_cache(), lines);
+}
+
 /// Every translation a provider's lyrics carried, marked as theirs.
 pub fn mark_source(lines: &mut [LyricLine], provider: &str) {
     for l in lines {
@@ -1276,5 +1337,93 @@ mod tests {
         ] {
             assert!(!is_credit(sung), "{sung}");
         }
+    }
+
+    fn translated(lines: &[Option<&str>]) -> lyrics_translate::cache::Entry {
+        lyrics_translate::cache::Entry {
+            from: "hi".into(),
+            into: "en".into(),
+            engine: "bergamot".into(),
+            version: "hi-en tiny 3.0".into(),
+            at_ms: 1,
+            lines: lines.iter().map(|l| l.map(str::to_owned)).collect(),
+        }
+    }
+
+    fn sung(texts: &[&str]) -> Vec<LyricLine> {
+        let mut lines: Vec<LyricLine> = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| LyricLine {
+                start_ms: i as u64 * 1000,
+                text: (*t).to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        finish(&mut lines);
+        lines
+    }
+
+    #[test]
+    fn a_translation_made_here_goes_under_its_lines() {
+        let mut lines = sung(&["तुम ही हो", "Baby", "अब तुम ही हो"]);
+        apply_translation(
+            &mut lines,
+            &translated(&[Some("You are"), None, Some("Now you are")]),
+        );
+        let t = lines[0].translation.as_ref().unwrap();
+        assert_eq!(t.text, "You are");
+        assert_eq!(t.lang, "en");
+        assert_eq!(t.source, SecondSource::Translated("bergamot".into()));
+        assert!(t.words.is_empty());
+        assert!(lines[1].translation.is_none());
+        assert_eq!(lines[2].translation.as_ref().unwrap().text, "Now you are");
+    }
+
+    #[test]
+    fn what_the_lyrics_carry_in_your_language_stays() {
+        let mut lines = sung(&["तुम ही हो", "अब तुम ही हो"]);
+        lines[0].translation = Some(Second {
+            text: "You are the one".into(),
+            words: Vec::new(),
+            lang: "en".into(),
+            source: SecondSource::Lyrics("lyricsplus".into()),
+        });
+        // A Chinese translation the lyrics carried is no use to someone reading English.
+        lines[1].translation = Some(carried_translation("现在你是", "netease"));
+        apply_translation(
+            &mut lines,
+            &translated(&[Some("You are"), Some("Now you are")]),
+        );
+        assert_eq!(
+            lines[0].translation.as_ref().unwrap().text,
+            "You are the one"
+        );
+        assert_eq!(lines[1].translation.as_ref().unwrap().text, "Now you are");
+    }
+
+    #[test]
+    fn a_translation_for_other_lines_is_not_put_on_these() {
+        let mut lines = sung(&["तुम ही हो", "अब तुम ही हो"]);
+        apply_translation(&mut lines, &translated(&[Some("You are")]));
+        assert!(lines.iter().all(|l| l.translation.is_none()));
+    }
+
+    #[test]
+    fn the_kept_translation_of_the_same_lines_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = lyrics_translate::cache::SongCache::new(dir.path());
+        let mut lines = sung(&["तुम ही हो", "अब तुम ही हो"]);
+        cache
+            .put(
+                &sung_texts(&lines),
+                &translated(&[Some("You are"), Some("Now you are")]),
+            )
+            .unwrap();
+        add_translation_from(&cache, &mut lines);
+        assert_eq!(lines[1].translation.as_ref().unwrap().text, "Now you are");
+        let mut other = sung(&["तुम ही हो", "कोई और"]);
+        add_translation_from(&cache, &mut other);
+        assert!(other.iter().all(|l| l.translation.is_none()));
     }
 }

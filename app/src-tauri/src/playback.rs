@@ -1464,8 +1464,11 @@ pub async fn song_lyrics(
         let Some(text) = text else {
             return Ok(Lyrics::default());
         };
-        let lyrics = lyrics_of(text);
+        let mut lyrics = lyrics_of(text);
         crate::japanese_dictionary::fetch_if_waiting(&app, &lyrics.lines, None);
+        // Remembered for Translation (the views' key for a file), with any made here.
+        engine::translation::Translations::global()
+            .serve(&format!("file:{path}"), &mut lyrics.lines);
         Ok(lyrics)
     })
     .await

@@ -1,14 +1,15 @@
-// Translation on this device: the models (one per language pair, downloaded only when asked,
-// from the model's own publisher, run on this PC; nothing is sent anywhere) and the way to ask
-// for a song's translation. The engine's side is the translation package's (L5); until its
-// commands exist there are no models, and Translation shows only what the lyrics carry.
+// Translation on this device: the models (one per language pair, downloaded only when the
+// listener clicks Download, from Mozilla, the models' publisher, and run on this PC; nothing is
+// sent anywhere) and the way to ask for a song's translation.
 //
-// The commands it fills (crates/lyrics-translate, through the Tauri app):
+// The engine's commands (crates/lyrics-translate, through engine::translation):
 //   translation_models                     -> TranslationModel[]
-//   translation_model_download { id }      -> ()  (progress through translation_models)
-//   translation_model_remove { id }        -> ()
+//   translation_model_download { id }      -> ()  (returns at once; progress through
+//                                                 translation_models, a failure in `error`)
+//   translation_model_remove { id }        -> ()  (also stops a download)
 //   lyrics_translate { key, from, into }   -> ()  (then the song's lyrics are read again, with
-//                                                 translation lines Translated(engine))
+//                                                 translation lines Translated("bergamot");
+//                                                 asks for the same song at once share one run)
 
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState } from 'react'
@@ -25,6 +26,8 @@ export interface TranslationModel {
   installed: boolean
   /** 0 to 1 while downloading, else null. */
   progress: number | null
+  /** Why its last download failed (null: it didn't). */
+  error?: string | null
 }
 
 /** What the page talks to: the engine's commands, or a stand-in (UI previews, tests). */
@@ -37,7 +40,7 @@ export interface TranslationBackend {
 
 const inApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-/** The engine's commands; none there yet (or outside the app), no models. */
+/** The engine's commands; outside the app, no models. */
 const engine: TranslationBackend = {
   models: () => (inApp() ? invoke<TranslationModel[]>('translation_models').catch(() => []) : Promise.resolve([])),
   download: (id) => invoke('translation_model_download', { id }),

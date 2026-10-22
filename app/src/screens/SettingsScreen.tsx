@@ -1095,6 +1095,10 @@ function SystemPage(props: { onShortcuts: () => void }) {
           OpenCC's character tables (Apache-2.0), pinyin_pro (MIT), a port of koroman (MIT), and lindera (MIT) with the IPADIC
           dictionary (under its NAIST notice), fetched the first time a Japanese song needs it.
         </p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
+          with fxtranslate (MPL-2.0). Nothing you play or read is sent anywhere.
+        </p>
       </div>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>

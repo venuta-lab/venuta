@@ -1,0 +1,38 @@
+[package]
+name = "lyrics-translate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+description = "Lyric lines translated on the device: the translation models (downloaded only when asked, checked against pinned checksums, removable), a song's lines translated in one go, and a cache per song. Pure: no platform code (Android reuses it); nothing leaves the device but a model's download"
+
+[features]
+default = ["bergamot", "download"]
+# Mozilla's Firefox Translations models through fxtranslate (a pure-Rust port of their engine).
+# The engine's optional C++ SIMD kernel is left off: it is compiled for one CPU level with no
+# check at run time (i8mm on Arm, which older phones lack), so the portable kernel runs
+# everywhere. `simd` turns it on for builds that know their CPU.
+bergamot = ["dep:fxtranslate"]
+simd = ["bergamot", "fxtranslate/gemmology"]
+# Downloads models over HTTPS (ureq); without it the app supplies its own `Fetch`.
+download = ["dep:ureq"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+flate2.workspace = true
+sha2 = "0.10"
+# Script detection only (no dictionaries).
+lyrics-text = { path = "../lyrics-text", default-features = false }
+fxtranslate = { version = "=0.5.0", default-features = false, features = ["mmap", "lean-embed", "threads"], optional = true }
+ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "bergamot_real"
+required-features = ["bergamot", "download"]

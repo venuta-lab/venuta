@@ -90,7 +90,7 @@ pub async fn lyrics_find(
             .then(|| kept.as_ref().and_then(|k| k.get(&ask.key, &slot)))
             .flatten();
         let catalog = |r: &LyricsRequest| catalog_lyrics(&access, r);
-        let found = match cached {
+        let mut found = match cached {
             Some(f) => f,
             None => {
                 // Found before in an older answer format: asked for again, kept to fall back on.
@@ -106,12 +106,14 @@ pub async fn lyrics_find(
                 }
             }
         };
-        if let Some(f) = &found {
+        if let Some(f) = &mut found {
             crate::japanese_dictionary::fetch_if_waiting(
                 &app,
                 &f.lyrics.lines,
                 f.lyrics.lang.as_deref(),
             );
+            // Remembered for Translation, with any made here (never kept with the answer).
+            engine::translation::Translations::global().serve(&ask.key, &mut f.lyrics.lines);
         }
         Ok(LyricsAnswer {
             label: found.as_ref().map(|f| lo::label(&f.source).to_owned()),
