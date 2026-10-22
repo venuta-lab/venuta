@@ -1,25 +1,25 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useSyncExternalStore } from 'react'
 import { inApp } from './engine'
+import { notify } from './notify'
+import {
+  START_DELAY,
+  afterCheck,
+  knownUpdate,
+  nextCheckIn,
+  shouldAnnounce,
+  type Checked,
+  type Problem,
+  type UpdateState,
+} from './updateModel'
+
+export type { UpdateInfo, UpdateState } from './updateModel'
 
 /*
-  New versions of Venuta: one store for the whole app, so the quiet check at start, the notice
-  and Settings › About all agree on what was found and what is happening.
+  New versions of Venuta: one store for the whole app, so the quiet checks, the title bar's
+  button, the notice and Settings › System › Updates all agree on what was found and what is
+  happening. What each answer means lives in updateModel.ts.
 */
-export interface UpdateInfo {
-  version: string
-  current: string
-  notes: string | null
-  date: string | null
-}
-
-export type UpdateState =
-  | { at: 'idle' }
-  | { at: 'checking' }
-  | { at: 'current'; checked: number }
-  | { at: 'found'; info: UpdateInfo }
-  | { at: 'downloading'; info: UpdateInfo; done: number; total: number | null }
-  | { at: 'failed'; message: string }
 
 let state: UpdateState = { at: 'idle' }
 const listeners = new Set<() => void>()
@@ -40,47 +40,10 @@ export function useUpdates(): UpdateState {
   )
 }
 
-/** Ask GitHub for a newer version. */
-export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  if (!inApp()) return null
-  set({ at: 'checking' })
-  try {
-    const info = await invoke<UpdateInfo | null>('update_check')
-    set(info ? { at: 'found', info } : { at: 'current', checked: Date.now() })
-    remember({ last: Date.now() })
-    return info
-  } catch (e) {
-    set({ at: 'failed', message: friendly(String(e)) })
-    return null
-  }
-}
-
-/** Download (signature checked), install and restart. Venuta closes while it installs. */
-export async function installUpdate() {
-  const s = state
-  if (s.at !== 'found') return
-  const progress = new Channel<{ done: number; total: number | null }>()
-  progress.onmessage = (p) => set({ at: 'downloading', info: s.info, done: p.done, total: p.total })
-  set({ at: 'downloading', info: s.info, done: 0, total: null })
-  try {
-    await invoke('update_install', { onProgress: progress })
-    // A test copy stops after the checked download; a real one has restarted by now.
-    set({ at: 'found', info: s.info })
-  } catch (e) {
-    set({ at: 'failed', message: friendly(String(e)) })
-  }
-}
-
-function friendly(e: string): string {
-  if (/signature|signed for version|tampered/i.test(e)) return "The download didn't match Venuta's signature for this version, so it was not installed."
-  if (/(404|not found|status code)/i.test(e)) return 'No published version was found on GitHub yet.'
-  if (/(dns|connect|timed out|timeout|network|resolve)/i.test(e)) return "Couldn't reach GitHub. Check the internet connection and try again."
-  return e.replace(/^Error: /, '')
-}
-
-// The quiet check when Venuta starts: on unless switched off, at most once a day.
+// What is kept between starts: the quiet checks' switch, when GitHub last answered, and the
+// version the notice was shown for.
 const KEY = 'venuta.updates'
-type Saved = { auto: boolean; last: number }
+type Saved = { auto: boolean; last: number; announced?: string }
 export function savedUpdates(): Saved {
   try {
     return { auto: true, last: 0, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
@@ -96,12 +59,95 @@ export function remember(change: Partial<Saved>) {
   }
 }
 
-/** At start: check if it's on and a day has passed. Resolves to what was found, if anything. */
-export async function checkAtStart(): Promise<UpdateInfo | null> {
-  const s = savedUpdates()
-  if (!s.auto || Date.now() - s.last < 24 * 3600 * 1000) return null
-  const info = await checkForUpdate()
-  // A failed quiet check stays quiet: Settings shows it only when you look.
-  if (!info && state.at === 'failed') set({ at: 'idle' })
-  return info
+const asProblem = (e: unknown): Problem =>
+  e && typeof e === 'object' && 'kind' in e && 'message' in e ? (e as Problem) : { kind: 'network', message: String(e).replace(/^Error: /, '') }
+
+let running: Promise<void> | null = null
+
+/**
+ * Ask GitHub for a newer version. A manual check always ends in an answer (up to date, found,
+ * or failed and why); a quiet one keeps an update already found when it fails. `anyway` asks
+ * once while Local only is on.
+ */
+export function checkForUpdate(opts: { manual: boolean; anyway?: boolean } = { manual: true }): Promise<void> {
+  if (!inApp() || state.at === 'downloading' || state.at === 'installing') return Promise.resolve()
+  if (running) return running
+  const before = state
+  set({ at: 'checking', manual: opts.manual, info: knownUpdate(before) })
+  running = invoke<Checked>('update_check', { anyway: opts.anyway ?? false })
+    .then(
+      (ok) => {
+        remember({ last: Date.now() })
+        set(afterCheck(before, { ok }, opts.manual))
+      },
+      (e) => set(afterCheck(before, { err: asProblem(e) }, opts.manual)),
+    )
+    .finally(() => {
+      running = null
+      announce()
+    })
+  return running
+}
+
+/** Download (signature checked), install and restart. Venuta closes while it installs. */
+export async function installUpdate() {
+  const info = knownUpdate(state)
+  if (!info || state.at === 'downloading' || state.at === 'installing') return
+  const progress = new Channel<{ done: number; total: number | null }>()
+  progress.onmessage = (p) => {
+    const complete = p.total !== null && p.done >= p.total
+    set(complete ? { at: 'installing', info } : { at: 'downloading', info, done: p.done, total: p.total })
+  }
+  set({ at: 'downloading', info, done: 0, total: null })
+  try {
+    await invoke('update_install', { onProgress: progress })
+    // A test copy stops after the checked download; a real one has quit for the installer.
+    set({ at: 'found', info })
+  } catch (e) {
+    const problem = asProblem(e)
+    set(problem.kind === 'up_to_date' ? { at: 'current', version: info.current } : { at: 'failed', problem, info })
+  }
+}
+
+/** The latest release's page on GitHub, to download the installer by hand. */
+export function openDownloadPage() {
+  void invoke('update_download_page').catch(() => {})
+}
+
+/** The notice, once per version, when the window can be seen (started in the tray, it waits). */
+function announce() {
+  if (state.at !== 'found') return
+  const info = state.info
+  if (!shouldAnnounce(info, savedUpdates().announced) || document.visibilityState !== 'visible') return
+  remember({ announced: info.version })
+  notify(`Venuta ${info.version} is out.`, { label: 'Update now', run: () => void installUpdate() })
+}
+
+/**
+ * The quiet checks: soon after start, every few hours while Venuta runs, sooner after a failure
+ * and as soon as the network is back. Each one asks only if checking is switched on. Returns a
+ * stop function.
+ */
+export function startUpdateChecks(): () => void {
+  if (!inApp()) return () => {}
+  let timer = 0
+  const schedule = (ms: number | null) => {
+    window.clearTimeout(timer)
+    timer = window.setTimeout(run, ms ?? 60_000)
+  }
+  const run = () => {
+    if (!savedUpdates().auto) return schedule(nextCheckIn(state))
+    void checkForUpdate({ manual: false }).then(() => schedule(nextCheckIn(state)))
+  }
+  const online = () => {
+    if (state.at === 'failed') run()
+  }
+  window.addEventListener('online', online)
+  document.addEventListener('visibilitychange', announce)
+  schedule(START_DELAY)
+  return () => {
+    window.clearTimeout(timer)
+    window.removeEventListener('online', online)
+    document.removeEventListener('visibilitychange', announce)
+  }
 }

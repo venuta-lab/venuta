@@ -17,7 +17,7 @@ Only for something you asked for, or the update check you can switch off:
 | Signing in to Spotify (optional) | Spotify's sign-in and API | Only if you sign in, in **Settings › Online sources**, to bring in your own playlists |
 | Bringing in a playlist from a link | The site of that link: Spotify, Apple Music, YouTube Music, TIDAL, JioSaavn, Deezer, ListenBrainz | When you paste the link and bring it in |
 | Finding your songs on a service (Send out) | Deezer, iTunes, ListenBrainz, MusicBrainz | When you send a playlist out to a service |
-| Checking for updates | GitHub (venuta-lab/venuta releases) | At most once a day, and only if **Check for updates when Venuta starts** is on (**Settings › About**); or when you click **Check for updates** |
+| Checking for updates | GitHub (venuta-lab/venuta releases: the update file, and if that fails the list of releases) | Soon after Venuta starts and every few hours while it runs, only if **Check automatically** is on (**Settings › System › Updates**) and Local only is off; or when you click **Check for updates** |
 | The stream tool (yt-dlp) | GitHub (yt-dlp releases) | When the online catalog needs it and it isn't installed |
 | YouTube's security check (only with **Count plays**) | YouTube and Google (www.youtube.com, www.google.com, jnn-pa.googleapis.com), never as your account | When Venuta first tells a play, then about twice a day while it keeps telling them |
 

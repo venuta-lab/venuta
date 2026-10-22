@@ -19,7 +19,8 @@ import { reducedMotion, resolvedTheme, setPrefs, surfaceShown, themeInfo, usePre
 import { ACCENTS, accentRoles, colourDistance } from '../lib/themes'
 import { AppearanceChoice, Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
-import { checkForUpdate, installUpdate, remember, savedUpdates, useUpdates } from '../lib/updates'
+import { checkForUpdate, installUpdate, openDownloadPage, remember, savedUpdates, useUpdates } from '../lib/updates'
+import { knownUpdate, statusLine } from '../lib/updateModel'
 import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
 import { ProxySetting } from './settings/ProxySetting'
@@ -139,6 +140,79 @@ export function SettingsScreen(props: {
   )
 }
 
+/**
+ * Updates: the state in words, when Venuta last heard from GitHub, and when something went wrong,
+ * why, with Try again and the installer to download by hand.
+ */
+function UpdatesGroup(props: { version: string }) {
+  const u = useUpdates()
+  const [auto, setAuto] = useState(savedUpdates().auto)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(t)
+  }, [])
+  const info = knownUpdate(u)
+  const busy = u.at === 'checking' || u.at === 'downloading' || u.at === 'installing'
+  const installFailed = u.at === 'failed' && !!info
+  return (
+    <Group title="Updates">
+      <Row title="Updates" hint={statusLine(u, savedUpdates().last, now, props.version)}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {u.at === 'local_only' ? (
+            <button onClick={() => void checkForUpdate({ manual: true, anyway: true })} className="btn">
+              Check once anyway
+            </button>
+          ) : (
+            <button onClick={() => void checkForUpdate({ manual: true })} disabled={busy} className="btn">
+              {u.at === 'checking' ? 'Checking…' : u.at === 'failed' && !info ? 'Try again' : 'Check for updates'}
+            </button>
+          )}
+          {info && (u.at === 'found' || u.at === 'failed' || (u.at === 'checking' && !!u.info)) && (
+            <button onClick={() => void installUpdate()} disabled={busy} className="btn-primary">
+              {installFailed ? 'Try again' : `Update to ${info.version}`}
+            </button>
+          )}
+        </div>
+      </Row>
+      {u.at === 'failed' && (
+        <p className="-mt-1 mb-3 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/60">
+          Or{' '}
+          <button onClick={openDownloadPage} className="font-semibold text-accent-ink hover:underline">
+            download the installer
+          </button>{' '}
+          from GitHub and run it. Your music, playlists and settings stay as they are.
+        </p>
+      )}
+      {(u.at === 'downloading' || u.at === 'installing') && (
+        <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
+          <div
+            className="h-full rounded-full bg-accent transition-[width]"
+            style={{ width: u.at === 'installing' ? '100%' : u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }}
+          />
+        </div>
+      )}
+      {info?.notes && (u.at === 'found' || u.at === 'downloading' || u.at === 'installing' || u.at === 'failed') && (
+        <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{info.notes}</div>
+      )}
+      <Row
+        title="Check automatically"
+        hint="Soon after Venuta starts and every few hours while it runs, it asks GitHub whether there is a new version. Nothing else is sent. Local only stops these checks."
+      >
+        <Switch
+          label="Check for updates automatically"
+          on={auto}
+          onChange={(on) => {
+            setAuto(on)
+            remember({ auto: on })
+          }}
+        />
+      </Row>
+      <BetaRow />
+    </Group>
+  )
+}
+
 /** Pre-releases (beta): newer versions before they are released to everyone. */
 function BetaRow() {
   const [beta, setBeta] = useState<boolean | null>(null)
@@ -154,7 +228,7 @@ function BetaRow() {
         on={beta}
         onChange={(on) => {
           setBeta(on)
-          void setSettings({ update_channel: on ? 'beta' : 'stable' }).then(() => void checkForUpdate())
+          void setSettings({ update_channel: on ? 'beta' : 'stable' }).then(() => void checkForUpdate({ manual: true }))
         }}
       />
     </Row>
@@ -986,20 +1060,6 @@ function SystemPage(props: { onShortcuts: () => void }) {
   useEffect(() => {
     engineVersion().then(setV)
   }, [])
-  const u = useUpdates()
-  const [auto, setAuto] = useState(savedUpdates().auto)
-  const line =
-    u.at === 'checking'
-      ? 'Checking…'
-      : u.at === 'current'
-        ? 'Venuta is up to date.'
-        : u.at === 'found'
-          ? `Venuta ${u.info.version} is ready to install (you have ${u.info.current}).`
-          : u.at === 'downloading'
-            ? `Downloading Venuta ${u.info.version}…`
-            : u.at === 'failed'
-              ? u.message
-              : 'New versions are signed, and installed only when you choose.'
   return (
     <div>
       <PageHead title="System" line="How Venuta runs on Windows, what it keeps, and its updates." />
@@ -1031,38 +1091,7 @@ function SystemPage(props: { onShortcuts: () => void }) {
         <HistoryRow />
         <CacheSetting />
       </Group>
-      <Group title="Updates">
-        <Row title="Updates" hint={line}>
-          {u.at === 'found' ? (
-            <button onClick={() => void installUpdate()} className="btn-primary">
-              Install and restart
-            </button>
-          ) : (
-            <button onClick={() => void checkForUpdate()} disabled={u.at === 'checking' || u.at === 'downloading'} className="btn">
-              {u.at === 'checking' ? 'Checking…' : 'Check for updates'}
-            </button>
-          )}
-        </Row>
-        {u.at === 'downloading' && (
-          <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
-            <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }} />
-          </div>
-        )}
-        {(u.at === 'found' || u.at === 'downloading') && u.info.notes && (
-          <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{u.info.notes}</div>
-        )}
-        <Row title="Check when Venuta starts" hint="At most once a day, it asks GitHub whether there is a new version. Nothing else is sent.">
-          <Switch
-            label="Check for updates when Venuta starts"
-            on={auto}
-            onChange={(on) => {
-              setAuto(on)
-              remember({ auto: on })
-            }}
-          />
-        </Row>
-        <BetaRow />
-      </Group>
+      <UpdatesGroup version={v} />
       <Group title="Help">
         <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
           <button

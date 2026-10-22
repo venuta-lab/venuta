@@ -26,8 +26,8 @@ before it is signed.
 ## Privacy
 
 See [PRIVACY.md](../PRIVACY.md). Venuta has no telemetry. It connects to the internet only for
-what the user asks for (lookups, the online catalog, playlist links) and a daily update check that
-can be switched off.
+what the user asks for (lookups, the online catalog, playlist links) and an update check, soon after
+start and every few hours, that can be switched off.
 
 ## Updates
 

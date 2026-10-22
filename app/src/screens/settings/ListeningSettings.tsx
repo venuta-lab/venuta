@@ -65,7 +65,7 @@ export function LocalOnlyRow() {
   return (
     <Row
       title="Local only"
-      hint="Only your own music. The online catalog's songs, shelves and searches are hidden, online songs in your playlists are skipped, and Venuta doesn't go online at all: no lyrics or details lookups, covers or update checks. Off: your files and the online catalog together."
+      hint="Only your own music. The online catalog's songs, shelves and searches are hidden, online songs in your playlists are skipped, and Venuta doesn't go online at all: no lyrics or details lookups, covers or automatic update checks. Off: your files and the online catalog together."
     >
       <Switch on={l.local_only} onChange={(on) => set({ local_only: on })} label="Local only" />
     </Row>

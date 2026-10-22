@@ -51,7 +51,7 @@ import {
 import { coverFor, loadCovers, refreshAccent, setPlayingAccent, useCovers } from './lib/covers'
 import { track } from './lib/jobs'
 import { OPEN_MUSIC_PAGE } from './lib/musicPage'
-import { dismissNotice, notify, useNotice } from './lib/notify'
+import { dismissNotice, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { catalogNow, ensureCatalog, trackAt } from './lib/catalog'
 import { albumWork, menuFor, playlistFacts, playlistWork } from './lib/actions'
@@ -75,7 +75,7 @@ import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { StudioHost } from './components/themes/ThemeStudio'
 import { ThemeImportHost } from './components/themes/ThemeImport'
 import { settingsSection } from './screens/settingsPage'
-import { checkAtStart } from './lib/updates'
+import { startUpdateChecks } from './lib/updates'
 import { keepRadioGoing } from './lib/radio'
 import { listening } from './lib/listening'
 import { applyZoom, readZoom, zoomBy } from './lib/zoom'
@@ -418,24 +418,9 @@ export default function App() {
     return () => window.removeEventListener(OPEN_MUSIC_PAGE, on)
   }, [paletteMusic])
 
-  // A new version: looked for quietly once a day, offered with a notice; installed only when asked.
-  useEffect(() => {
-    if (!inApp()) return
-    const t = window.setTimeout(() => {
-      void checkAtStart().then((info) => {
-        if (info)
-          notify(`Venuta ${info.version} is ready to install.`, {
-            label: 'See what’s new',
-            run: () => {
-              settingsSection('system')
-              go('settings')
-            },
-          })
-      })
-    }, 8000)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // A new version: looked for quietly after start and every few hours, offered in the title bar
+  // and with one notice; installed only when asked.
+  useEffect(() => startUpdateChecks(), [])
 
   // The first time the window is closed, ask what closing should do (Rust holds the window open).
   useEffect(() => {
@@ -1149,7 +1134,14 @@ export default function App() {
       <div className="relative flex h-full flex-col">
         <NowBackdrop covers={backdrop} />
         <ThemeFx />
-        <TitleBar onSearch={() => focusSearch(true)} onActivity={() => go('activity')} />
+        <TitleBar
+          onSearch={() => focusSearch(true)}
+          onActivity={() => go('activity')}
+          onUpdates={() => {
+            settingsSection('system')
+            go('settings')
+          }}
+        />
         <div className="relative z-10 flex min-h-0 flex-1">
           <Rail
             groups={groups}
