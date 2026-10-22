@@ -36,7 +36,7 @@ mod playback;
 mod theme_packs;
 mod together;
 mod translation;
-mod updates;
+pub mod updates;
 mod ytm_account;
 mod ytm_accounts;
 /// YouTube's security check, run in a hidden window (public for the dev probe in examples/).
@@ -3011,6 +3011,7 @@ pub fn run() {
         .manage(online::OnlineSearch::default())
         .manage(accounts::Accounts::default())
         .manage(phone::PhoneServer::default())
+        .manage(updates::Pending::default())
         // Invite links (venuta://join/…): registered by the installer, so a test copy never
         // takes them over.
         .plugin(tauri_plugin_deep_link::init())
@@ -3034,6 +3035,8 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .setup(|app| {
             allow_data_assets(app.handle());
+            // The installers earlier updates left behind (50 MB each).
+            std::thread::spawn(updates::clean_old_installers);
             together::watch_invite_links(app.handle());
             if test_copy()
                 && let Some(w) = app.get_webview_window("main")
@@ -3051,8 +3054,11 @@ pub fn run() {
                 eprintln!("shortcut {} ({}): {}", p.action, p.keys, p.reason);
             }
             // Started with Windows: stay in the tray. Otherwise show the window (it starts
-            // hidden so it never flashes before this choice).
-            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG) {
+            // hidden so it never flashes before this choice). Just updated, show it anyway: an
+            // older version's updater passes on its own --in-tray.
+            if !std::env::args().any(|a| a == desktop::IN_TRAY_ARG)
+                || updates::just_installed(&app.package_info().version.to_string())
+            {
                 desktop::show_main(app.handle());
             }
             #[cfg(windows)]
@@ -3280,6 +3286,7 @@ pub fn run() {
             accounts::spotify_playlists,
             accounts::spotify_read,
             updates::update_install,
+            updates::update_download_page,
             playlist_shelf,
             wanted_export,
             player_test_write,

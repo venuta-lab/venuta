@@ -1,11 +1,14 @@
-// Make a release: node scripts/release.mjs <version> [--notes file.md] [--publish | --local]
+// Make a release: node scripts/release.mjs <version> [--notes file.md] [--prerelease] [--publish | --local]
 //
 //   1. sets the version (tauri.conf.json, Cargo workspace, app/package.json);
 //   2. builds the Windows installer, signed with the updater key (never stored in the repo:
 //      VENUTA_SIGNING_KEY, or %USERPROFILE%\.venuta-signing\venuta-updater.key);
-//   3. writes latest.json, which installed copies read to find the new version;
+//   3. writes latest.json, which installed copies read to find the new version, and checks that
+//      every released version would find, accept and verify it (see scripts/update-feed.mjs);
 //   4. tags the commit and creates a GitHub release with both files, as a draft unless
-//      --publish (a draft is seen by nobody until you publish it on GitHub).
+//      --publish (a draft is seen by nobody until you publish it on GitHub). A stable release
+//      is made the latest, the release every installed copy reads; --prerelease makes a
+//      pre-release, offered only to copies with Pre-releases on, and never the latest.
 //
 // --local stops after step 3: the same signed installer to install and try, with nothing
 // committed, tagged, pushed or released. Run again without it to release.
@@ -13,19 +16,21 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { checkManifest, clientsFromGit, makeManifest, report, setupName } from './lib/update-feed.mjs'
 
 const REPO = 'venuta-lab/venuta'
 const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const args = process.argv.slice(2)
 const version = args.find((a) => /^\d+\.\d+\.\d+$/.test(a))
 if (!version) {
-  console.error('Usage: node scripts/release.mjs <x.y.z> [--notes notes.md] [--publish | --local]')
+  console.error('Usage: node scripts/release.mjs <x.y.z> [--notes notes.md] [--prerelease] [--publish | --local]')
   process.exit(1)
 }
 const notesAt = args.indexOf('--notes')
 const notes = notesAt >= 0 ? readFileSync(args[notesAt + 1], 'utf8').trim() : `Venuta ${version}`
 const publish = args.includes('--publish')
 const local = args.includes('--local')
+const prerelease = args.includes('--prerelease')
 // Only pnpm needs the Windows shell (it is a .cmd); git and gh get their arguments as they are, so a
 // title with a space stays one argument.
 const run = (cmd, a, opts = {}) =>
@@ -65,19 +70,21 @@ try {
   }
 }
 const dir = join(root, 'target/release/bundle/nsis')
-const setup = `Venuta_${version}_x64-setup.exe`
+const setup = setupName(version)
 const signature = readFileSync(join(dir, `${setup}.sig`), 'utf8').trim()
 
-// 3. What installed copies read.
-const latest = {
-  version,
-  notes,
-  pub_date: new Date().toISOString(),
-  platforms: {
-    'windows-x86_64': { signature, url: `https://github.com/${REPO}/releases/download/v${version}/${setup}` },
-  },
-}
+// 3. What installed copies read, and the proof that every released version can use it.
+const latest = makeManifest({ version, notes, pubDate: new Date().toISOString(), signature })
 writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n')
+const check = checkManifest(latest, {
+  clients: clientsFromGit(root),
+  installer: readFileSync(join(dir, setup)),
+  assets: [setup, 'latest.json'],
+  prerelease,
+  strict: true,
+})
+console.log(report(check))
+if (!check.ok) throw new Error('latest.json would leave installed versions behind, so nothing was released')
 if (local) {
   console.log(`Built ${join(dir, setup)}: nothing committed, tagged or released.`)
   process.exit(0)
@@ -95,5 +102,6 @@ run('git', ['tag', `v${version}`])
 run('git', ['push', 'origin', 'HEAD', `v${version}`])
 const notesFile = join(dir, 'notes.md')
 writeFileSync(notesFile, notes + '\n')
-run('gh', ['release', 'create', `v${version}`, '--repo', REPO, '--title', `Venuta ${version}`, '--notes-file', notesFile, ...(publish ? [] : ['--draft']), join(dir, setup), join(dir, 'latest.json')])
+run('gh', ['release', 'create', `v${version}`, '--repo', REPO, '--title', `Venuta ${version}`, '--notes-file', notesFile, ...(publish ? [] : ['--draft']), ...(prerelease ? ['--prerelease', '--latest=false'] : ['--latest']), join(dir, setup), join(dir, 'latest.json')])
 console.log(publish ? `Published v${version}.` : `Draft v${version} created: publish it on GitHub when ready.`)
+console.log('Once it is published: node scripts/update-feed.mjs live')

@@ -9,6 +9,7 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { setSignature } from './lib/update-feed.mjs'
 
 const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const [cmd, version, signedDir] = process.argv.slice(2)
@@ -42,7 +43,8 @@ if (cmd === 'notes') {
   const sig = join(dir, `${setup}.sig`)
   if (!existsSync(sig)) throw new Error('The updater signature was not written')
   const latest = JSON.parse(readFileSync(join(dir, 'latest.json'), 'utf8'))
-  latest.platforms['windows-x86_64'].signature = readFileSync(sig, 'utf8').trim()
+  // Every Windows platform in it (windows-x86_64-nsis and windows-x86_64) names this installer.
+  setSignature(latest, readFileSync(sig, 'utf8').trim())
   writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest, null, 2) + '\n')
   console.log(`Signed ${setup}; the updater signature and latest.json now match it.`)
 } else {

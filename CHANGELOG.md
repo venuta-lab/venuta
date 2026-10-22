@@ -64,6 +64,17 @@
   scrolling no longer changes the page you are on.
 - **Activity moved into Settings**, and the title bar shows it only while something is running.
 - **Listen together's buttons** wear your theme's colours.
+- **Updates that arrive.** Venuta checks soon after it starts and every few hours while it runs,
+  and a new version shows as **Update to x.y.z** in the title bar until it is installed, with
+  one notice. One click downloads it, checks its signature, installs it where Venuta is and
+  starts it again, in its window. Settings › System › Updates says when it last checked and,
+  if something went wrong, why, with Try again and the installer to download by hand. A busy
+  or unreachable GitHub is asked again, then through its list of releases.
+- **Fixed**: a check that found a new version no longer forgets it for the rest of the day; the
+  manual check with Local only on no longer says "up to date"; a download that stops no longer
+  leaves Settings on "Downloading" for ever; after an update Venuta no longer opens hidden in
+  the tray when it was started with Windows; old update installers are cleared from the temp
+  folder.
 - **Fixed**: an online song that stopped coming partway no longer freezes silently. Venuta asks
   for the rest again within seconds, says Buffering while it waits, and if the song can't be
   saved it says so by name and plays the next one.
