@@ -222,15 +222,90 @@ pub fn finish(lines: &mut [LyricLine]) {
 /// A pronunciation in Roman letters, made on the device, for every line in another script
 /// that has none yet (one the lyrics carried, or paired from another copy, comes first). Each
 /// romanized word keeps the timing of the word it came from. Source `Made`, language like
-/// "hi-Latn"; scripts with no reader yet (Urdu, Arabic, Thai) get none. One made before is
-/// made again, so kept answers follow the reader as it improves (it takes well under a
-/// millisecond a song).
+/// "hi-Latn"; scripts with no reader yet (Urdu, Arabic, Thai) get none, and Japanese lines
+/// with kanji get none until the dictionary is installed ([`waits_for_japanese_dictionary`]).
+/// One made before is made again, so kept answers follow the reader as it improves (it takes
+/// well under a millisecond a song).
 pub fn add_pronunciation(lyrics: &mut Lyrics) {
     add_pronunciation_lines(&mut lyrics.lines, lyrics.lang.as_deref());
 }
 
 /// [`add_pronunciation`] for lines whose song language is `song_lang` (BCP 47), if known.
 pub fn add_pronunciation_lines(lines: &mut [LyricLine], song_lang: Option<&str>) {
+    let dictionary = japanese_dictionary();
+    pronounce(lines, song_lang, dictionary.as_deref());
+}
+
+/// The installed Japanese dictionary's folder, under the app data folder.
+pub fn japanese_dictionary() -> Option<std::path::PathBuf> {
+    use lyrics_text::japanese::dictionary;
+    dictionary::installed(&crate::paths::app_data_dir(), &dictionary::IPADIC)
+}
+
+/// Whether some line waits for the Japanese dictionary to get its pronunciation (it has
+/// kanji, and the dictionary isn't installed): the app fetches it then
+/// ([`install_japanese_dictionary`]) and reads the lyrics again.
+pub fn waits_for_japanese_dictionary(lines: &[LyricLine], song_lang: Option<&str>) -> bool {
+    japanese_dictionary().is_none() && wants_japanese_dictionary(lines, song_lang)
+}
+
+/// Downloads, checks and installs the Japanese dictionary under the app data folder (10.5 MB,
+/// from lindera's own release); `progress` gets the stage and returns false to stop.
+pub fn install_japanese_dictionary(
+    progress: &mut dyn FnMut(lyrics_text::japanese::dictionary::Progress) -> bool,
+) -> Result<std::path::PathBuf, String> {
+    use lyrics_text::japanese::dictionary;
+    dictionary::ensure(&crate::paths::app_data_dir(), &dictionary::IPADIC, progress)
+        .map_err(|e| e.to_string())
+}
+
+/// Lines that would need the Japanese dictionary: Japanese ones with kanji and no
+/// pronunciation from the lyrics.
+fn wants_japanese_dictionary(lines: &[LyricLine], song_lang: Option<&str>) -> bool {
+    let hint = song_hint(lines, song_lang);
+    let japanese_song = hint
+        .as_deref()
+        .is_some_and(|l| l == "ja" || l.starts_with("ja-"));
+    lines.iter().any(|l| {
+        l.roman
+            .as_ref()
+            .is_none_or(|r| r.source == SecondSource::Made)
+            && (l.script == "Jpan" || (japanese_song && l.script == "Hani"))
+            && lyrics_text::japanese::needs_dictionary(&l.text)
+    })
+}
+
+/// The song's language, or what its lines say of it when unknown: Japanese when any line is
+/// in kana, and for Cyrillic the language its letters show (Ukrainian і, Serbian ђ), read over
+/// the whole song since one line may not tell.
+fn song_hint(lines: &[LyricLine], song_lang: Option<&str>) -> Option<String> {
+    if let Some(l) = song_lang {
+        return Some(l.to_owned());
+    }
+    if lines.iter().any(|l| l.script == "Jpan") {
+        return Some("ja".into());
+    }
+    let cyrillic: Vec<&str> = lines
+        .iter()
+        .filter(|l| l.script == "Cyrl")
+        .map(|l| l.text.as_str())
+        .collect();
+    (!cyrillic.is_empty()).then(|| {
+        lyrics_text::cyrillic::detect(&cyrillic.join(
+            "
+",
+        ))
+        .code()
+        .to_owned()
+    })
+}
+
+fn pronounce(
+    lines: &mut [LyricLine],
+    song_lang: Option<&str>,
+    dictionary: Option<&std::path::Path>,
+) {
+    let hint = song_hint(lines, song_lang);
     let mut words: Vec<lyrics_text::Word> = Vec::new();
     for l in lines {
         if l.roman
@@ -251,7 +326,8 @@ pub fn add_pronunciation_lines(lines: &mut [LyricLine], song_lang: Option<&str>)
         }));
         let line = lyrics_text::Line::new(&l.text)
             .words(&words)
-            .lang(song_lang);
+            .lang(hint.as_deref())
+            .japanese_dictionary(dictionary);
         if let Some(r) = lyrics_text::romanize(&line) {
             l.roman = Some(Second {
                 text: r.text,
@@ -963,6 +1039,73 @@ mod tests {
         let once = lyrics.clone();
         add_pronunciation(&mut lyrics);
         assert_eq!(lyrics, once, "made again, the same");
+    }
+
+    fn line_of(text: &str) -> LyricLine {
+        let mut l = LyricLine {
+            text: text.into(),
+            ..Default::default()
+        };
+        finish(std::slice::from_mut(&mut l));
+        l
+    }
+
+    #[test]
+    fn pronunciation_for_every_script_family() {
+        let mut lines = vec![
+            line_of("사랑해"),
+            line_of("我爱你"),
+            line_of("Я тебя люблю"),
+            line_of("Σ' αγαπώ"),
+        ];
+        pronounce(&mut lines, None, None);
+        let made: Vec<(&str, &str)> = lines
+            .iter()
+            .map(|l| {
+                let r = l.roman.as_ref().expect("made");
+                assert_eq!(r.source, SecondSource::Made);
+                (r.text.as_str(), r.lang.as_str())
+            })
+            .collect();
+        assert_eq!(
+            made,
+            [
+                ("Saranghae", "ko-Latn"),
+                ("Wo ai ni", "zh-Latn"),
+                ("Ya tebya lyublyu", "ru-Latn"),
+                ("S' agapo", "el-Latn"),
+            ]
+        );
+    }
+
+    #[test]
+    fn japanese_lines_with_kanji_wait_for_the_dictionary() {
+        let mut lines = vec![line_of("君の名は"), line_of("さよなら"), line_of("未来")];
+        pronounce(&mut lines, None, None);
+        assert_eq!(lines[0].roman, None);
+        assert_eq!(
+            lines[1].roman.as_ref().map(|r| r.text.as_str()),
+            Some("Sayonara")
+        );
+        // The kana lines make it a Japanese song: kanji alone are not read as Chinese.
+        assert_eq!(lines[2].roman, None);
+        assert!(wants_japanese_dictionary(&lines, None));
+        let chinese = vec![line_of("我爱你")];
+        assert!(!wants_japanese_dictionary(&chinese, None));
+        let korean = vec![line_of("사랑해")];
+        assert!(!wants_japanese_dictionary(&korean, None));
+    }
+
+    #[test]
+    fn the_whole_song_tells_its_cyrillic_language() {
+        // One line has no letter only Ukrainian uses; another line does.
+        let mut lines = vec![line_of("Я тебе кохаю"), line_of("моя Україно")];
+        pronounce(&mut lines, None, None);
+        let r = lines[0].roman.as_ref().unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.lang.as_str()),
+            ("Ya tebe kokhaiu", "uk-Latn")
+        );
     }
 
     #[test]
