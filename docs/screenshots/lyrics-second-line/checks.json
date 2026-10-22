@@ -4,158 +4,827 @@
       "name": "nowplaying-hindi-small-dark",
       "size": "1100x700",
       "bad": [],
-      "rows": 10
+      "rows": 10,
+      "attributions": 0
     },
     {
       "name": "nowplaying-hindi-large-dark",
       "size": "1920x1080",
       "bad": [],
-      "rows": 10
+      "rows": 10,
+      "attributions": 0
     },
     {
       "name": "bigscreen-hindi-small-dark",
       "size": "960x540",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
     },
     {
       "name": "bigscreen-hindi-large-dark",
       "size": "1920x1080",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
     },
     {
       "name": "desktop-hindi-small-dark",
       "size": "520x296",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "desktop-hindi-large-dark",
       "size": "1400x296",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "mini-bar-hindi-dark",
       "size": "380x132",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "mini-card-hindi-dark",
       "size": "300x400",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "settings-lyrics-dark",
       "size": "900x1000",
       "bad": [],
-      "rows": 0
+      "rows": 0,
+      "attributions": 0
     },
     {
       "name": "nowplaying-hindi-small-light",
       "size": "1100x700",
       "bad": [],
-      "rows": 10
+      "rows": 10,
+      "attributions": 0
     },
     {
       "name": "nowplaying-hindi-large-light",
       "size": "1920x1080",
       "bad": [],
-      "rows": 10
+      "rows": 10,
+      "attributions": 0
     },
     {
       "name": "bigscreen-hindi-small-light",
       "size": "960x540",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
     },
     {
       "name": "bigscreen-hindi-large-light",
       "size": "1920x1080",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
     },
     {
       "name": "desktop-hindi-small-light",
       "size": "520x296",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "desktop-hindi-large-light",
       "size": "1400x296",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "mini-bar-hindi-light",
       "size": "380x132",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "mini-card-hindi-light",
       "size": "300x400",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "settings-lyrics-light",
       "size": "900x1000",
       "bad": [],
-      "rows": 0
+      "rows": 0,
+      "attributions": 0
     },
     {
       "name": "bigscreen-mixed-english-line-large-dark",
       "size": "1920x1080",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
     },
     {
       "name": "bigscreen-japanese-small-dark",
       "size": "960x540",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "nowplaying-japanese-large-dark",
       "size": "1920x1080",
       "bad": [],
-      "rows": 4
+      "rows": 4,
+      "attributions": 0
     },
     {
       "name": "nowplaying-plain-small-light",
       "size": "1100x700",
       "bad": [],
-      "rows": 0
+      "rows": 0,
+      "attributions": 0
     },
     {
       "name": "desktop-spanish-smallest-dark",
       "size": "360x130",
       "bad": [],
-      "rows": 1
+      "rows": 1,
+      "attributions": 0
     },
     {
       "name": "mini-card-mixed-light",
       "size": "300x400",
       "bad": [],
-      "rows": 2
+      "rows": 2,
+      "attributions": 0
     },
     {
       "name": "bigscreen-hindi-outline-large-light",
       "size": "1920x1080",
       "bad": [],
-      "rows": 6
+      "rows": 6,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-karaoke-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-karaoke-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-karaoke-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-clean-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-clean-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-clean-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-glow-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-glow-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-glow-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-outline-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-outline-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-outline-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-serif-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-serif-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-serif-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-line0-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-line1-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-line2-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-venuta-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-green-room-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-orchard-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-redline-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-glasshouse-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-neo-tokyo-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-thermoptic-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-sync-ratio-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-layer-zero-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-bounty-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-theme-skin99-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-smallest-dark",
+      "size": "360x130",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-joined-smallest-light",
+      "size": "360x130",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "desktop-unbroken-large-light",
+      "size": "1400x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-unbroken-small-dark",
+      "size": "960x540",
+      "bad": [],
+      "rows": 4,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-unbroken-joined-small-dark",
+      "size": "960x540",
+      "bad": [],
+      "rows": 6,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1366x768-dark",
+      "size": "1366x768",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1366x768-dark",
+      "size": "1366x768",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1440x900-dark",
+      "size": "1440x900",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1440x900-dark",
+      "size": "1440x900",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1600x900-dark",
+      "size": "1600x900",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1600x900-dark",
+      "size": "1600x900",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1920x1080-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1920x1080-dark",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-2560x1440-dark",
+      "size": "2560x1440",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-2560x1440-dark",
+      "size": "2560x1440",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-3840x2160-dark",
+      "size": "3840x2160",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-3840x2160-dark",
+      "size": "3840x2160",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1366x768-light",
+      "size": "1366x768",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1366x768-light",
+      "size": "1366x768",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1440x900-light",
+      "size": "1440x900",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1440x900-light",
+      "size": "1440x900",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1600x900-light",
+      "size": "1600x900",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1600x900-light",
+      "size": "1600x900",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-1920x1080-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-1920x1080-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-2560x1440-light",
+      "size": "2560x1440",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-2560x1440-light",
+      "size": "2560x1440",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-3840x2160-light",
+      "size": "3840x2160",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-3840x2160-light",
+      "size": "3840x2160",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-venuta-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-green-room-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-orchard-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-redline-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-glasshouse-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-neo-tokyo-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-thermoptic-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-sync-ratio-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-layer-zero-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-bounty-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-theme-skin99-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-karaoke-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-clean-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-glow-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-outline-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-serif-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-google-awake-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 3
+    },
+    {
+      "name": "bigscreen-japanese-ask-awake-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 3,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-japanese-note-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 2,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-hindi-1280x720-dark",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 0
+    },
+    {
+      "name": "bigscreen-mixed-1280x720-light",
+      "size": "1280x720",
+      "bad": [],
+      "rows": 6,
+      "attributions": 0
+    },
+    {
+      "name": "nowplaying-japanese-google-small-dark",
+      "size": "1100x700",
+      "bad": [],
+      "rows": 8,
+      "attributions": 4
+    },
+    {
+      "name": "nowplaying-japanese-google-large-light",
+      "size": "1920x1080",
+      "bad": [],
+      "rows": 8,
+      "attributions": 4
+    },
+    {
+      "name": "desktop-japanese-google-small-dark",
+      "size": "520x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 1
+    },
+    {
+      "name": "desktop-japanese-google-large-light",
+      "size": "1400x296",
+      "bad": [],
+      "rows": 2,
+      "attributions": 1
+    },
+    {
+      "name": "desktop-japanese-google-smallest-dark",
+      "size": "360x130",
+      "bad": [],
+      "rows": 2,
+      "attributions": 1
+    },
+    {
+      "name": "mini-bar-japanese-google-dark",
+      "size": "380x132",
+      "bad": [],
+      "rows": 2,
+      "attributions": 1
+    },
+    {
+      "name": "mini-card-japanese-google-light",
+      "size": "300x400",
+      "bad": [],
+      "rows": 2,
+      "attributions": 1
+    },
+    {
+      "name": "settings-lyrics-google-dark",
+      "size": "900x1000",
+      "bad": [],
+      "rows": 0,
+      "attributions": 0
+    },
+    {
+      "name": "settings-lyrics-google-light",
+      "size": "900x1000",
+      "bad": [],
+      "rows": 0,
+      "attributions": 0
     }
   ],
   "clock": {
-    "framesIn5s": 1173,
-    "loopCallbacksPerFrame": 1.15,
-    "mainThreadMsPerFrame": 2.51,
-    "worstLoopMsInAFrame": 0.7,
+    "framesIn5s": 1149,
+    "loopCallbacksPerFrame": 1.13,
+    "mainThreadMsPerFrame": 3.1,
+    "worstLoopMsInAFrame": 1,
     "note": "headless Chrome draws without vsync, so it draws more frames than a 60 Hz screen; per-frame time is the measure"
   }
 }

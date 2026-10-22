@@ -49,6 +49,8 @@ export interface SecondRowView {
   progress?: number
   /** Its language (BCP 47), for the type and for screen readers. */
   lang?: string
+  /** What its translator asks to be shown beside it ("Powered by Google Translate"). */
+  attribution?: string
 }
 
 /** The second rows' sizes and gaps, as a share of the line's size (lib/lyricRows.ts counts them),
@@ -162,8 +164,14 @@ export function LyricText(props: {
               paintOrder: 'stroke fill',
             }}
           >
-            {/* An empty row keeps its height: the song's lines all have the same rows. */}
+            {/* An empty row keeps its height: the song's lines all have the same rows. Beside a
+                line its translator asks it of ("Powered by Google Translate"): that, smaller. */}
             {fill ? <Sung text={r.text} progress={r.progress ?? 0} colour={colour} dim={ink} /> : r.text || ' '}
+            {r.attribution && r.text && (
+              <span data-attribution lang="en" style={{ fontSize: 'max(10px, 0.62em)', marginLeft: '0.7em', whiteSpace: 'nowrap', letterSpacing: 0, opacity: 0.85 }}>
+                {r.attribution}
+              </span>
+            )}
           </div>
         )
       })}

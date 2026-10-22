@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { correctLine } from '../../lib/lyricCorrections'
-import { sourceKind, sourceWords, type LyricLine } from '../../lib/lyricsModel'
+import { attributionOf, sourceKind, sourceWords, type LyricLine } from '../../lib/lyricsModel'
 import { useEscape } from '../../lib/layers'
 import { rowsFor, type SecondKind } from '../../lib/secondLines'
 import { downloadModel, languageName, statusWords } from '../../lib/translation'
@@ -82,13 +82,13 @@ export function SecondRowsList(props: { seconds: SecondLinesView; line: LyricLin
   return (
     <div className="mt-0.5 grid gap-0.5">
       {rows.map((r) => (
-        <SecondRowLine key={r.kind} kind={r.kind} text={r.text} lang={r.second?.lang} source={r.second ? sourceWords(r.second.source) : ''} corrected={!!r.second && sourceKind(r.second.source).kind === 'Corrected'} line={line} songKey={v.key} active={props.active} />
+        <SecondRowLine key={r.kind} kind={r.kind} text={r.text} lang={r.second?.lang} source={r.second ? sourceWords(r.second.source) : ''} corrected={!!r.second && sourceKind(r.second.source).kind === 'Corrected'} attribution={attributionOf(r.second?.source)} line={line} songKey={v.key} active={props.active} />
       ))}
     </div>
   )
 }
 
-function SecondRowLine(props: { kind: SecondKind; text: string; lang?: string; source: string; corrected: boolean; line: LyricLine; songKey: string; active: boolean }) {
+function SecondRowLine(props: { kind: SecondKind; text: string; lang?: string; source: string; corrected: boolean; attribution: string | null; line: LyricLine; songKey: string; active: boolean }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(props.text)
   useEscape(editing, () => setEditing(false))
@@ -123,6 +123,12 @@ function SecondRowLine(props: { kind: SecondKind; text: string; lang?: string; s
         {props.text}
       </span>
       {props.corrected && <span className="shrink-0 text-[11px] text-ink/35">corrected</span>}
+      {/* What its translator asks to be shown beside it, always (not only on hover). */}
+      {props.attribution && (
+        <span data-attribution className="shrink-0 text-[11px] text-ink/45">
+          {props.attribution}
+        </span>
+      )}
       <button
         onClick={() => {
           setDraft(props.text)

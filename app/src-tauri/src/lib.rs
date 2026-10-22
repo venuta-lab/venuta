@@ -3352,6 +3352,7 @@ pub fn run() {
             translation::translation_keys,
             translation::translation_key_save,
             translation::translation_key_forget,
+            translation::translation_engine_page,
             translation::translation_key_test,
             online::online_collection,
             online::online_artist,

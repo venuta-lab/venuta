@@ -66,6 +66,10 @@ export interface TranslationBackend {
 
 const inApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+/** The page of the engine's service (Cloud Translation, which Google asks apps that show its
+ *  translations to link to), in your browser. Only the pages the engine names. */
+export const openEnginePage = (engine: EngineId): Promise<void> => (inApp() ? invoke<void>('translation_engine_page', { engine }) : Promise.resolve())
+
 /** The engine's commands; outside the app, no models and no keys. */
 const engine: TranslationBackend = {
   models: () => (inApp() ? invoke<TranslationModel[]>('translation_models').catch(() => []) : Promise.resolve([])),

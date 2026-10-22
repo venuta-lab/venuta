@@ -101,3 +101,46 @@ pub async fn translation_key_test(
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// The page of an engine's service that Venuta links to where the engine is chosen: Google asks
+/// apps that show its Cloud Translation API's translations to link to Cloud Translation. Only
+/// these addresses, never one the page sends.
+fn engine_page(engine: &str) -> Option<&'static str> {
+    match engine {
+        "google" => Some("https://cloud.google.com/translate"),
+        _ => None,
+    }
+}
+
+/// Opens [`engine_page`] in your browser.
+#[tauri::command]
+pub fn translation_engine_page(app: tauri::AppHandle, engine: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = engine_page(&engine).ok_or("Venuta has no page to open for that engine.")?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::engine_page;
+
+    #[test]
+    fn only_googles_page_is_opened_for_an_engine() {
+        assert_eq!(
+            engine_page("google"),
+            Some("https://cloud.google.com/translate")
+        );
+        for other in [
+            "deepl",
+            "microsoft",
+            "llm",
+            "device",
+            "https://example.com",
+            "",
+        ] {
+            assert_eq!(engine_page(other), None, "{other}");
+        }
+    }
+}

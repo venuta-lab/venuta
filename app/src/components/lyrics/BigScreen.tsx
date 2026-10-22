@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { MIN_FIT, nextFit, shrinkFor } from '../../lib/lyricFit'
+import { MIN_FIT, nextFit, shrinkFor, stageRoom } from '../../lib/lyricFit'
 import { scaleOf, useLyricLook } from '../../lib/lyricLook'
 import { usePrefs } from '../../lib/prefs'
 import { keyAction } from '../../lib/secondChoice'
@@ -89,8 +89,24 @@ function Stage({ frame }: { frame: Frame }) {
   // lines too tall together, make them all smaller, as much as they must; only past the smallest
   // size does a word break. The lines around it, smaller and dim, break inside a word rather than
   // shrink the line being sung. The rows under each line (pronunciation, translation) count in the
-  // height. The song at the bottom keeps its room: the lines stay clear of it.
+  // height. The song at the bottom keeps its room: the lines stay clear of it, however tall it is
+  // (where the rows came from, the translation note and its button add lines to it), measured.
   const stack = useRef<HTMLDivElement>(null)
+  const bar = useRef<HTMLDivElement>(null)
+  const showBar = !!song && !clear
+  const [barTop, setBarTop] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const b = bar.current
+    if (!showBar || !b) {
+      setBarTop(null)
+      return
+    }
+    const measure = () => setBarTop(b.offsetTop)
+    measure()
+    const watch = new ResizeObserver(measure)
+    watch.observe(b)
+    return () => watch.disconnect()
+  }, [showBar, view])
   const prefs = usePrefs()
   const [fonts, setFonts] = useState(0)
   useEffect(() => {
@@ -98,7 +114,8 @@ function Stage({ frame }: { frame: Frame }) {
     document.fonts?.addEventListener('loadingdone', f)
     return () => document.fonts?.removeEventListener('loadingdone', f)
   }, [])
-  const room = view.h * (song && !clear ? 0.72 : 0.9)
+  const area = stageRoom(view.h, showBar ? barTop : null)
+  const room = area.room
   const [fit, setFit] = useState(1)
   const measureKey = JSON.stringify([at, now, next, prev, chosen, view, room, look.look, rowsKey, seconds.model?.lines.length, prefs.style, prefs.pack, fonts])
   const [measured, setMeasured] = useState(measureKey)
@@ -118,7 +135,7 @@ function Stage({ frame }: { frame: Frame }) {
 
   return (
     <div className="relative h-full w-full">
-      <div className="relative flex h-full flex-col items-center justify-center px-[7vw]">
+      <div className="absolute inset-x-0 flex flex-col items-center justify-center px-[7vw]" style={{ top: area.top, bottom: area.bottom }}>
         {timed ? (
           <div ref={stack} data-stack className="flex w-full min-w-0 max-w-[min(92vw,1600px)] flex-col items-stretch gap-[3vh]">
             <div data-row className="min-h-[1.2em] w-full min-w-0 opacity-40" style={{ fontSize: px * 0.55 }}>
@@ -177,8 +194,10 @@ function Stage({ frame }: { frame: Frame }) {
       </div>
 
       {/* The song, small, at the bottom (not in Clear: the words alone). */}
-      {song && !clear && (
-        <div data-song-bar className="absolute inset-x-[5vw] bottom-[4vh] flex items-center gap-4 opacity-80">
+      {/* As tall with its buttons as without (they show while the mouse moves), so the lines
+          above it don't change size as the mouse moves. */}
+      {showBar && (
+        <div ref={bar} data-song-bar className="absolute inset-x-[5vw] bottom-[4vh] flex min-h-[72px] items-center gap-4 opacity-80">
           {cover && <img src={cover.src} alt="" className="h-[6vh] w-[6vh] rounded-lg object-cover shadow-lg" />}
           <div className="min-w-0 flex-1">
             <div className="truncate font-semibold" style={{ fontSize: Math.max(15, view.h * 0.022) }}>

@@ -33,6 +33,13 @@ export interface EngineInfo {
   quota: string
   /** Where a key comes from. */
   keyHelp: string
+  /** What the service asks to be shown beside each line it translated (Google: its "Powered by
+   *  Google Translate"), and only beside those. */
+  attribution?: string
+  /** The notice the service asks to be made available where it is chosen. */
+  notice?: string
+  /** The service's page, linked where it is chosen. */
+  page?: string
 }
 
 export const ENGINES: Record<EngineId, EngineInfo> = {
@@ -57,6 +64,15 @@ export const ENGINES: Record<EngineId, EngineInfo> = {
     vendor: 'Google',
     quota: 'The first 500,000 characters a month are free; Google bills the rest to your Cloud account.',
     keyHelp: 'An API key of a Google Cloud project with the Cloud Translation API turned on.',
+    // Google's terms for showing Cloud Translation API results to people
+    // (https://docs.cloud.google.com/translate/attribution, checked 2026-10-22): say they are
+    // automatic translations by Google Translate, with "Powered by Google Translate" beside them;
+    // make this disclaimer available when they are shown as they came; and say in the app's help
+    // that Google Translate powers them, with a link to Cloud Translation.
+    attribution: 'Powered by Google Translate',
+    notice:
+      'THIS SERVICE MAY CONTAIN TRANSLATIONS POWERED BY GOOGLE. GOOGLE DISCLAIMS ALL WARRANTIES RELATED TO THE TRANSLATIONS, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTIES OF ACCURACY, RELIABILITY, AND ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.',
+    page: 'https://cloud.google.com/translate',
   },
   llm: {
     label: 'AI (Claude), with your key',

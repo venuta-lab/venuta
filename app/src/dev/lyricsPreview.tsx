@@ -6,7 +6,7 @@
 //   /lyrics-preview.html?view=stage&song=hindi&theme=dark&rows=all&size=xl&line=2
 //
 //   view   nowplaying | stage | overlay | mini | settings
-//   song   hindi | japanese | spanish | mixed | plain | unbroken (lines with nowhere to wrap)
+//   song   hindi | japanese | japanese-google (translated by Google) | spanish | mixed | plain | unbroken (lines with nowhere to wrap)
 //   theme  dark | light
 //   style  a theme (venuta, thermoptic, skin99...): its fonts, for the Theme look
 //   rows   all | none | roman | translation   (the two switches, for every language)
@@ -68,6 +68,7 @@ lyrics.setPreviewLyrics(() => fixed)
 const TITLES: Record<string, [string, string]> = {
   hindi: ['Chaand Phir Se', 'Preview Artist'],
   japanese: ['Yozora', 'Preview Artist'],
+  'japanese-google': ['Yozora', 'Preview Artist'],
   spanish: ['Bajo la luna', 'Preview Artist'],
   mixed: ['Dil Ye Mera', 'Preview Artist'],
   plain: ['Morning Comes', 'Preview Artist'],
