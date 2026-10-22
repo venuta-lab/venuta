@@ -9,6 +9,7 @@ pub mod output;
 pub mod output_api;
 pub mod queue;
 pub mod remote;
+pub mod render;
 pub mod sim;
 pub mod spectrum;
 pub mod sync;

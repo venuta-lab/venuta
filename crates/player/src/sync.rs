@@ -12,6 +12,11 @@
 //! The rate change goes through a high-quality resampler (`Resampler`) whose rate glides, at
 //! most 500 per million (under a cent of pitch), asked for by one controller (`Controller`)
 //! on an error smoothed over a second so clock noise isn't chased.
+//!
+//! The resampler is one loop with two faces: `Resampler`, today's engine's (it keeps its own
+//! history), and `Converter`, the renderer's (`render.rs`), which works on a window it is lent,
+//! allocates nothing, and takes any base ratio (the source's rate over the device's), with a
+//! kernel cut at the device's rate for sources faster than it (`Kernels`).
 
 use std::time::{Duration, Instant};
 
@@ -267,17 +272,47 @@ impl Controller {
     }
 }
 
-/// Half the resampler's taps: 32 either side (flat to 20 kHz at 44.1 kHz, images 80 dB down).
+/// Half the 64-tap kernel's taps: 32 either side (flat to 20 kHz at 44.1 kHz, images 80 dB down).
 const HALF: usize = 32;
-/// Fractions of a frame the filter is worked out for (in between, interpolated).
+/// Fractions of a frame the 64-tap kernel is worked out for (in between, interpolated).
 const PHASES: usize = 512;
+/// Kaiser's window: about 87 dB down in the stop band.
+const BETA: f64 = 8.6;
+/// A kernel for a source faster than the device cuts here, as a share of the device's rate. Its
+/// transition band (0.087 of the device rate wide: 64 taps' worth at the device's rate) then
+/// ends at the device's Nyquist, so nothing above it folds back, and it is flat to 0.413 of the
+/// device's rate (19.8 kHz at 48 kHz).
+const CUTOFF: f64 = 0.4565;
+/// The most taps any kernel has: the one for 384 kHz on a 44.1 kHz device, 279 a side.
+pub const MAX_TAPS: usize = 560;
+/// The source rates a renderer has a kernel for. A source between two takes the kernel of the
+/// next one above it (cut a little lower, never folding back).
+pub const STANDARD_RATES: [u32; 16] = [
+    8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 64_000, 88_200, 96_000,
+    176_400, 192_000, 352_800, 384_000,
+];
 
-/// The resampler's filter: a windowed sinc (Kaiser), for each of `PHASES + 1` fractions of a
-/// frame, `2 * HALF` taps (tap t weighs the input frame `t + 1 - HALF` from the one at or before
+/// The resampler's filter: a windowed sinc (Kaiser), for each of `phases + 1` fractions of a
+/// frame, `2 * half` taps (tap t weighs the input frame `t + 1 - half` from the one at or before
 /// the point), each row summing to one.
-fn kernel() -> &'static [f64] {
-    static TABLE: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| {
+///
+/// The unity kernel (64 taps, 512 phases, cut at the source's own Nyquist) serves every ratio up
+/// to 1: the song at the device's rate (with a room's trim) and every source slower than the
+/// device. A source faster than the device needs one cut lower, at the device's rate: `scaled`
+/// stretches the same window over `ratio` times the frames, with `1 / ratio` the phases, so it
+/// is as exact and holds about as many coefficients.
+#[derive(Debug, Clone)]
+pub struct Kernel {
+    half: usize,
+    phases: usize,
+    /// Cut at the source's own Nyquist: its fraction 0 is the input frame itself, so a whole
+    /// frame passes untouched.
+    unity: bool,
+    table: Vec<f64>,
+}
+
+impl Kernel {
+    fn build(half: usize, phases: usize, scale: f64, unity: bool) -> Kernel {
         // The zeroth modified Bessel function, for Kaiser's window.
         fn i0(x: f64) -> f64 {
             let (mut sum, mut term, mut k) = (1.0, 1.0, 1.0);
@@ -288,31 +323,249 @@ fn kernel() -> &'static [f64] {
             }
             sum
         }
-        let beta = 8.6;
-        let taps = 2 * HALF;
-        let mut t = Vec::with_capacity((PHASES + 1) * taps);
-        for p in 0..=PHASES {
-            let frac = p as f64 / PHASES as f64;
+        let taps = 2 * half;
+        let mut t = Vec::with_capacity((phases + 1) * taps);
+        for p in 0..=phases {
+            let frac = p as f64 / phases as f64;
             let row: Vec<f64> = (0..taps)
                 .map(|i| {
-                    let x = i as f64 + 1.0 - HALF as f64 - frac;
-                    let w = x / HALF as f64;
+                    let x = i as f64 + 1.0 - half as f64 - frac;
+                    let w = x / half as f64;
                     if w.abs() >= 1.0 {
                         return 0.0;
                     }
-                    let sinc = if x.abs() < 1e-12 {
+                    let xs = x * scale;
+                    let sinc = if xs.abs() < 1e-12 {
                         1.0
                     } else {
-                        (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+                        (std::f64::consts::PI * xs).sin() / (std::f64::consts::PI * xs)
                     };
-                    sinc * i0(beta * (1.0 - w * w).sqrt()) / i0(beta)
+                    sinc * i0(BETA * (1.0 - w * w).sqrt()) / i0(BETA)
                 })
                 .collect();
             let sum: f64 = row.iter().sum();
             t.extend(row.iter().map(|v| v / sum));
         }
-        t
-    })
+        Kernel {
+            half,
+            phases,
+            unity,
+            table: t,
+        }
+    }
+
+    /// The tested 64-tap kernel, for every ratio up to 1 (worked out once, at the player's
+    /// start: call it there).
+    pub fn unity() -> &'static Kernel {
+        static K: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
+        K.get_or_init(|| Kernel::build(HALF, PHASES, 1.0, true))
+    }
+
+    /// The kernel for a source `ratio` times the device's rate (above 1): cut at 0.4565 of the
+    /// device's rate, `ceil(32 x ratio)` taps a side, `ceil(512 / ratio)` phases.
+    pub fn scaled(ratio: f64) -> Kernel {
+        let r = ratio.max(1.0);
+        let half = (HALF as f64 * r).ceil() as usize;
+        let phases = ((PHASES as f64 / r).ceil() as usize).max(1);
+        Kernel::build(half, phases, 2.0 * CUTOFF / r, false)
+    }
+
+    /// Taps either side.
+    pub fn half(&self) -> usize {
+        self.half
+    }
+
+    pub fn taps(&self) -> usize {
+        2 * self.half
+    }
+}
+
+/// A renderer's kernels: the unity one, and one for each standard rate above the device's, all
+/// worked out when the renderer is made (never on the render thread).
+#[derive(Debug, Clone)]
+pub struct Kernels {
+    device: u32,
+    scaled: Vec<(u32, Kernel)>,
+}
+
+impl Kernels {
+    pub fn for_device(rate: u32) -> Kernels {
+        let _ = Kernel::unity();
+        let d = rate.max(1);
+        Kernels {
+            device: d,
+            scaled: STANDARD_RATES
+                .iter()
+                .filter(|&&s| s > d)
+                .map(|&s| (s, Kernel::scaled(f64::from(s) / f64::from(d))))
+                .collect(),
+        }
+    }
+
+    /// The kernel for a source at `source` Hz (`None`: too far above the device's rate, past the
+    /// highest standard rate).
+    pub fn pick(&self, source: u32) -> Option<&Kernel> {
+        self.index(source).map(|i| self.get(i))
+    }
+
+    /// `pick`'s kernel as a number to keep beside a voice (0: the unity kernel).
+    pub fn index(&self, source: u32) -> Option<usize> {
+        if source <= self.device {
+            return Some(0);
+        }
+        self.scaled
+            .iter()
+            .position(|(s, _)| *s >= source)
+            .map(|i| i + 1)
+    }
+
+    /// The kernel `index` gave.
+    pub fn get(&self, index: usize) -> &Kernel {
+        match index {
+            0 => Kernel::unity(),
+            i => &self.scaled[i - 1].1,
+        }
+    }
+
+    /// The most input frames per device frame any kernel here serves (1 when none is above the
+    /// device's rate).
+    pub fn max_ratio(&self) -> f64 {
+        self.scaled
+            .last()
+            .map_or(1.0, |(s, _)| f64::from(*s) / f64::from(self.device))
+    }
+
+    /// The widest kernel's taps a side.
+    pub fn max_half(&self) -> usize {
+        self.scaled
+            .iter()
+            .map(|(_, k)| k.half)
+            .fold(HALF, usize::max)
+    }
+}
+
+/// Where the resampler is: how far past the first input frame not yet played past the next
+/// frame out is (0..1), the rate now (ppm faster), and, coming back to the song's own rate, the
+/// whole frame it stops on.
+#[derive(Debug, Clone, Copy, Default)]
+struct Glide {
+    phase: f64,
+    ppm: f64,
+    home: Option<f64>,
+}
+
+/// The resampler's one loop, for `Resampler` and `Converter` alike: `want` frames into `out`
+/// (interleaved, `ch` channels) from `win`, whose frame `at` is the first not yet played past
+/// (the frames before it are the filter's left side, and the ones after it must reach as far as
+/// the filter reads). Each frame out is the music at a point between input frames, worked out
+/// by the kernel; the point moves `base x (1 + ppm / 1e6)` input frames per frame out, the rate
+/// gliding toward `target_ppm` by at most `glide` ppm a frame. A source at the device's rate
+/// (`exact`) whose target is 0 comes to a standstill on a whole frame, and from there gives the
+/// input exactly. Returns how many input frames were played past. `places` gets each frame's
+/// point (for checks).
+#[allow(clippy::too_many_arguments)]
+fn run(
+    g: &mut Glide,
+    k: &Kernel,
+    base: f64,
+    exact: bool,
+    glide: f64,
+    win: &[i32],
+    ch: usize,
+    at: usize,
+    want: usize,
+    target_ppm: f64,
+    out: &mut [i32],
+    mut places: Option<&mut Vec<f64>>,
+) -> usize {
+    let taps = k.taps();
+    let half = k.half;
+    let phases = k.phases;
+    let table = &k.table[..];
+    let mut h = [0.0f64; MAX_TAPS];
+    let mut pos = g.phase;
+    let mut ppm = g.ppm;
+    let mut home = g.home;
+    for j in 0..want {
+        let whole = pos.floor();
+        let frac = pos - whole;
+        let i0 = whole as usize;
+        if let Some(a) = places.as_deref_mut() {
+            a.push(pos);
+        }
+        let o = &mut out[j * ch..(j + 1) * ch];
+        if frac == 0.0 && k.unity {
+            let s = (at + i0) * ch;
+            o.copy_from_slice(&win[s..s + ch]);
+        } else {
+            let f = frac * phases as f64;
+            let p = (f.floor() as usize).min(phases - 1);
+            let t = f - p as f64;
+            let (r0, r1) = (&table[p * taps..][..taps], &table[(p + 1) * taps..][..taps]);
+            for (hk, (a, b)) in h[..taps].iter_mut().zip(r0.iter().zip(r1)) {
+                *hk = a + (b - a) * t;
+            }
+            let first = (at + i0 + 1 - half) * ch;
+            let span = &win[first..first + taps * ch];
+            for (c, oc) in o.iter_mut().enumerate() {
+                let mut acc = 0.0;
+                for (kk, hk) in h[..taps].iter().enumerate() {
+                    acc += hk * f64::from(span[kk * ch + c]);
+                }
+                *oc = acc.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+            }
+        }
+        // The rate glides toward the target. At the song's own rate with a fraction of a frame
+        // left (or still moving), it comes to a standstill on a whole frame: the first it can
+        // stop at, chosen once, slowing so it arrives with no speed left. (`d` is how far the
+        // music is from where it would be at its own rate: a whole number of frames means on a
+        // frame.)
+        let homing = exact && target_ppm == 0.0 && (frac != 0.0 || ppm != 0.0);
+        let a = glide * 1e-6;
+        let d = pos - j as f64;
+        let goal = if homing {
+            let to = *home.get_or_insert_with(|| {
+                let v = ppm * 1e-6;
+                let stop = v * v.abs() / (2.0 * a);
+                if v > 0.0 {
+                    (d + stop).ceil()
+                } else if v < 0.0 {
+                    (d + stop).floor()
+                } else {
+                    d.round()
+                }
+            });
+            let left = to - d;
+            left.signum() * (2.0 * a * left.abs()).sqrt().min(100e-6) * 1e6
+        } else {
+            home = None;
+            target_ppm
+        };
+        ppm += (goal - ppm).clamp(-glide, glide);
+        let step = ppm * 1e-6;
+        match home {
+            Some(to)
+                if homing && {
+                    let left = to - d;
+                    left.abs() < 1e-12
+                        || (left > 0.0 && step >= left)
+                        || (left < 0.0 && step <= left)
+                } =>
+            {
+                // There: on a whole frame, at the song's own rate.
+                pos = (j + 1) as f64 + to;
+                ppm = 0.0;
+                home = None;
+            }
+            _ => pos += base * (1.0 + step),
+        }
+    }
+    g.ppm = ppm;
+    let used = pos.floor().max(0.0) as usize;
+    g.phase = pos - used as f64;
+    // The frame to land on, from where the next call counts.
+    g.home = home.map(|to| to - (used as f64 - want as f64));
+    used
 }
 
 /// Plays music a hair faster or slower without a step in it: each frame out is the music at a
@@ -320,6 +573,9 @@ fn kernel() -> &'static [f64] {
 /// repeated or dropped, heard as grit, nor a straight line drawn between two samples, which dulls
 /// and roughens the treble), the rate gliding to where it is asked. At the song's own rate,
 /// landed on a whole frame, it gives exactly the input: bit-perfect.
+///
+/// Today's engine's resampler (it keeps its own history, so it allocates); the renderer's is
+/// `Converter`, the same loop on a window it is lent.
 #[derive(Debug, Clone, Default)]
 pub struct Resampler {
     /// The last `HALF` input frames already played past, interleaved (the filter's left side).
@@ -360,7 +616,7 @@ impl Resampler {
 
     /// Work the filter out now (at the player's start), not on the sound's thread mid-song.
     pub fn warm() {
-        let _ = kernel();
+        let _ = Kernel::unity();
     }
 
     /// The music at `input` (interleaved, `ch` channels) came out as it is: its last frames are
@@ -391,7 +647,7 @@ impl Resampler {
         want: usize,
         target_ppm: f64,
         out: &mut Vec<i32>,
-        mut at: Option<&mut Vec<f64>>,
+        at: Option<&mut Vec<f64>>,
     ) -> Option<usize> {
         let ch = ch.max(1);
         let frames = input.len() / ch;
@@ -403,103 +659,168 @@ impl Resampler {
         if self.history.len() != HALF * ch {
             self.history = vec![0; HALF * ch];
         }
-        let glide = GLIDE_PPM_PER_S / f64::from(rate.max(1));
-        let history = &self.history;
-        let sample = |i: isize, c: usize| -> f64 {
-            if i < 0 {
-                f64::from(history[(HALF as isize + i) as usize * ch + c])
-            } else {
-                input
-                    .get(i as usize * ch + c)
-                    .map_or(0.0, |&v| f64::from(v))
-            }
+        // The filter's window: its left side, the input, and silence past a song's end.
+        let len = HALF + frames.max(reach) + HALF + 1;
+        let mut win = Vec::with_capacity(len * ch);
+        win.extend_from_slice(&self.history);
+        win.extend_from_slice(&input[..frames * ch]);
+        win.resize(len * ch, 0);
+        let start = out.len();
+        out.resize(start + want * ch, 0);
+        let mut g = Glide {
+            phase: self.phase,
+            ppm: self.ppm,
+            home: self.home,
         };
-        let table = kernel();
-        let taps = 2 * HALF;
-        let mut pos = self.phase;
-        let mut ppm = self.ppm;
-        let mut home = self.home;
-        for j in 0..want {
-            let whole = pos.floor();
-            let frac = pos - whole;
-            let i0 = whole as isize;
-            if let Some(a) = at.as_deref_mut() {
-                a.push(pos);
-            }
-            if frac == 0.0 {
-                for c in 0..ch {
-                    out.push(sample(i0, c) as i32);
-                }
-            } else {
-                let f = frac * PHASES as f64;
-                let p = (f.floor() as usize).min(PHASES - 1);
-                let t = f - p as f64;
-                let (r0, r1) = (&table[p * taps..][..taps], &table[(p + 1) * taps..][..taps]);
-                for c in 0..ch {
-                    let mut acc = 0.0;
-                    for k in 0..taps {
-                        let h = r0[k] + (r1[k] - r0[k]) * t;
-                        acc += h * sample(i0 + k as isize + 1 - HALF as isize, c);
-                    }
-                    out.push(acc.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
-                }
-            }
-            // The rate glides toward the target. At the song's own rate with a fraction of a
-            // frame left (or still moving), it comes to a standstill on a whole frame: the first
-            // it can stop at, chosen once, slowing so it arrives with no speed left. (`d` is how
-            // far the music is from where it would be at its own rate: a whole number of frames
-            // means on a frame.)
-            let homing = target_ppm == 0.0 && (frac != 0.0 || ppm != 0.0);
-            let a = glide * 1e-6;
-            let d = pos - j as f64;
-            let goal = if homing {
-                let to = *home.get_or_insert_with(|| {
-                    let v = ppm * 1e-6;
-                    let stop = v * v.abs() / (2.0 * a);
-                    if v > 0.0 {
-                        (d + stop).ceil()
-                    } else if v < 0.0 {
-                        (d + stop).floor()
-                    } else {
-                        d.round()
-                    }
-                });
-                let left = to - d;
-                left.signum() * (2.0 * a * left.abs()).sqrt().min(100e-6) * 1e6
-            } else {
-                home = None;
-                target_ppm
-            };
-            ppm += (goal - ppm).clamp(-glide, glide);
-            let step = ppm * 1e-6;
-            match home {
-                Some(to)
-                    if homing && {
-                        let left = to - d;
-                        left.abs() < 1e-12
-                            || (left > 0.0 && step >= left)
-                            || (left < 0.0 && step <= left)
-                    } =>
-                {
-                    // There: on a whole frame, at the song's own rate.
-                    pos = (j + 1) as f64 + to;
-                    ppm = 0.0;
-                    home = None;
-                }
-                _ => pos += 1.0 + step,
-            }
-        }
-        self.ppm = ppm;
-        let used = pos.floor().max(0.0) as usize;
-        self.phase = pos - used as f64;
-        // The frame to land on, from where the next call counts.
-        self.home = home.map(|to| to - (used as f64 - want as f64));
+        let glide = GLIDE_PPM_PER_S / f64::from(rate.max(1));
+        let used = run(
+            &mut g,
+            Kernel::unity(),
+            1.0,
+            true,
+            glide,
+            &win,
+            ch,
+            HALF,
+            want,
+            target_ppm,
+            &mut out[start..],
+            at,
+        );
+        self.phase = g.phase;
+        self.ppm = g.ppm;
+        self.home = g.home;
         // What was played past becomes the filter's left side.
-        let past: Vec<i32> = (0..used * ch)
-            .map(|i| input.get(i).copied().unwrap_or(0))
-            .collect();
-        self.played_as_is(&past, ch);
+        self.history
+            .copy_from_slice(&win[used * ch..(used + HALF) * ch]);
         Some(used.min(frames))
+    }
+}
+
+/// The renderer's resampler for one voice: the same filter, glide and landing as `Resampler`, at
+/// any base ratio (the source's rate over the device's), on a window of the voice's frames that
+/// it is lent. The frames in the window before the read point are the filter's left side, so it
+/// keeps no history of its own and allocates nothing.
+#[derive(Debug, Clone)]
+pub struct Converter {
+    base: f64,
+    /// The source runs at the device's rate: it can land on whole frames, bit-perfect.
+    exact: bool,
+    /// The most the rate moves per frame out, ppm.
+    glide: f64,
+    g: Glide,
+}
+
+impl Converter {
+    /// A voice's resampler: a source at `source_rate` played at `device_rate`, starting at a
+    /// trim of `ppm` (a new voice starts at the trim the room plays at: it starts from silence
+    /// or under a crossfade, so it has no rate to glide from).
+    pub fn new(source_rate: u32, device_rate: u32, ppm: f64) -> Converter {
+        let d = device_rate.max(1);
+        Converter {
+            base: f64::from(source_rate.max(1)) / f64::from(d),
+            exact: source_rate == d,
+            glide: GLIDE_PPM_PER_S / f64::from(d),
+            g: Glide {
+                phase: 0.0,
+                ppm: ppm.clamp(-MAX_PPM, MAX_PPM),
+                home: None,
+            },
+        }
+    }
+
+    /// The trim now, ppm faster.
+    pub fn ppm(&self) -> f64 {
+        self.g.ppm
+    }
+
+    /// How far past the next whole input frame the next frame out is (0..1).
+    pub fn phase(&self) -> f64 {
+        self.g.phase
+    }
+
+    /// The source's rate over the device's.
+    pub fn base(&self) -> f64 {
+        self.base
+    }
+
+    /// Input frames per frame out now.
+    pub fn ratio(&self) -> f64 {
+        self.base * (1.0 + self.g.ppm * 1e-6)
+    }
+
+    /// A source at the device's rate, untrimmed, on a whole frame: its frames pass as they are.
+    pub fn idle(&self) -> bool {
+        self.exact && self.g.ppm == 0.0 && self.g.phase == 0.0
+    }
+
+    /// The most frames of the window, from the read point on, that the next `want` frames out
+    /// may read (the filter's right side included).
+    pub fn reach(&self, k: &Kernel, want: usize) -> usize {
+        (self.g.phase + want as f64 * self.base * (1.0 + MAX_PPM / 1e6)).ceil() as usize
+            + k.half
+            + 1
+    }
+
+    /// `want` frames out (interleaved, `ch` channels) into `out`, reading `win` from frame `at`
+    /// (at least `k.half()`, the left side before it) to `at + reach(k, want)`, the trim gliding
+    /// toward `target_ppm` (at most 500 ppm either way). Returns the frames played past: the next
+    /// read point is `at` plus that.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process(
+        &mut self,
+        k: &Kernel,
+        win: &[i32],
+        ch: usize,
+        at: usize,
+        want: usize,
+        target_ppm: f64,
+        out: &mut [i32],
+    ) -> usize {
+        run(
+            &mut self.g,
+            k,
+            self.base,
+            self.exact,
+            self.glide,
+            win,
+            ch,
+            at,
+            want,
+            target_ppm.clamp(-MAX_PPM, MAX_PPM),
+            out,
+            None,
+        )
+    }
+
+    /// As `process`, with each frame's point in the window (relative to `at`) for checks.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn process_with_places(
+        &mut self,
+        k: &Kernel,
+        win: &[i32],
+        ch: usize,
+        at: usize,
+        want: usize,
+        target_ppm: f64,
+        out: &mut [i32],
+        places: &mut Vec<f64>,
+    ) -> usize {
+        run(
+            &mut self.g,
+            k,
+            self.base,
+            self.exact,
+            self.glide,
+            win,
+            ch,
+            at,
+            want,
+            target_ppm.clamp(-MAX_PPM, MAX_PPM),
+            out,
+            Some(places),
+        )
     }
 }
 
@@ -963,5 +1284,281 @@ mod tests {
         // A second at +500 ppm took up about half a millisecond, glide included.
         let gained = tail[0] - (places.len() - 48_000) as f64;
         assert!((gained - 24.0).abs() < 2.0, "{gained} frames gained");
+    }
+
+    // --- The resampler kept, and made general (WP3) -------------------------------------------
+
+    /// FNV-1a over the samples: a fingerprint of a run.
+    fn fingerprint(v: &[i32]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for x in v {
+            for b in x.to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// The resampler before WP3, run on `golden_input` with `golden_target` in periods of 480,
+    /// 441, 512 and 97 frames for 4 s: (tone, channels, fingerprint, samples). Taken from the
+    /// code as it was (`Resampler::process` as of fa8817a) before it was made general.
+    const GOLDEN: [(f64, usize, u64, usize); 2] = [
+        (15_000.0, 1, 0x69e5_b6e8_96c0_0bee, 192_171),
+        (1_000.0, 2, 0xc0a0_4051_c4b0_4f78, 384_342),
+    ];
+    const GOLDEN_PERIODS: [usize; 4] = [480, 441, 512, 97];
+
+    fn golden_input(hz: f64, ch: usize) -> Vec<i32> {
+        (0..48_000 * 5 * ch)
+            .map(|i| {
+                (f64::from(1 << 30)
+                    * (2.0 * std::f64::consts::PI * hz * (i / ch) as f64 / 48_000.0
+                        + (i % ch) as f64)
+                        .sin()) as i32
+            })
+            .collect()
+    }
+
+    /// 500 ppm faster for a second, 320 slower for a second, then the song's own rate.
+    fn golden_target(t: f64) -> f64 {
+        if t < 1.0 {
+            500.0
+        } else if t < 2.0 {
+            -320.0
+        } else {
+            0.0
+        }
+    }
+
+    #[test]
+    fn the_resampler_is_bit_for_bit_what_it_was() {
+        for (hz, ch, print, len) in GOLDEN {
+            let input = golden_input(hz, ch);
+            let mut r = Resampler::default();
+            let (mut used, mut out, mut k) = (0usize, Vec::new(), 0);
+            while out.len() < 48_000 * 4 * ch {
+                let t = (out.len() / ch) as f64 / 48_000.0;
+                let want = GOLDEN_PERIODS[k % 4];
+                k += 1;
+                used += r
+                    .process(
+                        &input[used * ch..],
+                        ch,
+                        48_000,
+                        false,
+                        want,
+                        golden_target(t),
+                        &mut out,
+                        None,
+                    )
+                    .unwrap();
+            }
+            assert_eq!((fingerprint(&out), out.len()), (print, len), "{hz} Hz");
+        }
+    }
+
+    /// A voice's window as the renderer keeps it: the filter's left side, then the frames in
+    /// hand, refilled from `input` before each call and moved down after it.
+    struct Window {
+        win: Vec<i32>,
+        /// Frames in it.
+        len: usize,
+        /// The read point.
+        at: usize,
+        /// Input frames copied in so far.
+        fed: usize,
+    }
+
+    impl Window {
+        fn new(half: usize, ch: usize, cap: usize) -> Window {
+            // Silence before the song: the filter's left side at the start.
+            Window {
+                win: vec![0; cap * ch],
+                len: half,
+                at: half,
+                fed: 0,
+            }
+        }
+
+        /// Room for `reach` frames from the read point, from `input` (or silence past its end).
+        fn fill(&mut self, input: &[i32], ch: usize, reach: usize) {
+            while self.len < self.at + reach {
+                let i = self.fed * ch;
+                let f = &mut self.win[self.len * ch..(self.len + 1) * ch];
+                match input.get(i..i + ch) {
+                    Some(s) => f.copy_from_slice(s),
+                    None => f.fill(0),
+                }
+                self.fed += 1;
+                self.len += 1;
+            }
+        }
+
+        /// Keep only `half` frames before the read point.
+        fn compact(&mut self, half: usize, ch: usize) {
+            let cut = self.at - half;
+            self.win.copy_within(cut * ch..self.len * ch, 0);
+            self.len -= cut;
+            self.at -= cut;
+        }
+    }
+
+    /// `secs` of `input` (interleaved, `ch`) through a converter from `from` to `to` Hz in
+    /// `periods`, asking `target(t)` ppm: (the frames out, each one's point in the input).
+    fn convert(
+        input: &[i32],
+        ch: usize,
+        from: u32,
+        to: u32,
+        secs: f64,
+        periods: &[usize],
+        target: impl Fn(f64) -> f64,
+    ) -> (Vec<i32>, Vec<f64>) {
+        let bank = Kernels::for_device(to);
+        let k = bank.pick(from).unwrap();
+        let mut c = Converter::new(from, to, 0.0);
+        let mut w = Window::new(k.half(), ch, 8_192);
+        let (mut out, mut places) = (Vec::new(), Vec::new());
+        let mut n = 0;
+        while out.len() < (f64::from(to) * secs) as usize * ch {
+            let want = periods[n % periods.len()];
+            n += 1;
+            let t = (out.len() / ch) as f64 / f64::from(to);
+            w.fill(input, ch, c.reach(k, want));
+            let mut o = vec![0; want * ch];
+            let mut at = Vec::new();
+            // The window's read point is input frame `fed - (len - at)`.
+            let first = (w.fed - (w.len - w.at)) as f64;
+            let used = c.process_with_places(k, &w.win, ch, w.at, want, target(t), &mut o, &mut at);
+            places.extend(at.iter().map(|p| p + first));
+            out.extend_from_slice(&o);
+            w.at += used;
+            w.compact(k.half(), ch);
+        }
+        (out, places)
+    }
+
+    #[test]
+    fn the_converter_on_a_lent_window_is_the_same_resampler() {
+        for (hz, ch, print, len) in GOLDEN {
+            let input = golden_input(hz, ch);
+            let (out, _) = convert(&input, ch, 48_000, 48_000, 4.0, &GOLDEN_PERIODS, |t| {
+                golden_target(t)
+            });
+            assert_eq!(
+                (fingerprint(&out), out.len()),
+                (print, len),
+                "{hz} Hz, {ch} channels"
+            );
+        }
+    }
+
+    #[test]
+    fn a_converter_at_its_own_rate_passes_every_frame_untouched() {
+        let input: Vec<i32> = (0..96_000).map(|i| i * 7_919 - 300_000_000).collect();
+        let (out, _) = convert(&input, 2, 44_100, 44_100, 1.0, &[441, 512, 1], |_| 0.0);
+        assert_eq!(out[..], input[..out.len()]);
+        let c = Converter::new(44_100, 44_100, 0.0);
+        assert!(c.idle());
+        assert!(!Converter::new(44_100, 48_000, 0.0).idle());
+        assert!(!Converter::new(48_000, 48_000, 20.0).idle());
+        // A new voice starts at the trim the room plays at, never past 500 ppm.
+        assert_eq!(Converter::new(48_000, 48_000, 300.0).ppm(), 300.0);
+        assert_eq!(Converter::new(48_000, 48_000, -900.0).ppm(), -MAX_PPM);
+    }
+
+    /// A sine of `hz` at `rate`, nearly full scale, at any (fractional) frame.
+    fn tone_at(hz: f64, rate: u32, pos: f64) -> f64 {
+        f64::from(1 << 30) * (2.0 * std::f64::consts::PI * hz * pos / f64::from(rate)).sin()
+    }
+
+    /// The worst error of a converted sine against the true one at each frame's point, in dB
+    /// below its peak, past the first 0.1 s (the filter starting from silence).
+    fn conversion_error(hz: f64, from: u32, to: u32, ppm: f64) -> f64 {
+        let input: Vec<i32> = (0..from as usize * 2)
+            .map(|i| tone_at(hz, from, i as f64) as i32)
+            .collect();
+        let (out, places) = convert(&input, 1, from, to, 1.0, &[480], |_| ppm);
+        let worst = out
+            .iter()
+            .zip(&places)
+            .skip(to as usize / 10)
+            .map(|(&y, &p)| (f64::from(y) - tone_at(hz, from, p)).abs())
+            .fold(0.0, f64::max);
+        20.0 * (worst / f64::from(1 << 30)).log10()
+    }
+
+    #[test]
+    fn rate_conversion_either_way_is_clean_to_the_top_of_hearing() {
+        // Up (a CD on a 48 kHz mixer), down (hi-res on a 48 kHz mixer, 384 kHz on a CD-rate
+        // device), each with a room's trim too: every frame within -90 dB of the true sine.
+        for (from, to) in [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (88_200, 48_000),
+            (96_000, 48_000),
+            (192_000, 48_000),
+            (384_000, 44_100),
+        ] {
+            for hz in [1_000.0, 15_000.0] {
+                for ppm in [0.0, 500.0, -500.0] {
+                    let db = conversion_error(hz, from, to, ppm);
+                    assert!(db < -90.0, "{from} to {to}, {hz} Hz, {ppm} ppm: {db:.1} dB");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_above_the_devices_nyquist_folds_back() {
+        // 30 kHz in a 96 kHz file played at 48 kHz would fold to 18 kHz: it must be gone.
+        let input: Vec<i32> = (0..192_000)
+            .map(|i| (tone_at(30_000.0, 96_000, i as f64) * 0.5) as i32)
+            .collect();
+        let (out, _) = convert(&input, 1, 96_000, 48_000, 1.0, &[480], |_| 0.0);
+        let peak = out[4_800..]
+            .iter()
+            .map(|&v| f64::from(v).abs())
+            .fold(0.0, f64::max);
+        let db = 20.0 * (peak / 2_147_483_648.0).log10();
+        assert!(db < -80.0, "30 kHz folded back at {db:.1} dBFS");
+    }
+
+    #[test]
+    fn a_trimmed_conversion_reaches_its_rate() {
+        let input: Vec<i32> = (0..88_200)
+            .map(|i| tone_at(1_000.0, 44_100, i as f64) as i32)
+            .collect();
+        let (_, places) = convert(&input, 1, 44_100, 48_000, 1.5, &[480], |_| 500.0);
+        let n = places.len();
+        let ratio = (places[n - 1] - places[n - 481]) / 480.0;
+        let want = 44_100.0 / 48_000.0 * (1.0 + 500e-6);
+        assert!(
+            ((ratio / want) - 1.0).abs() < 1e-6,
+            "{ratio} against {want}"
+        );
+    }
+
+    #[test]
+    fn a_renderer_has_a_kernel_for_every_standard_rate() {
+        let bank = Kernels::for_device(48_000);
+        assert!(std::ptr::eq(bank.pick(44_100).unwrap(), Kernel::unity()));
+        assert!(std::ptr::eq(bank.pick(48_000).unwrap(), Kernel::unity()));
+        assert_eq!(bank.pick(96_000).unwrap().half(), 64);
+        assert_eq!(bank.pick(192_000).unwrap().half(), 128);
+        // Between standard rates: the next one above (cut a little lower).
+        assert_eq!(
+            bank.pick(50_000).unwrap().half(),
+            bank.pick(64_000).unwrap().half()
+        );
+        assert!(bank.pick(400_000).is_none(), "past 384 kHz");
+        let cd = Kernels::for_device(44_100);
+        assert!(cd.pick(384_000).unwrap().taps() <= MAX_TAPS);
+        // Every kernel about the same size: the phases fall as the taps grow.
+        for (_, k) in &cd.scaled {
+            let n = k.table.len();
+            assert!((30_000..40_000).contains(&n), "{} taps: {n}", k.taps());
+        }
     }
 }
