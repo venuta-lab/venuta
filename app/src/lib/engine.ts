@@ -1385,6 +1385,8 @@ export interface FoundLyrics {
   text: string
   instrumental: boolean
   credit: string | null
+  /** Who made the song, as the source wrote it among the lyrics ("作词 : Ayase"): taken out of the sung lines. */
+  credits?: string[]
 }
 /** What you chose for one song's lyrics. */
 export interface LyricsChoice {

@@ -90,6 +90,10 @@ pub struct Found {
     /// Who the source says wrote them down ("Source: Musixmatch").
     #[serde(default)]
     pub credit: Option<String>,
+    /// Who made the song, as the source wrote it among the lyrics ("作词 : Ayase"): taken out
+    /// of the sung lines and kept here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credits: Vec<String>,
 }
 
 impl Found {
@@ -921,16 +925,16 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
     else {
         return Ok(None);
     };
-    let Some(lrc) = l
+    Ok(netease_found(req, &l))
+}
+
+/// NetEase's lyrics answer (`song/lyric`): the lyrics, with their translations.
+fn netease_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
+    let lrc = l
         .pointer("/lrc/lyric")
         .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(mut f) = found_from_text("netease", lrc) else {
-        return Ok(None);
-    };
+        .filter(|t| !t.trim().is_empty())?;
+    let mut f = found_from_text("netease", lrc)?;
     if let Some(t) = l
         .pointer("/tlyric/lyric")
         .and_then(Value::as_str)
@@ -938,7 +942,7 @@ fn netease(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, As
     {
         f.lyrics.lines = with_translation(f.lyrics.lines, t, "netease");
     }
-    Ok(Some(f))
+    credits_out(f, req)
 }
 
 fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
@@ -1028,19 +1032,26 @@ fn qq(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskErro
     else {
         return Ok(None);
     };
-    let Some(raw) = l
-        .get("lyric")
-        .and_then(Value::as_str)
-        .filter(|t| !t.trim().is_empty())
-    else {
-        return Ok(None);
+    Ok(qq_found(req, &l))
+}
+
+/// QQ Music's lyrics answer (`fcg_query_lyric_new`).
+fn qq_found(req: &LyricsRequest, l: &Value) -> Option<Found> {
+    let text = |key: &str| {
+        let raw = l
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())?;
+        Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(raw.trim())
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_else(|| unescape(raw)),
+        )
     };
-    let text = base64::engine::general_purpose::STANDARD
-        .decode(raw.trim())
-        .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_else(|| unescape(raw));
-    Ok(found_from_text("qq", &text))
+    let f = found_from_text("qq", &text("lyric")?)?;
+    credits_out(f, req)
 }
 
 fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskError> {
@@ -1126,17 +1137,50 @@ fn kugou(agent: &ureq::Agent, req: &LyricsRequest) -> Result<Option<Found>, AskE
     else {
         return Ok(None);
     };
-    let Some(content) = d.get("content").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let Some(text) = base64::engine::general_purpose::STANDARD
+    Ok(kugou_found(req, &d))
+}
+
+/// Kugou's lyrics download (`fmt=lrc`).
+fn kugou_found(req: &LyricsRequest, d: &Value) -> Option<Found> {
+    let content = d.get("content").and_then(Value::as_str)?;
+    let text = base64::engine::general_purpose::STANDARD
         .decode(content.trim())
         .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-    else {
-        return Ok(None);
-    };
-    Ok(found_from_text("kugou", &text))
+        .and_then(|b| String::from_utf8(b).ok())?;
+    let f = found_from_text("kugou", &text)?;
+    credits_out(f, req)
+}
+
+/// The lines that name who made the song ("作词 : Ayase", and the "Artist - Title" line some
+/// sources start with) taken out of the sung lines, and kept as credits.
+fn credits_out(mut f: Found, req: &LyricsRequest) -> Option<Found> {
+    let lines = std::mem::take(&mut f.lyrics.lines);
+    let title = fold(&search_title(&req.title));
+    let artists: Vec<String> = req
+        .artists
+        .iter()
+        .map(|a| fold(a))
+        .filter(|a| a.chars().count() >= 3)
+        .collect();
+    // Only before the first sung line: a dash further in is part of the words.
+    let mut leading = true;
+    let mut sung = Vec::new();
+    for l in lines {
+        let names_song = || {
+            let f = fold(&l.text);
+            l.text.contains(" - ")
+                && ((title.chars().count() >= 2 && f.contains(&title))
+                    || artists.iter().any(|a| f.contains(a.as_str())))
+        };
+        if crate::lyrics::is_credit(&l.text) || (leading && names_song()) {
+            f.credits.push(l.text.trim().to_owned());
+        } else {
+            leading &= l.text.trim().is_empty();
+            sung.push(l);
+        }
+    }
+    f.lyrics.lines = sung;
+    f.usable().then_some(f)
 }
 
 /// The catalog's own lyrics, asked of the app's catalog client (see the module notes).
@@ -1789,5 +1833,59 @@ mod tests {
         assert_eq!(total_ms(&serde_json::json!("1:02:03.5")), Some(3_723_500));
         assert_eq!(total_ms(&serde_json::json!("45.25")), Some(45_250));
         assert_eq!(total_ms(&serde_json::json!("soon")), None);
+    }
+
+    fn texts(f: &Found) -> Vec<&str> {
+        f.lyrics.lines.iter().map(|l| l.text.as_str()).collect()
+    }
+
+    #[test]
+    fn credit_lines_from_the_chinese_sources_are_not_sung() {
+        // Idol (YOASOBI) on NetEase and QQ Music, Gunjou on Kugou, as they answered on 2026-10-21.
+        let idol = req("アイドル", &["YOASOBI"], 213);
+        let ne = netease_found(&idol, &fixture("netease-idol.json")).unwrap();
+        assert_eq!(
+            &texts(&ne)[..2],
+            ["無敵の笑顔で荒らすメディア", "知りたいその秘密ミステリアス"]
+        );
+        assert_eq!(
+            ne.credits,
+            [
+                "作词 : Ayase",
+                "作曲 : Ayase",
+                "编曲 : Ayase",
+                "制作人 : Ayase"
+            ]
+        );
+        assert!(
+            ne.lyrics.lines[0].translation.is_some(),
+            "the translations still meet their lines"
+        );
+
+        let qq = qq_found(&idol, &fixture("qq-idol.json")).unwrap();
+        assert_eq!(texts(&qq)[0], "無敵の笑顔で荒らすメディア");
+        assert_eq!(
+            qq.credits,
+            [
+                "アイドル - YOASOBI (ヨアソビ)",
+                "词：Ayase",
+                "曲：Ayase",
+                "编曲：Ayase"
+            ]
+        );
+
+        let gunjou = req("群青", &["YOASOBI"], 248);
+        let kg = kugou_found(&gunjou, &fixture("kugou-gunjou-lrc.json")).unwrap();
+        assert_eq!(texts(&kg)[0], "嗚呼 いつもの様に");
+        assert_eq!(
+            kg.credits,
+            [
+                "YOASOBI - 群青 - THE FIRST TAKE",
+                "作词：Ayase",
+                "作曲：Ayase"
+            ]
+        );
+        // A sung line with a dash further in is still sung.
+        assert!(kg.lyrics.lines.len() > 80);
     }
 }

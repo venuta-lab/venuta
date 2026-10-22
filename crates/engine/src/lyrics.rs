@@ -606,6 +606,156 @@ pub fn write_lrc(tags: &[(String, String)], lines: &[LyricLine]) -> String {
     out
 }
 
+// --- Credit lines ---------------------------------------------------------------------------
+
+/// Words that name who made a song, as the Chinese services write them inside the lyrics
+/// ("作词 : Ayase", "词：Ayase", "制作人 : Ayase"), and their English kin.
+const CREDIT_WORDS: &[&str] = &[
+    "作词",
+    "作詞",
+    "作曲",
+    "编曲",
+    "編曲",
+    "词曲",
+    "詞曲",
+    "词",
+    "詞",
+    "曲",
+    "制作人",
+    "製作人",
+    "制作",
+    "製作",
+    "监制",
+    "監製",
+    "出品人",
+    "演唱",
+    "原唱",
+    "歌手",
+    "混音",
+    "混音师",
+    "混音師",
+    "母带",
+    "母带处理",
+    "母帶",
+    "录音",
+    "錄音",
+    "录音师",
+    "錄音師",
+    "和声",
+    "和聲",
+    "和音",
+    "伴唱",
+    "配唱",
+    "人声",
+    "人聲",
+    "吉他",
+    "贝斯",
+    "貝斯",
+    "鼓",
+    "键盘",
+    "鍵盤",
+    "钢琴",
+    "鋼琴",
+    "弦乐",
+    "弦樂",
+    "合成器",
+    "出品",
+    "发行",
+    "發行",
+    "统筹",
+    "統籌",
+    "企划",
+    "企劃",
+    "策划",
+    "策劃",
+    "监修",
+    "監修",
+    "封面",
+    "版权",
+    "版權",
+    "后期",
+    "後期",
+    "op",
+    "sp",
+    "lyrics",
+    "lyric",
+    "lyricist",
+    "composer",
+    "composed",
+    "music",
+    "arranger",
+    "arranged",
+    "arrangement",
+    "producer",
+    "produced",
+    "writer",
+    "written",
+    "songwriter",
+    "mixed",
+    "mixing",
+    "mastered",
+    "mastering",
+    "recorded",
+    "recording",
+    "vocals",
+    "vocal",
+];
+
+/// English credits written "Composed by Someone".
+const BY_WORDS: &[&str] = &[
+    "lyrics", "lyric", "words", "music", "composed", "written", "arranged", "produced", "mixed",
+    "mastered", "recorded", "vocals",
+];
+
+/// Whether a lyric line names who made the song instead of being sung: "作词 : Ayase",
+/// "作曲/编曲：X", "Lyrics by: X", "Composed by X".
+pub fn is_credit(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Credit words (joined by / & and the like), then a colon and a name.
+    if let Some(i) = t.find([':', '：']) {
+        let head = t[..i].trim();
+        let name = t[i..].trim_start_matches([':', '：']).trim();
+        let credit_word = |part: &str| {
+            let p = part.trim().to_lowercase();
+            let p = p.strip_suffix(" by").unwrap_or(&p).trim();
+            CREDIT_WORDS.contains(&p)
+        };
+        if !name.is_empty()
+            && !head.is_empty()
+            && head
+                .split(['/', '&', '、', ',', '，', '|', '｜'])
+                .all(credit_word)
+        {
+            return true;
+        }
+    }
+    // "Composed by Someone".
+    let lower = t.to_lowercase();
+    BY_WORDS.iter().any(|w| {
+        lower
+            .strip_prefix(w)
+            .and_then(|r| r.strip_prefix(" by "))
+            .is_some_and(|name| !name.trim().is_empty())
+    })
+}
+
+/// Credit lines taken out of the sung lines (in order), the rest kept.
+pub fn split_credits(lines: Vec<LyricLine>) -> (Vec<LyricLine>, Vec<String>) {
+    let mut credits = Vec::new();
+    let mut sung = Vec::new();
+    for l in lines {
+        if is_credit(&l.text) {
+            credits.push(l.text.trim().to_owned());
+        } else {
+            sung.push(l);
+        }
+    }
+    (sung, credits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,5 +936,33 @@ mod tests {
             serde_json::to_value(SecondSource::Lyrics("netease".into())).unwrap(),
             serde_json::json!({ "kind": "lyrics", "by": "netease" })
         );
+    }
+
+    #[test]
+    fn credit_lines_are_known() {
+        for credit in [
+            " 作词 : Ayase",
+            "作曲 : Ayase",
+            "编曲 : Ayase",
+            "制作人 : Ayase",
+            "词：Ayase",
+            "曲：Ayase",
+            "作词/作曲：Ayase",
+            "Lyrics by: Ayase",
+            "Composed by Ayase",
+            "Producer: Someone",
+        ] {
+            assert!(is_credit(credit), "{credit}");
+        }
+        for sung in [
+            "無敵の笑顔で荒らすメディア",
+            "You're my savior",
+            "Music is my life",
+            "Time: it's running out",
+            "曲",
+            "Written in the stars",
+        ] {
+            assert!(!is_credit(sung), "{sung}");
+        }
     }
 }
