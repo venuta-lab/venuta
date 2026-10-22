@@ -693,3 +693,67 @@ fn every_view_the_room_makes_passes_a_guests_checks() {
     }
     assert!(r.view_for(ravi).check().is_ok());
 }
+
+#[test]
+fn undo_keeps_a_pending_seek_and_never_takes_out_the_song_playing() {
+    let mut r = room();
+    let ravi = join(&mut r, "k1", "Ravi");
+    start(&mut r, &[HOST, ravi], 0);
+    // A seek getting ready (Ravi slow), then an addition, then undo: the seek stays on its way.
+    r.ask(HOST, Action::Seek { content_us: 60 * S }, 5 * S)
+        .unwrap();
+    r.ask(
+        HOST,
+        Action::Add {
+            songs: vec![song(9)],
+            next: false,
+        },
+        5 * S + 100_000,
+    )
+    .unwrap();
+    r.undo(HOST, 5 * S + 200_000).unwrap();
+    assert_eq!(r.queue().len(), 3);
+    assert_eq!(
+        r.preparing().map(|p| p.2),
+        Some(60 * S),
+        "the seek is still on its way"
+    );
+    // A room that started with an added song: undoing the addition would take out the song
+    // playing, so it isn't done.
+    let mut r = Room::new("Aakash", SECRET, vec![], Opening::Resting);
+    let c = r
+        .ask(
+            HOST,
+            Action::Add {
+                songs: vec![song(1)],
+                next: false,
+            },
+            0,
+        )
+        .unwrap();
+    let (p, e, _, _) = prep(&c).unwrap();
+    commit(&r.ready(HOST, p, e, 0)).unwrap();
+    assert_eq!(
+        r.undo(HOST, S).unwrap_err(),
+        "The song playing can't be taken out; skip it instead."
+    );
+    assert_eq!(r.queue().len(), 1);
+    assert_eq!(r.anchor().map(|a| a.entry), Some(e));
+}
+
+#[test]
+fn a_knocker_whose_connection_drops_leaves_the_door() {
+    let mut r = room();
+    let (k, _) = r.knock("k1", "Ravi", &proof(SECRET, "k1"), 0);
+    let Knock::Waiting(id) = k else { panic!() };
+    let c = r.lost(id, S);
+    assert_eq!(c.gone, vec![id]);
+    assert!(r.view_for(HOST).waiting.is_empty());
+}
+
+#[test]
+fn the_host_is_never_a_remote_in_its_own_room() {
+    let mut r = room();
+    r.mode(HOST, ListenMode::OneSpeaker, 0);
+    assert_eq!(r.mode_of(HOST), Some(ListenMode::Apart));
+}

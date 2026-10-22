@@ -628,6 +628,12 @@ impl Room {
 
     /// Their connection was lost: away now, kept 2 minutes for a reconnect.
     pub fn lost(&mut self, id: u32, now_us: i64) -> Changes {
+        // At the door: gone (they knock again when back).
+        if let Some(i) = self.waiting.iter().position(|w| w.id == id) {
+            self.waiting.remove(i);
+            self.out.gone.push(id);
+            self.view_dirty = true;
+        }
         if id != HOST
             && let Some(p) = self.person_mut(id)
         {
@@ -753,6 +759,10 @@ impl Room {
     /// How someone listens (D4: per person). Every device needs the host's network; asked
     /// for elsewhere, it is apart.
     pub fn mode(&mut self, id: u32, mode: ListenMode, now_us: i64) -> Changes {
+        // The host's speaker is the one a remote listens on: the host is never a remote.
+        if id == HOST && mode == ListenMode::OneSpeaker {
+            return Changes::default();
+        }
         let Some(p) = self.person_mut(id) else {
             return Changes::default();
         };
@@ -857,7 +867,21 @@ impl Room {
         let Some(u) = self.undo.take() else {
             return Err("Nothing to undo.".into());
         };
-        self.prep = None;
+        // The song playing stays in the queue, unless the undo goes back to the one before.
+        let playing = self.anchor().map(|a| a.entry);
+        let goes_back = u.anchor.is_some_and(|a| Some(a.entry) != playing);
+        if let Some(e) = playing
+            && !goes_back
+            && !u.queue.iter().any(|q| q.id == e)
+        {
+            self.undo = Some(u);
+            return Err("The song playing can't be taken out; skip it instead.".into());
+        }
+        // A prepare the undone change made (a skip on its way) goes; a seek stays.
+        let back_to = u.anchor.map(|a| a.entry).or(playing);
+        if self.prep.as_ref().is_some_and(|p| Some(p.entry) != back_to) {
+            self.prep = None;
+        }
         self.queue = u.queue;
         if let Some(a) = self.activity.iter_mut().rev().find(|a| a.undoable) {
             a.undoable = false;
@@ -1175,8 +1199,10 @@ impl Room {
             p.welcomed = true;
         }
         if let Some(pr) = self.prep.clone() {
-            if self.waits_for_id(id, pr.entry) && pr.waiting.len() < MAX_PEOPLE {
-                self.prep.as_mut().unwrap().waiting.insert(id);
+            if self.waits_for_id(id, pr.entry)
+                && let Some(p) = self.prep.as_mut()
+            {
+                p.waiting.insert(id);
                 self.view_dirty = true;
             }
             self.push(
