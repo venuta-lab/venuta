@@ -7,6 +7,7 @@
 use super::AppPlayer;
 use super::sources::{AppCopies, HostStream};
 use crate::playback::{Playback, QueueItem, RoomNow};
+use player::measure::{Analysis, EnvelopeMaker, Making};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
@@ -14,6 +15,7 @@ use tauri::{AppHandle, Manager};
 use together::clock_map;
 use together::conductor::Conductor;
 use together::invite::Invite;
+use together::measure::{Measured, References, Spawn};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room_player::ListenMode;
@@ -73,6 +75,20 @@ pub async fn join(
         reach.local_only,
         Some(hs),
         super::host::resolver(&app),
+    );
+    // Each copy measured against the host's reference (WP11): its envelope made on the
+    // player's downloads, the host's fetched on the env: stream, on the app's runtime.
+    let spawn: Spawn = Arc::new(|f| {
+        tauri::async_runtime::spawn(f);
+    });
+    let copies = Measured::guest(
+        Box::new(copies),
+        Box::new(EnvelopeMaker::<QueueItem>::new(
+            super::streams(&app),
+            Making::Threads,
+        )),
+        References::new(shared.clone(), HOST, Some(spawn)),
+        Arc::new(Analysis),
     );
     let mut conductor = Conductor::new(
         Arc::new(AppPlayer(app.clone())),

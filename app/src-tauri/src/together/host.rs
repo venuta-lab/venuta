@@ -7,6 +7,7 @@
 use super::AppPlayer;
 use super::sources::{AppCopies, HostFiles};
 use crate::playback::{Playback, QueueItem, RoomNow};
+use player::measure::{EnvelopeMaker, Making};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -17,6 +18,7 @@ use together::anchor::EntryId;
 use together::clock_map::{self, ClockMap};
 use together::conductor::Conductor;
 use together::invite::Invite;
+use together::measure::{Measured, Shelf};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room::v2::{HOST, HostNote, Opening, Room};
@@ -204,6 +206,17 @@ pub async fn start(
         resolver(&app),
     );
     copies.own = own.clone();
+    // The host's copies are the room's references: their envelopes made on the player's
+    // downloads and served on the env: stream (WP11).
+    let shelf = Shelf::new();
+    let copies = Measured::host(
+        Box::new(copies),
+        Box::new(EnvelopeMaker::<QueueItem>::new(
+            super::streams(&app),
+            Making::Threads,
+        )),
+        shelf.clone(),
+    );
     let mut conductor = Conductor::new(player, map, Box::new(copies), ListenMode::Apart)
         .with_handle(handle, playing_entry);
     conductor.set_extra_latency(super::my_delay(&app) * 1_000);
@@ -218,7 +231,8 @@ pub async fn start(
         HostConfig {
             invite_open: Arc::new(move || open.open_at(super::unix_now())),
         },
-    );
+    )
+    .with_envelopes(shelf);
     let covers = Arc::new(super::covers::Covers::default());
     let _ = later.0.set(s.media(Arc::new(HostMedia {
         files: files.clone(),
