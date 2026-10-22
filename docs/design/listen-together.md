@@ -946,6 +946,8 @@ Settled in WP0:
 - `EntryId`, `PrepId`, `Anchor`, `Next`, `Transition` and `Purpose` are in `anchor.rs`, serialised as protocol 3 will carry them (`Transition` as `{"kind": "crossfade", "ms": 4000}`).
 - The fakes: `FakeRoomPlayer` / `FakeRoomHandle` record every call in order and answer `status` from a script (ready after a delay, unable, a sub-state at a time); `RoomScript` plays timed room calls (by host time) against any `RoomPlayer` on a `Timebase`.
 
+Settled in WP7 (a contract change, its own `contract:` commit): `RoomHandle::disarm()` withdraws the armed next (protocol 3's `Disarm`: a queue change left nothing after the playing entry); arming another entry still replaces it. The fakes record it (`Call::Disarm`, `Step::Disarm`).
+
 ### 5.5 Clock map
 
 ```rust
