@@ -489,9 +489,19 @@ fn wasapi_a_late_period_says_xrun_once_and_the_presentation_stays_true() {
         } else {
             (before, after, "usual")
         };
+        // A queue's depth wobbles from fill to fill by its learned band (about 5 ms on the
+        // laptop's driver): no reading of it can be finer than that, so that is the allowance
+        // there, never less than 2 ms.
+        let allowed = if mode == Mode::Exclusive {
+            out.latency().map_or(2.0, |l| {
+                (f64::from(l.band) * 1000.0 / f64::from(info.format.rate)).max(2.0)
+            })
+        } else {
+            2.0
+        };
         assert!(
-            (a - b).abs() < 2.0,
-            "the presentation moved by {:.1} ms over the gap (the {what} lead)",
+            (a - b).abs() < allowed,
+            "the presentation moved by {:.1} ms over the gap (the {what} lead, {allowed:.1} ms allowed)",
             a - b
         );
     }
