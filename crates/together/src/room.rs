@@ -10,6 +10,9 @@
 //! Pure: the time is passed in (the host's clock, microseconds), and what changed is returned
 //! for the app to send.
 
+/// Room v2, on protocol 3, beside this one until the live sessions move to it (R2).
+pub mod v2;
+
 use crate::MAX_PEOPLE;
 use crate::invite::proof_ok;
 use crate::proto::{Action, Activity, Hearing, MAX_QUEUE, Member, Role, RoomView, Song};
