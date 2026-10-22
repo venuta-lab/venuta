@@ -17,6 +17,7 @@ tauri-build = { version = "2.7.2", features = [] }
 [dependencies]
 engine.workspace = true
 lyrics-text.workspace = true
+lyrics-translate.workspace = true
 rusqlite.workspace = true
 player = { path = "../../crates/player" }
 # Live catalog is compiled into the desktop app and on by default (release + dev).

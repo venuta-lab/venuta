@@ -57,8 +57,11 @@ export function LyricLinesSettings() {
 /** The translation models on this PC: download, size, remove. */
 function TranslationModels({ into }: { into: string }) {
   const models = useTranslationModels()
-  // Those into the language you read first.
-  const sorted = [...models].sort((a, b) => Number(langBase(b.to) === into) - Number(langBase(a.to) === into) || a.name.localeCompare(b.name))
+  // Those into the language you read (there are over a hundred pairs in all), and any on this
+  // PC or on its way.
+  const sorted = models
+    .filter((m) => langBase(m.to) === into || m.installed || m.progress !== null)
+    .sort((a, b) => Number(langBase(b.to) === into) - Number(langBase(a.to) === into) || a.name.localeCompare(b.name))
   const used = models.filter((m) => m.installed).reduce((n, m) => n + m.size_bytes, 0)
   return (
     <Group
@@ -73,7 +76,7 @@ function TranslationModels({ into }: { into: string }) {
             <Row
               key={m.id}
               title={m.name}
-              hint={m.progress !== null ? `Downloading, ${Math.round(m.progress * 100)}% of ${sizeWords(m.size_bytes)}` : m.installed ? `${sizeWords(m.size_bytes)} on this PC` : `${sizeWords(m.size_bytes)} to download`}
+              hint={m.progress !== null ? `Downloading, ${Math.round(m.progress * 100)}% of ${sizeWords(m.size_bytes)}` : m.installed ? `${sizeWords(m.size_bytes)} on this PC` : m.error ? `The download failed, try again. ${sizeWords(m.size_bytes)} to download` : `${sizeWords(m.size_bytes)} to download`}
             >
               {m.progress !== null ? (
                 <span className="h-1.5 w-28 overflow-hidden rounded-full bg-ink/[0.12]" aria-hidden>

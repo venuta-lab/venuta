@@ -34,6 +34,7 @@ mod phone;
 mod playback;
 mod theme_packs;
 mod together;
+mod translation;
 mod updates;
 mod ytm_account;
 mod ytm_accounts;
@@ -3320,6 +3321,10 @@ pub fn run() {
             lyrics_find::lyrics_check,
             lyrics_find::lyrics_choose,
             lyrics_find::lyrics_offset,
+            translation::translation_models,
+            translation::translation_model_download,
+            translation::translation_model_remove,
+            translation::lyrics_translate,
             online::online_collection,
             online::online_artist,
             online::online_album_tracks,
