@@ -294,6 +294,7 @@ impl Maker {
 
 /// The hash of the first 10 s of decoded PCM, with the rate, the channels and how many frames
 /// there were, so only the same samples at the same rate and layout match.
+#[derive(Clone)]
 struct PcmHash {
     hasher: blake3::Hasher,
     samples_max: u64,
@@ -344,50 +345,104 @@ impl PcmHash {
 /// samples (as [`crate::decode::Source`] gives them) in blocks of any size, read to the end.
 /// Only the windows are analysed; the rest of the song is only counted.
 pub fn envelope(decoded: &mut dyn Iterator<Item = &[i32]>, rate: u32, ch: u16) -> Envelope {
-    let mut out = Envelope {
-        hop_ms: HOP_MS,
-        windows: Vec::new(),
-        pcm_hash: None,
-    };
-    if rate == 0 || ch == 0 {
-        decoded.for_each(drop);
-        return out;
-    }
-    let mut maker = Maker::new(rate);
-    let mut hash = PcmHash::new(rate, ch);
-    let ch_n = u32::from(ch);
-    let scale = 1.0 / (f64::from(ch) * 2_147_483_648.0);
-    let mut frame: u64 = 0;
-    let mut chan: u32 = 0;
-    let mut acc: i64 = 0;
+    let mut e = Enveloper::new(rate, ch);
     for block in decoded {
+        e.feed(block);
+    }
+    e.finish()
+}
+
+/// [`envelope`] block by block, for a decoder that hands its blocks over one at a time (the
+/// room's measure decodes a song once, and gives the start's envelope as soon as the first
+/// window is done).
+pub struct Enveloper {
+    /// `None`: no rate or no channels, nothing to analyse.
+    maker: Option<Maker>,
+    hash: Option<PcmHash>,
+    ch_n: u32,
+    scale: f64,
+    frame: u64,
+    chan: u32,
+    acc: i64,
+}
+
+impl Enveloper {
+    pub fn new(rate: u32, ch: u16) -> Enveloper {
+        let ok = rate > 0 && ch > 0;
+        Enveloper {
+            maker: ok.then(|| Maker::new(rate)),
+            hash: ok.then(|| PcmHash::new(rate, ch)),
+            ch_n: u32::from(ch),
+            scale: 1.0 / (f64::from(ch.max(1)) * 2_147_483_648.0),
+            frame: 0,
+            chan: 0,
+            acc: 0,
+        }
+    }
+
+    /// The next block of interleaved samples (it may split a frame).
+    pub fn feed(&mut self, block: &[i32]) {
+        let (Some(maker), Some(hash)) = (self.maker.as_mut(), self.hash.as_mut()) else {
+            return;
+        };
+        let ch_n = self.ch_n;
         hash.feed(block);
         // Between windows only the frames are counted: a block whose every frame (the one it
         // ends inside included) comes before the next window is skipped whole.
-        let total = u64::from(chan) + block.len() as u64;
-        if frame + total / u64::from(ch_n) < maker.from {
-            frame += total / u64::from(ch_n);
-            chan = (total % u64::from(ch_n)) as u32;
-            acc = 0;
-            continue;
+        let total = u64::from(self.chan) + block.len() as u64;
+        if self.frame + total / u64::from(ch_n) < maker.from {
+            self.frame += total / u64::from(ch_n);
+            self.chan = (total % u64::from(ch_n)) as u32;
+            self.acc = 0;
+            return;
         }
         for &s in block {
-            acc += i64::from(s);
-            chan += 1;
-            if chan == ch_n {
-                maker.frame(frame, acc as f64 * scale);
-                frame += 1;
-                chan = 0;
-                acc = 0;
+            self.acc += i64::from(s);
+            self.chan += 1;
+            if self.chan == ch_n {
+                maker.frame(self.frame, self.acc as f64 * self.scale);
+                self.frame += 1;
+                self.chan = 0;
+                self.acc = 0;
             }
         }
     }
-    if frame > maker.kept {
-        maker.close();
+
+    /// The first window and the hash are done (the song is longer than its first window).
+    pub fn start_done(&self) -> bool {
+        self.maker.as_ref().is_some_and(|m| !m.windows.is_empty())
+            && self.hash.as_ref().is_some_and(|h| h.samples >= h.samples_max)
     }
-    out.windows = maker.windows;
-    out.pcm_hash = hash.finish();
-    out
+
+    /// What it has so far: the windows done and the hash (once its 10 s are in).
+    pub fn so_far(&self) -> Envelope {
+        Envelope {
+            hop_ms: HOP_MS,
+            windows: self
+                .maker
+                .as_ref()
+                .map_or_else(Vec::new, |m| m.windows.clone()),
+            pcm_hash: self.hash.clone().and_then(PcmHash::finish),
+        }
+    }
+
+    /// The whole song's envelope (the song ended).
+    pub fn finish(self) -> Envelope {
+        let mut out = Envelope {
+            hop_ms: HOP_MS,
+            windows: Vec::new(),
+            pcm_hash: None,
+        };
+        let (Some(mut maker), Some(hash)) = (self.maker, self.hash) else {
+            return out;
+        };
+        if self.frame > maker.kept {
+            maker.close();
+        }
+        out.windows = maker.windows;
+        out.pcm_hash = hash.finish();
+        out
+    }
 }
 
 // The verdicts and the whole comparison are the contract's (`together::align`), so the room's
