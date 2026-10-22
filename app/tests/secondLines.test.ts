@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fromLegacy, langBase, modelOf, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricsModel.ts'
+import { attributionOf, fromLegacy, langBase, modelOf, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricsModel.ts'
 import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf } from '../src/lib/secondLines.ts'
 
 const fixture = (name: string): LyricsModel => readModel(JSON.parse(readFileSync(new URL(`./fixtures/lyrics-second/${name}.json`, import.meta.url), 'utf8')))
@@ -247,4 +247,26 @@ test('a translation whose language the lyrics did not say shows when it is in th
   assert.deepEqual(reservedRows(song, ALL, 'en'), { roman: false, translation: true })
   assert.deepEqual(reservedRows(song, ALL, 'hi'), { roman: false, translation: false })
   assert.deepEqual(reservedRows(japanese, ALL, 'en'), { roman: true, translation: false }, 'zh-Hans is not English')
+})
+
+test("Google's attribution goes beside the lines Google translated, and only those", () => {
+  // Google asks apps that show its Cloud Translation API's translations to show "Powered by
+  // Google Translate" beside them (docs/research/lyrics-translation-test.md).
+  const google = fixture('japanese-google')
+  for (const line of google.lines) {
+    const rows = rowsFor(line, { roman: true, translation: true }, 'en')
+    assert.deepEqual(
+      rows.map((r) => [r.kind, attributionOf(r.second?.source)]),
+      [
+        ['roman', null],
+        ['translation', 'Powered by Google Translate'],
+      ],
+    )
+  }
+  for (const s of [{ kind: 'translated', by: 'google' }, { Translated: 'google' }, { kind: 'translated', by: 'Google' }, 'translated'])
+    assert.equal(attributionOf(s as never), s === 'translated' ? null : 'Powered by Google Translate', JSON.stringify(s))
+  // Other engines, the lyrics' own lines, and a Google line corrected by hand: nothing.
+  for (const s of [{ kind: 'translated', by: 'deepl' }, { kind: 'translated', by: 'opus-mt' }, { kind: 'translated', by: 'constructor' }, { kind: 'lyrics', by: 'google' }, { kind: 'corrected' }, undefined])
+    assert.equal(attributionOf(s as never), null, JSON.stringify(s))
+  for (const line of fixture('hindi').lines) assert.equal(attributionOf(line.translation?.source), null)
 })

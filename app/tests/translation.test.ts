@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { modelFor, statusWords, sizeWords, translationStatus, type TranslationModel, type TranslationStatus } from '../src/lib/translation.ts'
-import { DEFAULT_ENGINE, DEFAULT_MODEL, engineArg, readEngine, type EngineChoice } from '../src/lib/translationEngine.ts'
+import { DEFAULT_ENGINE, DEFAULT_MODEL, ENGINE_IDS, ENGINES, engineArg, readEngine, type EngineChoice } from '../src/lib/translationEngine.ts'
 
 const models: TranslationModel[] = [
   { id: 'hi-en', from: 'hi', to: 'en', name: 'Hindi to English', size_bytes: 47_185_920, installed: true, progress: null, offered: false },
@@ -87,4 +87,14 @@ test('the engine choice: on this PC at first, automatic off, the default model',
   assert.deepEqual(readEngine(() => 'not json'), DEFAULT_ENGINE)
   assert.deepEqual(engineArg(keyed('llm')), { engine: 'llm', model: 'claude-sonnet-5-5' })
   assert.deepEqual(engineArg(keyed('deepl')), { engine: 'deepl' })
+})
+
+test("Google's terms for its translations: the attribution, the disclaimer, and the page to link to", () => {
+  // As https://docs.cloud.google.com/translate/attribution asks (checked 2026-10-22).
+  const g = ENGINES.google
+  assert.equal(g.attribution, 'Powered by Google Translate')
+  assert.match(g.notice ?? '', /^THIS SERVICE MAY CONTAIN TRANSLATIONS POWERED BY GOOGLE\. GOOGLE DISCLAIMS ALL WARRANTIES RELATED TO THE TRANSLATIONS,/)
+  assert.equal(g.page, 'https://cloud.google.com/translate')
+  // No other engine asks for any.
+  for (const id of ENGINE_IDS.filter((e) => e !== 'google')) assert.deepEqual([ENGINES[id].attribution, ENGINES[id].notice, ENGINES[id].page], [undefined, undefined, undefined], id)
 })

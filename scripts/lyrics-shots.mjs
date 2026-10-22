@@ -92,6 +92,19 @@ SHOTS.push(
   ['bigscreen-hindi-1280x720-dark', 'view=stage&song=hindi&line=2&size=xl&theme=dark', 1280, 720],
   ['bigscreen-mixed-1280x720-light', 'view=stage&song=mixed&line=1&size=xl&theme=light&look=outline', 1280, 720],
 )
+// Lines translated by Google, in every view: "Powered by Google Translate" beside each, fitting as
+// the rest does; and Settings with Google chosen (its attribution, disclaimer and page).
+SHOTS.push(
+  ['nowplaying-japanese-google-small-dark', 'view=nowplaying&song=japanese-google&theme=dark&line=2', 1100, 700],
+  ['nowplaying-japanese-google-large-light', 'view=nowplaying&song=japanese-google&theme=light&line=2', 1920, 1080],
+  ['desktop-japanese-google-small-dark', 'view=overlay&song=japanese-google&theme=dark&line=2&size=m', 520, 296],
+  ['desktop-japanese-google-large-light', 'view=overlay&song=japanese-google&theme=light&line=3&size=xl', 1400, 296],
+  ['desktop-japanese-google-smallest-dark', 'view=overlay&song=japanese-google&theme=dark&line=3&size=xl', 360, 130],
+  ['mini-bar-japanese-google-dark', 'view=mini&song=japanese-google&theme=dark&line=2', 380, 132],
+  ['mini-card-japanese-google-light', 'view=mini&song=japanese-google&theme=light&line=3', 300, 400],
+  ['settings-lyrics-google-dark', 'view=settings&song=hindi&theme=dark&engine=google&key=1', 900, 1000],
+  ['settings-lyrics-google-light', 'view=settings&song=hindi&theme=light&engine=google', 900, 1000],
+)
 
 // --- Chrome over a pipe ---------------------------------------------------------------------
 const profile = mkdtempSync(join(tmpdir(), 'venuta-shots-'))
@@ -177,8 +190,11 @@ const CHECK = `(() => {
     const prev = r.previousElementSibling
     if (prev && r.getBoundingClientRect().top < prev.getBoundingClientRect().bottom - 1) bad.push('overlaps the line above: ' + name(r))
   }
+  // Google's attribution sits inside a translation row, beside the line it translated.
+  const marks = [...document.querySelectorAll('[data-attribution]')]
+  for (const m of marks) if (!m.closest('[data-second="translation"]')) bad.push('attribution away from its translation: "' + m.textContent + '"')
   const order = [...document.querySelectorAll('[data-second]')].map((e) => e.dataset.second)
-  return { bad, rows: order.length }
+  return { bad, rows: order.length, attributions: marks.length }
 })()`
 
 async function shoot(session, [name, query, w, h, opts = {}]) {
@@ -197,6 +213,11 @@ async function shoot(session, [name, query, w, h, opts = {}]) {
   const { result } = await send('Runtime.evaluate', { expression: CHECK, returnByValue: true }, session)
   const shot = await send('Page.captureScreenshot', { format: 'png' }, session)
   writeFileSync(join(OUT, `${name}.png`), Buffer.from(shot.data, 'base64'))
+  // "Powered by Google Translate" beside the lines Google translated, and nowhere else.
+  const google = /song=japanese-google/.test(query) && !/view=settings/.test(query) && /translation|all/.test(new URLSearchParams(query).get('rows') ?? 'all')
+  const { bad, attributions } = result.value
+  if (google && !attributions) bad.push("no attribution beside Google's translations")
+  if (!google && attributions) bad.push(`${attributions} attributions on lines Google didn't translate`)
   return { name, size: `${w}x${h}`, ...result.value }
 }
 

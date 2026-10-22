@@ -7,6 +7,7 @@
 import type { FoundLine, LyricWord, SecondSource as EngineSource } from './engine'
 import type { Lyrics } from './lyrics'
 import { toLatin } from './textsearch.ts'
+import { ENGINE_IDS, ENGINES, type EngineId } from './translationEngine.ts'
 
 export interface ShownLines {
   /** [ms, line], in order. */
@@ -152,6 +153,17 @@ export function sourceWords(s: SecondSource, device = 'PC'): string {
     case 'Corrected':
       return 'Corrected by you'
   }
+}
+
+/** What a line's translator asks to be shown beside it ("Powered by Google Translate" beside a
+ *  line Google translated), or null: only for a line as the engine sent it (one corrected by hand
+ *  is yours), and only for engines that ask. */
+export function attributionOf(source: SecondSource | null | undefined): string | null {
+  if (!source) return null
+  const { kind, by } = sourceKind(source)
+  const engine = by?.toLowerCase()
+  if (kind !== 'Translated' || !engine || !ENGINE_IDS.includes(engine as EngineId)) return null
+  return ENGINES[engine as EngineId].attribution ?? null
 }
 
 // --- Scripts and languages -----------------------------------------------------------------

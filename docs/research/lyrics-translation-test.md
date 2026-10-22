@@ -148,6 +148,29 @@ Each has a human English translation, and every source is linked from its song b
    - **A word repeated in a loop.** Venuta cuts it back to as many times as the original sings it (`lines::tidy`).
    - **Invented content.** Nothing can catch it offline. It is why the line must say it is a machine translation, and why a listener can correct any line by hand (L6 keeps corrections).
 
+## Google Cloud Translation: what Google asks of apps that show its translations (2026-10-22)
+
+Checked on Google's attribution page for the Cloud Translation API ([docs.cloud.google.com/translate/attribution](https://docs.cloud.google.com/translate/attribution), last updated 2026-10-20; `cloud.google.com/translate/attribution` redirects there). **Attribution is required**, for apps as well as websites, whenever its translations are shown to people:
+
+- Make it clear they are automatic translations from Google Translate, with "Powered by Google Translate" shown beside the translations. The page offers the attribution as badges (the full-colour Google logo preferred; a plain-text style is one of its options), in a style that suits the app's layout, never altered or partly covered.
+- When translations are shown as they came (unmodified), make Google's disclaimer available somewhere in the app. It does not have to sit beside every line.
+- The app's description and help must say that Google Translate powers the translation, and link to Cloud Translation.
+- Buttons that start a translation carry Google's attribution (on phones, labelled "Translate with Google"). The service is named "Google Translate" (no abbreviations); "Cloud Translation API" for developer-facing features.
+- Pages indexed by search engines mark machine-translated text with Google's HTML markup: not applicable, Venuta's lyrics views are not web pages.
+
+What Venuta does (L7 follow-up):
+
+- **Beside each line Google translated, and only those**, the views show "Powered by Google Translate": Now Playing (always, not only on hover), the big screen, the desktop lyrics and the mini player. A line is marked when its translation's source is `Translated("google")`; lines the lyrics carried, lines translated on this PC or by another engine, and a Google line corrected by hand are not (`attributionOf`, `lib/lyricsModel.ts`, tested in `tests/secondLines.test.ts`).
+- **Settings > Lyrics**, with Google chosen in "Translate with": a row "Powered by Google Translate" saying the lines are automatic translations by Google Translate and marked so, Google's disclaimer in full under it, and an "About Cloud Translation" button that opens `https://cloud.google.com/translate` in the browser (the only address it can open, `translation_engine_page`).
+- The Translate button already names Google ("Translate with Google Cloud Translation"), which the page asks of desktop buttons.
+
+Left for the owner:
+
+- The attribution is drawn as text in each view's own type. Google's badge images (a zip linked from the page) were not downloaded or bundled: they are Google's brand assets under Google's brand terms, not MIT. Swapping a badge in is a decision for the owner.
+- Venuta's store description and README should say that Google Translate powers translation when you choose it, with a link to Cloud Translation. Not changed here.
+- The Android app, when it gets key-based engines, labels its button "Translate with Google".
+- DeepL, Microsoft and Anthropic were not checked for attribution terms in this follow-up; their lines say "Translated by DeepL, with your key" and so on.
+
 ## Android
 - **The engine builds for Android with no C++ library.** `fxtranslate` is pure Rust plus an optional C++ SIMD kernel, which Venuta leaves off. The rest of the crate (`ureq` with rustls, `flate2`, `sha2`, `serde`) is pure Rust as well.
 - **Why the SIMD kernel stays off.** It is compiled for one CPU level with no check at run time:

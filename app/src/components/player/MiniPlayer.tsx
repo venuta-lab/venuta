@@ -676,6 +676,11 @@ function FittedLines(props: { lines: { text: string; now: boolean; rows: SecondR
             {l.rows.map((r) => (
               <div key={r.kind} data-second={r.kind} lang={r.lang} className={`leading-snug ${r.kind === 'roman' ? 'text-ink/70' : 'text-ink/55'}`} style={{ fontSize: r.kind === 'roman' ? '0.86em' : '0.8em' }}>
                 {r.text || '\u00a0'}
+                {r.attribution && r.text && (
+                  <span data-attribution lang="en" className="ml-1.5 whitespace-nowrap text-[0.82em] text-ink/45">
+                    {r.attribution}
+                  </span>
+                )}
               </div>
             ))}
           </div>
