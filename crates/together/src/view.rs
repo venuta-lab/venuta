@@ -49,6 +49,75 @@ pub struct View {
     pub you: Option<You>,
     /// The output you hear the room on, and its delay.
     pub output: OutputView,
+    /// The host's time when this view was made, from your clock line (`None` before it is
+    /// ready): a remote's progress is the anchor's place at this time, moved on since.
+    pub host_now_us: Option<i64>,
+    /// Rooms open on this network (the host lets them be seen; joining one still knocks).
+    pub nearby: Vec<NearbyView>,
+    /// The host's room can be seen on this network.
+    pub visible: bool,
+    /// A room to go back to: after a crash or restart, while its invite is valid.
+    pub resume: Option<Resume>,
+    /// After a room: how many songs its queue had, for "Save the room's queue as a playlist".
+    pub last_queue: Option<u32>,
+}
+
+/// A room open on this network.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NearbyView {
+    pub id: u32,
+    pub host: String,
+    pub listening: u32,
+}
+
+/// A room to go back to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Resume {
+    /// A guest's: "Rejoin Asha's room?"
+    Rejoin { host: String },
+    /// A host's: "Reopen your room?"
+    Reopen,
+}
+
+/// A mode you may take now, in the order offered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeChoice {
+    pub mode: ListenMode,
+    /// Why it can't be had now, in words ("Hide my IP is on"); `None`: it can.
+    pub why_not: Option<String>,
+}
+
+/// Why you stepped out of the room's sound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepOut {
+    /// "Pause for me".
+    Chosen,
+    /// The sleep timer ran out.
+    SleepTimer,
+    /// Headphones unplugged or a Bluetooth output gone.
+    Unplugged,
+}
+
+/// Where the room's playback is (the same words as protocol 3's).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Nothing has played yet ("Add songs to start").
+    Resting,
+    /// The last song ended ("The room's queue has ended").
+    QueueEnded,
+    Playing,
+    Held,
+}
+
+/// Something asked of whoever controls ("Ravi asks to skip").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestView {
+    pub id: u32,
+    pub from: u32,
+    pub words: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,6 +149,11 @@ pub struct You {
     pub pressing: Option<String>,
     /// While joining: how much of the first song is in, 0 to 100.
     pub joining_pct: Option<u8>,
+    /// The modes you may take now, in the order offered (one speaker first on the host's
+    /// network; empty over the internet).
+    pub choices: Vec<ModeChoice>,
+    /// Why you stepped out, while you are.
+    pub stepped_out: Option<StepOut>,
 }
 
 /// The output you hear the room on.
@@ -112,6 +186,15 @@ pub struct RoomView {
     pub starting: Option<Vec<String>>,
     /// The host is reconnecting: room controls are greyed.
     pub host_away: bool,
+    pub phase: Phase,
+    /// What people without the role asked (shown to whoever controls).
+    pub requests: Vec<RequestView>,
+    /// The host hasn't chosen the role for new people: control up to 4 people, add above.
+    pub auto_roles: bool,
+    /// Remotes may change the host's speaker's volume.
+    pub guests_volume: bool,
+    /// The host's speaker's volume, 0 to 100 (for the host, and remotes allowed to change it).
+    pub volume: Option<u8>,
 }
 
 /// One song in the room's queue.
@@ -140,6 +223,11 @@ pub struct MemberView {
     /// The milliseconds behind the line, for the disclosure: their error and the clock's bound.
     pub error_ms: Option<f32>,
     pub bound_ms: Option<f32>,
+    /// Missed three prepares in a row (the host's view).
+    pub slow: bool,
+    /// `None`: can't take the room over; else how many people would lose songs only the host
+    /// has if they did (the host's view).
+    pub hand_over: Option<u32>,
 }
 
 /// Which copy a person plays.
@@ -219,6 +307,15 @@ pub fn line(
         SubState::SteppedOut => "Stepped out".into(),
         SubState::CannotPlay => "Not available for you, back with the next song".into(),
         SubState::Remote => format!("Listening on {host_name}'s speaker"),
+    }
+}
+
+/// Your line while stepped out (others read "Stepped out").
+pub fn stepped_out_line(why: StepOut) -> String {
+    match why {
+        StepOut::Chosen => "Stepped out".into(),
+        StepOut::SleepTimer => "Stepped out (sleep timer)".into(),
+        StepOut::Unplugged => "Paused: headphones disconnected".into(),
     }
 }
 
@@ -315,6 +412,15 @@ mod tests {
         );
         assert_eq!(joining_line(60), "Joining... buffering 60%");
         assert_eq!(pressing(Press::Seek { to_ms: 95_400 }), "Moving to 1:35...");
+        assert_eq!(stepped_out_line(StepOut::Chosen), "Stepped out");
+        assert_eq!(
+            stepped_out_line(StepOut::SleepTimer),
+            "Stepped out (sleep timer)"
+        );
+        assert_eq!(
+            stepped_out_line(StepOut::Unplugged),
+            "Paused: headphones disconnected"
+        );
         let c = CopyView {
             kind: CopyKind::Catalog,
             class: CopyClass::Approximate,
@@ -347,18 +453,8 @@ mod tests {
         }
     }
 
-    fn member(
-        id: u32,
-        name: &str,
-        mode: ListenMode,
-        s: Option<SubState>,
-        away: bool,
-    ) -> MemberView {
-        let (e, b) = match mode {
-            ListenMode::EveryDevice => (Some(0.3), Some(0.9)),
-            _ => (Some(-4.0), Some(9.0)),
-        };
-        let copy = Some(match id % 4 {
+    fn copy_of(id: u32) -> CopyView {
+        match id % 4 {
             0 => CopyView {
                 kind: CopyKind::HostStream,
                 class: CopyClass::Exact,
@@ -379,7 +475,26 @@ mod tests {
                 class: CopyClass::Approximate,
                 length_diff_s: None,
             },
-        });
+        }
+    }
+
+    /// A person's error and the clock's bound, by mode (a remote has neither).
+    fn error_bound(mode: ListenMode) -> (Option<f32>, Option<f32>) {
+        match mode {
+            ListenMode::EveryDevice => (Some(0.3), Some(0.9)),
+            ListenMode::OneSpeaker => (None, None),
+            ListenMode::Apart => (Some(-4.0), Some(9.0)),
+        }
+    }
+
+    fn member(
+        id: u32,
+        name: &str,
+        mode: ListenMode,
+        s: Option<SubState>,
+        away: bool,
+    ) -> MemberView {
+        let (e, b) = error_bound(mode);
         MemberView {
             id,
             name: name.into(),
@@ -389,9 +504,11 @@ mod tests {
             sub_state: if away { None } else { s },
             away,
             line: line(if away { None } else { s }, mode, away, e, b, "Asha"),
-            copy,
+            copy: (mode != ListenMode::OneSpeaker).then(|| copy_of(id)),
             error_ms: e,
             bound_ms: b,
+            slow: false,
+            hand_over: None,
         }
     }
 
@@ -399,7 +516,7 @@ mod tests {
         RoomView {
             host_name: "Asha".into(),
             members,
-            waiting: vec![(7, "Kabir".into())],
+            waiting: vec![],
             queue: (1..=4)
                 .map(|n| EntryView {
                     id: EntryId(u64::from(n) + 40),
@@ -421,7 +538,7 @@ mod tests {
             }),
             transition,
             activity: vec![Activity {
-                who: 2,
+                who: 1,
                 name: "Ravi".into(),
                 what: "added 2 songs".into(),
                 at_us: 3_590_000_000,
@@ -430,6 +547,11 @@ mod tests {
             new_role: Role::Add,
             starting: None,
             host_away: false,
+            phase: if playing { Phase::Playing } else { Phase::Held },
+            requests: vec![],
+            auto_roles: false,
+            guests_volume: false,
+            volume: None,
         }
     }
 
@@ -452,16 +574,22 @@ mod tests {
                 bluetooth: false,
                 delay_known: true,
             },
+            host_now_us: None,
+            nearby: vec![],
+            visible: false,
+            resume: None,
+            last_queue: None,
         }
     }
 
-    /// Every sub-state, mode, copy and absence, among the members of one room.
+    /// Every sub-state, mode, copy and absence, among the members of one room (the host's
+    /// view: everyone's copy, who is slow, who could take the room over).
     fn everyone() -> Vec<MemberView> {
         use ListenMode::*;
         use SubState::*;
         let states = [
-            (Apart, Some(InStep)),
             (EveryDevice, Some(InStep)),
+            (Apart, Some(InStep)),
             (Apart, Some(Opening)),
             (Apart, Some(Ready)),
             (EveryDevice, Some(Correcting)),
@@ -485,12 +613,18 @@ mod tests {
             .map(|(i, (&(mode, s), name))| member(i as u32, name, mode, s, false))
             .collect();
         m.push(member(13, "Ishan", Apart, Some(InStep), true));
+        // Dev missed three starts; Ravi and Meera could host (Meera without two people's
+        // songs only Asha has).
+        m[6].slow = true;
+        m[1].hand_over = Some(0);
+        m[2].hand_over = Some(2);
         m
     }
 
-    /// A small room: the host, you and one more.
-    fn few() -> Vec<MemberView> {
-        vec![
+    /// A small room as Meera (id 2) sees it: the host, Meera listening as given, and Ali
+    /// buffering. Only Meera's own copy is in her view (D14).
+    fn few(mode: ListenMode, s: SubState) -> Vec<MemberView> {
+        let mut out = vec![
             member(
                 0,
                 "Asha",
@@ -498,7 +632,7 @@ mod tests {
                 Some(SubState::InStep),
                 false,
             ),
-            member(2, "Meera", ListenMode::Apart, Some(SubState::InStep), false),
+            member(2, "Meera", mode, Some(s), false),
             member(
                 3,
                 "Ali",
@@ -506,13 +640,122 @@ mod tests {
                 Some(SubState::Suspended(Suspension::Buffering)),
                 false,
             ),
-        ]
+        ];
+        for m in &mut out {
+            if m.id != 2 {
+                m.copy = None;
+            }
+        }
+        out
+    }
+
+    fn you(mode: ListenMode, s: SubState, pressing: Option<String>) -> You {
+        let (e, b) = error_bound(mode);
+        You {
+            mode,
+            sub_state: s,
+            line: line(Some(s), mode, false, e, b, "Asha"),
+            pressing,
+            joining_pct: None,
+            choices: vec![],
+            stepped_out: None,
+        }
+    }
+
+    fn choice(mode: ListenMode) -> ModeChoice {
+        ModeChoice {
+            mode,
+            why_not: None,
+        }
+    }
+
+    /// Meera, a guest over the internet (through a relay), in a playing room.
+    fn guest(s: SubState, mode: ListenMode, pressing: Option<String>, t: Transition) -> View {
+        View {
+            me: Some(2),
+            path: Some(PathView {
+                direct: false,
+                relay: true,
+                rtt_ms: Some(118),
+            }),
+            room: Some(room(few(mode, s), t, true)),
+            you: Some(you(mode, s, pressing)),
+            host_now_us: Some(3_612_500_000),
+            ..base(SessionState::In)
+        }
+    }
+
+    /// Meera on the host's network (direct, a few ms), offered one speaker first.
+    fn neighbour(s: SubState, mode: ListenMode) -> View {
+        let mut v = guest(s, mode, None, Transition::Gapless);
+        v.path = Some(PathView {
+            direct: true,
+            relay: false,
+            rtt_ms: Some(3),
+        });
+        if let Some(y) = v.you.as_mut() {
+            y.choices = vec![
+                choice(ListenMode::OneSpeaker),
+                choice(ListenMode::EveryDevice),
+            ];
+        }
+        v
+    }
+
+    fn edit(mut v: View, f: impl FnOnce(&mut View)) -> View {
+        f(&mut v);
+        v
+    }
+
+    fn room_of(v: &mut View) -> &mut RoomView {
+        v.room.as_mut().expect("a room")
+    }
+
+    fn you_of(v: &mut View) -> &mut You {
+        v.you.as_mut().expect("you")
+    }
+
+    fn me_of(v: &mut View) -> &mut MemberView {
+        let me = v.me;
+        room_of(v)
+            .members
+            .iter_mut()
+            .find(|m| Some(m.id) == me)
+            .expect("me")
     }
 
     fn fixtures() -> Vec<(&'static str, View)> {
         use ListenMode::*;
-        let mut out = Vec::new();
-        out.push(("off", base(SessionState::Off)));
+        let mut out = vec![("off", base(SessionState::Off))];
+        out.push((
+            "off, rooms nearby and one to rejoin",
+            View {
+                nearby: vec![
+                    NearbyView {
+                        id: 1,
+                        host: "Asha".into(),
+                        listening: 3,
+                    },
+                    NearbyView {
+                        id: 2,
+                        host: "Kabir".into(),
+                        listening: 1,
+                    },
+                ],
+                resume: Some(Resume::Rejoin {
+                    host: "Asha".into(),
+                }),
+                ..base(SessionState::Off)
+            },
+        ));
+        out.push((
+            "off, your room to reopen",
+            View {
+                name: "Asha".into(),
+                resume: Some(Resume::Reopen),
+                ..base(SessionState::Off)
+            },
+        ));
         out.push((
             "starting",
             View {
@@ -527,45 +770,93 @@ mod tests {
             host: "Asha".into(),
             until: 1_790_000_000,
         };
-        let you = |mode, s: SubState, pressing: Option<String>| You {
-            mode,
-            sub_state: s,
-            line: line(Some(s), mode, false, Some(0.5), Some(8.0), "Asha"),
-            pressing,
-            joining_pct: None,
+        let hosting = |members: Vec<MemberView>, mode, t| View {
+            host: true,
+            me: Some(0),
+            name: "Asha".into(),
+            invite: Some(invite.clone()),
+            room: Some(RoomView {
+                volume: Some(80),
+                ..room(members, t, true)
+            }),
+            you: Some(you(mode, SubState::InStep, None)),
+            host_now_us: Some(3_612_500_000),
+            visible: true,
+            ..base(SessionState::Hosting)
         };
         out.push((
             "hosting, everyone in every state",
-            View {
-                host: true,
-                me: Some(0),
-                name: "Asha".into(),
-                let_in: true,
-                invite: Some(invite.clone()),
-                room: Some(room(everyone(), Transition::Gapless, true)),
-                you: Some(you(EveryDevice, SubState::InStep, None)),
-                ..base(SessionState::Hosting)
-            },
+            edit(hosting(everyone(), EveryDevice, Transition::Gapless), |v| {
+                v.let_in = true;
+                let r = room_of(v);
+                r.waiting = vec![(20, "Kabir".into())];
+                r.auto_roles = true;
+                r.requests = vec![RequestView {
+                    id: 4,
+                    from: 1,
+                    words: "Ravi asks to skip".into(),
+                }];
+            }),
         ));
         out.push((
             "hosting alone, nothing playing",
-            View {
-                host: true,
-                me: Some(0),
-                name: "Asha".into(),
-                invite: Some(invite),
-                room: Some(RoomView {
-                    members: vec![member(0, "Asha", EveryDevice, Some(SubState::Ready), false)],
-                    queue: vec![],
-                    anchor: None,
-                    next: None,
-                    activity: vec![],
-                    waiting: vec![],
-                    ..room(vec![], Transition::Gapless, false)
-                }),
-                you: Some(you(EveryDevice, SubState::Ready, None)),
-                ..base(SessionState::Hosting)
-            },
+            edit(
+                hosting(
+                    vec![member(0, "Asha", EveryDevice, Some(SubState::Ready), false)],
+                    EveryDevice,
+                    Transition::Gapless,
+                ),
+                |v| {
+                    you_of(v).sub_state = SubState::Ready;
+                    you_of(v).line = "Ready".into();
+                    let r = room_of(v);
+                    r.queue = vec![];
+                    r.anchor = None;
+                    r.next = None;
+                    r.activity = vec![];
+                    r.phase = Phase::Resting;
+                },
+            ),
+        ));
+        out.push((
+            "hosting, a one speaker room",
+            edit(
+                hosting(
+                    vec![
+                        member(0, "Asha", EveryDevice, Some(SubState::InStep), false),
+                        member(1, "Ravi", OneSpeaker, Some(SubState::Remote), false),
+                        member(2, "Meera", OneSpeaker, Some(SubState::Remote), false),
+                    ],
+                    EveryDevice,
+                    Transition::Gapless,
+                ),
+                |v| {
+                    let r = room_of(v);
+                    r.guests_volume = true;
+                    r.members[1].hand_over = Some(0);
+                },
+            ),
+        ));
+        out.push((
+            "hosting, the queue ended",
+            edit(
+                hosting(
+                    vec![
+                        member(0, "Asha", EveryDevice, Some(SubState::Ready), false),
+                        member(2, "Meera", Apart, Some(SubState::Ready), false),
+                    ],
+                    EveryDevice,
+                    Transition::Gapless,
+                ),
+                |v| {
+                    you_of(v).sub_state = SubState::Ready;
+                    you_of(v).line = "Ready".into();
+                    let r = room_of(v);
+                    r.anchor = None;
+                    r.next = None;
+                    r.phase = Phase::QueueEnded;
+                },
+            ),
         ));
         out.push((
             "joining, buffering",
@@ -584,18 +875,32 @@ mod tests {
                 ..base(SessionState::Joining)
             },
         ));
-        out.push(("waiting at the door", base(SessionState::Waiting)));
-        let guest = |s: SubState, mode, pressing: Option<String>, t| View {
-            me: Some(2),
-            path: Some(PathView {
-                direct: false,
-                relay: true,
-                rtt_ms: Some(118),
+        out.push((
+            "joining on the host's network, choosing",
+            edit(neighbour(SubState::Opening, OneSpeaker), |v| {
+                v.state = SessionState::Joining;
+                let y = you_of(v);
+                y.line = "Getting ready".into();
+                me_of(v).sub_state = Some(SubState::Opening);
+                me_of(v).line = "Getting ready".into();
             }),
-            room: Some(room(few(), t, true)),
-            you: Some(you(mode, s, pressing)),
-            ..base(SessionState::In)
-        };
+        ));
+        out.push((
+            "joining on the host's network, on headphones",
+            edit(neighbour(SubState::Opening, OneSpeaker), |v| {
+                v.state = SessionState::Joining;
+                v.output = OutputView {
+                    name: "WH-1000XM5".into(),
+                    delay_ms: 0,
+                    bluetooth: true,
+                    delay_known: false,
+                };
+                let y = you_of(v);
+                y.line = "Getting ready".into();
+                y.choices = vec![choice(OneSpeaker), choice(Apart)];
+            }),
+        ));
+        out.push(("waiting at the door", base(SessionState::Waiting)));
         for (name, p) in [
             ("in, pausing", Press::Pause),
             ("in, moving", Press::Seek { to_ms: 95_000 }),
@@ -628,55 +933,214 @@ mod tests {
         ));
         out.push((
             "in, a remote on the host's speaker",
-            guest(SubState::Remote, OneSpeaker, None, Transition::Gapless),
+            neighbour(SubState::Remote, OneSpeaker),
         ));
-        let mut paused = guest(SubState::Ready, Apart, None, Transition::Gapless);
-        if let Some(r) = paused.room.as_mut() {
-            r.anchor = r.anchor.map(|a| Anchor {
-                playing: false,
-                ..a
-            });
+        out.push((
+            "in, a remote who controls and may change the volume",
+            edit(neighbour(SubState::Remote, OneSpeaker), |v| {
+                me_of(v).role = Role::Control;
+                let r = room_of(v);
+                r.guests_volume = true;
+                r.volume = Some(60);
+            }),
+        ));
+        out.push((
+            "in, every device, on the host's network",
+            neighbour(SubState::InStep, EveryDevice),
+        ));
+        out.push((
+            "in, every device not available",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    you_of(v).choices = vec![
+                        ModeChoice {
+                            mode: EveryDevice,
+                            why_not: Some("Not while Hide my IP is on".into()),
+                        },
+                        choice(Apart),
+                    ];
+                },
+            ),
+        ));
+        out.push((
+            "in, the room paused",
+            edit(
+                guest(SubState::Ready, Apart, None, Transition::Gapless),
+                |v| {
+                    let r = room_of(v);
+                    r.anchor = r.anchor.map(|a| Anchor {
+                        playing: false,
+                        ..a
+                    });
+                    r.phase = Phase::Held;
+                },
+            ),
+        ));
+        out.push((
+            "in, a start waiting for someone",
+            edit(
+                guest(SubState::Ready, Apart, None, Transition::Gapless),
+                |v| {
+                    room_of(v).starting = Some(vec!["Ali".into()]);
+                },
+            ),
+        ));
+        out.push((
+            "in, a skip waiting for two",
+            edit(
+                guest(
+                    SubState::InStep,
+                    Apart,
+                    Some(pressing(Press::Skip)),
+                    Transition::Gapless,
+                ),
+                |v| {
+                    room_of(v).starting = Some(vec!["Ali".into(), "Dev".into()]);
+                },
+            ),
+        ));
+        out.push((
+            "in, the host reconnecting",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    let r = room_of(v);
+                    r.host_away = true;
+                    let host = &mut r.members[0];
+                    host.away = true;
+                    host.sub_state = None;
+                    host.line = line(None, host.mode, true, None, None, "Asha");
+                },
+            ),
+        ));
+        out.push((
+            "in, on Bluetooth with its delay set",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    v.output = OutputView {
+                        name: "WH-1000XM5".into(),
+                        delay_ms: 200,
+                        bluetooth: true,
+                        delay_known: true,
+                    };
+                },
+            ),
+        ));
+        out.push((
+            "in, on Bluetooth with its delay not known",
+            edit(neighbour(SubState::InStep, EveryDevice), |v| {
+                v.output = OutputView {
+                    name: "JBL Flip".into(),
+                    delay_ms: 0,
+                    bluetooth: true,
+                    delay_known: false,
+                };
+            }),
+        ));
+        for (name, why) in [
+            ("in, stepped out", StepOut::Chosen),
+            ("in, stepped out by the sleep timer", StepOut::SleepTimer),
+            ("in, headphones disconnected", StepOut::Unplugged),
+        ] {
+            out.push((
+                name,
+                edit(
+                    guest(SubState::SteppedOut, Apart, None, Transition::Gapless),
+                    |v| {
+                        let y = you_of(v);
+                        y.stepped_out = Some(why);
+                        y.line = stepped_out_line(why);
+                    },
+                ),
+            ));
         }
-        out.push(("in, the room paused", paused));
-        let mut starting = guest(SubState::Ready, Apart, None, Transition::Gapless);
-        if let Some(r) = starting.room.as_mut() {
-            r.starting = Some(vec!["Ali".into()]);
+        for (name, why) in [
+            ("in, buffering", Suspension::Buffering),
+            ("in, sound output unavailable", Suspension::OutputLost),
+            ("in, interrupted", Suspension::Interrupted),
+        ] {
+            out.push((
+                name,
+                guest(SubState::Suspended(why), Apart, None, Transition::Gapless),
+            ));
         }
-        out.push(("in, a start waiting for someone", starting));
-        let mut host_away = guest(SubState::InStep, Apart, None, Transition::Gapless);
-        if let Some(r) = host_away.room.as_mut() {
-            r.host_away = true;
-        }
-        out.push(("in, the host reconnecting", host_away));
-        let mut bluetooth = guest(SubState::InStep, Apart, None, Transition::Gapless);
-        bluetooth.output = OutputView {
-            name: "WH-1000XM5".into(),
-            delay_ms: 200,
-            bluetooth: true,
-            delay_known: true,
-        };
-        out.push(("in, on Bluetooth with its delay set", bluetooth));
-        let mut unmeasured = guest(SubState::InStep, EveryDevice, None, Transition::Gapless);
-        unmeasured.output = OutputView {
-            name: "JBL Flip".into(),
-            delay_ms: 0,
-            bluetooth: true,
-            delay_known: false,
-        };
-        out.push(("in, on Bluetooth with its delay not known", unmeasured));
+        out.push((
+            "in, not available for you",
+            guest(SubState::CannotPlay, Apart, None, Transition::Gapless),
+        ));
+        out.push((
+            "in, catching up",
+            guest(SubState::Correcting, Apart, None, Transition::Gapless),
+        ));
+        out.push((
+            "in, on another version",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    me_of(v).copy = Some(CopyView {
+                        kind: CopyKind::Catalog,
+                        class: CopyClass::Approximate,
+                        length_diff_s: Some(12),
+                    });
+                },
+            ),
+        ));
+        out.push((
+            "in, just listening",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    me_of(v).role = Role::Listen;
+                },
+            ),
+        ));
+        out.push((
+            "in, in control with a request to answer",
+            edit(
+                guest(SubState::InStep, Apart, None, Transition::Gapless),
+                |v| {
+                    me_of(v).role = Role::Control;
+                    room_of(v).requests = vec![RequestView {
+                        id: 9,
+                        from: 3,
+                        words: "Ali asks to skip".into(),
+                    }];
+                },
+            ),
+        ));
+        out.push((
+            "in, the room's queue ended",
+            edit(
+                guest(SubState::Ready, Apart, None, Transition::Gapless),
+                |v| {
+                    let r = room_of(v);
+                    r.anchor = None;
+                    r.next = None;
+                    r.phase = Phase::QueueEnded;
+                },
+            ),
+        ));
         out.push((
             "reconnecting",
             View {
-                me: Some(2),
-                room: Some(room(few(), Transition::Gapless, true)),
-                you: Some(you(Apart, SubState::InStep, None)),
-                ..base(SessionState::Reconnecting)
+                state: SessionState::Reconnecting,
+                ..guest(SubState::InStep, Apart, None, Transition::Gapless)
             },
         ));
         out.push((
             "ended",
             View {
                 message: Some("Asha ended the room".into()),
+                last_queue: Some(4),
+                ..base(SessionState::Ended)
+            },
+        ));
+        out.push((
+            "ended, not let in",
+            View {
+                message: Some("Asha didn't let you in.".into()),
                 ..base(SessionState::Ended)
             },
         ));

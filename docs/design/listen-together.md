@@ -1166,6 +1166,14 @@ Settled in WP0 (`together::view`, the window's copy of the shapes in `app/src/li
 - The lines of 4.12 are made in Rust by `view::line(...)` and `view::joining_line(pct)`, so Windows and Android say the same; the window only shows them. A suspension for sleep reads "Sleeping".
 - `app/tests/fixtures/together-views.json` is made by `view.rs`'s test (run it with `UPDATE_FIXTURES=1` after a change; it fails while the file is out of date), and `app/tests/togetherViews.test.ts` checks it holds every session state, sub-state, mode, copy, press and transition in plain words.
 
+Settled in WP12 (what the panel needs that the first shapes did not carry, each for a window cell of 6.1):
+
+- `View.host_now_us`: the host's time when the view was made, from your clock line (`None` before it is ready). A remote's progress is `anchor.content_at(host_now_us)` moved on by the time since (J7, within 100 ms at 10 views a second).
+- `View.nearby: Vec<NearbyView { id, host, listening }>` (A15) and `View.visible` (the host's "Visible on this network", D19); `View.resume: Option<Resume>`, `rejoin { host }` or `reopen` (I6, I7); `View.last_queue: Option<u32>`, the songs of the room just left, for "Save the room's queue as a playlist" (I10).
+- `You.choices: Vec<ModeChoice { mode, why_not }>`: the modes you may take now, in the order offered (one speaker first on the host's network, A16; empty over the internet), each with why it can't be had now (A6, E9, F12) or none. `You.stepped_out: Option<StepOut>`, `chosen`, `sleep_timer` or `unplugged`, and `view::stepped_out_line` for your line ("Stepped out", "Stepped out (sleep timer)", "Paused: headphones disconnected"; H4b, H7); others still read "Stepped out".
+- `RoomView.phase: Phase` (`resting`, `queue_ended`, `playing`, `held`; the same words as protocol 3's `Phase`, A2, A13), `requests: Vec<RequestView { id, from, words }>` ("Ravi asks to skip", made by the session from protocol 3's request; shown to whoever controls, B13), `auto_roles` and `guests_volume` (protocol 3's settings, D20, B17), `volume: Option<u8>` (the host's speaker, for remotes allowed to change it and for the host).
+- `MemberView.slow` (the host's view: three prepares missed in a row, G7) and `MemberView.hand_over: Option<u32>`: `None` when they can't take the room over, else how many people would lose songs only the host has (4.15).
+
 ## 6. Use cases
 
 ### 6.0 How shipped products do it (from note 07)
@@ -1556,7 +1564,8 @@ From `app/src-tauri/src/together/net.rs` (kept: `Reach`, `endpoint`, `ticket`, `
 | `lib/together.ts` | Keep the store and route; rework the view types (entry ids, sub-states, per-member mode, copy, accuracy, pressing) |
 | `lib/roomRoute.ts` | Keep |
 | `components/together/RoomChip.tsx` | Rework: per-member lines (4.12), the mode per person, the join choice ("Play on Asha's speaker" or "Play on this device too"), the remote view, requests to accept, Leave / End for everyone / Hand over, the room's transition setting, the delay per output with "Line up by ear" and the Bluetooth hint, rooms nearby, rejoin and reopen prompts |
-| `components/together/RoomQueue.tsx` | Keep; entry ids |
+| `components/together/RoomQueue.tsx` | Keep; entry ids (WP12: `lib/together.ts` maps its indices to entry ids while today's view is still projected for it; WP13 moves it to ids) |
+| new `components/together/{model.ts, RoomChipV2.tsx, RoomPanel.tsx, preview/}` | New (WP12): the v2 chip and panel, their pure logic, and the preview page the screenshots are taken from |
 
 ## 9. Implementation plan
 
@@ -1626,6 +1635,49 @@ Where the first frame after a seek lies is taken from the first packet that give
 
 **Left to others.** The alignment envelope and PCM hash need the song from its start, which a voice starting partway never sees: WP11 runs `analysis::envelope` over a `Source` of its own. The readiness rule (2 s or 3 s decoded, 10 s of bytes ahead or all) is WP4's, read from `VoiceStatus`.
 
+#### WP12 notes: the room panel (the plan, as built)
+
+**Beside today's panel, switched by the view.** The app sends today's view (protocol 2) until WP9 moves the sessions, so the desktop stays releasable: `lib/together.ts` takes either shape from the `together` event and tells them apart by `output` (only `View` v2 has it). A v2 view is kept as it is for the new panel, and projected down to today's `TogetherView` for everything else that reads the room (the queue drawer, Now Playing, radio's top-up, the availability badge), so none of them changes: members get a `hearing` from their sub-state and copy, the queue its songs, the timeline its index from the anchor's entry. Presses from the player's buttons and the queue go out in protocol 3's actions (entry ids, `content_us`), the queue's indices mapped to entry ids. The title bar's chip draws the v2 chip and panel (`RoomChipV2.tsx`, `RoomPanel.tsx`) for a v2 view and today's (`RoomChip.tsx`, unchanged) otherwise. WP13 deletes today's panel, the projection and the v1 types once R2 ships.
+
+**What decides, and where.** Lines, presses' words and every sentence about a person's state are Rust's (`view::line`, `view::pressing`, `view::stepped_out_line`, the request words), so Windows and Android say the same. Everything the window decides itself (which screen, what is greyed, who may do what, which notes show, progress, the chip's colour) is in one pure module, `components/together/model.ts`, with node tests over every fixture case; the components only draw what it says. The panel takes the view and a set of actions as props, so the preview page (`components/together/preview/`) draws every fixture case in headless Chrome with the app's own CSS and themes.
+
+**The screens.**
+
+| View | Screen | What it shows |
+|---|---|---|
+| `off`, `starting`, `ended` | Start | "Start a room" (or "Opening your room..."), Join with an invite (its preview: "Asha's room, 3 listening, now playing X" when the invite says so), Rooms nearby (A15, each "Ask to join"), a rejoin or reopen prompt (I6, I7), your name; after an ending its words ("Asha ended the room") and "Save the room's queue as a playlist" (I10) |
+| `waiting` | The door | "Waiting for Asha to let you in...", Cancel |
+| `joining` | Joining | your line ("Joining... buffering 60%") over a progress bar; the join choice when it is offered (below); "Start with the next song" (A17); Cancel |
+| `hosting`, `in`, `reconnecting` | The room | top to bottom: the header (the host's: invite and QR), the status strip, you, requests and knocks, the people, your output, the activity line, the host's settings, the buttons |
+
+**The status strip** (one line each, in this order, only those that hold): "Reconnecting... the music goes on" (you, F7); "Host reconnecting" (`host_away`, F13: every room control greyed, Leave and your own settings still work); a start or press under way: the press's words, else "Starting...", with " waiting for Ali" while the prepare waits ("Skipping... waiting for Ali and Dev", B1, G4); the room's phase: "Paused" (held), "Add songs to start" (resting, A2), "The room's queue has ended" (A13, C7).
+
+**You.** Your line is in your row. Playing: "How you listen" with your mode and the other modes as buttons, and at the foot "Step out" (or "Catch up" when stepped out; "Rejoin" when your headphones went, H4b). Your copy, when it is another version over 2 s longer or shorter: "Different version (+12 s): use Asha's copy" (E10, one tap). A remote (one speaker, J7) sees the remote view instead: the song, its progress from the anchor and the clock line (`Anchor::content_at` at `host_now_us`, moved on by the time since the view came), the lyric line being sung and the next, the room's buttons (as requests without the role), the host's speaker volume when the host allows it (B17), and "Play here too".
+
+**The join choice** (A16, F1). While joining, when your choices hold one speaker: two choices, "Play on Asha's speaker" (selected) and "Play on this device too", which means the second choice in your list (every device, or apart for headphones). In the room the same choice is one button: "Play here too" for a remote, "Listen on Asha's speaker" for a player who may. A mode you can't have now is greyed with its reason in words (A6, E9, F12). Over the internet there is no choice.
+
+**Your output** (4.14, H3, H3b; not for a remote, whose device plays nothing). Its name, and "Bluetooth" when it is. The delay slider, -500 to +500 ms in steps of 5, saved on release ("none", "+200 ms"). Apart with a delay set on Bluetooth: "Bluetooth: about 200 ms behind". Every device with the delay not known: "Bluetooth delay not measured: you may hear an echo" (another output: "This output's delay isn't measured: you may hear an echo"). Bluetooth with the delay not known: "Bluetooth is usually about 170 ms late" with "Use 170 ms" (never applied by itself). A double click on the slider puts it back to none. Every device: "Line up by ear", which starts the alternating clicks and shows the slider with "Slide until the clicks sound evenly spaced" and Done.
+
+**The people.** One row each: the initial, the name, "host" and "you", the mode in a word ("Asha's speaker", "Every device", "Apart"), the line. A row opens to its numbers (the disclosure of 4.12): the copy in words (the host sees everyone's, where the host's file is "your file, streamed"; a guest only their own, where it is "Asha's file, streamed", D14), "Off by 4 ms, the clock within 9 ms", and for you the path ("Direct, 42 ms round trip", "Through a relay"). The host also has each guest's role, "Remove" and "Remove and block", and for a guest who missed three prepares (G7) "Ravi's connection is slow" with "Give a lighter copy" and "Start with the next song".
+
+**Requests** (B13). Whoever controls sees each ("Ravi asks to skip") with Accept and No. A press without the role is sent as a request and said ("Asked the room to skip"); adding without the role is explained ("Asha hasn't let you add songs"), never a request.
+
+**The host's settings.** New people can (Automatic, which is D20's rule, Control, Add songs, Just listen); Between songs (Gapless, Crossfade 4 s, Cut, and the room's own value if it is another); Let guests change the volume (B17, off by default); Let people in without asking; Visible on this network (A15, D19).
+
+**Leaving and ending** (4.15). A guest: "Leave". The host: "Hand over..." and "End for everyone". End asks first, in place: "End the room for everyone? Everyone's own music comes back, paused." with "End for everyone" and "Keep the room". Hand over lists who can take the room (those the view marks), each with its warning when songs only the host has would be lost ("2 people will lose songs only you have"); with nobody able: "Nobody here can take the room over yet".
+
+**Who may do what** (`model.ts`'s `may`): the host anything; control: presses, queue changes, adding, answering requests; add: adding; listen: neither (presses become requests). Volume: the host, and remotes when the host lets them. Greyed while the host is away: presses, queue changes, adding, answers, modes, the host's settings. Never greyed: Leave, step out and catch up, your output, your name.
+
+**The chip** (4.15 "For you"). The accent while you are in step, ready, a remote or joining; the theme's warning colour (today's chip's) while you are catching up, suspended or getting ready; faded while you or the host are reconnecting, and while you are stepped out or can't play the song. A knock shows a dot; waiting at the door says "Waiting...".
+
+**Screenshots.** `components/together/preview/shoot.mjs` photographs every fixture state, dark and light, at the window's default size (1280 x 820) and its smallest (960 x 620), plus the host's two questions and a row's numbers, into `docs/screenshots/listen-together-v2/`: headless Chrome with a temporary profile over its DevTools pipe (the viewport set exactly), against the Vite dev server.
+
+**Copy.** Plain sentence case, "..." for something under way (as Rust's), no em dashes, a name wherever there is one ("Asha's speaker", never "the host's" when the name is known).
+
+**Contract additions** (5.9, in their own `contract:` commit): see "Settled in WP12" there.
+
+**Left to others.** The commands behind the new buttons are WP9's (the names are in `lib/together.ts`: `together_mode`, `together_request`, `together_end`, `together_hand_over`, `together_transition`, `together_guests_volume`, `together_visible`, `together_line_up`, `together_use_host_copy`, `together_lighter`, `together_next_song_for`, `together_join_nearby`, `together_start_with_next`, `together_save_queue`, `together_resume`); the clicks of "Line up by ear" are WP19's; lyrics for a song only the host has (the remote view finds lyrics for catalog songs) are WP18's; hand-over itself is WP20's; reopen and rejoin are WP15's. One word for WP9: `view::line` says "Not available for you, back with the next song" beside everyone's name, which reads wrong beside someone else's; the room panel shows the line as given, so the fix (a line for others, such as "Can't play this one, back with the next song") belongs in `view::line`.
+
 #### Phase 2
 
 | WP | Size | Depends on | Owns | Tests written first |
@@ -1644,7 +1696,7 @@ Where the first frame after a seek lies is taken from the first packet that give
 | **WP11 Alignment in the room** | M | WP9, WP10 | `env:` stream, conductor's alignment, `sources.rs` order by mode | E1 to E6, E9 in simulation; FLAC against a lossy copy on hardware within 10 ms |
 | **WP18 One speaker mode** | S | WP9, WP12 | the session's `Remote` mode, the join choice, the remote view (progress from the anchor, lyrics), the host's free-running player with re-anchoring, guests' volume toggle | 7.8 one speaker gates; J7, A16, B17 in simulation. Cheap by design: a remote attaches no player, and the control path is today's room control |
 | **WP19 Output delay per output** | M | WP5, WP14's Bluetooth measurement | per-output delay store keyed by endpoint id, picked up on switches; "Line up by ear" (alternating clicks between the host's device and this one); the Bluetooth suggestion; every device mode refuses an unknown delay | H3, H3b, J8; the N1b row of 7.7 |
-| **WP13 Removal** | M | WP9 (and R2 shipped) | the old engine, `SyncPlan` adapter, `follow.rs`, aside files, unused `sync.rs` parts | the whole suite green without them |
+| **WP13 Removal** | M | WP9 (and R2 shipped) | the old engine, `SyncPlan` adapter, `follow.rs`, aside files, unused `sync.rs` parts; in the window, today's panel (`RoomChipV1` in `RoomChip.tsx`), the v1 view types and their projection in `lib/together.ts` | the whole suite green without them |
 
 **Release R2** after WP9, WP11, WP18 and WP19: protocol 3, with the three modes. Both sides must update; a guest on protocol 2 gets the "different versions" message. Must pass every gate in section 7.
 

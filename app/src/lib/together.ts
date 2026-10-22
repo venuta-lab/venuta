@@ -1,16 +1,23 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useSyncExternalStore } from 'react'
-import { inApp } from './engine'
+import { isV2, routePress, toV1, type InvitePreview, type Press, type RoomActions } from '../components/together/model'
+import { inApp, libraryHome } from './engine'
 import { loadListening } from './listening'
 import { notify } from './notify'
 import { clock, getPlayerState, type QueueItem } from './player'
 import { setRoomRoute } from './roomRoute'
+import type { TogetherViewV2 } from './togetherView'
 
 /*
   Listening together (app together/): host a room from this Venuta or join one, and everyone
   hears the same song at the same moment, each from their best copy. The app sends its view as
   the "together" event after every change; here it's kept for the screens, and while you're in a
   room the player's buttons go to the room (lib/roomRoute.ts).
+
+  Two shapes arrive until protocol 3 is the only one (design, WP12 notes): today's view, and
+  View v2 (lib/togetherView.ts), told apart by its `output`. A v2 view is kept for the room
+  panel v2 and projected to today's shape for everything else that reads the room; presses then
+  go out as protocol 3's actions (entry ids, content_us).
 */
 
 /** The one place the feature's name is written, so it can be renamed in one line. */
@@ -90,6 +97,9 @@ export interface TogetherView {
 const OFF: TogetherView = { state: 'off', host: false, me: null, room: null, invite: null, path: null, message: null, name: '', delay_ms: 0, local_only: false, let_in: false }
 
 let view: TogetherView = OFF
+/** The v2 view, when the app sends one, and when it came (for a remote's progress). */
+let v2: TogetherViewV2 | null = null
+let v2At = 0
 let version = 0
 let started = false
 const listeners = new Set<() => void>()
@@ -117,8 +127,11 @@ export function dropInvite() {
   changed()
 }
 
-function publish(v: TogetherView) {
+function publish(sent: TogetherView | TogetherViewV2) {
   const was = view.state
+  v2 = isV2(sent) ? sent : null
+  v2At = performance.now()
+  const v = isV2(sent) ? toV1(sent) : sent
   view = v
   changed()
   setRoomRoute(inRoom(v) ? route : null)
@@ -133,10 +146,10 @@ const inRoom = (v: TogetherView) => v.state === 'hosting' || v.state === 'in' ||
 export function startTogether() {
   if (started || !inApp()) return
   started = true
-  void invoke<TogetherView>('together_view').then(publish).catch(() => {})
+  void invoke<TogetherView | TogetherViewV2>('together_view').then(publish).catch(() => {})
   void invoke<string | null>('together_take_invite').then(offerInvite).catch(() => {})
   void import('@tauri-apps/api/event').then(({ listen }) => {
-    void listen<TogetherView>('together', (e) => publish(e.payload))
+    void listen<TogetherView | TogetherViewV2>('together', (e) => publish(e.payload))
     // Why a button pressed elsewhere (the tray, media keys, the mini player) did nothing.
     void listen<string>('together-note', (e) => notify(e.payload))
     void listen<string>('together-invite', (e) => offerInvite(e.payload))
@@ -144,9 +157,12 @@ export function startTogether() {
 }
 
 export const togetherView = () => view
+/** The v2 view, while the app sends one. */
+export const togetherViewV2 = () => v2
+/** How long ago the view came, in ms (a remote's progress moves on by it). */
+export const viewAge = () => performance.now() - v2At
 
-/** The room's view, kept current. */
-export function useTogether(): TogetherView {
+function useVersion() {
   useEffect(() => startTogether(), [])
   useSyncExternalStore(
     (l) => {
@@ -157,7 +173,18 @@ export function useTogether(): TogetherView {
     },
     () => version,
   )
+}
+
+/** The room's view, kept current. */
+export function useTogether(): TogetherView {
+  useVersion()
   return view
+}
+
+/** The v2 view, kept current (null while the app sends today's). */
+export function useTogetherV2(): TogetherViewV2 | null {
+  useVersion()
+  return v2
 }
 
 /** You, in the room. */
@@ -182,18 +209,41 @@ function explainNo(need: Role) {
 
 const ask = (action: Record<string, unknown>) => invoke('together_ask', { action }).catch((e) => notify(String(e)))
 
+/**
+ * A press in a v2 room: to the room when your role allows it, else a request to whoever
+ * controls, or said why not (components/together/model.ts's `routePress`).
+ */
+function pressV2(room: TogetherViewV2, press: Press, action: Record<string, unknown>, seekMs = 0) {
+  const r = routePress(room, press, seekMs)
+  if (r.send === 'ask') return ask(action)
+  notify(r.said)
+  if (r.send === 'request') return invoke('together_request', { action }).catch((e) => notify(String(e)))
+  return Promise.resolve()
+}
+
+/** The entry id at a place in the v2 room's queue (the queue drawer counts by place). */
+const entryAt = (room: TogetherViewV2, index: number) => room.room?.queue[index]?.id
+
 /** The player's buttons, in a room. */
 const route = {
   toggle: () => {
+    if (v2) {
+      const going = v2.room?.phase === 'playing' || v2.room?.starting != null
+      return pressV2(v2, going ? 'pause' : 'play', { do: going ? 'pause' : 'play' })
+    }
     if (!can(view, 'control')) return explainNo('control')
     // Playing or on its way (the button shows pause for both): pause. Deciding from the room's
     // paused-while-it-starts state sent Play, which took the room back to the song before.
     const going = !!view.room?.timeline?.playing || view.room?.starting != null
     return ask({ do: going ? 'pause' : 'play' })
   },
-  next: () => (can(view, 'control') ? ask({ do: 'next' }) : explainNo('control')),
-  previous: () => (can(view, 'control') ? ask({ do: 'previous' }) : explainNo('control')),
-  seek: (ms: number) => (can(view, 'control') ? ask({ do: 'seek', position_ms: Math.max(0, Math.round(ms)) }) : explainNo('control')),
+  next: () => (v2 ? pressV2(v2, 'next', { do: 'next' }) : can(view, 'control') ? ask({ do: 'next' }) : explainNo('control')),
+  previous: () => (v2 ? pressV2(v2, 'previous', { do: 'previous' }) : can(view, 'control') ? ask({ do: 'previous' }) : explainNo('control')),
+  seek: (ms: number) => {
+    const at = Math.max(0, Math.round(ms))
+    if (v2) return pressV2(v2, 'seek', { do: 'seek', content_us: at * 1000 }, at)
+    return can(view, 'control') ? ask({ do: 'seek', position_ms: at }) : explainNo('control')
+  },
   play: async (items: QueueItem[], index: number) => {
     if (!can(view, 'add')) return explainNo('add')
     const picked = items.slice(index, index + 50)
@@ -278,9 +328,71 @@ export const setMyDelay = (ms: number) =>
   invoke('together_set_delay', { ms: Math.round(ms) })
     .then(() => loadListening(true))
     .catch((e) => notify(String(e)))
-export const jumpInRoom = (index: number) => (can(view, 'control') ? ask({ do: 'jump', index }) : explainNo('control'))
-export const removeFromRoom = (index: number) => (can(view, 'control') ? ask({ do: 'remove', index }) : explainNo('control'))
-export const moveInRoom = (from: number, to: number) => (can(view, 'control') ? ask({ do: 'move', from, to }) : explainNo('control'))
+export function jumpInRoom(index: number) {
+  if (v2) return pressV2(v2, 'jump', { do: 'jump', entry: entryAt(v2, index) })
+  return can(view, 'control') ? ask({ do: 'jump', index }) : explainNo('control')
+}
+export function removeFromRoom(index: number) {
+  if (v2) return pressV2(v2, 'remove', { do: 'remove', entry: entryAt(v2, index) })
+  return can(view, 'control') ? ask({ do: 'remove', index }) : explainNo('control')
+}
+export function moveInRoom(from: number, to: number) {
+  if (v2) return pressV2(v2, 'move', { do: 'move', entry: entryAt(v2, from), to })
+  return can(view, 'control') ? ask({ do: 'move', from, to }) : explainNo('control')
+}
+
+// --- The room panel v2's actions (the commands are WP9's; design, WP12 notes) -----------------
+
+const call = (cmd: string, args?: Record<string, unknown>) => invoke(cmd, args).catch((e) => notify(String(e)))
+const libraryRoot = async () => (await libraryHome()).library ?? ''
+
+/** What the room panel v2 does, in the app. */
+export const liveActions: RoomActions = {
+  start: async () => startRoom(await libraryRoot()),
+  join: async (code) => joinRoom(await libraryRoot(), code),
+  readInvite: (code) => invoke<InvitePreview>('together_read_invite', { code }),
+  joinNearby: async (id) => {
+    root = await libraryRoot()
+    await call('together_join_nearby', { root, id })
+  },
+  resume: (yes) => void call('together_resume', { yes }),
+  saveQueue: () => void call('together_save_queue'),
+  setName: (name) => void setMyName(name),
+  cancel: () => void leaveRoom(),
+  leave: () => void leaveRoom(),
+  end: () => void call('together_end'),
+  handOver: (id) => void call('together_hand_over', { id }),
+  toggle: () => void route.toggle(),
+  next: () => void route.next(),
+  previous: () => void route.previous(),
+  seek: (ms) => void route.seek(ms),
+  answer: (request, yes) => void ask(yes ? { do: 'accept', request } : { do: 'decline', request }),
+  admit: (id) => void admit(id),
+  deny: (id) => void deny(id),
+  remove: (id, block) => void removeMember(id, block),
+  setRole: (id, role) => void setRole(id, role),
+  setNewRole: (role) => void call('together_new_role', { roleName: role }),
+  setTransition: (transition) => void call('together_transition', { transition }),
+  setGuestsVolume: (on) => void call('together_guests_volume', { on }),
+  setLetIn: (on) => void setLetIn(on),
+  setVisible: (on) => void call('together_visible', { on }),
+  setVolume: (percent) => void ask({ do: 'volume', percent: Math.max(0, Math.min(100, Math.round(percent))) }),
+  setMode: (mode) => void call('together_mode', { mode }),
+  startWithNext: () => void call('together_start_with_next'),
+  stepOut: (out) => void stepOut(out),
+  setDelay: (ms) => void setMyDelay(ms),
+  lineUp: (on) => void call('together_line_up', { on }),
+  takeHostCopy: () => void call('together_use_host_copy'),
+  lighter: (id) => void call('together_lighter', { id }),
+  nextSongFor: (id) => void call('together_next_song_for', { id }),
+  copyInvite: async () => {
+    const link = v2?.invite?.link
+    if (!link) return
+    await navigator.clipboard?.writeText(link).catch(() => {})
+    notify('Invite link copied. Send it to friends; you let each of them in.')
+  },
+  undo: () => void undoRoom(),
+}
 
 /** What the queue drawer's header says in a room. */
 export function roomQueueLine(v: TogetherView): string {
