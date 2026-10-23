@@ -559,3 +559,14 @@ export function toV1(v: TogetherViewV2): TogetherView {
     let_in: v.let_in,
   }
 }
+
+/**
+ * The words the host sent for a remote's song playing (a song only the host has, WP18), as
+ * the lyrics display takes them; null when there are none for it (a catalog song's words come
+ * from the lyrics services instead).
+ */
+export function hostWords(v: TogetherViewV2): { lines: [number, string][]; text: string } | null {
+  const sent = v.room?.lyrics
+  const song = v.you?.mode === 'one_speaker' ? progress(v, 0)?.entry.song : undefined
+  return sent && song && sent.key === song.key ? { lines: sent.lines, text: sent.text } : null
+}
