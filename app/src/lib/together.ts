@@ -355,6 +355,7 @@ export const liveActions: RoomActions = {
     root = await libraryRoot()
     await call('together_join_nearby', { root, id })
   },
+  watchNearby: (on) => void invoke('together_nearby', { on }).catch(() => {}),
   resume: (yes) => void call('together_resume', { yes }),
   saveQueue: () => void call('together_save_queue'),
   setName: (name) => void setMyName(name),

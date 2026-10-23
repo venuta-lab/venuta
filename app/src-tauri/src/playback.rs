@@ -646,6 +646,10 @@ impl Playback {
             {
                 p.send(Cmd::Sound(sound));
             }
+            // What rooms learn of each output's drift, remembered across rooms (WP15).
+            if let Some(p) = slot.as_ref() {
+                p.set_drift_memory(crate::together::drift_memory());
+            }
         }
         Ok(f(slot.as_ref().expect("just made")))
     }

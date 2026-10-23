@@ -98,6 +98,11 @@ function Start({ v, act, offered }: P & { offered?: string | null }) {
   const [read, setRead] = useState<{ code: string; p: InvitePreview | null } | null>(null)
   const [draft, setDraft] = useState<string | null>(null)
   const name = draft ?? v.name
+  // Rooms nearby are listened for only while this screen shows (A15).
+  useEffect(() => {
+    act.watchNearby(true)
+    return () => act.watchNearby(false)
+  }, [act])
   const preview = code.trim() && read?.code === code ? read : null
   useEffect(() => {
     if (!code.trim()) return

@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager};
 use together::clock_map;
 use together::conductor::Conductor;
 use together::invite::Invite;
+use together::lifecycle::GuestKeeper;
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room_player::ListenMode;
@@ -33,6 +34,8 @@ pub struct Live {
     /// The host's files, played through this computer's server (stops with the room).
     _proxy: Proxy,
     covers: Arc<super::covers::Covers>,
+    /// What is kept for a rejoin after a restart (I7).
+    keeper: GuestKeeper,
 }
 
 /// Join the invite's room: connect (25 s at most), then knock; the rest is the session's.
@@ -93,6 +96,7 @@ pub async fn join(
             host_name: invite.host.clone(),
         },
     );
+    let keeper = GuestKeeper::new(super::kept(), invite.clone(), invite.host.clone());
     let live = Live {
         s,
         t,
@@ -100,6 +104,7 @@ pub async fn join(
         invite,
         _proxy: proxy,
         covers: Arc::default(),
+        keeper,
     };
     let (tx, rx) = channel();
     std::thread::Builder::new()
@@ -119,9 +124,12 @@ fn run(mut live: Live, rx: Receiver<super::GuestWork>) {
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(f) => f(&mut live),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => live.s.leave(),
+            // The app is going away: as a crash for the room (no goodbye), the rejoin kept.
+            Err(RecvTimeoutError::Disconnected) => break,
         }
         live.s.step();
+        let (stage_now, ending) = (live.s.stage(), live.s.ending());
+        live.keeper.step(stage_now, ending, super::unix_now_ms());
         if live.s.stage() != stage {
             stage = live.s.stage();
             super::trace(&format!("room: {stage:?}"));

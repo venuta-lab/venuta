@@ -3228,6 +3228,7 @@ pub fn run() {
             together::together_hand_over,
             together::together_line_up,
             together::together_join_nearby,
+            together::together_nearby,
             together::together_resume,
             together::together_save_queue,
             ytm_account::ytm_bring_in_likes,
