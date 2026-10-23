@@ -25,6 +25,8 @@ export interface RoomActions {
   join: (code: string) => void
   readInvite: (code: string) => Promise<InvitePreview>
   joinNearby: (id: number) => void
+  /** Listen for rooms nearby while the start screen shows (`false`: stop). */
+  watchNearby: (on: boolean) => void
   resume: (yes: boolean) => void
   saveQueue: () => void
   setName: (name: string) => void

@@ -9,6 +9,8 @@
 //!   times the pings on any transport.
 //! - [`timeline`]: where the song should be at any moment, for starting and catching up.
 //! - [`invite`]: the invite people share: who hosts, a secret, and when it ends.
+//! - [`lifecycle`]: what is kept across restarts, so a host can reopen its room and a guest
+//!   rejoin it.
 //!
 //! The contracts of the Listen together redesign (section 5 of `docs/design/listen-together.md`)
 //! are declared here so every package builds against the same shapes, with the fakes and the
@@ -29,6 +31,7 @@ pub mod clock_map;
 pub mod conductor;
 pub mod fakes;
 pub mod invite;
+pub mod lifecycle;
 pub mod measure;
 pub mod proto;
 pub mod room;

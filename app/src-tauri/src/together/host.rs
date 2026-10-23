@@ -1,8 +1,9 @@
 //! Hosting a room: this Venuta is the room. The room and the host's session are `together`'s
 //! (`HostSession`: the door, Room v2, everyone's messages and clock pings, the host's own
 //! conductor); the connection is `together_net`'s `IrohTransport`. This is the app around them:
-//! the room made from what's playing without touching it (A1), the host's files and covers,
-//! the session's thread, and the window told of every change.
+//! the room made from what's playing without touching it (A1), or reopened after the app
+//! restarted (I6, D8), the host's files and covers, the room kept on disk as it goes, the
+//! beacon for people nearby (A15), the session's thread, and the window told of every change.
 
 use super::AppPlayer;
 use super::sources::{AppCopies, HostFiles};
@@ -18,16 +19,21 @@ use together::anchor::EntryId;
 use together::clock_map::{self, ClockMap};
 use together::conductor::Conductor;
 use together::invite::Invite;
+use together::lifecycle::{HostKeeper, HostRecord, KEPT};
 use together::measure::{Measured, Shelf};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room::v2::{HOST, HostNote, Opening, Room};
-use together::room_player::{ListenMode, RoomPlayer, SyncMode};
+use together::room_player::{ListenMode, RoomHandle, RoomPlayer, SyncMode};
 use together::session::{HostConfig, HostSession, WindowExtras};
-use together::time::RealClock;
+use together::time::{MonoClock, RealClock};
 use together::transport::{Get, MediaInfo, MediaServer, PeerId};
 use together::view::{InviteView, SessionState, View};
+use together_net::nearby::{self, Announcer, Beacon};
 use together_net::transport::IrohTransport;
+
+/// The record and the beacon are looked at this often (a change is written within it).
+const KEEP_EVERY: Duration = Duration::from_millis(250);
 
 /// The host's side, on its own thread.
 pub struct Live {
@@ -44,6 +50,27 @@ pub struct Live {
     knocks: HashSet<u32>,
     /// The host ended it (not the hour without an action).
     ended_by_host: bool,
+    /// The room on disk, for reopening after a restart (D8).
+    keeper: HostKeeper,
+    /// The beacon for people nearby, while the room is open and visible (D19).
+    announcer: Option<Announcer>,
+    hide_ip: bool,
+}
+
+/// The app's own part of the room's record: its music folder and its items by song key.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct AppPart {
+    root: String,
+    own: HashMap<String, QueueItem>,
+}
+
+fn app_part(root: &str, own: &Mutex<HashMap<String, QueueItem>>) -> serde_json::Value {
+    let own = own.lock().map(|o| o.clone()).unwrap_or_default();
+    serde_json::to_value(AppPart {
+        root: root.to_owned(),
+        own,
+    })
+    .unwrap_or_default()
 }
 
 /// The host's files and covers, as the transport serves them (the session lets members only).
@@ -98,7 +125,8 @@ pub async fn start(
     playing: bool,
 ) -> Result<Sender<super::HostWork>, String> {
     let reach = super::net::reach_from_settings();
-    let ep = super::net::endpoint(&reach, true, None).await?;
+    let (key, key_hex) = super::net::room_key(None);
+    let ep = super::net::endpoint_on(&reach, true, Some(key), None).await?;
     super::trace("room: endpoint open");
     let name = super::my_name();
     let lib = crate::load_lib(std::path::Path::new(&root))
@@ -197,6 +225,138 @@ pub async fn start(
     };
     super::trace(&format!("room: opened as {opening:?}"));
     let room = Room::new(&name, &secret, songs, opening);
+    launch(
+        Opened {
+            app,
+            ep,
+            reach,
+            key_hex,
+            invite,
+            root,
+            lib,
+            catalog,
+            files,
+            own,
+            lengths,
+            covers_of,
+            room,
+            player,
+            map,
+            handle,
+            playing_entry,
+        },
+        "room: open",
+    )
+}
+
+/// Reopen the room kept on disk (I6, D8): the same endpoint key (so the same endpoint id the
+/// guests' reconnects dial), on the port it had when that is free, the same secret and end;
+/// the room held at its last place, its members away until they reconnect. The host's player
+/// is attached (never adopted) and plays nothing until a press starts the room.
+pub async fn reopen(app: AppHandle, record: HostRecord) -> Result<Sender<super::HostWork>, String> {
+    let reach = super::net::reach_from_settings();
+    let (key, key_hex) = super::net::room_key(Some(&record.key));
+    let ep = super::net::endpoint_on(&reach, true, Some(key), record.port).await?;
+    super::trace("room: endpoint open again");
+    let part: AppPart = serde_json::from_value(record.app.clone()).unwrap_or_default();
+    let root = part.root;
+    let lib = crate::load_lib(std::path::Path::new(&root))
+        .ok()
+        .map(|(_, l)| l);
+    let files = Arc::new(HostFiles::default());
+    let lengths: Arc<Mutex<HashMap<String, u64>>> = Arc::default();
+    let mut covers_of = Vec::new();
+    for e in &record.room.queue {
+        if let Some(d) = e.song.duration_ms {
+            lengths.lock().unwrap().insert(e.song.key.clone(), d);
+        }
+        if e.song.host_file
+            && let Some(it) = part.own.get(&e.song.key)
+        {
+            files.add(&e.song.key, std::path::Path::new(&root).join(&it.path));
+            covers_of.push((e.song.key.clone(), it.dir.clone()));
+        }
+    }
+    let own = Arc::new(Mutex::new(part.own));
+    let ticket = super::net::ticket(&ep, &reach).await;
+    // The same secret and end; the way in made again, where the endpoint is now.
+    let invite = Invite {
+        to: ticket,
+        ..record.invite
+    };
+    let map = clock_map::handle();
+    map.store(Arc::new(Some(ClockMap::identity())));
+    let player: Arc<dyn RoomPlayer<QueueItem>> = Arc::new(AppPlayer(app.clone()));
+    let handle = player.attach(map.clone(), SyncMode::Apart);
+    let now_us = (RealClock.now_ns() / 1_000) as i64;
+    let room = Room::reopen(record.room, now_us);
+    let catalog = app.state::<Playback>().catalog();
+    launch(
+        Opened {
+            app,
+            ep,
+            reach,
+            key_hex,
+            invite,
+            root,
+            lib,
+            catalog,
+            files,
+            own,
+            lengths,
+            covers_of,
+            room,
+            player,
+            map,
+            handle,
+            playing_entry: None,
+        },
+        "room: reopened",
+    )
+}
+
+/// A room made (opened or reopened), for its session and thread.
+struct Opened {
+    app: AppHandle,
+    ep: super::net::Endpoint,
+    reach: super::net::Reach,
+    key_hex: String,
+    invite: Invite,
+    root: String,
+    lib: Option<Arc<engine::library::Library>>,
+    catalog: Arc<dyn media_access::MediaAccess>,
+    files: Arc<HostFiles>,
+    own: Arc<Mutex<HashMap<String, QueueItem>>>,
+    lengths: Arc<Mutex<HashMap<String, u64>>>,
+    covers_of: Vec<(String, String)>,
+    room: Room,
+    player: Arc<dyn RoomPlayer<QueueItem>>,
+    map: clock_map::ClockMapHandle,
+    handle: Box<dyn RoomHandle<QueueItem>>,
+    playing_entry: Option<EntryId>,
+}
+
+/// The session on its transport, the room's record written, and its thread started.
+fn launch(o: Opened, said: &str) -> Result<Sender<super::HostWork>, String> {
+    let Opened {
+        app,
+        ep,
+        reach,
+        key_hex,
+        invite,
+        root,
+        lib,
+        catalog,
+        files,
+        own,
+        lengths,
+        covers_of,
+        room,
+        player,
+        map,
+        handle,
+        playing_entry,
+    } = o;
     let mut copies = AppCopies::new(
         root.clone(),
         lib,
@@ -220,6 +380,7 @@ pub async fn start(
     let mut conductor = Conductor::new(player, map, Box::new(copies), ListenMode::Apart)
         .with_handle(handle, playing_entry);
     conductor.set_extra_latency(super::my_delay(&app) * 1_000);
+    let port = super::net::port_of(&ep);
     let later = Arc::new(Later::default());
     let t = IrohTransport::host(ep, Arc::new(RealClock), later.clone());
     let open = invite.clone();
@@ -243,6 +404,18 @@ pub async fn start(
         covers: covers.clone(),
         lengths,
     })));
+    let keeper = HostKeeper::new(
+        super::kept(),
+        HostRecord {
+            kept: KEPT,
+            invite: invite.clone(),
+            key: key_hex,
+            port,
+            room: s.state(),
+            saved_at: super::unix_now(),
+            app: app_part(&root, &own),
+        },
+    );
     let live = Live {
         s,
         t,
@@ -254,6 +427,9 @@ pub async fn start(
         own,
         knocks: HashSet::new(),
         ended_by_host: false,
+        keeper,
+        announcer: None,
+        hide_ip: reach.hide_ip && !reach.local_only,
     };
     live.make_covers(covers_of);
     let (tx, rx) = channel();
@@ -261,7 +437,7 @@ pub async fn start(
         .name("venuta-room".into())
         .spawn(move || run(live, rx))
         .map_err(|e| e.to_string())?;
-    super::trace("room: open");
+    super::trace(said);
     Ok(tx)
 }
 
@@ -283,14 +459,21 @@ fn run(mut live: Live, rx: Receiver<super::HostWork>) {
     let mut last_tick = Instant::now();
     let mut over_at: Option<Instant> = None;
     let mut queue_version = (0u64, String::new());
+    let mut last_keep = Instant::now();
     loop {
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(f) => f(&mut live),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => live.end(),
+            // The app is going away: as a crash for the guests (they play on and reconnect),
+            // the room kept for reopening (D8).
+            Err(RecvTimeoutError::Disconnected) => break,
         }
         live.s.step();
         live.after_step();
+        if live.s.ended() || last_keep.elapsed() >= KEEP_EVERY {
+            last_keep = Instant::now();
+            live.keep();
+        }
         let playing = live.s.room().anchor().is_some_and(|a| a.playing);
         let v = live.view();
         let json = serde_json::to_string(&v).unwrap_or_default();
@@ -316,12 +499,53 @@ fn run(mut live: Live, rx: Receiver<super::HostWork>) {
         .map(|e| e.song.clone())
         .collect();
     let last = live.view();
+    // The beacon says the room is gone (the announcer stops on drop).
+    live.announcer = None;
     let t = live.t.clone();
     tauri::async_runtime::spawn(async move { t.close().await });
     super::session_over(&live.app, queue, last);
 }
 
 impl Live {
+    /// The room on disk as it is (removed once it ended), and the beacon for people nearby
+    /// while the room is open, visible and the invite valid (D19; not with Hide my IP: a
+    /// datagram carries its sender's address).
+    fn keep(&mut self) {
+        let visible = self
+            .app
+            .state::<super::Together>()
+            .visible
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.s.set_visible(visible);
+        if self.s.ended() {
+            self.keeper.ended();
+            self.announcer = None;
+            return;
+        }
+        let playing = self.s.room().anchor().is_some_and(|a| a.playing);
+        self.keeper
+            .step(self.s.state(), playing, super::unix_now_ms());
+        let open = self.invite.open_at(super::unix_now());
+        if visible && open && !self.hide_ip {
+            let b = Beacon::new(
+                &together::invite::nearby_secret(&self.invite.secret),
+                &self.invite.host,
+                self.s.room().member_ids().len() as u32,
+                &self.invite.to,
+                self.invite.until,
+            );
+            match &self.announcer {
+                Some(a) => a.update(b),
+                None => match Announcer::start(nearby::group(), b) {
+                    Ok(a) => self.announcer = Some(a),
+                    Err(e) => super::trace(&format!("room: not announced nearby ({e})")),
+                },
+            }
+        } else {
+            self.announcer = None;
+        }
+    }
+
     /// End the room for everyone.
     pub fn end(&mut self) {
         if !self.s.ended() {
@@ -497,6 +721,7 @@ impl Live {
             return Err("Those songs can't go in the room.".into());
         }
         self.make_covers(covers_of);
+        self.keeper.set_app(app_part(&self.root, &self.own));
         self.s.ask(Action::Add { songs, next })
     }
 

@@ -15,6 +15,7 @@ mod net;
 mod sources;
 
 use crate::playback::{Button, Playback, QueueItem};
+use player::drift_memory::DriftMemory;
 use std::sync::mpsc::{Sender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,12 +23,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use together::align::Alignment;
 use together::anchor::{Anchor, EntryId, PrepId, Transition};
 use together::invite::Invite;
+use together::lifecycle::{Kept, Offer, offer};
 use together::proto::v3::{Action, Advice};
 use together::proto::{Role, Song};
 use together::room_player::{
     ListenMode, RoomHandle, RoomPlayStatus, RoomPlayer, SubState, SyncMode,
 };
-use together::view::{OutputView, SessionState, View};
+use together::view::{OutputView, Resume, SessionState, View};
+use together_net::nearby::{self, Beacon, Listener};
 
 /// The catalog's provider name, for the player's plays.
 pub use sources::CATALOG as CATALOG_PROVIDER;
@@ -43,7 +46,6 @@ enum Session {
     Guest(Sender<GuestWork>),
 }
 
-#[derive(Default)]
 pub struct Together {
     session: Mutex<Option<Session>>,
     /// The view last published (the session's, or the last one after it ended).
@@ -55,8 +57,112 @@ pub struct Together {
     invite_link: Mutex<Option<String>>,
     /// The songs of the room just left, for "Save the room's queue as a playlist".
     last_queue: Mutex<Vec<Song>>,
-    /// The host lets the room be seen on this network (D19; discovery isn't built yet).
+    /// The host lets the room be seen on this network (D19: on by default).
     visible: std::sync::atomic::AtomicBool,
+    /// What the records on disk offer ("Reopen your room?", "Rejoin Asha's room?"), read once
+    /// at start and again after a room; `None` inside while not read yet.
+    offer: Mutex<Option<Option<Offer>>>,
+    /// An automatic rejoin was tried (once per start).
+    auto_tried: std::sync::atomic::AtomicBool,
+    /// Rooms nearby, heard while in no room (A15).
+    nearby: Mutex<Option<Listener>>,
+    rooms: Arc<Mutex<Vec<(u32, Beacon)>>>,
+}
+
+impl Default for Together {
+    fn default() -> Self {
+        Together {
+            session: Mutex::default(),
+            view: Mutex::default(),
+            busy: Mutex::default(),
+            error: Mutex::default(),
+            invite_link: Mutex::default(),
+            last_queue: Mutex::default(),
+            visible: std::sync::atomic::AtomicBool::new(true),
+            offer: Mutex::default(),
+            auto_tried: std::sync::atomic::AtomicBool::new(false),
+            nearby: Mutex::default(),
+            rooms: Arc::default(),
+        }
+    }
+}
+
+/// The records kept for reopening and rejoining, in the app's data folder (WP15).
+pub fn kept() -> Kept {
+    Kept::new(engine::paths::app_data_dir())
+}
+
+/// What rooms learn of each output's drift, kept in the data folder (WP15), for the player.
+pub fn drift_memory() -> Arc<DriftMemory> {
+    static MEMORY: std::sync::OnceLock<Arc<DriftMemory>> = std::sync::OnceLock::new();
+    MEMORY
+        .get_or_init(|| {
+            Arc::new(DriftMemory::open(
+                &engine::paths::app_data_dir().join("together-drift.json"),
+            ))
+        })
+        .clone()
+}
+
+pub fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// What the records offer now (read from disk the first time, and after each room).
+fn the_offer(t: &Together) -> Option<Offer> {
+    let mut o = t.offer.lock().unwrap();
+    if o.is_none() {
+        let k = kept();
+        *o = Some(offer(k.host().as_ref(), k.guest().as_ref(), unix_now()));
+    }
+    o.clone().flatten()
+}
+
+/// Rooms nearby are listened for while in no room, and the window is told of each change.
+fn listen_nearby(app: &AppHandle) {
+    let t = app.state::<Together>();
+    let mut n = t.nearby.lock().unwrap();
+    if n.is_some() || t.session.lock().unwrap().is_some() || t.busy.lock().unwrap().is_some() {
+        return;
+    }
+    let (a, rooms) = (app.clone(), t.rooms.clone());
+    let at = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, nearby::PORT));
+    match Listener::start(at, Some(nearby::GROUP), move |heard| {
+        *rooms.lock().unwrap() = heard;
+        let t = a.state::<Together>();
+        if current(&t).is_none() && t.busy.lock().unwrap().is_none() {
+            emit_idle(&a);
+        }
+    }) {
+        Ok(l) => *n = Some(l),
+        Err(e) => trace(&format!("rooms nearby: not listening ({e})")),
+    }
+}
+
+/// A room begins: rooms nearby aren't listened for meanwhile.
+fn stop_nearby(t: &Together) {
+    let l = t.nearby.lock().unwrap().take();
+    drop(l);
+    t.rooms.lock().unwrap().clear();
+}
+
+/// The rooms nearby, for the window: those whose invite still works.
+fn nearby_views(t: &Together) -> Vec<together::view::NearbyView> {
+    let now = unix_now();
+    t.rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, b)| b.until > now)
+        .map(|(id, b)| together::view::NearbyView {
+            id: *id,
+            host: b.host.clone(),
+            listening: b.listening,
+        })
+        .collect()
 }
 
 /// The name others see: yours from Settings, or this computer's user name.
@@ -303,9 +409,17 @@ fn idle_view(app: &AppHandle) -> View {
         you: None,
         output: output_view(app),
         host_now_us: None,
-        nearby: Vec::new(),
+        nearby: if busy.is_none() {
+            nearby_views(&t)
+        } else {
+            Vec::new()
+        },
         visible: t.visible.load(std::sync::atomic::Ordering::Relaxed),
-        resume: None,
+        resume: if busy.is_none() {
+            the_offer(&t).map(|o| o.resume)
+        } else {
+            None
+        },
         last_queue,
     }
 }
@@ -435,10 +549,19 @@ fn session_over(app: &AppHandle, queue: Vec<Song>, last: View) {
     *t.last_queue.lock().unwrap() = queue;
     take_buttons(app, false);
     app.state::<Playback>().set_room_now(None);
+    // What the room learned of this output's drift, kept for the next room (WP15).
+    if let Err(e) = drift_memory().save() {
+        trace(&format!("room: the drift not kept ({e})"));
+    }
+    // The records as the room left them: a guest whose host went is offered a rejoin.
+    *t.offer.lock().unwrap() = None;
+    let resume = the_offer(&t).map(|o| o.resume);
     publish(
         app,
         View {
             last_queue: (n > 0).then_some(n),
+            resume,
+            nearby: Vec::new(),
             ..last
         },
     );
@@ -470,15 +593,62 @@ pub fn together_view(t: State<'_, Together>, app: AppHandle) -> View {
     {
         return v;
     }
+    // A guest whose app went mid-room under 2 minutes ago rejoins by itself (I7), once.
+    if t.busy.lock().unwrap().is_none()
+        && the_offer(&t).is_some_and(|o| o.auto)
+        && !t.auto_tried.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        let a = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // The library folder, once the window has opened it (a few seconds at most).
+            for _ in 0..20 {
+                if !crate::playback::current_root(&a).is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            trace("room: rejoining by itself after a restart");
+            if let Err(e) = resume(&a).await {
+                note(&a, &e);
+            }
+        });
+    }
     idle_view(&app)
 }
 
+/// Rooms nearby are listened for while the panel's start screen shows (`on`), and not after
+/// (A15): nothing is bound for them otherwise.
+#[tauri::command]
+pub fn together_nearby(app: AppHandle, on: bool) {
+    if on {
+        listen_nearby(&app);
+    } else {
+        stop_nearby(&app.state::<Together>());
+    }
+}
+
+/// Start a room or join one (`fresh`: not a reopen or rejoin, so what was kept goes: one room
+/// at a time).
 fn begin(app: &AppHandle, as_: SessionState) -> Result<(), String> {
+    begin_with(app, as_, true)
+}
+
+fn begin_with(app: &AppHandle, as_: SessionState, fresh: bool) -> Result<(), String> {
     needs_engine_two(app)?;
     let t = app.state::<Together>();
     if t.session.lock().unwrap().is_some() {
         return Err("You're in a room already. Leave it first.".into());
     }
+    if t.busy.lock().unwrap().is_some() {
+        return Err("A room is starting already.".into());
+    }
+    if fresh {
+        let k = kept();
+        k.clear_host();
+        k.clear_guest();
+        *t.offer.lock().unwrap() = Some(None);
+    }
+    stop_nearby(&t);
     *t.busy.lock().unwrap() = Some(as_);
     *t.error.lock().unwrap() = None;
     *t.view.lock().unwrap() = None;
@@ -540,7 +710,7 @@ pub async fn together_join(app: AppHandle, root: String, code: String) -> Result
     let invite = Invite::parse(&code)?;
     begin(&app, SessionState::Joining)?;
     trace("joining a room");
-    let r = guest::join(app.clone(), music_root(&root), invite).await;
+    let r = guest::join(app.clone(), music_root(&root), invite, None).await;
     Ok(begun(&app, r.map(Session::Guest)))
 }
 
@@ -717,7 +887,8 @@ pub fn together_same_room(_on: bool) -> Result<(), String> {
     Err("Each person chooses how they listen now: Play here too, or on the host's speaker.".into())
 }
 
-/// The room seen on this network (D19). Rooms nearby aren't discovered yet: the choice is kept.
+/// The room seen on this network (D19): the host's beacon and its door for people nearby
+/// follow it within a quarter second.
 #[tauri::command]
 pub fn together_visible(t: State<'_, Together>, on: bool) -> Result<(), String> {
     t.visible.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -813,16 +984,75 @@ pub fn together_line_up(_on: bool) -> Result<(), String> {
     )
 }
 
-/// Join a room seen on this network: discovery isn't built yet.
+/// Ask to join a room heard on this network (A15): its beacon made into an invite whose secret
+/// is the room's door code, so the host always lets you in by hand (D19).
 #[tauri::command]
-pub fn together_join_nearby(_root: String, _id: u32) -> Result<(), String> {
-    Err("Rooms nearby aren't shown yet: join with the invite link.".into())
+pub async fn together_join_nearby(app: AppHandle, root: String, id: u32) -> Result<View, String> {
+    let b = app
+        .state::<Together>()
+        .rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, b)| b.clone())
+        .ok_or_else(|| "That room isn't on this network any more.".to_owned())?;
+    let invite = Invite {
+        to: b.to,
+        secret: b.door,
+        until: b.until,
+        host: b.host,
+    };
+    if !invite.open_at(unix_now()) {
+        return Err("That room's invite has ended.".into());
+    }
+    begin(&app, SessionState::Joining)?;
+    trace("joining a room nearby");
+    let r = guest::join(app.clone(), music_root(&root), invite, None).await;
+    Ok(begun(&app, r.map(Session::Guest)))
 }
 
-/// Rejoin or reopen after a restart: WP15's (nothing is offered yet).
+/// "Reopen your room?" or "Rejoin Asha's room?" (I6, I7): yes goes back to it; no forgets it.
 #[tauri::command]
-pub fn together_resume(_yes: bool) -> Result<(), String> {
-    Ok(())
+pub async fn together_resume(app: AppHandle, yes: bool) -> Result<View, String> {
+    if yes {
+        return resume(&app).await;
+    }
+    let t = app.state::<Together>();
+    let k = kept();
+    k.clear_host();
+    k.clear_guest();
+    *t.offer.lock().unwrap() = Some(None);
+    emit_idle(&app);
+    Ok(idle_view(&app))
+}
+
+/// Back to the room the records offer: the host's reopened, or a guest's joined again with the
+/// same invite (so the same key, so the same member).
+async fn resume(app: &AppHandle) -> Result<View, String> {
+    let (what, k) = (the_offer(&app.state::<Together>()), kept());
+    match what.map(|o| o.resume) {
+        Some(Resume::Reopen) => {
+            let record = k
+                .host()
+                .ok_or_else(|| "Your room isn't kept any more.".to_owned())?;
+            begin_with(app, SessionState::Starting, false)?;
+            trace("reopening the room");
+            let r = host::reopen(app.clone(), record).await;
+            Ok(begun(app, r.map(Session::Host)))
+        }
+        Some(Resume::Rejoin { .. }) => {
+            let record = k
+                .guest()
+                .ok_or_else(|| "That room isn't kept any more.".to_owned())?;
+            begin_with(app, SessionState::Joining, false)?;
+            trace("rejoining a room");
+            let root = music_root(&crate::playback::current_root(app));
+            let r = guest::join(app.clone(), root, record.invite, record.mode).await;
+            Ok(begun(app, r.map(Session::Guest)))
+        }
+        None => Err("There's no room to go back to.".into()),
+    }
 }
 
 /// The room just left, as a playlist: its online songs, and your own files of its songs.
@@ -840,20 +1070,46 @@ pub async fn together_save_queue(app: AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let rootp = std::path::PathBuf::from(&root);
         let (_, lib) = crate::load_lib(&rootp).map_err(|e| e.to_string())?;
-        let items: Vec<engine::playlists::Item> = songs
-            .iter()
-            .filter_map(|s| sources::playlist_item(s, &lib))
-            .collect();
-        if items.is_empty() {
-            return Err("None of the room's songs can go in a playlist here.".into());
-        }
-        let name = format!("Listened together {}", date_of(unix_now()));
-        engine::playlists::create(&rootp, &lib, &name)?;
-        engine::playlists::add_with(&rootp, &lib, &name, &items, false)?;
-        Ok(name)
+        save_room_queue(&rootp, &lib, &songs, &date_of(unix_now()))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The room's songs as a playlist in the library at `root` (I10), in the room's order: the
+/// catalog's songs by their id, your own files of the others; songs only the host had are left
+/// out. Named for the day ("Listened together 2026-10-22", then "(2)" for a second room).
+fn save_room_queue(
+    root: &std::path::Path,
+    lib: &engine::library::Library,
+    songs: &[Song],
+    date: &str,
+) -> Result<String, String> {
+    let items: Vec<engine::playlists::Item> = songs
+        .iter()
+        .filter_map(|s| sources::playlist_item(s, lib))
+        .collect();
+    if items.is_empty() {
+        return Err("None of the room's songs can go in a playlist here.".into());
+    }
+    let taken: std::collections::HashSet<String> = engine::playlists::list(root, lib)
+        .into_iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    let base = format!("Listened together {date}");
+    let name = (1..)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base} ({n})")
+            }
+        })
+        .find(|n| !taken.contains(&n.to_lowercase()))
+        .expect("a free name");
+    engine::playlists::create(root, lib, &name)?;
+    engine::playlists::add_with(root, lib, &name, &items, false)?;
+    Ok(name)
 }
 
 /// A date as a playlist's name says it ("2026-10-22").
@@ -905,12 +1161,46 @@ pub fn together_set_delay(app: AppHandle, ms: i32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::date_of;
+    use super::{date_of, save_room_queue};
+    use together::proto::Song;
 
     #[test]
     fn a_date_is_said_as_a_playlist_name_says_it() {
         assert_eq!(date_of(0), "1970-01-01");
         assert_eq!(date_of(1_792_627_200), "2026-10-22");
         assert_eq!(date_of(951_782_400), "2000-02-29");
+    }
+
+    fn song(n: u32, online: bool) -> Song {
+        Song {
+            key: format!("k{n}"),
+            title: format!("Song {n}"),
+            artists: vec!["Someone".into()],
+            album: None,
+            duration_ms: Some(200_000),
+            isrc: None,
+            mbid: None,
+            online_id: online.then(|| format!("vid{n:07}")),
+            host_file: !online,
+            format: None,
+            artwork_url: None,
+            added_by: None,
+        }
+    }
+
+    #[test]
+    fn i10_the_rooms_queue_becomes_a_playlist_in_its_order_and_a_second_room_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = engine::library::Library::of_tracks(Vec::new());
+        // A song only the host had can't be one: left out; the others in the room's order.
+        let songs = vec![song(3, true), song(1, false), song(2, true)];
+        let name = save_room_queue(dir.path(), &lib, &songs, "2026-10-22").unwrap();
+        assert_eq!(name, "Listened together 2026-10-22");
+        let (entries, _) = engine::playlists::read(dir.path(), &lib, &name).unwrap();
+        let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
+        assert_eq!(titles, vec!["Song 3", "Song 2"]);
+        let again = save_room_queue(dir.path(), &lib, &songs[..1], "2026-10-22").unwrap();
+        assert_eq!(again, "Listened together 2026-10-22 (2)");
+        assert!(save_room_queue(dir.path(), &lib, &[song(9, false)], "2026-10-22").is_err());
     }
 }

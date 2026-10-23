@@ -573,6 +573,152 @@ impl World {
         let v = self.room().view_for(HOST);
         v.members.iter().any(|m| m.name == name)
     }
+
+    /// The member id of the person of this name, as the host's room has them.
+    pub fn member_id(&mut self, name: &str) -> Option<u32> {
+        let v = self.room().view_for(HOST);
+        v.members.iter().find(|m| m.name == name).map(|m| m.id)
+    }
+
+    /// Seconds since 1970 for the records, from the simulation's clock.
+    pub fn unix(&self) -> u64 {
+        1_800_000_000 + self.clock.now_ns() / 1_000_000_000
+    }
+
+    /// The host's app goes (a quit, a crash or a kill: nobody is told): every guest's link
+    /// carries nothing more (each side told lost after the idle timeout), the session and its
+    /// player gone. The guests play on.
+    pub fn host_goes(&mut self) {
+        for g in self.guest_ids() {
+            self.cut(g);
+        }
+        self.people[0].side = None;
+    }
+
+    /// The host's app started again and the room reopened from `state` (`Room::reopen`): a new
+    /// player (the app's own, fresh), the same transport (the same endpoint key), the links
+    /// carrying again (the guests' reconnects reaching it).
+    pub fn host_reopens(&mut self, state: together::room::v2::RoomState) {
+        let hc = self.people[0].clock.clone();
+        let (player, log) = FakeRoomPlayer::<String>::new(self.base.clone(), self.script.clone());
+        let player: Arc<dyn RoomPlayer<String>> = Arc::new(player);
+        let map = clock_map::handle();
+        map.store(Arc::new(Some(together::clock_map::ClockMap::identity())));
+        let now_us = (hc.now_ns() / 1_000) as i64;
+        let room = Room::reopen(state, now_us);
+        let handle = player.attach(map.clone(), SyncMode::Apart);
+        let rules = Arc::new(Mutex::new(Rules::default()));
+        let conductor = Conductor::new(
+            player,
+            map,
+            Box::new(TestCopies(rules.clone())),
+            ListenMode::Apart,
+        )
+        .with_handle(handle, None);
+        let open = self.invite_open.clone();
+        let t = self.people[0].t.clone();
+        let host = HostSession::new(
+            Arc::new(t),
+            hc,
+            room,
+            conductor,
+            HostConfig {
+                invite_open: Arc::new(move || open.load(std::sync::atomic::Ordering::SeqCst)),
+            },
+        );
+        let p = &mut self.people[0];
+        p.log = log;
+        p.rules = rules;
+        p.side = Some(Side::Host(Box::new(host)));
+        for g in self.guest_ids() {
+            self.restore(g);
+        }
+    }
+
+    /// A guest's app goes (a crash: no goodbye): its link carries nothing more, its session
+    /// and player gone.
+    pub fn guest_goes(&mut self, i: usize) {
+        self.cut(i);
+        self.people[i].side = None;
+    }
+
+    /// A guest's app started again and joins the same room with the same key (the same
+    /// computer's key in this room), as `mode` (what its record kept; `None`: chosen by the
+    /// network): a new player, the same transport, the link back.
+    pub fn guest_comes_back(&mut self, i: usize, mode: Option<ListenMode>) {
+        let gc = self.people[i].clock.clone();
+        let (player, log) = FakeRoomPlayer::<String>::new(self.base.clone(), self.script.clone());
+        let rules = Arc::new(Mutex::new(Rules::default()));
+        let conductor = Conductor::new(
+            Arc::new(player),
+            clock_map::handle(),
+            Box::new(TestCopies(rules.clone())),
+            ListenMode::Apart,
+        );
+        let t = self.people[i].t.clone();
+        let key = format!("peer{}", t.id().0);
+        let g = GuestSession::new(
+            Arc::new(t),
+            self.people[0].t.id(),
+            gc,
+            conductor,
+            together::session::GuestConfig {
+                name: self.people[i].name.clone(),
+                proof: together::invite::proof(SECRET, &key),
+                app: "Venuta test".into(),
+                host_name: "Asha".into(),
+                mode,
+            },
+        );
+        let p = &mut self.people[i];
+        p.log = log;
+        p.rules = rules;
+        p.side = Some(Side::Guest(Box::new(g)));
+        self.restore(i);
+    }
+
+    /// A person nearby (no invite: the beacon's door code as the secret) connects and knocks.
+    pub fn arrive_nearby(&mut self, name: &str) -> usize {
+        let i = self.people.len();
+        let gc = computer(&self.base, i);
+        let t = self.net.peer(gc.clone());
+        let (player, log) = FakeRoomPlayer::<String>::new(self.base.clone(), self.script.clone());
+        let rules = Arc::new(Mutex::new(Rules::default()));
+        let conductor = Conductor::new(
+            Arc::new(player),
+            clock_map::handle(),
+            Box::new(TestCopies(rules.clone())),
+            ListenMode::Apart,
+        );
+        let host = self.people[0].t.id();
+        let key = format!("peer{}", t.id().0);
+        let door = together::invite::nearby_secret(SECRET);
+        let g = GuestSession::new(
+            Arc::new(t.clone()),
+            host,
+            gc.clone(),
+            conductor,
+            together::session::GuestConfig {
+                name: name.into(),
+                proof: together::invite::proof(&door, &key),
+                app: "Venuta test".into(),
+                host_name: "Asha".into(),
+                mode: Some(ListenMode::Apart),
+            },
+        );
+        self.net.connect(&t, &self.people[0].t, Way::LAN, Way::LAN);
+        self.people.push(Person {
+            name: name.into(),
+            t,
+            clock: gc,
+            log,
+            rules,
+            side: Some(Side::Guest(Box::new(g))),
+            ways: (Way::LAN, Way::LAN),
+            truths: Truths::default(),
+        });
+        i
+    }
 }
 
 // --- Measured copies (WP11) ---------------------------------------------------------------

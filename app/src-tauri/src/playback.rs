@@ -719,6 +719,8 @@ impl Playback {
                 p.send(Cmd::PauseWhenHeadphonesGo(
                     s.player.pause_when_headphones_go,
                 ));
+                // What rooms learn of each output's drift, remembered across rooms (WP15).
+                p.set_drift_memory(crate::together::drift_memory());
             }
         }
         Ok(f(slot.as_ref().expect("just made")))
