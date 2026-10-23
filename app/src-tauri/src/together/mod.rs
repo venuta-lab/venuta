@@ -191,6 +191,11 @@ impl RoomPlayer<QueueItem> for AppPlayer {
     }
 }
 
+/// The player's shared downloads, for measuring copies on the bytes its voices read.
+fn streams(app: &AppHandle) -> Option<Arc<player::decode::Streams>> {
+    app.state::<Playback>().with(|p| p.streams()).ok().flatten()
+}
+
 /// A player that couldn't be had (its thread failed to start): it can't play anything.
 struct NoPlayer;
 

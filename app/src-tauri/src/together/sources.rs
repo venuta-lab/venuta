@@ -5,6 +5,9 @@
 //! 3. **The host's file, streamed from the host**: lossless, the exact copy.
 //! 4. **A close match online**: the catalog's nearest by title, artist and length.
 //!
+//! Listening in step with the room's speakers (every device), the host's file comes first: only
+//! an exact copy lines up within a millisecond from the first frame (decision D5).
+//!
 //! The host's files are known to the room by a hash (`Song::host_key`), never by path; their
 //! bytes go only from the host, on request, to people in the room. A guest's player reads the
 //! stream like any online song, through a small server on this computer (127.0.0.1 only, with a
@@ -187,7 +190,9 @@ pub enum Order {
 }
 
 /// The best copy for a guest (see the module's order), in this `order`. `host_stream`: how to
-/// reach the host's files (none for the host itself).
+/// reach the host's files (none for the host itself). `every_device`: speakers heard together,
+/// where only an exact copy lines up within a millisecond from the first frame, so the host's
+/// file streamed comes first (D5), unless the host advised a lighter copy.
 pub fn best_copy_in(
     song: &Song,
     lib: Option<&Library>,
@@ -195,6 +200,7 @@ pub fn best_copy_in(
     local_only: bool,
     host_stream: Option<Arc<HostStream>>,
     order: Order,
+    every_device: bool,
 ) -> Option<Copy> {
     let from_host = |hs: Option<Arc<HostStream>>| -> Option<Copy> {
         let hs = hs.filter(|_| song.host_file)?;
@@ -210,7 +216,7 @@ pub fn best_copy_in(
             kind: CopyKind::HostStream,
         })
     };
-    if order == Order::HostFirst
+    if (order == Order::HostFirst || (every_device && order != Order::Lighter))
         && let Some(c) = from_host(host_stream.clone())
     {
         return Some(c);
@@ -433,7 +439,9 @@ pub struct AppCopies {
     pub resolve: Resolver,
     pub order: Order,
     pub host_first: std::collections::HashSet<String>,
-    found: std::collections::HashMap<(String, bool, bool), Found>,
+    /// How this person listens: every device puts the host's file first (D5).
+    pub mode: together::room_player::ListenMode,
+    found: std::collections::HashMap<(String, bool, bool, bool), Found>,
 }
 
 impl AppCopies {
@@ -455,6 +463,7 @@ impl AppCopies {
             resolve,
             order: Order::Usual,
             host_first: Default::default(),
+            mode: together::room_player::ListenMode::Apart,
             found: Default::default(),
         }
     }
@@ -464,8 +473,8 @@ impl AppCopies {
         let length_ms = Some(item.duration_ms).filter(|d| *d > 0);
         together::conductor::Copy {
             item,
-            // Until WP11 measures copies against the host's: the host's own bytes are exact,
-            // anything else approximate at no offset.
+            // The host's own bytes are exact; anything else is measured against the host's
+            // reference by the room's measure (`together::measure::Measured`, WP11).
             align: if kind == CopyKind::HostStream {
                 Alignment::EXACT
             } else {
@@ -492,7 +501,8 @@ impl together::conductor::Copies<QueueItem> for AppCopies {
         } else {
             self.order
         };
-        let k = (song.key.clone(), host_first, order == Order::Lighter);
+        let every = self.mode == together::room_player::ListenMode::EveryDevice;
+        let k = (song.key.clone(), host_first, order == Order::Lighter, every);
         let slot = self.found.entry(k.clone()).or_insert_with(|| {
             let slot: Found = Arc::default();
             let (s2, song) = (slot.clone(), song.clone());
@@ -506,14 +516,22 @@ impl together::conductor::Copies<QueueItem> for AppCopies {
             std::thread::Builder::new()
                 .name("venuta-room-copy".into())
                 .spawn(move || {
-                    let c = best_copy_in(&song, lib.as_deref(), &catalog, local_only, hs, order)
-                        .map(|c| {
-                            let mut item = resolve(&root, c.item);
-                            if let Some(own) = c.own {
-                                item.media = crate::playback::MediaRef::new(own);
-                            }
-                            (item, c.kind)
-                        });
+                    let c = best_copy_in(
+                        &song,
+                        lib.as_deref(),
+                        &catalog,
+                        local_only,
+                        hs,
+                        order,
+                        every,
+                    )
+                    .map(|c| {
+                        let mut item = resolve(&root, c.item);
+                        if let Some(own) = c.own {
+                            item.media = crate::playback::MediaRef::new(own);
+                        }
+                        (item, c.kind)
+                    });
                     if let Ok(mut s) = s2.lock() {
                         *s = Some(c);
                     }
@@ -540,6 +558,10 @@ impl together::conductor::Copies<QueueItem> for AppCopies {
 
     fn prefer_host(&mut self, key: &str) {
         self.host_first.insert(key.to_owned());
+    }
+
+    fn set_mode(&mut self, mode: together::room_player::ListenMode) {
+        self.mode = mode;
     }
 }
 
@@ -594,6 +616,29 @@ mod tests {
         assert!(
             hs.resolve_audio("online:abcdefghijk", &CancellationToken::default())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn every_device_puts_the_hosts_file_first_and_apart_its_own_order() {
+        let hs = HostStream::new(4567, "tok".into());
+        let s = Song {
+            key: "host:0123456789abcdef0123456789abcdef".into(),
+            host_file: true,
+            format: Some("flac".into()),
+            ..song()
+        };
+        let catalog: Arc<dyn MediaAccess> = Arc::new(media_access::UnconfiguredOnlineAccess);
+        let kind = |order, every| {
+            best_copy_in(&s, None, &catalog, false, Some(hs.clone()), order, every).map(|c| c.kind)
+        };
+        assert_eq!(kind(Order::Usual, false), Some(CopyKind::Catalog));
+        assert_eq!(kind(Order::Usual, true), Some(CopyKind::HostStream), "D5");
+        assert_eq!(kind(Order::HostFirst, false), Some(CopyKind::HostStream));
+        assert_eq!(
+            kind(Order::Lighter, true),
+            Some(CopyKind::Catalog),
+            "the host's advice wins"
         );
     }
 

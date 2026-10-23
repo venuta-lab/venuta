@@ -47,6 +47,11 @@ pub const AUTO_SKIP_US: i64 = 5_000_000;
 pub const IDLE_END_US: i64 = 3_600_000_000;
 /// Within this of a boundary, a queue change leaves the armed next as it is (case C6).
 pub const FREEZE_US: i64 = 3_000_000;
+/// A one-speaker host's heard place this far from the anchor becomes the anchor (4.13), µs ...
+pub const REANCHOR_US: i64 = 20_000;
+/// ... and, once, this far when the host stops leading (someone plays: they follow the host's
+/// real place, not one up to 20 ms off), µs.
+pub const REANCHOR_ONCE_US: i64 = 1_000;
 /// Previous over this far into a song starts it again; under it, the song before.
 pub const PREVIOUS_RESTARTS_US: i64 = 3_000_000;
 /// A request is kept this long.
@@ -368,6 +373,10 @@ pub struct Room {
     /// The role for guests the host chose (`None`: by the room's size, D20).
     new_role: Option<Role>,
     guests_volume: bool,
+    /// The host's speaker's volume, 0 to 100, as the host's player has it (B17).
+    volume: Option<u8>,
+    /// The host led (every other member a remote) when its heard place came last.
+    led: bool,
     let_in_without_asking: bool,
     next_member: u32,
     next_entry: u64,
@@ -428,6 +437,8 @@ impl Room {
             transition: Transition::Gapless,
             new_role: None,
             guests_volume: false,
+            volume: None,
+            led: false,
             let_in_without_asking: false,
             next_member: 1,
             next_entry: 1,
@@ -1010,6 +1021,74 @@ impl Room {
         self.done(now_us)
     }
 
+    /// The host's speaker's volume as its player has it now (0 to 100): in the host's view, and
+    /// in remotes', while the host lets guests change it (B17).
+    pub fn set_volume(&mut self, percent: Option<u8>, now_us: i64) -> Changes {
+        let p = percent.map(|p| p.min(100));
+        if self.volume != p {
+            self.volume = p;
+            self.view_dirty = true;
+        }
+        self.done(now_us)
+    }
+
+    /// Whether the room follows the host's player (one speaker, 4.13): every member but the host
+    /// is a remote, or the host is alone (A19). Then the host's player plays free, as solo.
+    pub fn host_leads(&self) -> bool {
+        // Someone just let in counts once they have said how they listen (their mode, or how
+        // their player is): a remote coming in never makes the host's player follow the clock
+        // for a moment.
+        self.people
+            .iter()
+            .all(|p| p.id == HOST || p.mode == ListenMode::OneSpeaker || p.sub_state.is_none())
+    }
+
+    /// Where the host's player is heard now (`RoomPlayStatus::heard`), each step. While the host
+    /// leads, a heard place more than 20 ms from the anchor becomes the anchor: the room follows
+    /// the host's sound card (remotes' progress moves; the host's player is untouched, its commit
+    /// a no-op). When the host stops leading, a place 1 ms off is taken once, so whoever plays
+    /// now follows the host's real place. Never while a prepare waits, nor within 3 s of the
+    /// armed boundary (C6: the boundary stays).
+    pub fn heard_host(&mut self, heard: Anchor, now_us: i64) -> Changes {
+        let leads = self.host_leads();
+        let limit = match (leads, self.led) {
+            (true, _) => Some(REANCHOR_US),
+            (false, true) => Some(REANCHOR_ONCE_US),
+            (false, false) => None,
+        };
+        let Play::Playing(a) = self.play else {
+            self.led = leads;
+            return self.done(now_us);
+        };
+        let Some(limit) = limit else {
+            return self.done(now_us);
+        };
+        let near_boundary = self
+            .armed
+            .is_some_and(|ar| now_us >= ar.next.boundary_host_us - FREEZE_US);
+        if self.ended
+            || self.prep.is_some()
+            || near_boundary
+            || heard.entry != a.entry
+            || heard.host_us < a.host_us
+        {
+            return self.done(now_us);
+        }
+        self.led = leads;
+        let drift = heard.content_us - a.content_at(heard.host_us);
+        if drift.abs() > limit {
+            let anchor = Anchor {
+                entry: a.entry,
+                content_us: heard.content_us.max(0),
+                host_us: heard.host_us,
+                playing: true,
+                seq: self.new_seq(),
+            };
+            self.set_playing(anchor);
+        }
+        self.done(now_us)
+    }
+
     pub fn set_let_in_without_asking(&mut self, on: bool) {
         self.let_in_without_asking = on;
     }
@@ -1082,6 +1161,13 @@ impl Room {
                     at_us: r.at_us,
                 })
                 .collect(),
+            volume: if for_host
+                || (self.guests_volume && self.mode_of(id) == Some(ListenMode::OneSpeaker))
+            {
+                self.volume
+            } else {
+                None
+            },
         }
     }
 
@@ -1603,7 +1689,14 @@ impl Room {
                 self.note(who, "moved a song", true, now_us);
                 self.queue_changed(now_us);
             }
-            Action::Volume { percent } => self.out.volume = Some(percent.min(100)),
+            Action::Volume { percent } => {
+                let p = percent.min(100);
+                self.out.volume = Some(p);
+                if self.volume != Some(p) {
+                    self.volume = Some(p);
+                    self.view_dirty = true;
+                }
+            }
             Action::Accept { request } => {
                 let Some(i) = self.requests.iter().position(|r| r.id == request) else {
                     return Err("That request has gone.".into());

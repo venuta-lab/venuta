@@ -195,6 +195,19 @@ pub struct RoomView {
     pub guests_volume: bool,
     /// The host's speaker's volume, 0 to 100 (for the host, and remotes allowed to change it).
     pub volume: Option<u8>,
+    /// The words of the song playing when only the host has it (sent to remotes by the host,
+    /// WP18); a catalog song's words the window finds itself.
+    #[serde(default)]
+    pub lyrics: Option<RoomLyrics>,
+}
+
+/// A song's words, for the remote view: timed lines (ms, words) or plain words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomLyrics {
+    /// The song they are the words of (`Song::key`).
+    pub key: String,
+    pub lines: Vec<(u32, String)>,
+    pub text: String,
 }
 
 /// One song in the room's queue.
@@ -231,7 +244,7 @@ pub struct MemberView {
 }
 
 /// Which copy a person plays.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CopyKind {
     /// Their own file.
@@ -596,6 +609,7 @@ mod tests {
             auto_roles: false,
             guests_volume: false,
             volume: None,
+            lyrics: None,
         }
     }
 
@@ -986,6 +1000,22 @@ mod tests {
                 let r = room_of(v);
                 r.guests_volume = true;
                 r.volume = Some(60);
+            }),
+        ));
+        out.push((
+            "in, a remote, the words of a song only the host has",
+            edit(neighbour(SubState::Remote, OneSpeaker), |v| {
+                let r = room_of(v);
+                let key = r.queue[0].song.key.clone();
+                r.lyrics = Some(RoomLyrics {
+                    key,
+                    lines: vec![
+                        (90_000, "The line before".into()),
+                        (94_500, "The line being sung".into()),
+                        (99_000, "The next line".into()),
+                    ],
+                    text: String::new(),
+                });
             }),
         ));
         out.push((
