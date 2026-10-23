@@ -5,7 +5,6 @@
 - **Fixed: Venuta closed at start when a sound device's name had a curly apostrophe**, as
   Windows names Bluetooth devices ("Name’s AirPods"). On 0.4.0, if Venuta closes as soon as it
   opens, switch the device off or disconnect it, start Venuta and update, then connect it again.
-
 - **About and updates**, a page of its own in Settings: your version and its update at the top,
   with one button and its progress; what's new in it, by headline, in full on request; then the
   update options, diagnostics and credits. System keeps only how Venuta runs on Windows.
