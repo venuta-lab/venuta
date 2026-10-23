@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.4.1 (2026-10-23)
 
 - **Fixed: Venuta closed at start when a sound device's name had a curly apostrophe**, as
   Windows names Bluetooth devices ("Name’s AirPods"). On 0.4.0, if Venuta closes as soon as it
