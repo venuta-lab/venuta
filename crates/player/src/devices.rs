@@ -767,7 +767,10 @@ mod tests {
         // the 7 bytes " Stereo" would take start inside it. Venuta panicked at start on this.
         assert_eq!(base_name("Abcde’s Buds"), "Abcde’s Buds");
         assert_eq!(base_name("Abcde’s Buds Stereo"), "Abcde’s Buds");
-        assert_eq!(base_name("Écouteurs de Zoë Hands-Free AG Audio"), "Écouteurs de Zoë");
+        assert_eq!(
+            base_name("Écouteurs de Zoë Hands-Free AG Audio"),
+            "Écouteurs de Zoë"
+        );
         assert_eq!(base_name("’’’’’’’"), "’’’’’’’");
     }
 
