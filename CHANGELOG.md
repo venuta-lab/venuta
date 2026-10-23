@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.4.2 (2026-10-23)
 
 - **Share, for your own songs too.** A song of yours is shared by its YouTube Music version, found
   the moment you share it and only when it is the same recording (same title, artist, length and
