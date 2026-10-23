@@ -4,17 +4,25 @@
 //! `*/lexicons` and `*/romanized` folders.
 //!
 //! ```text
-//! cargo run -p lyrics-text --example dakshina -- table   <dataset dir> hi mr bn ...
+//! cargo run -p lyrics-text --example dakshina -- table   <dataset dir> [--splits train,dev] hi mr bn ...
 //! cargo run -p lyrics-text --example dakshina -- fixture <dataset dir> <split> <max sentences> hi mr ...
 //! cargo run -p lyrics-text --example dakshina -- misses  <dataset dir> <split> <lang> [lists]
+//! cargo run -p lyrics-text --example dakshina -- rules   <dataset dir> <lexicon split> <lang> [misses file]
+//! cargo run -p lyrics-text --example dakshina -- score   <split> [misses to show] [langs]
 //! ```
 //!
 //! `table` writes `data/dakshina/<lang>.tsv`: for every lexicon word whose spelling by rule no
 //! annotator used, the spelling most annotators used. Run it again after changing the rules.
+//! It reads all three lexicon splits; `--splits train,dev` leaves the test lexicon out, to see
+//! what the test split scores with none of its lexicon's words in the tables.
 //! `fixture` writes `tests/fixtures/dakshina/<lang>.<split>.tsv`: every native word of the
 //! split's hand-romanized sentences, how often it occurs, the romanizations the annotators gave
 //! it in those sentences (with counts), and its romanizations in the lexicons.
 //! `misses` prints the commonest words the engine spells differently from every annotator.
+//! `rules <dataset dir> <lexicon split> <lang> [misses file]` scores the rules alone (no word
+//! lists) on a lexicon split's words, each word counted once, and writes the misses.
+//! `score <split> [misses to show] [langs]` scores a fixture made by `fixture` the way
+//! `tests/dakshina.rs` scores the test split (for tuning on `dev`), with its commonest misses.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -29,8 +37,14 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("table") => {
             let dir = PathBuf::from(&args[1]);
-            for code in &args[2..] {
-                table(&dir, code, crate_dir);
+            // `--splits train,dev` builds the tables from those lexicon splits only (to measure
+            // the test split with no word of its lexicon in the tables).
+            let (splits, codes) = match args.get(2).map(String::as_str) {
+                Some("--splits") => (args[3].split(',').collect::<Vec<_>>(), &args[4..]),
+                _ => (SPLITS.to_vec(), &args[2..]),
+            };
+            for code in codes {
+                table(&dir, code, crate_dir, &splits);
             }
         }
         Some("fixture") => {
@@ -50,13 +64,25 @@ fn main() {
                 args.get(4).is_some_and(|a| a == "lists"),
             );
         }
+        Some("score") => {
+            let split = &args[1];
+            let show: usize = args
+                .get(2)
+                .map_or(0, |a| a.parse().expect("misses to show"));
+            let all = ["hi", "mr", "bn", "gu", "pa", "ta", "te", "kn", "ml"].map(String::from);
+            let codes = args.get(3..).filter(|c| !c.is_empty()).unwrap_or(&all);
+            for code in codes {
+                score(crate_dir, split, code, show);
+            }
+        }
+        Some("rules") => rules(&PathBuf::from(&args[1]), &args[2], &args[3], args.get(4)),
         Some("vowels") => vowels(&PathBuf::from(&args[1]), &args[2]),
         Some("choose") => {
             for code in &args[3..] {
                 choose(&PathBuf::from(&args[1]), &args[2], code);
             }
         }
-        _ => eprintln!("usage: dakshina table|fixture|misses|vowels ..."),
+        _ => eprintln!("usage: dakshina table|fixture|misses|rules|score|vowels|choose ..."),
     }
 }
 
@@ -70,10 +96,17 @@ fn canonical(word: &str) -> String {
         .collect()
 }
 
+const SPLITS: [&str; 3] = ["train", "dev", "test"];
+
 /// Native word -> romanization -> attestations, from the three lexicon splits.
 fn lexicon(dir: &Path, code: &str) -> BTreeMap<String, BTreeMap<String, u32>> {
+    lexicon_of(dir, code, &SPLITS)
+}
+
+/// [`lexicon`] from some of the splits.
+fn lexicon_of(dir: &Path, code: &str, splits: &[&str]) -> BTreeMap<String, BTreeMap<String, u32>> {
     let mut lex: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
-    for split in ["train", "dev", "test"] {
+    for split in splits {
         let path = dir
             .join(code)
             .join("lexicons")
@@ -114,9 +147,9 @@ fn distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-fn table(dir: &Path, code: &str, crate_dir: &Path) {
+fn table(dir: &Path, code: &str, crate_dir: &Path, splits: &[&str]) {
     let l = lang(code);
-    let lex = lexicon(dir, code);
+    let lex = lexicon_of(dir, code, splits);
     let mut out = String::new();
     let (mut kept, mut junk) = (0, 0);
     for (native, variants) in &lex {
@@ -456,4 +489,88 @@ fn choose(dir: &Path, split: &str, code: &str) {
         }
     }
     println!("{line}");
+}
+
+/// Scores `tests/fixtures/dakshina/<lang>.<split>.tsv` as `tests/dakshina.rs` does, and prints
+/// the `show` commonest misses (`*`: a word no lexicon has).
+fn score(crate_dir: &Path, split: &str, code: &str, show: usize) {
+    let l = lang(code);
+    let path = crate_dir
+        .join("tests")
+        .join("fixtures")
+        .join("dakshina")
+        .join(format!("{code}.{split}.tsv"));
+    let Ok(text) = fs::read_to_string(&path) else {
+        eprintln!("{}: not made yet (see `fixture`)", path.display());
+        return;
+    };
+    let (mut words, mut any, mut unseen, mut unseen_ok) = (0u32, 0u32, 0u32, 0u32);
+    let mut missed: Vec<(u32, String)> = Vec::new();
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let mut f = line.split('\t');
+        let (Some(word), Some(count), Some(seen)) = (f.next(), f.next(), f.next()) else {
+            continue;
+        };
+        let lexicon = f.next().unwrap_or("");
+        let count: u32 = count.parse().expect("count");
+        let got = word_to_latin(word, l, true);
+        let known = seen
+            .split(' ')
+            .any(|p| p.rsplit_once(':').is_some_and(|(r, _)| r == got))
+            || lexicon.split(' ').any(|r| r == got);
+        words += count;
+        if lexicon.is_empty() {
+            unseen += count;
+        }
+        if known {
+            any += count;
+            if lexicon.is_empty() {
+                unseen_ok += count;
+            }
+        } else {
+            let mark = if lexicon.is_empty() { "*" } else { "" };
+            missed.push((
+                count,
+                format!("{count}\t{mark}{word}\t{got}\t{seen} | {lexicon}"),
+            ));
+        }
+    }
+    println!(
+        "{code} {split}: {words} words, {:.2}% as some annotator spells them; words no lexicon has: {:.2}% of {unseen}",
+        100.0 * any as f64 / words.max(1) as f64,
+        100.0 * unseen_ok as f64 / unseen.max(1) as f64
+    );
+    missed.sort_by_key(|m| std::cmp::Reverse(m.0));
+    for (_, m) in missed.iter().take(show) {
+        println!("{m}");
+    }
+}
+
+/// The rules alone on the words of one lexicon split: how many come out spelled as an
+/// annotator spelled them. Misses go to `out` as `word\tgot\tspelling:count ...`.
+fn rules(dir: &Path, split: &str, code: &str, out: Option<&String>) {
+    let l = lang(code);
+    let lex = lexicon_of(dir, code, &[split]);
+    let (mut ok, mut total) = (0u32, 0u32);
+    let mut missed = String::new();
+    for (native, variants) in &lex {
+        if native.chars().any(|c| c.is_ascii()) {
+            continue;
+        }
+        let got = word_to_latin(native, l, false);
+        total += 1;
+        if variants.contains_key(&got) {
+            ok += 1;
+        } else {
+            let all: Vec<String> = variants.iter().map(|(r, c)| format!("{r}:{c}")).collect();
+            missed.push_str(&format!("{native}\t{got}\t{}\n", all.join(" ")));
+        }
+    }
+    println!(
+        "{code} {split} lexicon, rules alone: {ok}/{total} = {:.2}%",
+        100.0 * ok as f64 / total.max(1) as f64
+    );
+    if let Some(path) = out {
+        fs::write(path, missed).expect("write misses");
+    }
 }

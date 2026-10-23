@@ -13,6 +13,19 @@ pub fn house(lang: Lang, word: &str) -> Option<&'static str> {
             "காதல்" => Some("kaadhal"),
             _ => None,
         },
+        // "my" and "your": the rules write Marathi झ "z" ("zad", "zop"), but these keep the
+        // "jh" lyric sites and Dakshina's annotators give them ("majha", "tujhi").
+        Lang::Mr => Some(match word {
+            "माझा" => "majha",
+            "माझी" => "majhi",
+            "माझे" => "majhe",
+            "माझ्या" => "majhya",
+            "तुझा" => "tujha",
+            "तुझी" => "tujhi",
+            "तुझे" => "tujhe",
+            "तुझ्या" => "tujhya",
+            _ => return None,
+        }),
         Lang::Ml => match word {
             "എന്റെ" => Some("ente"),
             "നിന്റെ" => Some("ninte"),

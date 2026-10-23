@@ -183,7 +183,8 @@ impl Lang {
 
     fn spelling(self) -> &'static Spelling {
         match self {
-            Lang::Hi | Lang::Mr | Lang::Gu | Lang::Pa => &NORTH,
+            Lang::Hi | Lang::Gu | Lang::Pa => &NORTH,
+            Lang::Mr => &MARATHI,
             Lang::Ne | Lang::Sa => &NEPALI,
             Lang::Bn => &BENGALI,
             Lang::Or => &ODIA,
@@ -223,6 +224,8 @@ static NORTH: Spelling = Spelling {
     au: "au",
     r: "ri",
 };
+// Marathi says ऋ "ru" ("krupa", "pruthvi"), as four annotators in five write it.
+static MARATHI: Spelling = Spelling { r: "ru", ..NORTH };
 static NEPALI: Spelling = Spelling {
     a: "a",
     aa: ("a", "a"),
@@ -449,7 +452,7 @@ fn word(
         UNITS.with_borrow_mut(|units| {
             units.clear();
             parse(script, text, range.start, units);
-            silent_a(lang, units, medial);
+            silent_a(lang, units, medial, text, range.start);
             let (spans, bytes) = (out.spans().len(), out.text().len());
             spell(lang, units, out, familiar);
             out.respell(spans, bytes, spelled);
@@ -459,7 +462,7 @@ fn word(
     UNITS.with_borrow_mut(|units| {
         units.clear();
         parse(script, text, range.start, units);
-        silent_a(lang, units, medial);
+        silent_a(lang, units, medial, text, range.start);
         spell(lang, units, out, familiar);
     });
 }
@@ -644,8 +647,8 @@ fn parse(script: Script, text: &str, base: usize, units: &mut Vec<Unit>) {
     }
 }
 
-/// Marks the unwritten "a" that is not said.
-fn silent_a(lang: Lang, units: &mut [Unit], medial: bool) {
+/// Marks the unwritten "a" that is not said. `text` is the word, starting at `base` in the line.
+fn silent_a(lang: Lang, units: &mut [Unit], medial: bool, text: &str, base: usize) {
     let schwa = lang.schwa();
     if schwa == Schwa::Keep {
         return;
@@ -654,21 +657,20 @@ fn silent_a(lang: Lang, units: &mut [Unit], medial: bool) {
     if n < 2 {
         return;
     }
-    // At the end of the word: "dil", not "dila". Said after some clusters ("mitra", "satya",
-    // "krishna"; in Bengali and Nepali after any), after -ī in -īya ("bhartiya"), and when it
-    // carries a nasal ("evam").
-    let last = units[n - 1];
-    if last.cons() && last.v == Vs::Inherent && last.nasal == Nasal::None && !last.visarga {
-        let cluster = units[n - 2].cons() && units[n - 2].v == Vs::Dead;
-        let iya =
-            (last.is(C::Y) || last.is(C::Yy)) && matches!(units[n - 2].v, Vs::Is(V::I | V::Ii));
-        let keep = iya
-            || cluster
-                && (schwa == Schwa::DropKeepClusters
-                    || matches!(last.c, Some(C::Y | C::R | C::Ya))
-                    || (units[n - 2].is(C::Ss) && last.is(C::Nn)));
-        if !keep {
-            units[n - 1].v = Vs::Dropped;
+    drop_final_a(schwa, units);
+    // Marathi writes its case endings onto the word, and the word's own last "a" goes before
+    // them as at a word's end: "ghar-chya", "sachin-la", "kolhapur-pasun", "albam-madhil".
+    if lang == Lang::Mr
+        && let Some(ending) = MARATHI_ENDINGS
+            .iter()
+            .filter(|e| text.len() > e.len() && text.ends_with(**e))
+            .max_by_key(|e| e.len())
+    {
+        let at = base + text.len() - ending.len();
+        if let Some(k) = units.iter().position(|u| u.start as usize == at)
+            && k >= 2
+        {
+            drop_final_a(schwa, &mut units[..k]);
         }
     }
     // Inside the word, right to left: V C a C V -> V C C V ("sam-jh-na", "dhad-kan"), but not
@@ -693,6 +695,54 @@ fn silent_a(lang: Lang, units: &mut [Unit], medial: bool) {
             continue;
         }
         units[i].v = Vs::Dropped;
+    }
+}
+
+/// The case endings Marathi writes onto a word, after which the word's last "a" is not said.
+/// Only the ones annotators write that way more often than not; "-ही", "-ने", "-वर" are left
+/// out (annotators keep the "a" before them as often as they drop it).
+static MARATHI_ENDINGS: &[&str] = &[
+    "च्या",
+    "चा",
+    "ची",
+    "चे",
+    "चं",
+    "ला",
+    "मध्ये",
+    "मधील",
+    "मधून",
+    "मधे",
+    "वरील",
+    "वरून",
+    "वरुन",
+    "कडे",
+    "कडून",
+    "पासून",
+    "पर्यंत",
+    "साठी",
+];
+
+/// At the end of a word: "dil", not "dila". Said after some clusters ("mitra", "satya",
+/// "krishna"; in Bengali and Nepali after any), after -ī in -īya ("bhartiya"), and when it
+/// carries a nasal ("evam").
+fn drop_final_a(schwa: Schwa, units: &mut [Unit]) {
+    let n = units.len();
+    if n < 2 {
+        return;
+    }
+    let last = units[n - 1];
+    if last.cons() && last.v == Vs::Inherent && last.nasal == Nasal::None && !last.visarga {
+        let cluster = units[n - 2].cons() && units[n - 2].v == Vs::Dead;
+        let iya =
+            (last.is(C::Y) || last.is(C::Yy)) && matches!(units[n - 2].v, Vs::Is(V::I | V::Ii));
+        let keep = iya
+            || cluster
+                && (schwa == Schwa::DropKeepClusters
+                    || matches!(last.c, Some(C::Y | C::R | C::Ya))
+                    || (units[n - 2].is(C::Ss) && last.is(C::Nn)));
+        if !keep {
+            units[n - 1].v = Vs::Dropped;
+        }
     }
 }
 
@@ -739,9 +789,14 @@ fn spell(lang: Lang, units: &[Unit], out: &mut Pieces, familiar: bool) {
             }
             Vs::Dropped => {}
             Vs::Dead => {
-                // Malayalam says a dead consonant at the end of a word with a short "u":
-                // "ninnu", "aanu".
-                if lang == Lang::Ml && end && !u.chillu && familiar {
+                // Malayalam says a dead consonant at the end of its own words with a short "u"
+                // (samvruthokaram): "ninnu", "aanu". An English word ends on its consonant.
+                if lang == Lang::Ml
+                    && end
+                    && !u.chillu
+                    && familiar
+                    && !malayalam_loan_ending(units, i)
+                {
                     out.write("u");
                 }
             }
@@ -837,6 +892,10 @@ fn nasal(lang: Lang, u: Unit, next: Option<Unit>, end: bool) -> &'static str {
         };
     }
     match next_c {
+        // Marathi's plural -ां, -ीं keep their n before -ना, -नी, -मध्ये ("mulanna", "lokanni",
+        // "gharanmadhye"), and -ां before a labial too ("gavanpasun").
+        Some(C::N | C::M | C::Nn) if lang == Lang::Mr && u.v != Vs::Inherent => "n",
+        Some(c) if lang == Lang::Mr && c.is_labial() && u.v == Vs::Is(V::Aa) => "n",
         // The nasal is heard in a following n or m: "maine".
         Some(C::N | C::M | C::Nn) if u.v != Vs::Inherent => "",
         // Only the anusvara takes the place of the next letter: a candrabindu stays "n".
@@ -909,7 +968,14 @@ fn consonant(lang: Lang, units: &[Unit], i: usize, c: C) -> &'static str {
                 "j"
             }
         }
-        C::Jh => "jh",
+        // Marathi झ is said, and mostly written, "z" ("zad", "zop").
+        C::Jh => {
+            if lang == Lang::Mr {
+                "z"
+            } else {
+                "jh"
+            }
+        }
         C::Ny => {
             if after(C::J) {
                 match lang {
@@ -939,9 +1005,10 @@ fn consonant(lang: Lang, units: &[Unit], i: usize, c: C) -> &'static str {
                 "nj"
             }
         }
-        // Malayalam ട between vowels is said, and written, "d" ("avide", "nadathi").
+        // Malayalam ട between vowels is said, and written, "d" ("avide", "nadathi"), and so
+        // is ണ്ട ("undu", "kandu", "vendi").
         C::Tt => {
-            if lang == Lang::Ml && !dead && prev.is_some_and(|p| p.sounds()) {
+            if lang == Lang::Ml && (after(C::Nn) || !dead && prev.is_some_and(|p| p.sounds())) {
                 "d"
             } else {
                 "t"
@@ -964,13 +1031,23 @@ fn consonant(lang: Lang, units: &[Unit], i: usize, c: C) -> &'static str {
             _ => "t",
         },
         C::Th => "th",
-        C::D => "d",
+        // Malayalam ദ്ധ is written "dh" ("budhi", "yudham").
+        C::D => {
+            if lang == Lang::Ml && dead && before(C::Dh) {
+                ""
+            } else {
+                "d"
+            }
+        }
         C::Dh => "dh",
         C::P => "p",
         // ph where it starts a syllable at the start of a word ("phir", "phool"), f elsewhere
-        // ("kaafi", "taraf", "khilaaf": Persian words written without the nukta).
+        // ("kaafi", "taraf", "khilaaf": Persian words written without the nukta). Marathi and
+        // Malayalam annotators write f two times in three wherever it stands ("fakt", "falam").
         C::Ph => {
-            if matches!(lang, Lang::Hi | Lang::Pa | Lang::Gu) && !(initial && units[i].sounds()) {
+            if matches!(lang, Lang::Mr | Lang::Ml)
+                || matches!(lang, Lang::Hi | Lang::Pa | Lang::Gu) && !(initial && units[i].sounds())
+            {
                 "f"
             } else {
                 "ph"
@@ -1078,13 +1155,14 @@ fn tamil(units: &[Unit], i: usize, c: C) -> &'static str {
                 "g"
             }
         }
+        // A doubled ch is written in full ("pachchai"), and so is one that ends a word.
         C::C => {
-            if geminate_first {
-                "c"
-            } else if after(C::C) || after(C::Tt) || after(C::Rr) {
+            if geminate_first || after(C::C) || after(C::Tt) || after(C::Rr) {
                 "ch"
             } else if after(C::Ny) || after_nasal {
                 "j"
+            } else if dead && next.is_none() {
+                "ch"
             } else {
                 "s"
             }
@@ -1096,16 +1174,9 @@ fn tamil(units: &[Unit], i: usize, c: C) -> &'static str {
                 "d"
             }
         }
-        // A doubled th is written once ("paarthu", "pathu").
-        C::T => {
-            if geminate_first {
-                ""
-            } else if after(C::N) {
-                "dh"
-            } else {
-                "th"
-            }
-        }
+        // th wherever it stands: "thth" doubled ("muththam", "paththu"), "nth" after n
+        // ("vanthathu", "sontham"), as about four annotators in five write them.
+        C::T => "th",
         C::P => {
             if after_nasal {
                 "b"
@@ -1153,6 +1224,38 @@ fn tamil(units: &[Unit], i: usize, c: C) -> &'static str {
     }
 }
 
+/// Whether the dead consonant ending a Malayalam word ends an English word or name ("bus",
+/// "blog", "agent", "ticket"), said without the samvruthokaram "u" of Malayalam's own words
+/// ("aanu", "athu", "ennu", "paattu"). The endings Malayalam's own words seldom have: s, d, g,
+/// b, f, j, sh, ng, y, a single k or p, and റ്റ, ന്റ (the English t, nt). In Dakshina's
+/// sentences an "u" follows these in one ending in twenty, and the others in two in three or
+/// more.
+fn malayalam_loan_ending(units: &[Unit], i: usize) -> bool {
+    let prev = i.checked_sub(1).map(|p| units[p]);
+    let after = |c: C| prev.is_some_and(|p| p.is(c) && p.v == Vs::Dead);
+    match units[i].c {
+        Some(
+            C::S
+            | C::Dd
+            | C::G
+            | C::B
+            | C::Ph
+            | C::F
+            | C::J
+            | C::Ss
+            | C::Sh
+            | C::Z
+            | C::Ng
+            | C::D
+            | C::Y,
+        ) => true,
+        Some(C::K) => !after(C::K),
+        Some(C::P) => !after(C::P) && !after(C::M),
+        Some(C::Rr) => after(C::Rr) || after(C::N) || after(C::Nnn),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1170,5 +1273,210 @@ mod tests {
         );
         assert_eq!(Lang::of(Script::Deva, Some("nep")), Some(Lang::Ne));
         assert_eq!(Lang::of(Script::Latn, Some("hi")), None);
+    }
+
+    /// Each word as the rules alone spell it (no Dakshina table).
+    #[track_caller]
+    fn rules(lang: Lang, cases: &[(&str, &str)]) {
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter_map(|(native, want)| {
+                let got = word_to_latin(native, lang, false);
+                (got != *want).then(|| format!("{native}: want {want}, got {got}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{lang:?}:\n{}", wrong.join("\n"));
+    }
+
+    #[test]
+    fn malayalam_chillus_are_dead_consonants_with_no_vowel() {
+        rules(
+            Lang::Ml,
+            &[
+                ("അവൻ", "avan"),
+                ("അവൾ", "aval"),
+                ("അവർ", "avar"),
+                ("കണ്ണിൽ", "kannil"),
+                ("കൺ", "kan"),
+            ],
+        );
+    }
+
+    #[test]
+    fn malayalam_says_a_final_virama_as_u_in_its_own_words() {
+        rules(
+            Lang::Ml,
+            &[
+                ("ആണ്", "aanu"),
+                ("അത്", "athu"),
+                ("എന്ന്", "ennu"),
+                ("കഴിച്ച്", "kazhichu"),
+                ("പാട്ട്", "paattu"),
+            ],
+        );
+    }
+
+    #[test]
+    fn malayalam_loanwords_end_on_their_consonant() {
+        // English words end on the consonant ("bus", "blog", "agent"), not on a samvruthokaram.
+        rules(
+            Lang::Ml,
+            &[
+                ("ബസ്", "bas"),
+                ("ക്ലാസ്", "klaas"),
+                ("ബ്ലോഗ്", "blog"),
+                ("ഏജന്റ്", "ejant"),
+                ("ടിക്കറ്റ്", "tikkatt"),
+                ("ബാങ്ക്", "baank"),
+                ("ക്ലബ്", "klab"),
+            ],
+        );
+    }
+
+    #[test]
+    fn malayalam_doubles_kk_and_tt_and_writes_tth_th() {
+        rules(
+            Lang::Ml,
+            &[
+                ("നോക്കുക", "nokkuka"),
+                ("ഒത്തിരി", "othiri"),
+                ("കുട്ടി", "kutti"),
+            ],
+        );
+    }
+
+    #[test]
+    fn malayalam_nt_after_n_retroflex_is_nd() {
+        // ണ്ട is said, and written, "nd": "undu", "kandu", "vendi".
+        rules(
+            Lang::Ml,
+            &[("ഉണ്ട്", "undu"), ("കണ്ടു", "kandu"), ("വേണ്ടി", "vendi")],
+        );
+    }
+
+    #[test]
+    fn malayalam_n_dental_and_alveolar() {
+        // ന്ത (dental) "nth", ന്റ (alveolar) "nt".
+        rules(Lang::Ml, &[("മുന്തിരി", "munthiri"), ("അവന്റെ", "avante")]);
+    }
+
+    #[test]
+    fn malayalam_zh_ddh_and_f() {
+        rules(
+            Lang::Ml,
+            &[
+                ("മഴ", "mazha"),
+                ("പുഴ", "puzha"),
+                ("ബുദ്ധി", "budhi"),
+                ("യുദ്ധം", "yudham"),
+                ("ഫലം", "falam"),
+            ],
+        );
+    }
+
+    #[test]
+    fn tamil_stops_by_where_they_stand() {
+        rules(
+            Lang::Ta,
+            &[
+                // க: k at the start and doubled, g between vowels and after a nasal.
+                ("கடல்", "kadal"),
+                ("புகழ்", "pugazh"),
+                ("மகன்", "magan"),
+                ("அக்கா", "akkaa"),
+                ("தங்கம்", "thangam"),
+                // ச: s alone, ch doubled, j after a nasal.
+                ("சந்தோஷம்", "santhosham"),
+                ("பஞ்சு", "panju"),
+                // ட: d between vowels, t doubled.
+                ("பாடல்", "paadal"),
+                ("பாட்டு", "paattu"),
+                // ழ zh, ற r (tr doubled, dr after n), ன n, a final u.
+                ("தமிழ்", "thamizh"),
+                ("ஆறு", "aaru"),
+                ("வெற்றி", "vetri"),
+                ("நன்றி", "nandri"),
+                ("அவன்", "avan"),
+            ],
+        );
+    }
+
+    #[test]
+    fn tamil_nth_thth_and_chch() {
+        // As most people write them: ந்த "nth", த்த "thth", ச்ச "chch".
+        rules(
+            Lang::Ta,
+            &[
+                ("வந்தது", "vanthathu"),
+                ("சொந்தம்", "sontham"),
+                ("முத்தம்", "muththam"),
+                ("பத்து", "paththu"),
+                ("பச்சை", "pachchai"),
+                ("இந்தச்", "inthach"),
+            ],
+        );
+    }
+
+    #[test]
+    fn marathi_nasal_plurals_keep_their_n() {
+        // The plural oblique -ां is said before -ना, -नी, -मध्ये, -पासून: "mulanna", "lokanni".
+        rules(
+            Lang::Mr,
+            &[
+                ("मुलांना", "mulanna"),
+                ("लोकांनी", "lokanni"),
+                ("घरांमध्ये", "gharanmadhye"),
+                ("गावांपासून", "gavanpasun"),
+            ],
+        );
+    }
+
+    #[test]
+    fn marathi_r_vowel_z_and_f() {
+        rules(
+            Lang::Mr,
+            &[
+                ("कृपा", "krupa"),
+                ("पृथ्वी", "pruthvi"),
+                ("झाड", "zad"),
+                ("झोप", "zop"),
+                ("फक्त", "fakt"),
+                ("फूल", "ful"),
+            ],
+        );
+        // Hindi keeps its own: "kripa", "jhad", "phul".
+        rules(
+            Lang::Hi,
+            &[("कृपा", "kripa"), ("झाड़", "jhad"), ("फूल", "phul")],
+        );
+        // "my" and "your" keep their "jh" (Venuta's word list).
+        rules(
+            Lang::Mr,
+            &[("माझा", "majha"), ("माझ्या", "majhya"), ("तुझी", "tujhi")],
+        );
+    }
+
+    #[test]
+    fn marathi_drops_the_a_of_a_stem_before_its_case_ending() {
+        // अल्बम + मधील, घर + च्या, सचिन + ला: the stem's last "a" goes, as at a word's end.
+        rules(
+            Lang::Mr,
+            &[
+                ("अल्बममधील", "albammadhil"),
+                ("घरच्या", "gharchya"),
+                ("सचिनला", "sachinla"),
+                ("कोल्हापूरपासून", "kolhapurpasun"),
+                // A short stem keeps it: "kala", not "kla".
+                ("कला", "kala"),
+            ],
+        );
+    }
+
+    #[test]
+    fn marathi_ll_and_dny() {
+        rules(
+            Lang::Mr,
+            &[("जवळ", "javal"), ("बाळ", "bal"), ("ज्ञान", "dnyan")],
+        );
     }
 }

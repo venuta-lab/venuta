@@ -4,7 +4,8 @@
 //! spell words several ways, and any of them is how people spell it).
 //!
 //! The fixtures hold the test split, which the rules were never tuned on (they were tuned on
-//! the dev split with `cargo run -p lyrics-text --example dakshina -- misses`).
+//! the dev split and the train lexicons, with `cargo run -p lyrics-text --example dakshina --`
+//! `misses`, `score dev` and `rules`).
 
 use lyrics_text::indic::{Lang, word_to_latin};
 
@@ -69,21 +70,21 @@ fn report(lang: Lang) -> f64 {
 #[test]
 fn hindi_words_are_spelled_as_people_spell_them() {
     let pct = report(Lang::Hi);
-    assert!(pct >= 95.0, "Hindi: {pct:.2}%");
+    assert!(pct >= 95.6, "Hindi: {pct:.2}%");
 }
 
 #[test]
 fn the_other_languages_dakshina_covers() {
     // Reported, and held at what they reach today so a change that makes one worse is seen.
     for (lang, floor) in [
-        (Lang::Mr, 87.0),
-        (Lang::Bn, 87.0),
-        (Lang::Gu, 85.5),
-        (Lang::Pa, 91.0),
-        (Lang::Ta, 79.0),
-        (Lang::Te, 90.0),
-        (Lang::Kn, 90.0),
-        (Lang::Ml, 70.5),
+        (Lang::Mr, 88.8),
+        (Lang::Bn, 87.5),
+        (Lang::Gu, 86.2),
+        (Lang::Pa, 91.7),
+        (Lang::Ta, 79.8),
+        (Lang::Te, 90.9),
+        (Lang::Kn, 90.6),
+        (Lang::Ml, 72.1),
     ] {
         let pct = report(lang);
         assert!(
