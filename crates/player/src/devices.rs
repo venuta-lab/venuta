@@ -141,11 +141,13 @@ fn base_name(adapter: &str) -> &str {
         " Hands-Free",
         " Stereo",
     ] {
-        if a.len() > suffix.len()
-            && a[a.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
-            && a.is_char_boundary(a.len() - suffix.len())
+        // `get` is None where the cut would fall inside a letter ("’" in "Name’s Buds").
+        let cut = a.len().saturating_sub(suffix.len());
+        if let (Some(head), Some(tail)) = (a.get(..cut), a.get(cut..))
+            && !head.is_empty()
+            && tail.eq_ignore_ascii_case(suffix)
         {
-            return a[..a.len() - suffix.len()].trim_end();
+            return head.trim_end();
         }
     }
     a
@@ -758,6 +760,16 @@ mod tests {
     use super::*;
     use EndpointState::{Active, NotPresent, Unplugged};
     use form_factor as ff;
+
+    #[test]
+    fn a_name_with_letters_beyond_ascii_where_a_suffix_would_start_is_kept_whole() {
+        // Windows names Bluetooth devices "Name’s Buds", with a curly apostrophe (3 bytes): here
+        // the 7 bytes " Stereo" would take start inside it. Venuta panicked at start on this.
+        assert_eq!(base_name("Abcde’s Buds"), "Abcde’s Buds");
+        assert_eq!(base_name("Abcde’s Buds Stereo"), "Abcde’s Buds");
+        assert_eq!(base_name("Écouteurs de Zoë Hands-Free AG Audio"), "Écouteurs de Zoë");
+        assert_eq!(base_name("’’’’’’’"), "’’’’’’’");
+    }
 
     fn ep(
         id: &str,
