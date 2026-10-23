@@ -10,7 +10,7 @@ import { lyricsChanged, lyricsChoiceChanged, lyricsKey, type Lyrics } from './ly
 import { attributionOf, fromLegacy, songLang, type LyricsModel } from './lyricsModel'
 import type { QueueItem } from './player'
 import { choiceFor, readerLang, setSecondLine, systemLang, useSecondChoices } from './secondChoice'
-import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, type SecondKind, type SecondSwitches } from './secondLines'
+import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, withoutMadeTranslations, type SecondKind, type SecondSwitches } from './secondLines'
 import type { SecondRowView } from '../components/lyrics/LyricText'
 import { pressTranslate, runKey, startRun, translateSong, translationStatus, useRun, useTranslationKeys, useTranslationModels, type TranslationStatus } from './translation'
 import { MAKE_TRANSLATIONS, engineArg, isKeyed, useEngineChoice } from './translationEngine'
@@ -50,7 +50,12 @@ export function useSecondLines(song: QueueItem | null | undefined, lyrics: Lyric
   const engine = useEngineChoice()
   const dict = useJapaneseDictionary()
   const reader = readerLang(choices, systemLang())
-  const base = useMemo(() => (lyrics?.lines.length ? fromLegacy(lyrics) : null), [lyrics])
+  // While Venuta makes no translations, the ones made before (0.4.0) and kept with the lyrics go.
+  const base = useMemo(() => {
+    if (!lyrics?.lines.length) return null
+    const m = fromLegacy(lyrics)
+    return MAKE_TRANSLATIONS ? m : withoutMadeTranslations(m)
+  }, [lyrics])
   const model = useMemo(() => (base ? applyCorrections(base, corrections, reader) : null), [base, corrections, reader])
   const lang = songLang(model)
   const choice = choiceFor(choices, lang)

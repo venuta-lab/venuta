@@ -7,6 +7,13 @@
 import { langBase, scriptOfLang, songLang, sourceKind, sourceWords, wordsProgress, type LyricLine, type LyricsModel, type Second } from './lyricsModel.ts'
 
 export type SecondKind = 'roman' | 'translation'
+
+/** The song without the translations a machine made for it (on a PC, or by a key's service),
+ *  kept from before: only those the lyrics brought, and your own corrections, are left. */
+export function withoutMadeTranslations(m: LyricsModel): LyricsModel {
+  if (!m.lines.some((l) => l.translation && sourceKind(l.translation.source).kind === 'Translated')) return m
+  return { ...m, lines: m.lines.map((l) => (l.translation && sourceKind(l.translation.source).kind === 'Translated' ? { ...l, translation: null } : l)) }
+}
 export interface SecondSwitches {
   roman: boolean
   translation: boolean

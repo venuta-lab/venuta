@@ -8,7 +8,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { attributionOf, fromLegacy, langBase, modelOf, readModel, scriptOf, songLang, sourceKind, sourceWords, type LyricsModel } from '../src/lib/lyricsModel.ts'
-import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf } from '../src/lib/secondLines.ts'
+import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, withoutMadeTranslations } from '../src/lib/secondLines.ts'
+import { MAKE_TRANSLATIONS } from '../src/lib/translationEngine.ts'
 
 const fixture = (name: string): LyricsModel => readModel(JSON.parse(readFileSync(new URL(`./fixtures/lyrics-second/${name}.json`, import.meta.url), 'utf8')))
 const hindi = fixture('hindi')
@@ -102,6 +103,28 @@ test('rows are kept for the song, not the line: only what is switched on and the
   assert.deepEqual(reservedRows(japanese, ALL, 'en'), { roman: true, translation: false })
   assert.deepEqual(reservedRows(japanese, ALL, 'zh'), { roman: true, translation: true })
   assert.deepEqual(reservedRows(japanese, ALL, 'zh-Hans'), { roman: true, translation: true })
+})
+
+test('without made translations, only those the lyrics brought (or you corrected) are left', () => {
+  const line = (source: unknown) => ({
+    start_ms: 0,
+    text: 'Te quiero',
+    words: [],
+    script: 'Latn',
+    roman: null,
+    translation: { text: 'I love you', words: [], lang: 'en', source },
+  })
+  const song = (source: unknown) => withoutMadeTranslations({ lines: [line(source)], lang: 'es', version: 4 } as unknown as LyricsModel)
+  const on = { roman: false, translation: true }
+  // Venuta makes none for now (lib/translationEngine.ts), so views read songs through this.
+  assert.equal(MAKE_TRANSLATIONS, false)
+  assert.deepEqual(reservedRows(song({ kind: 'lyrics', by: 'netease' }), on, 'en'), on)
+  assert.deepEqual(reservedRows(song({ kind: 'paired', by: 'apple' }), on, 'en'), on)
+  assert.deepEqual(reservedRows(song({ kind: 'corrected' }), on, 'en'), on)
+  // Made on a PC or by a key's service in 0.4.0, kept with the lyrics: not shown now.
+  assert.deepEqual(reservedRows(song({ kind: 'translated', by: 'device' }), on, 'en'), { roman: false, translation: false })
+  assert.deepEqual(reservedRows(song({ Translated: 'deepl' }), on, 'en'), { roman: false, translation: false })
+  assert.equal(rowsFor(song({ kind: 'translated', by: 'google' }).lines[0], on, 'en')[0]?.text, '')
 })
 
 test('one layout rule: the original, then pronunciation, then translation, the same rows for every line', () => {
