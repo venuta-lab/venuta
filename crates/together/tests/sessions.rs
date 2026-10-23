@@ -1504,8 +1504,11 @@ fn b17_a_remote_changes_the_speakers_volume_only_when_the_host_lets_guests() {
     );
 }
 
+/// The songs whose words were asked for, and the words the host has, by song.
+type Asked = Arc<Mutex<(Vec<String>, HashMap<String, Lyrics>)>>;
+
 /// The host's words for its own songs, and how often they were asked for.
-struct Words(Arc<Mutex<(Vec<String>, HashMap<String, Lyrics>)>>);
+struct Words(Asked);
 
 impl HostLyrics for Words {
     fn of(&mut self, song: &Song) -> Option<Option<Lyrics>> {
@@ -1522,7 +1525,7 @@ fn j7_the_words_of_a_song_only_the_host_has_reach_remotes_once() {
         lines: vec![(1_000, "First line".into()), (5_000, "Second line".into())],
         text: String::new(),
     };
-    let asked: Arc<Mutex<(Vec<String>, HashMap<String, Lyrics>)>> = Arc::new(Mutex::new((
+    let asked: Asked = Arc::new(Mutex::new((
         Vec::new(),
         [(mine.key.clone(), words.clone())].into_iter().collect(),
     )));
