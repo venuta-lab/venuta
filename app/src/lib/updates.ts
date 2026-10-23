@@ -1,3 +1,4 @@
+import { getVersion } from '@tauri-apps/api/app'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { useSyncExternalStore } from 'react'
 import { inApp } from './engine'
@@ -7,9 +8,11 @@ import {
   afterCheck,
   knownUpdate,
   nextCheckIn,
+  rememberedUpdate,
   shouldAnnounce,
   type Checked,
   type Problem,
+  type UpdateInfo,
   type UpdateState,
 } from './updateModel'
 
@@ -40,10 +43,10 @@ export function useUpdates(): UpdateState {
   )
 }
 
-// What is kept between starts: the quiet checks' switch, when GitHub last answered, and the
-// version the notice was shown for.
+// What is kept between starts: the quiet checks' switch, when GitHub last answered, the version
+// the notice was shown for, and the update found, so its button is back as soon as Venuta starts.
 const KEY = 'venuta.updates'
-type Saved = { auto: boolean; last: number; announced?: string }
+type Saved = { auto: boolean; last: number; announced?: string; found?: UpdateInfo }
 export function savedUpdates(): Saved {
   try {
     return { auto: true, last: 0, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
@@ -77,10 +80,14 @@ export function checkForUpdate(opts: { manual: boolean; anyway?: boolean } = { m
   running = invoke<Checked>('update_check', { anyway: opts.anyway ?? false })
     .then(
       (ok) => {
-        remember({ last: Date.now() })
+        remember({ last: Date.now(), found: ok.status === 'found' ? ok.info : undefined })
         set(afterCheck(before, { ok }, opts.manual))
       },
-      (e) => set(afterCheck(before, { err: asProblem(e) }, opts.manual)),
+      (e) => {
+        const problem = asProblem(e)
+        if (problem.kind === 'up_to_date') remember({ found: undefined })
+        set(afterCheck(before, { err: problem }, opts.manual))
+      },
     )
     .finally(() => {
       running = null
@@ -105,6 +112,7 @@ export async function installUpdate() {
     set({ at: 'found', info })
   } catch (e) {
     const problem = asProblem(e)
+    if (problem.kind === 'up_to_date') remember({ found: undefined })
     set(problem.kind === 'up_to_date' ? { at: 'current', version: info.current } : { at: 'failed', problem, info })
   }
 }
@@ -144,6 +152,15 @@ export function startUpdateChecks(): () => void {
   }
   window.addEventListener('online', online)
   document.addEventListener('visibilitychange', announce)
+  // An update found before is offered at once (the first check confirms it, or takes it away),
+  // even with the quiet checks off or Local only on.
+  void getVersion()
+    .then((running) => {
+      const info = rememberedUpdate(savedUpdates().found, running)
+      if (info && state.at === 'idle') set({ at: 'found', info })
+      else if (!info && savedUpdates().found) remember({ found: undefined })
+    })
+    .catch(() => {})
   schedule(START_DELAY)
   return () => {
     window.clearTimeout(timer)

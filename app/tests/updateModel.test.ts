@@ -8,6 +8,8 @@ import {
   EVERY,
   afterCheck,
   ago,
+  isNewer,
+  rememberedUpdate,
   knownUpdate,
   nextCheckIn,
   shouldAnnounce,
@@ -83,6 +85,24 @@ test('Settings says the state, when it last checked, and what went wrong', () =>
   assert.match(statusLine({ at: 'downloading', info, done: 1, total: 4 }, 0, now, '0.3.1'), /Downloading Venuta 0\.4\.0.*25%/)
   assert.match(statusLine({ at: 'checking', manual: true }, 0, now, '0.3.1'), /Checking/)
   for (const s of [found, { at: 'idle' }, { at: 'installing', info }] as UpdateState[]) assert.doesNotMatch(statusLine(s, now, now, '0.3.1'), /—/)
+})
+
+test('an update found before shows again as soon as Venuta starts, until it is installed', () => {
+  // Found while 0.3.1 ran; Venuta starts again, still 0.3.1: the button is back at once.
+  assert.deepEqual(rememberedUpdate(info, '0.3.1'), info)
+  // The running version is what counts, not the one the update was found from.
+  assert.deepEqual(rememberedUpdate({ ...info, current: '0.3.0' }, '0.3.1'), info)
+  // Installed (or newer already): nothing to offer.
+  assert.equal(rememberedUpdate(info, '0.4.0'), undefined)
+  assert.equal(rememberedUpdate(info, '0.4.2'), undefined)
+  assert.equal(rememberedUpdate(undefined, '0.3.1'), undefined)
+  // Numbers, not letters: 0.10.0 is newer than 0.9.3.
+  assert.deepEqual(rememberedUpdate({ ...info, version: '0.10.0' }, '0.9.3')?.version, '0.10.0')
+  // A pre-release comes before its release.
+  assert.equal(rememberedUpdate({ ...info, version: '0.4.0-beta.1' }, '0.4.0'), undefined)
+  assert.equal(rememberedUpdate({ ...info, version: '0.4.0' }, '0.4.0-beta.1')?.version, '0.4.0')
+  assert.equal(isNewer('1.0.0', '0.99.9'), true)
+  assert.equal(isNewer('0.4.0', '0.4.0'), false)
 })
 
 test('times read plainly', () => {

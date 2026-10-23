@@ -86,6 +86,30 @@ export function nextCheckIn(s: UpdateState): number | null {
   return EVERY
 }
 
+/** Whether version `a` comes after `b` (1.2.10 after 1.2.9; a pre-release before its release). */
+export function isNewer(a: string, b: string): boolean {
+  const parse = (v: string) => {
+    const [main, pre] = v.trim().replace(/^v/, '').split('-', 2)
+    return { nums: main.split('.').map((n) => Number.parseInt(n, 10) || 0), pre: pre ?? '' }
+  }
+  const x = parse(a)
+  const y = parse(b)
+  for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) {
+    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0)
+    if (d) return d > 0
+  }
+  if (x.pre === y.pre) return false
+  if (!x.pre) return true
+  if (!y.pre) return false
+  return x.pre.localeCompare(y.pre, undefined, { numeric: true }) > 0
+}
+
+/** An update found before, offered again at start while the running version is older than it. */
+export function rememberedUpdate(saved: UpdateInfo | undefined, running: string): UpdateInfo | undefined {
+  if (!saved || !isNewer(saved.version, running)) return undefined
+  return { ...saved, current: running }
+}
+
 /** The notice comes once for each version. */
 export function shouldAnnounce(info: UpdateInfo, announced: string | undefined): boolean {
   return info.version !== announced
