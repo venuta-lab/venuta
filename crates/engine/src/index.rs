@@ -3,7 +3,7 @@
 
 use crate::error::{Error, Result};
 use crate::media::{FileKind, MediaFacts};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -330,26 +330,26 @@ impl Index {
         Ok(())
     }
 
+    /// Bind the index to its library root, or check it is the one it was bound to. Several openers
+    /// at once (the first time a library is read) each try to bind it: the first write wins and
+    /// the rest keep it (`ON CONFLICT DO NOTHING`), so all of them read the same root back.
     fn bind_root(&mut self, root: &str) -> Result<()> {
-        let existing: Option<String> = self
-            .conn
-            .query_row("SELECT value FROM meta WHERE key = 'root'", [], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        match existing {
-            Some(indexed) if indexed != root => Err(Error::RootMismatch {
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('root', ?1) ON CONFLICT(key) DO NOTHING",
+            params![root],
+        )?;
+        let indexed: String =
+            self.conn
+                .query_row("SELECT value FROM meta WHERE key = 'root'", [], |r| {
+                    r.get(0)
+                })?;
+        if indexed == root {
+            Ok(())
+        } else {
+            Err(Error::RootMismatch {
                 indexed,
                 requested: root.to_owned(),
-            }),
-            Some(_) => Ok(()),
-            None => {
-                self.conn.execute(
-                    "INSERT INTO meta (key, value) VALUES ('root', ?1)",
-                    params![root],
-                )?;
-                Ok(())
-            }
+            })
         }
     }
 
