@@ -360,8 +360,34 @@ impl World {
         i
     }
 
+    /// A guest who chose `mode` joins now over these ways; runs until in.
+    pub fn join_as(&mut self, name: &str, up: Way, down: Way, mode: ListenMode) -> usize {
+        let i = self.arrive(name, up, down, mode);
+        assert!(
+            self.run_until(|w| w.people[i].guest().stage() == Stage::In, 5_000),
+            "{name} in"
+        );
+        i
+    }
+
     /// A guest connects and knocks (as `mode`), not waited for.
     pub fn arrive(&mut self, name: &str, up: Way, down: Way, mode: ListenMode) -> usize {
+        self.arrive_with(name, up, down, mode, Some(mode))
+    }
+
+    /// A guest who chose nothing before joining connects and knocks: the network decides (A16).
+    pub fn arrive_by_network(&mut self, name: &str, up: Way, down: Way) -> usize {
+        self.arrive_with(name, up, down, ListenMode::Apart, None)
+    }
+
+    fn arrive_with(
+        &mut self,
+        name: &str,
+        up: Way,
+        down: Way,
+        mode: ListenMode,
+        chosen: Option<ListenMode>,
+    ) -> usize {
         let i = self.people.len();
         let gc = computer(&self.base, i);
         let t = self.net.peer(gc.clone());
@@ -391,7 +417,7 @@ impl World {
                 proof: together::invite::proof(SECRET, &key),
                 app: "Venuta test".into(),
                 host_name: "Asha".into(),
-                mode: Some(mode),
+                mode: chosen,
             },
         );
         self.net.connect(&t, &self.people[0].t, up, down);
@@ -495,6 +521,21 @@ impl World {
             self.run_until(
                 |w| w.room().anchor().is_some_and(|a| a.playing)
                     && w.people.iter().all(|p| !p.commits().is_empty()),
+                4_000
+            ),
+            "started"
+        );
+        self.room().anchor().unwrap()
+    }
+
+    /// The room starts from the first song with remotes in it (who play nothing): the room and
+    /// the host's player.
+    pub fn start_with_remotes(&mut self) -> Anchor {
+        self.host_ask(Action::Play);
+        assert!(
+            self.run_until(
+                |w| w.room().phase() == together::proto::v3::Phase::Playing
+                    && !w.people[0].commits().is_empty(),
                 4_000
             ),
             "started"

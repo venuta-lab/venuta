@@ -20,8 +20,8 @@ use crate::conductor::Conductor;
 use crate::measure::Shelf;
 use crate::proto::Song;
 use crate::proto::v3::{
-    self, Action, Advice, CopyReport, Member, Phase as WirePhase, RoomView as WireRoom, ToGuest,
-    ToHost, check_to_guest, check_to_host,
+    self, Action, Advice, CopyReport, Lyrics, Member, Phase as WirePhase, RoomView as WireRoom,
+    ToGuest, ToHost, check_to_guest, check_to_host,
 };
 use crate::room::v2::{Changes, HOST, HostNote, Knock, Room};
 use crate::room_player::{ListenMode, SubState, Suspension};
@@ -194,7 +194,16 @@ pub struct HostSession<I> {
     allowed: Arc<Mutex<Allowed>>,
     /// The references of the room's songs (WP11), served on the `env:` stream.
     envelopes: Option<Shelf>,
+    /// The words of the host's own songs, for remotes (WP18), and the song each was sent last.
+    lyrics: Option<Box<dyn HostLyrics>>,
+    lyrics_sent: HashMap<u32, String>,
     now_ns: u64,
+}
+
+/// The words of the host's own songs (the app reads its files' `.lrc` or tags on a thread of
+/// its own). Never blocks: `None` while looking, `Some(None)` when the song has none.
+pub trait HostLyrics: Send {
+    fn of(&mut self, song: &Song) -> Option<Option<Lyrics>>;
 }
 
 impl<I: Clone + Send + 'static> HostSession<I> {
@@ -235,6 +244,8 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             waking: false,
             allowed: Arc::default(),
             envelopes: None,
+            lyrics: None,
+            lyrics_sent: HashMap::new(),
             now_ns,
         };
         s.update_allowed();
@@ -246,6 +257,25 @@ impl<I: Clone + Send + 'static> HostSession<I> {
     pub fn with_envelopes(mut self, shelf: Shelf) -> Self {
         self.envelopes = Some(shelf);
         self
+    }
+
+    /// Send remotes the words of the host's own songs as they play (WP18): a catalog song's words
+    /// the remote's window finds itself; a song only the host has, only the host has them.
+    pub fn with_lyrics(mut self, lyrics: Box<dyn HostLyrics>) -> Self {
+        self.set_lyrics(lyrics);
+        self
+    }
+
+    pub fn set_lyrics(&mut self, lyrics: Box<dyn HostLyrics>) {
+        self.lyrics = Some(lyrics);
+    }
+
+    /// The host's speaker's volume as its player has it now (B17: remotes allowed to change it
+    /// see it).
+    pub fn set_volume(&mut self, percent: Option<u8>) {
+        let now = self.now_us();
+        let c = self.room.set_volume(percent, now);
+        self.apply(c);
     }
 
     /// The room's time now (µs of the host's clock).
@@ -433,6 +463,9 @@ impl<I: Clone + Send + 'static> HostSession<I> {
     }
 
     fn conductor_step(&mut self, now_ns: u64) {
+        // One speaker: while every other member is a remote, the host's player leads (no rate
+        // change, ever) and the room follows where it is heard (4.13).
+        self.conductor.set_lead(self.room.host_leads());
         self.conductor.step(now_ns);
         for m in self.conductor.take_out() {
             let now = self.now_us();
@@ -444,6 +477,55 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             let now = self.now_us();
             let c = self.room.set_length(entry, len, now);
             self.apply(c);
+        }
+        if let Some(heard) = self.conductor.status().and_then(|s| s.heard) {
+            let now = self.now_us();
+            let c = self.room.heard_host(heard, now);
+            self.apply(c);
+        }
+        self.send_lyrics();
+    }
+
+    /// The words of the song playing, when only the host has it, to each remote once.
+    fn send_lyrics(&mut self) {
+        let Some(src) = self.lyrics.as_mut() else {
+            return;
+        };
+        let Some(a) = self.room.anchor() else {
+            return;
+        };
+        let Some(song) = self
+            .room
+            .queue()
+            .iter()
+            .find(|e| e.id == a.entry)
+            .map(|e| e.song.clone())
+            .filter(|s| s.host_file)
+        else {
+            return;
+        };
+        let want: Vec<(u32, PeerId)> = self
+            .peer_of
+            .iter()
+            .filter(|(id, _)| self.room.mode_of(**id) == Some(ListenMode::OneSpeaker))
+            .filter(|(id, _)| self.lyrics_sent.get(id) != Some(&song.key))
+            .map(|(id, p)| (*id, *p))
+            .collect();
+        if want.is_empty() {
+            return;
+        }
+        let Some(found) = src.of(&song) else {
+            return;
+        };
+        for (id, p) in want {
+            if let Some(l) = &found {
+                let m = ToGuest::Lyrics {
+                    key: song.key.clone(),
+                    lyrics: l.clone(),
+                };
+                let _ = self.t.send(p, ControlMsg::of(&m));
+            }
+            self.lyrics_sent.insert(id, song.key.clone());
         }
     }
 
@@ -610,6 +692,7 @@ impl<I: Clone + Send + 'static> HostSession<I> {
         }
         for id in c.gone {
             self.slow.remove(&id);
+            self.lyrics_sent.remove(&id);
             if let Some(p) = self.peer_of.remove(&id) {
                 self.member_of.remove(&p);
                 self.closing.push((p, now_ns + CLOSE_AFTER_NS));
@@ -650,6 +733,7 @@ impl<I: Clone + Send + 'static> HostSession<I> {
             why: None,
             host_away: false,
             copy: None,
+            lyrics: None,
             extras,
         })
     }
@@ -704,6 +788,8 @@ pub struct GuestSession<I> {
     last_queue: Option<u32>,
     /// How they listen was settled at the first welcome.
     settled: bool,
+    /// The words of songs only the host has, as it sent them (the last few).
+    lyrics: Vec<(String, Lyrics)>,
     now_ns: u64,
 }
 
@@ -746,6 +832,7 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             close_at: None,
             last_queue: None,
             settled: false,
+            lyrics: Vec::new(),
             now_ns,
         };
         if let Some(m) = g.cfg.mode
@@ -986,12 +1073,14 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             ToGuest::Waiting => self.stage = Stage::AtTheDoor,
             ToGuest::Welcome { .. } => {
                 if !self.settled {
-                    // Not chosen before joining: one speaker first on the host's network (D15).
                     self.settled = true;
-                    if self.cfg.mode.is_none()
-                        && !self.conductor.chosen()
-                        && same_network(self.path())
-                    {
+                    if self.conductor.chosen() || self.conductor.mode() != ListenMode::Apart {
+                        // Chosen before coming in (said while knocking, which goes unsent, or
+                        // the mode it came with): said now that the room hears it.
+                        let m = self.conductor.mode();
+                        self.conductor.set_mode(m);
+                    } else if self.cfg.mode.is_none() && same_network(self.path()) {
+                        // Not chosen: one speaker first on the host's network (A16, D15).
                         self.conductor.set_mode(ListenMode::OneSpeaker);
                     }
                 }
@@ -1008,6 +1097,14 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
                 return;
             }
             ToGuest::Commit { .. } | ToGuest::Hold { .. } => self.pressing = None,
+            ToGuest::Lyrics { key, lyrics } => {
+                self.lyrics.retain(|(k, _)| k != key);
+                self.lyrics.push((key.clone(), lyrics.clone()));
+                if self.lyrics.len() > 3 {
+                    self.lyrics.remove(0);
+                }
+                return;
+            }
             _ => {}
         }
         self.conductor.message(&m, now_ns);
@@ -1027,6 +1124,24 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
                 self.notes.push(too_late(&h.action));
             }
         }
+    }
+
+    /// The words of the song playing, when the host sent them.
+    fn lyrics_now(&self) -> Option<view::RoomLyrics> {
+        let a = self.conductor.anchor()?;
+        let key = &self
+            .conductor
+            .queue()
+            .iter()
+            .find(|e| e.id == a.entry)?
+            .song
+            .key;
+        let (_, l) = self.lyrics.iter().find(|(k, _)| k == key)?;
+        Some(view::RoomLyrics {
+            key: key.clone(),
+            lines: l.lines.clone(),
+            text: l.text.clone(),
+        })
     }
 
     /// The window's view of this room (see [`window`]).
@@ -1061,6 +1176,7 @@ impl<I: Clone + Send + 'static> GuestSession<I> {
             why: self.why.clone(),
             host_away: self.stage == Stage::Reconnecting,
             copy: self.conductor.copy(),
+            lyrics: self.lyrics_now(),
             extras,
         })
     }
@@ -1121,6 +1237,8 @@ struct Window<'a> {
     host_away: bool,
     /// Your copy of the song playing (a guest's).
     copy: Option<CopyReport>,
+    /// The words of the song playing, when the host sent them (a remote's).
+    lyrics: Option<view::RoomLyrics>,
     extras: &'a WindowExtras,
 }
 
@@ -1234,7 +1352,9 @@ fn window(w: Window<'_>) -> View {
             .collect(),
         auto_roles: r.settings.auto_roles,
         guests_volume: r.settings.guests_volume,
-        volume: x.volume,
+        // The host's own, or the room's word of it (a remote allowed to change it, B17).
+        volume: x.volume.or(r.volume),
+        lyrics: w.lyrics.clone(),
     });
     let in_room = matches!(
         w.state,

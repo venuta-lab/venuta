@@ -167,6 +167,8 @@ pub struct Conductor<I> {
     length: Option<(EntryId, i64)>,
     length_told: Option<(EntryId, i64)>,
     status: Option<RoomPlayStatus>,
+    /// The room follows this player (a one-speaker host, WP18).
+    lead: bool,
     /// This computer's time at the last message or step, ns.
     now_ns: u64,
 }
@@ -222,6 +224,7 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             length: None,
             length_told: None,
             status: None,
+            lead: false,
             now_ns: 0,
         }
     }
@@ -365,7 +368,8 @@ impl<I: Clone + Send + 'static> Conductor<I> {
                 Advice::StartWithNext => self.start_with_next(),
             },
             ToGuest::Refused { .. } | ToGuest::Ended { .. } => self.end(),
-            ToGuest::HandOver { .. } => {}
+            // Words for the window (the session keeps them); hand-over is WP20's.
+            ToGuest::Lyrics { .. } | ToGuest::HandOver { .. } => {}
         }
     }
 
@@ -940,6 +944,21 @@ impl<I: Clone + Send + 'static> Conductor<I> {
             }
             self.handle = Some(h);
         }
+    }
+
+    /// The room follows this player (the host's, while every other member is a remote: one
+    /// speaker, 4.13): no controller and no rate change, its heard place re-anchors the room.
+    pub fn set_lead(&mut self, on: bool) {
+        if self.lead != on {
+            self.lead = on;
+            if let Some(h) = &self.handle {
+                h.lead(on);
+            }
+        }
+    }
+
+    pub fn leads(&self) -> bool {
+        self.lead
     }
 
     /// Pause just for me (B16).
