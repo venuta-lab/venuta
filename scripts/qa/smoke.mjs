@@ -566,25 +566,23 @@ if (want('lyrics')) {
     return `Devanagari lines get "Bhigi-bhigi sadkon…" under them; ${note || 'no note'}; T switches it`
   })
 
-  await check('New 0.4.0', 'Translation in Now Playing > Lyrics (no online engine)', async () => {
+  // Venuta makes no translations of its own for now (MAKE_TRANSLATIONS in lib/translationEngine.ts):
+  // a song shows Translation only when its lyrics come with one in your language. Sanam Re's don't.
+  await check('New 0.4.0', 'Translation only where the lyrics carry one (none made here)', async () => {
     await press('Open Now Playing')
     await until(`document.querySelector('section[aria-label="Now Playing"]')`)
     await press('Lyrics', 'section[aria-label="Now Playing"]')
     need(await until(`document.querySelector('[aria-label="Under each line"]')`, 5000), 'no switches')
-    const pressed = () => run(`return [...document.querySelectorAll('[aria-label="Under each line"] button')].find((b) => b.textContent.trim() === 'Translation')?.getAttribute('aria-pressed')`)
-    if ((await pressed()) === 'true') await press('Translation', '[aria-label="Under each line"]')
-    await press('Translation', '[aria-label="Under each line"]')
-    await sleep(1500)
-    const p = await pressed()
-    const note = await run(`return document.querySelector('[aria-label="Under each line"]').parentElement.innerText.split('\\n').slice(2).join(' ')`)
-    const asks = await run(`return [...document.querySelector('[aria-label="Under each line"]').parentElement.querySelectorAll('button')].map((b) => b.textContent.trim()).filter((x) => !['Pronunciation', 'Translation'].includes(x))`)
-    await press('Translation', '[aria-label="Under each line"]')
+    const switches = await run(`return [...document.querySelectorAll('[aria-label="Under each line"] button')].map((b) => b.textContent.trim())`)
+    const words = await run(`return document.querySelector('[aria-label="Under each line"]').parentElement.innerText`)
     await esc()
-    need(p === 'true', 'Translation did not switch on')
-    need(note.length > 10, 'Translation on says nothing about where a translation comes from')
-    return `on: "${note.slice(0, 160)}"${asks.length ? `; offers ${asks.join(', ')} (not pressed)` : ''}; switched off again`
+    need(switches.includes('Pronunciation'), 'Pronunciation is gone too')
+    need(!switches.includes('Translation'), 'Translation is offered for a song whose lyrics carry none')
+    need(!/DeepL|Microsoft|Google|Claude|your key|on this PC/i.test(words), 'the lyrics still talk about engines or keys: ' + words.slice(0, 120))
+    const settings = await settingsPage('Lyrics')
+    need(!/Translate with|Translation models|French to English/.test(settings), 'Settings still shows the translation engine')
+    return `switches: ${switches.join(', ')}; no engine or key words in the lyrics or in Settings`
   })
-  person('New 0.4.0', 'Translation made on this PC or by DeepL/Microsoft/Google/Claude', 'needs a model download or a key and the network: not done from a test run')
 }
 
 // ===============================================================================================
@@ -1386,9 +1384,9 @@ if (want('settings') && !stopped) {
   await check('Settings', 'Lyrics: sources, big screen, desktop lyrics', async () => {
     const m = await settingsPage('Lyrics')
     const sources = await run(`return document.querySelectorAll('main [role=switch]').length`)
-    const miss = ['Under each line', 'Translation', 'Sources, in the order they are asked', 'Lyrics windows', 'Big screen', 'Desktop lyrics'].filter((w) => !m.includes(w))
+    const miss = ['Under each line', 'Translation, at first', 'Sources, in the order they are asked', 'Lyrics windows', 'Big screen', 'Desktop lyrics'].filter((w) => !m.includes(w))
     need(!miss.length, 'Lyrics lacks ' + miss.join(', '))
-    return `${sources} switches; sources in order, under each line, translation engine, lyrics windows`
+    return `${sources} switches; under each line, sources in order, lyrics windows; no translation engine while Venuta makes none`
   })
 
   await check('Settings', 'Library: folders, detail sources and keys, backup, rules', async () => {

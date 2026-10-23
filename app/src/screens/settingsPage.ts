@@ -61,7 +61,7 @@ export const SETTINGS_FOUND: [SettingsPage, string, string][] = [
   ['playback', 'Stream quality', 'online quality bitrate'],
   ['lyrics', 'Lyrics', 'lyrics'],
   ['lyrics', 'Pronunciation under lyrics', 'english letters roman romanisation romanization transliteration hinglish'],
-  ['lyrics', 'Translation of lyrics', 'translate translation language deepl microsoft google claude key'],
+  ['lyrics', 'Translation of lyrics', 'translate translation language meaning'],
   ['lyrics', 'Lyrics sources', 'lrclib netease musixmatch sources order'],
   ['lyrics', 'Big screen and desktop lyrics', 'big screen desktop lyrics window tv'],
   ['library', 'Library', 'folders music folder where details come from musicbrainz backup rules'],

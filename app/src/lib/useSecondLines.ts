@@ -13,7 +13,7 @@ import { choiceFor, readerLang, setSecondLine, systemLang, useSecondChoices } fr
 import { noteWords, offered, reservedRows, rowsFor, secondProgress, sourcesOf, type SecondKind, type SecondSwitches } from './secondLines'
 import type { SecondRowView } from '../components/lyrics/LyricText'
 import { pressTranslate, runKey, startRun, translateSong, translationStatus, useRun, useTranslationKeys, useTranslationModels, type TranslationStatus } from './translation'
-import { engineArg, isKeyed, useEngineChoice } from './translationEngine'
+import { MAKE_TRANSLATIONS, engineArg, isKeyed, useEngineChoice } from './translationEngine'
 
 export interface SecondLinesView {
   /** The song's lyrics key (corrections are kept by it). */
@@ -61,9 +61,10 @@ export function useSecondLines(song: QueueItem | null | undefined, lyrics: Lyric
   const view = useMemo((): SecondLinesView => {
     const can = offered(model, reader)
     const carried = reservedRows(model, { roman: true, translation: true }, reader).translation
-    // Translation is offered for every song in another language: when nothing can translate it
-    // here, the note under the switches says why and what can.
-    const offers = { roman: can.roman, translation: carried || can.translation }
+    // Translation is offered when the lyrics carry one in your language; while Venuta makes
+    // translations itself, for every song in another language (when nothing can translate it
+    // here, the note under the switches says why and what can).
+    const offers = { roman: can.roman, translation: carried || (MAKE_TRANSLATIONS && can.translation) }
     const on = { roman: offers.roman && choice.roman, translation: offers.translation && choice.translation }
     const rows = model ? reservedRows(model, on, reader) : NONE
     const src = sourcesOf(model, rows, reader)

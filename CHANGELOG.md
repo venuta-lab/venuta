@@ -9,6 +9,9 @@
   "bluetooth" or "translation"); Lyrics opens on what shows under each line, with translation in
   one group; the online catalog's state has its name beside it; Exclusive is a switch like the
   others.
+- **Translation shows where the lyrics come with one**, in your language, as Apple Music does.
+  Translating songs on this PC or with your own key is set aside until it works well for
+  everyone without a key: Pronunciation stays for every song.
 - **Fixed**: an update found before is back in the title bar the moment Venuta starts, instead
   of after its first check, and also with the quiet checks off or Local only on.
 

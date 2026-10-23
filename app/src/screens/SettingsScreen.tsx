@@ -32,6 +32,7 @@ import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
 import { SETTINGS_PAGE_NAMES, onSettingsSection, peekSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
 import { ActivityPage } from './ActivityScreen'
+import { MAKE_TRANSLATIONS } from '../lib/translationEngine'
 import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
 import { PlaybackSettings } from './settings/PlaybackSettings'
 import { LyricWindowsSettings } from './settings/LyricWindowsSettings'
@@ -209,11 +210,13 @@ function AboutPage(props: { onShortcuts: () => void }) {
           OpenCC's character tables (Apache-2.0), pinyin_pro (MIT), a port of koroman (MIT), and lindera (MIT) with the IPADIC
           dictionary (under its NAIST notice), fetched the first time a Japanese song needs it.
         </p>
-        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
-          Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
-          with fxtranslate (MPL-2.0); nothing you play or read is sent anywhere. Translation with your own key sends a
-          song's lyrics to the service you chose (DeepL, Microsoft, Google or Anthropic) only when you translate.
-        </p>
+        {MAKE_TRANSLATIONS && (
+          <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+            Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
+            with fxtranslate (MPL-2.0); nothing you play or read is sent anywhere. Translation with your own key sends a
+            song's lyrics to the service you chose (DeepL, Microsoft, Google or Anthropic) only when you translate.
+          </p>
+        )}
       </div>
     </div>
   )

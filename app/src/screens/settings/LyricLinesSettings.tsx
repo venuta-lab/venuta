@@ -3,7 +3,7 @@ import { Switch } from '../../components/ui'
 import { langBase } from '../../lib/lyricsModel'
 import { readerLang, secondChoices, setSecondChoices, systemLang, useSecondChoices } from '../../lib/secondChoice'
 import { downloadModel, forgetKey, languageName, openEnginePage, removeModel, saveKey, sizeWords, testKey, useTranslationKeys, useTranslationModels, type KeyState } from '../../lib/translation'
-import { DEFAULT_MODEL, ENGINE_IDS, ENGINES, engineChoice, isKeyed, setEngineChoice, useEngineChoice, type EngineChoice, type EngineId, type KeyedId } from '../../lib/translationEngine'
+import { DEFAULT_MODEL, MAKE_TRANSLATIONS, ENGINE_IDS, ENGINES, engineChoice, isKeyed, setEngineChoice, useEngineChoice, type EngineChoice, type EngineId, type KeyedId } from '../../lib/translationEngine'
 import { Group, Row } from './parts'
 
 /*
@@ -27,7 +27,7 @@ export function LyricLinesSettings() {
     <>
       <Group
         title="Under each line"
-        line="Pronunciation shows a song's words in English letters under each line, for songs in another script. Translation shows what each line means. Both are on every lyrics view (T and Shift+T on the big screen), and each song language keeps its own choice once you switch them."
+        line={`Pronunciation shows a song's words in English letters under each line, for songs in another script. Translation shows what each line means${MAKE_TRANSLATIONS ? '' : ', when the lyrics come with one in your language'}. Both are on every lyrics view (T and Shift+T on the big screen), and each song language keeps its own choice once you switch them.`}
       >
         <Row title="Pronunciation, at first" hint="For a song language you haven't switched yet. Made on this PC when the lyrics don't carry one.">
           <Switch on={c.defaults.roman} onChange={(on) => set({ defaults: { ...c.defaults, roman: on } })} label="Pronunciation at first" />
@@ -53,7 +53,7 @@ export function LyricLinesSettings() {
           </Row>
         )}
       </Group>
-      <Translation into={readerLang(c, system)} />
+      {MAKE_TRANSLATIONS && <Translation into={readerLang(c, system)} />}
     </>
   )
 }

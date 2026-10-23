@@ -7,6 +7,14 @@
 
 import { useEffect, useState } from 'react'
 
+/**
+ * Whether Venuta makes translations itself (on this PC, or with your own key). Off until it can
+ * translate well for everyone without a key of their own: on this PC it is reliable for Spanish
+ * and French only, and a key is a step most people won't take. While off, a translation shows
+ * only when the lyrics come with one in your language, and nothing about engines or keys shows.
+ */
+export const MAKE_TRANSLATIONS = false
+
 export type EngineId = 'device' | 'deepl' | 'microsoft' | 'google' | 'llm'
 export type KeyedId = Exclude<EngineId, 'device'>
 
