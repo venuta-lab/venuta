@@ -16,7 +16,7 @@ import { blockArtist, dislike, startRadio } from '../../lib/radio'
 import { LikeButton } from '../LikeButton'
 import { menuFromEvent } from '../../lib/menu'
 import { findOnlineArtist } from '../../screens/listen/onlineSearch'
-import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconShare, IconTiming } from '../Icons'
+import { IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconShare, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
 import { useLyricColour } from '../lyrics/useNowLyrics'
 
@@ -26,6 +26,9 @@ const spring = { type: 'spring', stiffness: 420, damping: 32 } as const
  * A round icon button with its name (and key) shown under it on hover or focus, in the app's
  * glass. `on`: lit like a chosen tab (a view that's showing).
  */
+/** The raised surface the song's actions sit on. */
+const ROW_SURFACE = 'seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]'
+
 function IconAction(props: {
   label: string
   keys?: string
@@ -315,9 +318,13 @@ export function SongActions(props: {
         </button>
       )}
       {props.from}
+      {/* The heart on its own (what you think of the song, read at a glance), on the same surface
+          as the things you do with it: the same three for every song, so the row never moves. */}
       <div className="mt-4 flex items-center justify-center gap-3">
-        <LikeButton root={props.root} item={song} size={20} />
-        <div className="seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
+        <div className={ROW_SURFACE}>
+          <LikeButton root={props.root} item={song} size={18} />
+        </div>
+        <div className={ROW_SURFACE}>
           <IconAction label="Add to playlist" onClick={() => askAddSongs([songItemOf(song)], song.title)}>
             <IconPlaylistAdd width={18} height={18} />
           </IconAction>
@@ -325,11 +332,6 @@ export function SongActions(props: {
           <IconAction label="Share" onClick={() => void shareSong(song)}>
             <IconShare width={18} height={18} />
           </IconAction>
-          {!remote && (
-            <IconAction label="Go to album" onClick={() => props.onAlbum(song.dir)}>
-              <IconAlbum width={18} height={18} />
-            </IconAction>
-          )}
           <IconAction label="More" onClick={(e) => menuFromEvent(e, moreMenu)}>
             <IconMore width={18} height={18} />
           </IconAction>

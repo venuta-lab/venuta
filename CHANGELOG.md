@@ -9,6 +9,9 @@
   Playing; songs, albums, artists and playlists share from their menus. Share copies the link at
   once, and More ways opens Windows' share panel (WhatsApp, Mail, Phone Link, Nearby Share) and a
   QR code to scan with a phone.
+- **Now Playing's buttons, steadier.** The heart sits on its own, on the same surface as Add to
+  playlist, Share and More, and every song has the same row (Go to album is the album's name
+  above, and in More).
 
 ## 0.4.1 (2026-10-23)
 
