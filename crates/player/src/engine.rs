@@ -357,6 +357,8 @@ pub struct Player<T> {
     /// An engine on a test's simulated clock: dropping the player moves that clock until the
     /// engine has quit.
     sim: Option<SimClock>,
+    /// Engine 2's downloads, shared by every source of a song.
+    streams: Option<Arc<Streams>>,
 }
 
 impl<T: Item + Serialize> Player<T> {
@@ -395,6 +397,7 @@ impl<T: Item + Serialize> Player<T> {
                     thread: Some(thread),
                     kind,
                     sim: None,
+                    streams: None,
                 }
             }
             EngineKind::Two => {
@@ -410,6 +413,7 @@ impl<T: Item + Serialize> Player<T> {
                     thread: Some(spawned.thread),
                     kind,
                     sim,
+                    streams: Some(spawned.streams),
                 }
             }
         }
@@ -425,6 +429,13 @@ impl<T: Item + Serialize> Player<T> {
             }
             (None, None) => {}
         }
+    }
+
+    /// Engine 2's shared downloads (`None` on engine 1): a source of a song opened on them
+    /// reads the bytes its voices read, so measuring a stream's copy (the room's alignment)
+    /// never downloads it twice.
+    pub fn streams(&self) -> Option<Arc<Streams>> {
+        self.streams.clone()
     }
 
     /// Whether the player thread is still running (it ends only on Quit, or a panic).

@@ -969,6 +969,11 @@ pub(crate) enum RoomMsg<T> {
     Rejoin,
     Suspend(Suspension),
     Resume,
+    Refine {
+        entry: EntryId,
+        align: Alignment,
+    },
+    Lead(bool),
     Detach,
 }
 
@@ -1073,6 +1078,12 @@ impl<T: Send> RoomHandle<T> for RoomLink<T> {
     fn resume(&self) {
         let _ = self.tx.send(Msg::Room(RoomMsg::Resume));
     }
+    fn refine(&self, entry: EntryId, align: Alignment) {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Refine { entry, align }));
+    }
+    fn lead(&self, on: bool) {
+        let _ = self.tx.send(Msg::Room(RoomMsg::Lead(on)));
+    }
     fn status(&self) -> RoomPlayStatus {
         *self.status.lock().unwrap_or_else(|p| p.into_inner())
     }
@@ -1125,6 +1136,8 @@ const ARM_AHEAD_MS: u32 = 1_000;
 const EXACT_JOIN_MS: u32 = 5;
 /// A longer copy fades out over this, ending at the boundary, ms.
 const END_FADE_MS: u32 = 150;
+/// A refined offset moves by rate when it moves at most this far (WP11), µs.
+const REFINE_GLIDE_US: i64 = 20_000;
 /// A seek or realign crossfade, a skip's fade-out, ms.
 const CROSSFADE_MS: u32 = 40;
 const SKIP_FADE_MS: u32 = 30;
@@ -1226,6 +1239,9 @@ pub(super) struct RoomProgram<T> {
     over_since: Option<u64>,
     /// The host's music taken in place: nothing acts on it until the room's first anchor.
     adopted: bool,
+    /// The room follows this player (a one-speaker host, WP18): no controller, no rate, the
+    /// next joined at the copy's own end.
+    lead: bool,
     ctl: Controller,
     dac: DacRate,
     epoch: Option<u32>,
@@ -1302,6 +1318,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             cant_hold: false,
             over_since: None,
             adopted: false,
+            lead: false,
             ctl: Controller::default(),
             dac: DacRate::default(),
             epoch: None,
@@ -1472,6 +1489,18 @@ impl<T: Item + Serialize> RoomProgram<T> {
                     // re-arms within 3 s of a boundary).
                     return;
                 }
+                if let Some(a) = self.armed.as_mut().filter(|a| {
+                    a.rs.entry == entry
+                        && (a.rs.offset_us - align.offset_us).abs() <= REFINE_GLIDE_US
+                }) {
+                    // The same entry armed again (a new anchor moved its boundary, WP18): its
+                    // voice is kept, decoded ahead as it is.
+                    a.boundary_us = boundary_host_us;
+                    a.transition = transition;
+                    a.rs.offset_us = align.offset_us;
+                    a.rs.class = align.class;
+                    return;
+                }
                 self.drop_armed(deck);
                 let hint = self.rate_hint(entry);
                 let rs = Self::open(
@@ -1548,7 +1577,63 @@ impl<T: Item + Serialize> RoomProgram<T> {
                     self.way_back(deck, ENTRANCE_MS, None);
                 }
             }
+            RoomMsg::Refine { entry, align } => self.refine(entry, align),
+            RoomMsg::Lead(on) => {
+                if self.lead != on {
+                    self.lead = on;
+                    let now = deck.now_ns();
+                    if on {
+                        // Nothing measured or corrected from now: the room follows this one.
+                        self.realign_since = None;
+                        if matches!(
+                            self.spare,
+                            Some(Spare {
+                                what: Use::Realign { .. },
+                                ..
+                            })
+                        ) {
+                            self.drop_spare(deck);
+                        }
+                        self.over_since = None;
+                        self.ctl.freeze();
+                    } else {
+                        self.ctl.settle(now, now);
+                    }
+                }
+            }
             RoomMsg::Attach { .. } | RoomMsg::Detach => {}
+        }
+    }
+
+    /// My copy of `entry` lines up as `align` from now on (WP11). A change of offset within a
+    /// glide moves every voice of the song and the controller's filtered error with it, so the
+    /// proportional part takes it up by rate (no realign: the line is 50 ms or more) and the
+    /// integral learns nothing from it; a larger one is kept for the next voice of the song
+    /// (a way back in), never jumped to. The class changes the controller's column at once.
+    fn refine(&mut self, entry: EntryId, align: Alignment) {
+        let glides = |from: i64| (align.offset_us - from).abs() <= REFINE_GLIDE_US;
+        if let Some(p) = self.playing.as_mut().filter(|p| p.entry == entry) {
+            if glides(p.offset_us) {
+                let d = align.offset_us - p.offset_us;
+                p.offset_us = align.offset_us;
+                // The error (my place less the offset, against the room's) moves by -d.
+                self.ctl.shift(-(d as f64) / 1_000.0);
+            }
+            p.class = align.class;
+        }
+        let others = [
+            self.armed.as_mut().map(|a| &mut a.rs),
+            self.spare.as_mut().map(|s| &mut s.rs),
+        ];
+        for rs in others.into_iter().flatten().filter(|rs| rs.entry == entry) {
+            if glides(rs.offset_us) {
+                rs.offset_us = align.offset_us;
+            }
+            rs.class = align.class;
+        }
+        if let Some(k) = self.known.as_mut().filter(|k| k.0 == entry) {
+            k.2 = align.offset_us;
+            k.3 = align.class;
         }
     }
 
@@ -1603,8 +1688,29 @@ impl<T: Item + Serialize> RoomProgram<T> {
         }
     }
 
+    /// Whether `a` holds the song playing at its very end (the end of the queue).
+    fn at_its_end(&self, a: &Anchor) -> bool {
+        let Some(p) = self.playing.as_ref().filter(|p| p.entry == a.entry) else {
+            return false;
+        };
+        let s = p.song.lane.status();
+        let len = s.format.as_ref().and_then(|f| {
+            let frames = s
+                .frames
+                .or((s.phase == Phase::Ended).then_some(s.decoded_to))?;
+            Some(us_of(frames as f64, f.rate))
+        });
+        len.is_some_and(|len| (a.content_us + p.offset_us) as f64 >= len - 1_000.0)
+    }
+
     /// A scheduled pause: fade out from the frame heard at `a.host_us`, then hold.
     fn hold(&mut self, a: Anchor, deck: &mut Deck) {
+        if self.lead && self.at_its_end(&a) {
+            // Leading, the room's end of the queue is this copy's own end: it ends as solo
+            // playback does, never faded short.
+            self.commit = None;
+            return;
+        }
         self.commit = None;
         self.realign_since = None;
         if !matches!(
@@ -1788,10 +1894,21 @@ impl<T: Item + Serialize> RoomProgram<T> {
         if self.playing.as_ref().is_some_and(|p| p.entry != a.entry) {
             return;
         }
+        let sounding = self
+            .playing
+            .as_ref()
+            .is_some_and(|p| p.song.state == State::Sounding);
+        let end = if sounding { self.end_frame(deck) } else { None };
         // My copy starts at my content for the room's 0: its offset (a later frame when the
-        // offset is negative).
+        // offset is negative). Leading (one speaker), the boundary is this copy's own end, as
+        // solo: the room follows this player, not the other way.
         let late_start = (-n.rs.offset_us).max(0);
-        let Some(f_b) = self.frame_for(deck, n.boundary_us + late_start) else {
+        let own = match (self.lead, end, n.transition) {
+            (true, Some(e), Transition::Crossfade { ms }) => Some(e.saturating_sub(deck.ms(ms))),
+            (true, Some(e), _) => Some(e),
+            _ => None,
+        };
+        let Some(f_b) = own.or_else(|| self.frame_for(deck, n.boundary_us + late_start)) else {
             return;
         };
         let now_f = deck.frames();
@@ -1809,11 +1926,6 @@ impl<T: Item + Serialize> RoomProgram<T> {
             return;
         }
         let start = lane.start().unwrap_or(0);
-        let sounding = self
-            .playing
-            .as_ref()
-            .is_some_and(|p| p.song.state == State::Sounding);
-        let end = if sounding { self.end_frame(deck) } else { None };
         let exact = self
             .playing
             .as_ref()
@@ -2073,6 +2185,12 @@ impl<T: Item + Serialize> RoomProgram<T> {
         }
         if self.adopted {
             // The host's music, untouched until the room's first anchor.
+            return;
+        }
+        if self.lead {
+            // The room follows this player (one speaker): no rate, ever; its output is the
+            // solo path's. Where it is heard goes to the room for re-anchoring.
+            deck.set_trim(0.0);
             return;
         }
         let anchor = self

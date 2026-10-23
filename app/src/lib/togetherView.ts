@@ -95,6 +95,15 @@ export interface RoomViewV2 {
   guests_volume: boolean
   /** The host's speaker's volume, 0 to 100 (for the host, and remotes allowed to change it). */
   volume: number | null
+  /** The words of the song playing when only the host has it (sent to remotes by the host). */
+  lyrics?: RoomLyrics | null
+}
+
+/** A song's words for the remote view: timed lines [ms, words], or plain words. */
+export interface RoomLyrics {
+  key: string
+  lines: [number, string][]
+  text: string
 }
 
 /** Where the room's playback is. */

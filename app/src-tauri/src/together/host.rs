@@ -7,6 +7,7 @@
 use super::AppPlayer;
 use super::sources::{AppCopies, HostFiles};
 use crate::playback::{Playback, QueueItem, RoomNow};
+use player::measure::{EnvelopeMaker, Making};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -17,6 +18,7 @@ use together::anchor::EntryId;
 use together::clock_map::{self, ClockMap};
 use together::conductor::Conductor;
 use together::invite::Invite;
+use together::measure::{Measured, Shelf};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room::v2::{HOST, HostNote, Opening, Room};
@@ -204,6 +206,17 @@ pub async fn start(
         resolver(&app),
     );
     copies.own = own.clone();
+    // The host's copies are the room's references: their envelopes made on the player's
+    // downloads and served on the env: stream (WP11).
+    let shelf = Shelf::new();
+    let copies = Measured::host(
+        Box::new(copies),
+        Box::new(EnvelopeMaker::<QueueItem>::new(
+            super::streams(&app),
+            Making::Threads,
+        )),
+        shelf.clone(),
+    );
     let mut conductor = Conductor::new(player, map, Box::new(copies), ListenMode::Apart)
         .with_handle(handle, playing_entry);
     conductor.set_extra_latency(super::my_delay(&app) * 1_000);
@@ -218,7 +231,12 @@ pub async fn start(
         HostConfig {
             invite_open: Arc::new(move || open.open_at(super::unix_now())),
         },
-    );
+    )
+    .with_envelopes(shelf)
+    .with_lyrics(Box::new(FileLyrics {
+        files: files.clone(),
+        found: HashMap::new(),
+    }));
     let covers = Arc::new(super::covers::Covers::default());
     let _ = later.0.set(s.media(Arc::new(HostMedia {
         files: files.clone(),
@@ -314,6 +332,9 @@ impl Live {
     }
 
     fn after_step(&mut self) {
+        // The speaker's volume, for remotes the host lets change it (B17).
+        let v = self.app.state::<Playback>().volume_percent();
+        self.s.set_volume(v);
         if let Some(v) = self.s.take_volume() {
             let _ = self
                 .app
@@ -491,5 +512,64 @@ impl Live {
                 covers.put(&key, path);
             }
         });
+    }
+}
+
+/// The words of the host's own songs for remotes (WP18): read from each file's `.lrc` or tags
+/// on a thread of its own, once per song.
+struct FileLyrics {
+    files: Arc<HostFiles>,
+    found: HashMap<String, Arc<Mutex<Option<Option<together::proto::v3::Lyrics>>>>>,
+}
+
+impl together::session::HostLyrics for FileLyrics {
+    fn of(&mut self, song: &Song) -> Option<Option<together::proto::v3::Lyrics>> {
+        if let Some(slot) = self.found.get(&song.key) {
+            return slot.lock().ok()?.clone();
+        }
+        let slot: Arc<Mutex<Option<Option<together::proto::v3::Lyrics>>>> = Arc::default();
+        let Some((path, _)) = self.files.get(&song.key) else {
+            *slot.lock().ok()? = Some(None);
+            self.found.insert(song.key.clone(), slot);
+            return Some(None);
+        };
+        let s2 = slot.clone();
+        let spawned = std::thread::Builder::new()
+            .name("venuta-room-lyrics".into())
+            .spawn(move || {
+                let l = crate::playback::lyrics_of_file(&path);
+                let words = together::proto::v3::Lyrics {
+                    lines: l
+                        .lines
+                        .into_iter()
+                        .take(together::proto::v3::MAX_LYRIC_LINES)
+                        .map(|l| {
+                            let line: String = l
+                                .text
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .take(500)
+                                .collect();
+                            (l.start_ms.min(u64::from(u32::MAX)) as u32, line)
+                        })
+                        .collect(),
+                    text: l
+                        .text
+                        .chars()
+                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+                        .take(60_000)
+                        .collect(),
+                };
+                let some = !(words.lines.is_empty() && words.text.trim().is_empty());
+                let ok = words.check().is_ok();
+                if let Ok(mut s) = s2.lock() {
+                    *s = Some((some && ok).then_some(words));
+                }
+            });
+        if spawned.is_err() {
+            *slot.lock().ok()? = Some(None);
+        }
+        self.found.insert(song.key.clone(), slot);
+        None
     }
 }

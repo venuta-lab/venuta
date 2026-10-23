@@ -6,6 +6,7 @@ pub mod decode;
 pub mod devices;
 pub mod dsp;
 pub mod engine;
+pub mod measure;
 pub mod output;
 pub mod output_api;
 pub mod queue;

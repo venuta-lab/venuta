@@ -65,6 +65,8 @@ pub(crate) enum Msg<T> {
 pub(super) struct Spawned<T> {
     pub msgs: Sender<Msg<T>>,
     pub thread: JoinHandle<()>,
+    /// Every song's download, shared by every source of it.
+    pub streams: Arc<Streams>,
 }
 
 /// Start engine 2: its control thread, its status thread, and (for the fast memory output) the
@@ -100,6 +102,8 @@ pub(super) fn spawn<T: Item + Serialize>(
     let (control_pacer, status_pacer) = (pacer(&tb), pacer(&tb));
     let driver = own_clock.map(Driver::start);
     let shared = Arc::new(Shared::new());
+    let streams = Arc::new(Streams::new());
+    let deck_streams = streams.clone();
     let status_thread = {
         let shared = shared.clone();
         std::thread::Builder::new()
@@ -115,7 +119,7 @@ pub(super) fn spawn<T: Item + Serialize>(
     let thread = std::thread::Builder::new()
         .name("venuta-player".into())
         .spawn(move || {
-            let deck = Deck::new(tb, pace, output, shared.common.clone(), watch);
+            let deck = Deck::new(tb, pace, output, shared.common.clone(), watch, deck_streams);
             let mut control = Control {
                 shared: shared.clone(),
                 pacer: control_pacer,
@@ -141,6 +145,7 @@ pub(super) fn spawn<T: Item + Serialize>(
     Spawned {
         msgs: msg_tx,
         thread,
+        streams,
     }
 }
 
@@ -592,6 +597,7 @@ impl Deck {
         choice: OutputChoice,
         common: Arc<status::Common>,
         watch: Watch,
+        streams: Arc<Streams>,
     ) -> Deck {
         let mono: Arc<dyn MonoClock> = tb.clone();
         let mut deck = Deck {
@@ -604,7 +610,7 @@ impl Deck {
             },
             common,
             watch,
-            streams: Arc::new(Streams::new()),
+            streams,
             next_vid: 1,
             open: None,
             run: None,
@@ -2058,6 +2064,18 @@ impl Controller {
 
     pub(super) fn last(&self) -> Steer {
         self.out
+    }
+
+    /// What is measured moved by `by_ms` at once, not by drifting (a refined offset, WP11): the
+    /// filter moves with it, so the proportional part takes it up and the integral, which
+    /// learns from the filtered error's slope, learns nothing from it.
+    pub(super) fn shift(&mut self, by_ms: f64) {
+        for e in &mut self.errs {
+            *e += by_ms;
+        }
+        if let Some(a) = self.avg.as_mut() {
+            *a += by_ms;
+        }
     }
 
     /// One tick: `err_ms` the error measured now (none: nothing to measure, the trim kept);

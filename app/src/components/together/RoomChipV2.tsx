@@ -1,12 +1,12 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useEscape } from '../../lib/layers'
-import { useOnlineLyrics } from '../../lib/lyrics'
+import { useOnlineLyrics, type Lyrics } from '../../lib/lyrics'
 import type { QueueItem } from '../../lib/player'
 import { dropInvite, liveActions, pendingInvite, TOGETHER, viewAge } from '../../lib/together'
 import type { TogetherViewV2 } from '../../lib/togetherView'
 import { Initial } from './Initial'
-import { chipTone, progress, screenOf, type RoomActions } from './model'
+import { chipTone, hostWords, progress, screenOf, type RoomActions } from './model'
 import { RoomPanel, type PanelEnv } from './RoomPanel'
 
 /*
@@ -120,10 +120,14 @@ export function RoomChipV2(props: {
   )
 }
 
-/** The room's song as a queue row, for the lyrics services (a catalog song; WP18 adds the host's). */
-function useRoomLyrics(v: TogetherViewV2) {
+/**
+ * The words of the room's song for a remote: a song only the host has, as the host sent them;
+ * a catalog song's, from the lyrics services (as a queue row).
+ */
+function useRoomLyrics(v: TogetherViewV2): Lyrics | null {
   const remote = v.you?.mode === 'one_speaker'
   const song = remote ? progress(v, 0)?.entry.song : undefined
+  const fromHost: Lyrics | null = hostWords(v)
   // A new object with each view is fine: the lyrics are looked up by the song's key and words.
   const item: QueueItem | undefined = song?.online_id
     ? {
@@ -143,7 +147,8 @@ function useRoomLyrics(v: TogetherViewV2) {
         online: { kind: 'online', provider: 'remote_catalog', track_id: song.online_id },
       }
     : undefined
-  return useOnlineLyrics(item, !!item)
+  const online = useOnlineLyrics(item, !!item && !fromHost)
+  return fromHost ?? online
 }
 
 /** The chip and panel v2, bound to the app. */

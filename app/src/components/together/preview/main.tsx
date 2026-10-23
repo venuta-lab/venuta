@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/sora'
 import '../../../index.css'
 import type { Lyrics } from '../../../lib/lyrics'
+import { hostWords } from '../model'
 import { setAccentVars } from '../../../lib/prefs'
 import { accentRoles, ACCENTS } from '../../../lib/themes'
 import type { TogetherViewV2 } from '../../../lib/togetherView'
@@ -29,7 +30,8 @@ document.body.style.background = 'var(--solid)'
 // The default accent (Iris), as Lumen shows it in this theme.
 setAccentVars(accentRoles(ACCENTS[0].seed, theme === 'light'))
 
-// Words for the remote's lyrics (made up for the preview; songs in the fixture have none).
+// Words for the remote's lyrics (made up for the preview, where the fixture carries none from the
+// host).
 const LYRICS: Lyrics = {
   lines: [
     [100_000, 'The first line of the song'],
@@ -55,7 +57,7 @@ const windowWith = (v: TogetherViewV2) => (
     <div className="flex h-11 items-center gap-3 border-b border-edge px-4">
       <span className="text-[13px] font-semibold text-ink/70">Venuta</span>
       <span className="flex-1" />
-      <RoomChipV2 v={v} act={act} env={{ since: () => 0, lyrics: LYRICS, start: START }} startOpen />
+      <RoomChipV2 v={v} act={act} env={{ since: () => 0, lyrics: hostWords(v) ?? LYRICS, start: START }} startOpen />
     </div>
   </div>
 )

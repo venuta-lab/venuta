@@ -279,6 +279,10 @@ pub struct RoomView {
     pub settings: Settings,
     #[serde(default)]
     pub requests: Vec<RequestView>,
+    /// The host's speaker's volume, 0 to 100: in the host's own view, and in a remote's while the
+    /// host lets guests change it (B17).
+    #[serde(default)]
+    pub volume: Option<u8>,
 }
 
 /// The old host's clock in the new host's time, for a hand-over (WP20):
@@ -333,6 +337,45 @@ pub enum ToGuest {
     },
     /// The host suggests something to this person (G7, for someone who missed three starts).
     Advise { advice: Advice },
+    /// The words of a song only the host has (its file's), for a remote's view (WP18; catalog
+    /// songs' words come from the lyrics services).
+    Lyrics { key: String, lyrics: Lyrics },
+}
+
+/// A song's words: timed lines (ms, words), or plain words when they have no times.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lyrics {
+    pub lines: Vec<(u32, String)>,
+    #[serde(default)]
+    pub text: String,
+}
+
+/// The most lines a song's words may have, and the longest line and plain words.
+pub const MAX_LYRIC_LINES: usize = 2_000;
+const MAX_LYRIC_LINE: usize = 500;
+const MAX_LYRIC_TEXT: usize = 64 * 1024;
+
+impl Lyrics {
+    /// Whether words from the host can be taken as they are.
+    pub fn check(&self) -> Result<(), String> {
+        let line_ok =
+            |l: &str| l.chars().count() <= MAX_LYRIC_LINE && !l.chars().any(char::is_control);
+        if self.lines.len() > MAX_LYRIC_LINES
+            || !self
+                .lines
+                .iter()
+                .all(|(ms, l)| u64::from(*ms) * 1_000 <= MAX_CONTENT_US as u64 && line_ok(l))
+            || self.text.len() > MAX_LYRIC_TEXT
+            || self
+                .text
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err("words that are too long".into());
+        }
+        Ok(())
+    }
 }
 
 /// What the host can suggest to one person.
@@ -442,6 +485,12 @@ pub fn check_to_guest(m: &ToGuest) -> Result<(), String> {
         }
         ToGuest::Commit { anchor } | ToGuest::Hold { anchor } if !anchor_ok(anchor) => {
             Err("a place in a song that isn't one".into())
+        }
+        ToGuest::Lyrics { key, lyrics } => {
+            if key.is_empty() || key.len() > 64 || !key.bytes().all(|b| b.is_ascii_graphic()) {
+                return Err("a song that isn't one".into());
+            }
+            lyrics.check()
         }
         ToGuest::HandOver { ticket, line, .. }
             if ticket.len() > MAX_TICKET
@@ -598,6 +647,7 @@ mod tests {
                 action: Action::Next,
                 at_us: 5,
             }],
+            volume: Some(40),
         }
     }
 
@@ -681,6 +731,13 @@ mod tests {
                 },
             },
             ToGuest::Disarm { seq: 5 },
+            ToGuest::Lyrics {
+                key: Song::host_key("Album/01.flac"),
+                lyrics: Lyrics {
+                    lines: vec![(1_250, "First line".into()), (4_000, "Second".into())],
+                    text: String::new(),
+                },
+            },
             ToGuest::HandOver {
                 to: 2,
                 ticket: "endpointabc".into(),
@@ -734,6 +791,17 @@ mod tests {
         assert!(
             read::<ToGuest>(b"{\"t\":\"advise\",\"advice\":\"louder\"}").is_err(),
             "only the advice there is"
+        );
+        assert_eq!(
+            l(&ToGuest::Lyrics {
+                key: "host:0123".into(),
+                lyrics: Lyrics {
+                    lines: vec![(1_250, "First".into())],
+                    text: String::new(),
+                },
+            }),
+            "{\"t\":\"lyrics\",\"key\":\"host:0123\",\"lyrics\":{\"lines\":[[1250,\"First\"]],\"text\":\"\"}}
+"
         );
         let a = String::from_utf8(line(&ToHost::Ask {
             action: Action::Jump { entry: EntryId(9) },
@@ -850,6 +918,25 @@ mod tests {
                 why: "x".repeat(400)
             })
             .is_err()
+        );
+        let words = |lines: Vec<(u32, String)>, text: &str| ToGuest::Lyrics {
+            key: "host:0123".into(),
+            lyrics: Lyrics {
+                lines,
+                text: text.into(),
+            },
+        };
+        assert!(check_to_guest(&words(vec![(0, "a\u{7}b".into())], "")).is_err());
+        assert!(check_to_guest(&words(vec![(0, "x".repeat(501))], "")).is_err());
+        assert!(check_to_guest(&words(vec![(0, "ok".into()); 2_001], "")).is_err());
+        assert!(check_to_guest(&words(vec![], &"x".repeat(70_000))).is_err());
+        assert!(
+            check_to_guest(&words(
+                vec![],
+                "Two
+lines"
+            ))
+            .is_ok()
         );
         assert!(
             check_to_guest(&ToGuest::HandOver {

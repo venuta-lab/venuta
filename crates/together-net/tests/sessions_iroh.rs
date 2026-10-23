@@ -89,6 +89,7 @@ async fn a_guest_joins_over_iroh_learns_the_clock_and_plays_the_rooms_start() {
             proof: together::invite::proof(SECRET, &me),
             app: "Venuta test".into(),
             host_name: "Asha".into(),
+            mode: Some(ListenMode::Apart),
         },
     );
     let t0 = Instant::now();
