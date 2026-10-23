@@ -1,5 +1,10 @@
 # Changes
 
+## Unreleased
+
+- **Fixed**: an update found before is back in the title bar the moment Venuta starts, instead
+  of after its first check, and also with the quiet checks off or Local only on.
+
 ## 0.4.0 (2026-10-23)
 
 - **A new sound engine, clean in every case.** Decoding runs ahead on its own thread, and one
