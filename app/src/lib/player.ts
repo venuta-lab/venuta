@@ -727,6 +727,9 @@ export const outputChoices = () =>
 export const setOutput = (device: string | null, exclusive: boolean, name?: string) => call('player_output', { device, name: name ?? null, exclusive })
 /** Set (or, null, clear) an output's extra delay, ms: lyrics and rooms follow it. */
 export const setOutputDelay = (endpoint: string, ms: number | null) => call('player_set_output_delay', { endpoint, ms: ms === null ? null : Math.round(ms) })
+/** Pause when headphones, a headset or Bluetooth go away (on unless turned off). */
+export const pauseWhenHeadphonesGo = () => (inApp() ? invoke<boolean>('player_pause_when_headphones_go') : Promise.resolve(true))
+export const setPauseWhenHeadphonesGo = (on: boolean) => call('player_set_pause_when_headphones_go', { on })
 
 /** "FLAC 24/96" for the badge. */
 export function sourceLabel(s: Signal['source']): string {

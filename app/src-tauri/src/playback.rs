@@ -714,7 +714,11 @@ impl Playback {
             }
             // The extra delay set for each output (what you hear is that much later).
             if let Some(p) = slot.as_ref() {
-                p.send(Cmd::OutputDelays(engine::settings::load().output_delays()));
+                let s = engine::settings::load();
+                p.send(Cmd::OutputDelays(s.output_delays()));
+                p.send(Cmd::PauseWhenHeadphonesGo(
+                    s.player.pause_when_headphones_go,
+                ));
             }
         }
         Ok(f(slot.as_ref().expect("just made")))
@@ -2305,4 +2309,23 @@ mod mini_one_window {
         assert!(live != "mini" && live != "mini-90", "{live}");
         assert!(host.has("main"), "the main window is never taken for one");
     }
+}
+
+/// Pause when headphones, a headset or Bluetooth go away (rather than carry on through the
+/// speakers): kept in Settings and told to the player.
+#[tauri::command]
+pub fn player_set_pause_when_headphones_go(
+    on: bool,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
+    let mut s = engine::settings::load();
+    s.player.pause_when_headphones_go = on;
+    engine::settings::save(&s)?;
+    pb.send(Cmd::PauseWhenHeadphonesGo(on))
+}
+
+/// Whether headphones or Bluetooth going away pause the music.
+#[tauri::command]
+pub fn player_pause_when_headphones_go() -> bool {
+    engine::settings::load().player.pause_when_headphones_go
 }

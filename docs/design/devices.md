@@ -69,7 +69,8 @@ endpoints, default)` gives the endpoint to open and a note:
 2. **Following Windows:** the default, with the same twin rule (Windows makes the hands-free
    endpoint the default more often than people expect). A virtual default is followed: it is
    where Windows sends every app's sound, and the window says it is virtual.
-3. **Chosen and away** (unplugged, switched off, a monitor asleep): the fallback, with "SNOWSKY DISC
+3. **Chosen and away** (unplugged, switched off, a monitor asleep): the fallback (headphones and
+   Bluetooth pause instead unless that is turned off, section 9), with "SNOWSKY DISC
    isn't connected: playing on Speakers until it's back".
 4. **The fallback** is Windows' default unless that is virtual, else the first physical output by
    kind (wired, USB, HDMI, Bluetooth); never a virtual device, never a device whose opens all
@@ -231,8 +232,18 @@ The guided test on the owner's devices is [qa/devices-live.md](../qa/devices-liv
 - **The spectrum** still reads what the renderer made (ahead of the DAC by the output's lead);
   putting it on the heard time is left with the rest of 4.8's "Heard time".
 
-## 9. Open questions for the owner
+## 9. Pause when headphones or Bluetooth disconnect (decided)
 
-- Unplugging wired headphones now moves the music to the speakers (as asked). Phones pause
-  instead, so music never suddenly plays out loud; a "pause when headphones go" option is easy to
-  add on this design if wanted.
+A setting, **on by default** (`player.pause_when_headphones_go`, `Cmd::PauseWhenHeadphonesGo`,
+Settings > Playback), so music never suddenly plays out loud through the speakers: when the
+output the music is on goes away and it is headphones, a headset (by its form factor: the jack's
+Headphones, a USB DAC Windows calls Headphones) or any Bluetooth device, your own music pauses
+where it was heard, with "Paused: <device> disconnected." under the player (cleared when it
+plays again; a new queue clears it too). Wired or USB speakers, a display or a virtual device
+going away keep the carry-on above. It is decided once the list of devices has caught up after
+the loss (`LOST_LOOK_NS`), so an output whose stream was only invalidated (a format change, a
+driver restart) is reopened, never paused; after a sleep, headphones not back yet pause too. A
+room keeps its own rules (H4, H4b): there the fallback plays for it. Off, every device carries on
+as in section 4. Gates: `bluetooth_going_away_pauses_where_it_was_instead_of_playing_out_loud`,
+`a_headphone_dac_pauses_too_but_speakers_going_away_carry_on_and_the_setting_turns_it_off`,
+`a_format_change_on_headphones_never_pauses`.

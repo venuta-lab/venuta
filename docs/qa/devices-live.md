@@ -41,9 +41,13 @@ before a move; the wrong device in the badge.
    out of the speakers and in on the headphones within about 2 s, from where it was. If Windows
    keeps the speakers, nothing moves (choose Headphones in the picker to move it).
 3. Choose **Headphones** in the picker (Follow Windows turns off). Unplug them. Expect: the
-   music goes on from the speakers within about a second, at the same place, starting quietly
-   (a fade in, no burst), and the note "Headphones isn't connected: playing on Speakers until
-   it's back." Plug them back: after about 2 s it fades back to the headphones.
+   music **pauses** where it was, with "Paused: Headphones disconnected." under the player, and
+   nothing comes out of the speakers. Plug them back and press Play: it plays on the headphones.
+4. Settings > Playback: turn **Pause when headphones or Bluetooth disconnect** off. Play on the
+   headphones and unplug them again. Expect: the music goes on from the speakers within about a
+   second, at the same place, starting quietly (a fade in, no burst), with the note "Headphones
+   isn't connected: playing on Speakers until it's back." Plug them back: after about 2 s it
+   fades back to the headphones. Turn the setting on again.
 
 ## 3. SNOWSKY DISC (USB DAC)
 
@@ -52,11 +56,13 @@ before a move; the wrong device in the badge.
    at its own rate where the DAC takes it (the device line under its name then shows what it
    takes, for example "exclusive 44.1 to 384 kHz, up to 32-bit"); a rate it lacks says
    "resampled" and "Resampled to ..." in the signal path.
-3. While a song plays, **pull the USB cable**. Expect: within about a second the music goes on
-   from the speakers at the same place, from quiet, with "SNOWSKY DISC isn't connected: playing
-   on Speakers until it's back." It must not stop.
-4. **Plug it back.** Expect: about 2 s later the music fades out of the speakers and back in on
-   the DAC, bit-perfect again.
+3. While a song plays, **pull the USB cable**. Windows calls the DAC headphones, so with the
+   pause setting on (the default) expect the music to **pause** where it was, with "Paused:
+   SNOWSKY DISC disconnected." Plug it back and press Play: bit-perfect on the DAC again.
+4. Turn the pause setting off and pull the cable again. Expect: within about a second the music
+   goes on from the speakers at the same place, from quiet, with "SNOWSKY DISC isn't connected:
+   playing on Speakers until it's back." It must not stop. **Plug it back**: about 2 s later it
+   fades out of the speakers and back in on the DAC. Turn the setting on again.
 5. Play a video in a browser while Venuta has the DAC in exclusive mode: the video is silent
    (Venuta has the device). Turn Exclusive off: both play.
 
@@ -74,23 +80,24 @@ before a move; the wrong device in the badge.
    (AirPods Pro Hands-Free)". In Venuta turn Follow Windows on. Expect the music to stay full
    quality, with the note "Playing on AirPods Pro's stereo connection: its hands-free one is for
    calls". Set Windows' output back.
-5. **Gone and back.** Put them in their case while playing. Expect the music to go on from the
-   speakers (Follow Windows off, AirPods chosen), from quiet; take them out: back to them after
-   they reconnect and about 2 s more.
+5. **Gone and back.** Put them in their case while playing (AirPods chosen). Expect the music to
+   pause, with "Paused: AirPods Pro disconnected.", and nothing from the speakers. Take them
+   out, wait for them to connect, press Play: on the AirPods again.
 
 ## 5. FiiO EH11
 
 1. Connect; one entry "FIIO EH11" under Bluetooth. Choose it; same state as the AirPods.
 2. With both Bluetooth devices connected, choose one, then the other, while playing. Expect a
    short fade out and in each time, never both at once, never a pop.
-3. Switch the FiiO off while playing: the fallback, as for the AirPods; on again: back.
+3. Switch the FiiO off while playing: paused, as for the AirPods; on again and Play: back.
 
 ## 6. soundcore Motion X600
 
 1. Connect; one entry under Bluetooth. Choose it and play.
 2. Press **Use 170 ms** and judge with lyrics, as for the AirPods (a speaker's delay is often
    longer).
-3. Switch it off and on while playing: the fallback and the return, as above.
+3. Switch it off while playing: paused ("Paused: soundcore Motion X600 disconnected."). With the
+   pause setting off: on the speakers, and back to the speaker about 2 s after it reconnects.
 4. If Windows ever shows only "Headset Earphone (soundcore Motion X600 Hands-Free)" (its stereo
    service off), Venuta plays on it with the warning "connected for calls only ... music sounds
    poor". It should never pick it silently.
@@ -107,9 +114,10 @@ before a move; the wrong device in the badge.
 ## 8. Sleep and wake
 
 1. Choose SNOWSKY DISC, play, then **Start > Power > Sleep** (or close the lid).
-2. Wake it. Expect: the music carries on (from where it was heard, give or take a fraction of a
-   second), never with a burst of the old sound; on the speakers first if the DAC is not back
-   yet, then on the DAC once it is.
+2. Wake it. Expect: if the DAC is back at once, the music carries on (from where it was heard,
+   give or take a fraction of a second), never with a burst of the old sound. If it is not back
+   yet, the music is paused ("Paused: SNOWSKY DISC disconnected.", the DAC being headphones);
+   with the pause setting off it plays on the speakers until the DAC is back, then on the DAC.
 
 ## 9. Windows changes the format while playing
 

@@ -3124,6 +3124,8 @@ pub fn run() {
             playback::player_devices,
             playback::player_output,
             playback::player_set_output_delay,
+            playback::player_set_pause_when_headphones_go,
+            playback::player_pause_when_headphones_go,
             playback::song_lyrics,
             playback::all_lyrics,
             playback::player_resume,

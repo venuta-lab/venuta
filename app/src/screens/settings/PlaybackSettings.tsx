@@ -1,6 +1,7 @@
-import { Segmented } from '../../components/ui'
+import { useEffect, useState } from 'react'
+import { Segmented, Switch } from '../../components/ui'
 import { OutputPicker } from '../../components/player/OutputPicker'
-import { setSound, usePlayer } from '../../lib/player'
+import { pauseWhenHeadphonesGo, setPauseWhenHeadphonesGo, setSound, usePlayer } from '../../lib/player'
 import { NeverOffered, StreamQualityRow, WhatPlaysRows } from './ListeningSettings'
 import { Group, PageHead, Row } from './parts'
 
@@ -18,12 +19,36 @@ function Output() {
     <div className="border-b border-edge py-4 last:border-b-0">
       <div className="text-[14px] font-medium">Play through</div>
       <div className="mt-0.5 max-w-[68ch] text-[12.5px] leading-relaxed text-ink/55">
-        The speakers, headphones or DAC Venuta plays on, by kind. A chosen device that goes away (unplugged, switched off, a monitor asleep) hands over to Windows' default, and the music comes back to it when it returns. Also in the quality badge beside the song.
+        The speakers, headphones or DAC Venuta plays on, by kind. A chosen device that goes away (unplugged, switched off, a monitor asleep) hands over to Windows' default, and the music comes back to it when it returns; headphones and Bluetooth pause instead, unless you turn that off below. Also in the quality badge beside the song.
       </div>
       <div className="mt-3 max-w-[560px]">
         <OutputPicker signal={s.signal} roomy />
       </div>
     </div>
+  )
+}
+
+/** Headphones or Bluetooth going away pause the music, so it never suddenly plays out loud. */
+function PauseWhenHeadphonesGo() {
+  const [on, setOn] = useState<boolean | null>(null)
+  useEffect(() => {
+    void pauseWhenHeadphonesGo().then(setOn)
+  }, [])
+  if (on === null) return null
+  return (
+    <Row
+      title="Pause when headphones or Bluetooth disconnect"
+      hint="When the headphones, headset or Bluetooth device the music is on goes away, the music pauses where it was instead of carrying on through the speakers. Wired or USB speakers going away still hand over to Windows' default."
+    >
+      <Switch
+        label="Pause when headphones or Bluetooth disconnect"
+        on={on}
+        onChange={(v) => {
+          setOn(v)
+          void setPauseWhenHeadphonesGo(v)
+        }}
+      />
+    </Row>
   )
 }
 
@@ -85,6 +110,7 @@ export function PlaybackSettings(props: { onOpenSound: () => void }) {
       <PageHead title="Playback" line="Where the sound goes, how it sounds, and what plays next. For your files and online songs alike." />
       <Group title="Where the sound goes">
         <Output />
+        <PauseWhenHeadphonesGo />
       </Group>
       <Group title="How it sounds">
         <HowItSounds onOpenSound={props.onOpenSound} />
