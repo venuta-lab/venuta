@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.4.0 (2026-10-23)
 
 - **A new sound engine, clean in every case.** Decoding runs ahead on its own thread, and one
   stage shapes every change: pauses, seeks, skips, volume and EQ changes fade or glide instead

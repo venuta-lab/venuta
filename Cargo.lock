@@ -163,7 +163,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "audio-check"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "audio-codec-algorithms"
@@ -1057,7 +1057,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2023,7 +2023,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aes 0.9.3",
  "anyhow",
@@ -4150,7 +4150,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lyrics-text"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lindera",
  "pinyin_pro",
@@ -4166,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "lyrics-translate"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "flate2",
  "fxtranslate",
@@ -4256,7 +4256,7 @@ dependencies = [
 
 [[package]]
 name = "media-access"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "innertube-rs",
@@ -5484,7 +5484,7 @@ dependencies = [
 
 [[package]]
 name = "phone-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "blake3",
@@ -5563,7 +5563,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "player"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "audio-check",
  "blake3",
@@ -8383,7 +8383,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "together"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -8398,7 +8398,7 @@ dependencies = [
 
 [[package]]
 name = "together-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "bytes",
@@ -9973,7 +9973,7 @@ dependencies = [
 
 [[package]]
 name = "ytmusic"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hex",
  "reqwest 0.12.28",

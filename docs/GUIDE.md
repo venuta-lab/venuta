@@ -51,7 +51,14 @@ Undo; while work runs, the same button shows it. **Settings** has six pages,
 one subject each: Look and feel, Playback (where the sound goes, levelling, crossfade, what plays),
 Lyrics (sources and the lyrics windows), Library (folders, where details come from, your backup),
 Online (Local only, accounts, region, listen together) and System (closing and startup, shortcuts,
-history and cache, updates).
+history and cache, updates). When a new version is out, **Update to x.y.z** shows in the title
+bar; one press installs it and opens Venuta again.
+
+**Where the sound goes** (Settings > Playback) follows Windows or stays on the output you choose.
+Bluetooth plays in full stereo quality, never through its hands-free side; headphones, USB DACs,
+HDMI and speakers can come and go while the music carries on, or it pauses when headphones or
+Bluetooth go (on by default). Each output keeps its own delay, so lyrics stay in time on
+Bluetooth.
 
 **The app icon** is yours to choose: Settings, Look and feel, App icon offers the Venuta mark (a V
 with a peacock feather and a flute's holes) in 33 materials. Your choice is on the taskbar, the
@@ -93,8 +100,12 @@ you let them in.
 - **The room's queue** shows in the queue drawer, with who added each song. Your own queue comes
   back, paused, when you leave.
 - **Step out** pauses just for you; **Catch up** brings you back to where the room is.
-- **Same room** (for speakers that hear each other) keeps every player within a millisecond or
-  two, at the cost of bit-perfect playback while it corrects.
+- **Three ways to listen**: **One speaker** (one device plays; everyone chooses and controls from
+  their own), **Every device** (several speakers in one room, in step to about a millisecond) and
+  **Apart** (different places, in step to about 15 ms over the internet).
+- **Nothing stops the music**: someone whose connection stalls drops out alone and fades back in,
+  a room survives the host's app restarting, guests rejoin as themselves, and rooms on your
+  network show up nearby. Everyone in a room needs Venuta 0.4.0 or later.
 - **Settings > Online > Listen together**: the name others see, hiding your IP address (the
   connection goes through a relay), and your own relay.
 
