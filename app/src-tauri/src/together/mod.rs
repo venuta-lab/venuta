@@ -297,6 +297,11 @@ impl RoomPlayer<QueueItem> for AppPlayer {
     }
 }
 
+/// The player's shared downloads, for measuring copies on the bytes its voices read.
+fn streams(app: &AppHandle) -> Option<Arc<player::decode::Streams>> {
+    app.state::<Playback>().with(|p| p.streams()).ok().flatten()
+}
+
 /// A player that couldn't be had (its thread failed to start): it can't play anything.
 struct NoPlayer;
 
@@ -679,7 +684,7 @@ pub async fn together_join(app: AppHandle, root: String, code: String) -> Result
     let invite = Invite::parse(&code)?;
     begin(&app, SessionState::Joining)?;
     trace("joining a room");
-    let r = guest::join(app.clone(), music_root(&root), invite).await;
+    let r = guest::join(app.clone(), music_root(&root), invite, None).await;
     Ok(begun(&app, r.map(Session::Guest)))
 }
 
@@ -977,7 +982,7 @@ pub async fn together_join_nearby(app: AppHandle, root: String, id: u32) -> Resu
     }
     begin(&app, SessionState::Joining)?;
     trace("joining a room nearby");
-    let r = guest::join(app.clone(), music_root(&root), invite).await;
+    let r = guest::join(app.clone(), music_root(&root), invite, None).await;
     Ok(begun(&app, r.map(Session::Guest)))
 }
 
@@ -1017,7 +1022,7 @@ async fn resume(app: &AppHandle) -> Result<View, String> {
             begin_with(app, SessionState::Joining, false)?;
             trace("rejoining a room");
             let root = music_root(&crate::playback::current_root(app));
-            let r = guest::join(app.clone(), root, record.invite).await;
+            let r = guest::join(app.clone(), root, record.invite, record.mode).await;
             Ok(begun(app, r.map(Session::Guest)))
         }
         None => Err("There's no room to go back to.".into()),

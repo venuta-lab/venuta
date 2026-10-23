@@ -22,7 +22,7 @@ use together::lifecycle::{GuestKeeper, HostKeeper, HostRecord, KEPT, Kept, Offer
 use together::proto::Role;
 use together::proto::v3::{Action, Phase};
 use together::room::v2::{HOST, Place, RoomState};
-use together::room_player::SyncMode;
+use together::room_player::{ListenMode, SyncMode};
 use together::session::{Ending, Stage};
 use together::view::Resume;
 
@@ -82,7 +82,8 @@ fn run_keeping(
                 continue;
             }
             let g = w.people[*i].guest();
-            k.step(g.stage(), g.ending(), now);
+            let mode = g.conductor().mode();
+            k.step(g.stage(), g.ending(), mode, now);
         }
     }
 }
@@ -253,7 +254,7 @@ fn i6_reopened_after_the_guests_gave_up_they_are_asked_and_come_back_as_themselv
     w.run_ms(130_000);
     assert!(!w.has_member("Ravi"), "dropped for silence");
     // ... and Ravi's rejoin still comes back as Ravi, with the role the host gave.
-    w.guest_comes_back(1);
+    w.guest_comes_back(1, rejoin.mode);
     assert!(w.run_until(|w| w.people[1].guest().stage() == Stage::In, 5_000));
     assert_eq!(w.member_id("Ravi"), Some(id));
     assert_eq!(w.room().role_of(id), Some(Role::Add));
@@ -285,7 +286,12 @@ fn i7_a_guest_crash_under_two_minutes_rejoins_by_itself_as_the_same_member() {
             auto: true
         })
     );
-    w.guest_comes_back(1);
+    assert_eq!(
+        record.mode,
+        Some(ListenMode::Apart),
+        "how Ravi listened, kept"
+    );
+    w.guest_comes_back(1, record.mode);
     assert!(w.run_until(|w| w.people[1].guest().stage() == Stage::In, 5_000));
     assert_eq!(w.member_id("Ravi"), Some(id), "the same member");
     // A late joiner: caught up at the room's place; nobody else hears a thing.
@@ -323,7 +329,7 @@ fn i7_after_two_minutes_the_guest_is_asked_and_still_comes_back_as_themselves() 
         Some(false),
         "asked"
     );
-    w.guest_comes_back(1);
+    w.guest_comes_back(1, record.mode);
     assert!(w.run_until(|w| w.people[1].guest().stage() == Stage::In, 5_000));
     assert_eq!(w.member_id("Ravi"), Some(rid));
     assert_eq!(w.room().role_of(rid), Some(Role::Listen));
@@ -577,4 +583,33 @@ fn a_kept_room_goes_through_its_record_and_comes_back_held_with_its_people() {
         panic!("Meera in")
     };
     assert!(meera > ali + REOPEN_MARGIN as u32 - 1);
+}
+
+#[test]
+fn i7_a_rejoin_comes_back_as_it_listened_not_as_the_network_would_choose() {
+    // On the host's network a guest who chose nothing comes in as a remote (A16); one who
+    // listened apart and rejoins comes back apart, and a remote as a remote.
+    for was in [ListenMode::Apart, ListenMode::OneSpeaker] {
+        let d = dir();
+        let mut w = World::lan(&["Ravi"]);
+        w.people[1].guest().conductor().set_mode(was);
+        let mut ravi = GuestKeeper::new(Kept::new(d.path()), invite(&w), "Asha".into());
+        // A remote never commits: the room is just started.
+        w.host_ask(Action::Play);
+        run_keeping(&mut w, None, &mut [(1, &mut ravi)], 3_000);
+        w.guest_goes(1);
+        w.run_ms(20_000);
+        let record = Kept::new(d.path()).guest().unwrap();
+        assert_eq!(record.mode, Some(was));
+        w.guest_comes_back(1, record.mode);
+        assert!(w.run_until(|w| w.people[1].guest().stage() == Stage::In, 5_000));
+        w.run_ms(1_000);
+        assert_eq!(w.people[1].guest().conductor().mode(), was, "{was:?}");
+        let id = w.member_id("Ravi").unwrap();
+        assert_eq!(
+            w.room().mode_of(id),
+            Some(was),
+            "{was:?}, as the room has it"
+        );
+    }
 }

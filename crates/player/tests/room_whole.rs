@@ -307,6 +307,7 @@ impl Whole {
                 proof: together::invite::proof("0123456789abcdef0123456789abcdef", &key),
                 app: "Venuta test".into(),
                 host_name: "Asha".into(),
+                mode: Some(ListenMode::Apart),
             },
         );
         let _ = mode;

@@ -7,6 +7,7 @@
 use super::AppPlayer;
 use super::sources::{AppCopies, HostStream};
 use crate::playback::{Playback, QueueItem, RoomNow};
+use player::measure::{Analysis, EnvelopeMaker, Making};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
@@ -15,6 +16,7 @@ use together::clock_map;
 use together::conductor::Conductor;
 use together::invite::Invite;
 use together::lifecycle::GuestKeeper;
+use together::measure::{Measured, References, Spawn};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room_player::ListenMode;
@@ -39,10 +41,13 @@ pub struct Live {
 }
 
 /// Join the invite's room: connect (25 s at most), then knock; the rest is the session's.
+/// `mode`: how to listen, when known (a rejoin comes back as it listened, WP15); `None` lets
+/// the network choose (A16).
 pub async fn join(
     app: AppHandle,
     root: String,
     invite: Invite,
+    mode: Option<ListenMode>,
 ) -> Result<Sender<super::GuestWork>, String> {
     if !invite.open_at(super::unix_now()) {
         return Err("This room's invite has ended. Ask for a new one.".into());
@@ -77,6 +82,20 @@ pub async fn join(
         Some(hs),
         super::host::resolver(&app),
     );
+    // Each copy measured against the host's reference (WP11): its envelope made on the
+    // player's downloads, the host's fetched on the env: stream, on the app's runtime.
+    let spawn: Spawn = Arc::new(|f| {
+        tauri::async_runtime::spawn(f);
+    });
+    let copies = Measured::guest(
+        Box::new(copies),
+        Box::new(EnvelopeMaker::<QueueItem>::new(
+            super::streams(&app),
+            Making::Threads,
+        )),
+        References::new(shared.clone(), HOST, Some(spawn)),
+        Arc::new(Analysis),
+    );
     let mut conductor = Conductor::new(
         Arc::new(AppPlayer(app.clone())),
         clock_map::handle(),
@@ -94,6 +113,9 @@ pub async fn join(
             proof: invite.proof(&me),
             app: format!("Venuta {}", engine::VERSION),
             host_name: invite.host.clone(),
+            // One speaker first on the host's network, unless chosen (A16, D15) or kept from
+            // before a restart.
+            mode,
         },
     );
     let keeper = GuestKeeper::new(super::kept(), invite.clone(), invite.host.clone());
@@ -129,7 +151,9 @@ fn run(mut live: Live, rx: Receiver<super::GuestWork>) {
         }
         live.s.step();
         let (stage_now, ending) = (live.s.stage(), live.s.ending());
-        live.keeper.step(stage_now, ending, super::unix_now_ms());
+        let mode = live.s.conductor().mode();
+        live.keeper
+            .step(stage_now, ending, mode, super::unix_now_ms());
         if live.s.stage() != stage {
             stage = live.s.stage();
             super::trace(&format!("room: {stage:?}"));

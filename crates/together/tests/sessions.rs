@@ -9,24 +9,33 @@
 //! - what a player does with the calls (splices, fades, the boundary table, stalls, output
 //!   switches, H1 to H11): `crates/player/tests/room2.rs` and `room2_sync.rs`, and whole rooms
 //!   with real players in `crates/player/tests/room_whole.rs` (7.3, 7.4, 7.6, clicks);
-//! - copies and alignment (E1 to E11): WP11; one speaker mode's details (A16, B17, J7): WP18;
-//!   output delays (H3, H3b, J8): WP19; hand-over (I3b): WP20; reopen and rejoin (I6, I7):
-//!   WP15, in `lifecycle.rs`, with the door for rooms nearby (A15);
+//! - copies and alignment: E1 to E6 and E9 here (WP11, with fake envelopes), and on real encodes
+//!   in `crates/player/tests/room_align.rs`; one speaker mode (A16, B17, J7) here (WP18) and
+//!   with a real host in `crates/player/tests/room_one_speaker.rs`; output delays (H3, H3b,
+//!   J8): WP19; hand-over (I3b): WP20; reopen and rejoin (I6, I7): WP15, in `lifecycle.rs`,
+//!   with the door for rooms nearby (A15);
 //! - the window's (B9, the panel's words and greying): `app/tests` and WP12's model tests;
 //!   the app shell's (A14, B15, C8, J4, H13): the app.
 
 mod session_sim;
 
 use session_sim::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use together::align::{Alignment, CopyClass};
 use together::anchor::{Anchor, EntryId, Transition};
 use together::fakes::Call;
 use together::proto::Role;
-use together::proto::v3::{Action, Advice, DIFFERENT_VERSIONS, Phase, ToGuest};
+use together::proto::Song;
+use together::proto::v3::{Action, Advice, DIFFERENT_VERSIONS, Lyrics, Phase, ToGuest};
 use together::room::v2::{HOST, HostNote, Opening};
 use together::room_player::{ListenMode, SubState, Suspension, SyncMode};
+use together::session::HostLyrics;
 use together::session::Stage;
 use together::sim_net::Way;
+use together::time::MonoClock;
 use together::transport::{ControlMsg, Transport, TransportEvent};
+use together::view::{CopyKind, CopyView};
 
 fn internet() -> (Way, Way) {
     (Way::internet(25.0, 5.0), Way::internet(35.0, 5.0))
@@ -61,14 +70,16 @@ fn a1_the_hosts_music_goes_on_untouched_and_a_guest_joins_its_place() {
     let a = w.room().anchor().unwrap();
     assert_eq!(a.entry, w.entry(1));
     w.run_ms(500);
-    // The host's player: made in place, then its own anchor, a no-op. No prepare, no fade.
+    // The host's player: made in place, then its own anchor, a no-op. No prepare, no fade;
+    // alone in its room, it leads (A19: exactly solo playback).
     assert_eq!(
         w.people[0].calls(),
         vec![
             Call::Attach {
                 mode: SyncMode::Apart
             },
-            Call::Commit(a)
+            Call::Commit(a),
+            Call::Lead(true)
         ]
     );
     let t = w.sim_ns();
@@ -78,8 +89,11 @@ fn a1_the_hosts_music_goes_on_untouched_and_a_guest_joins_its_place() {
     assert_eq!(p.len(), 1, "Ravi caught up");
     assert_eq!(p[0].1, a.entry);
     assert_eq!(w.people[r].commits(), vec![a]);
-    assert!(
-        w.people[0].calls_since(t).is_empty(),
+    // Someone plays now: the host's player follows the room's clock (no longer leading), and
+    // nothing else: no prepare, no commit, no fade.
+    assert_eq!(
+        w.people[0].calls_since(t),
+        vec![Call::Lead(false)],
         "the host's music is never touched by a joiner"
     );
 }
@@ -255,6 +269,7 @@ fn a9_a_0_3_host_says_different_versions_and_the_guest_shows_its_words() {
             proof: "cd".repeat(32),
             app: "Venuta test".into(),
             host_name: "Asha".into(),
+            mode: Some(ListenMode::Apart),
         },
     );
     w.net.connect(&t, &old_host, Way::LAN, Way::LAN);
@@ -927,6 +942,377 @@ fn i11_a_held_room_idle_for_an_hour_ends_and_lets_everyone_go() {
     assert!(w.people[0].host().ended());
 }
 
+// --- E. Copies and alignment (WP11) ------------------------------------------------------
+
+/// A song only the host has (its file, streamed to whoever asks).
+fn host_song(n: u32, secs: u64) -> Song {
+    Song {
+        key: Song::host_key(&format!("Album/{n:02}.flac")),
+        online_id: None,
+        host_file: true,
+        format: Some("flac".into()),
+        ..song(n, secs)
+    }
+}
+
+/// The copy someone's row shows in `viewer`'s window.
+fn copy_seen(w: &mut World, viewer: usize, of: usize) -> Option<CopyView> {
+    let id = if of == 0 {
+        HOST
+    } else {
+        w.people[of].guest().me().unwrap()
+    };
+    let v = match viewer {
+        0 => w.people[0].host().window(&Default::default()),
+        i => w.people[i].guest().window(&Default::default()),
+    };
+    v.room?.members.into_iter().find(|m| m.id == id)?.copy
+}
+
+/// Someone's first prepare: when it was made (the fake's clock) and its alignment.
+fn first_prepare(w: &mut World, i: usize) -> (u64, Alignment) {
+    assert!(w.run_until(|w| !w.people[i].prepares().is_empty(), 4_000));
+    let (at, c) = w.people[i]
+        .log
+        .calls()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Call::Prepare { .. }))
+        .unwrap();
+    match c {
+        Call::Prepare { align, .. } => (at, align),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn e1_d5_the_hosts_file_is_exact_with_nothing_to_measure_and_first_in_every_device() {
+    let mut w = World::open_measured(vec![host_song(1, 200), host_song(2, 200)], Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    let key = host_song(1, 200).key;
+    w.people[r].rules.lock().unwrap().host_copy.insert(key);
+    // Every device puts the host's file first (D5), asked for or not.
+    w.people[m]
+        .guest()
+        .conductor()
+        .set_mode(ListenMode::EveryDevice);
+    w.run_ms(1_500);
+    w.start();
+    for i in [r, m] {
+        let (_, a) = first_prepare(&mut w, i);
+        assert_eq!(a, Alignment::EXACT, "{}", w.people[i].name);
+    }
+    w.run_ms(2_000);
+    let seen = copy_seen(&mut w, 0, r).expect("the host sees Ravi's copy");
+    assert_eq!(
+        (seen.kind, seen.class),
+        (CopyKind::HostStream, CopyClass::Exact)
+    );
+    assert_eq!(seen.words(), "your file, streamed, matched");
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.class),
+        Some(CopyClass::Exact)
+    );
+    assert_eq!(
+        copy_seen(&mut w, m, m).map(|c| c.kind),
+        Some(CopyKind::HostStream)
+    );
+}
+
+#[test]
+fn e2_an_own_copy_that_decodes_the_same_is_exact() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Exact);
+    assert_eq!(a.offset_us, 0);
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, 0, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, matched")
+    );
+}
+
+#[test]
+fn e3_another_master_is_measured_then_refined_through_the_song_by_glides() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            offsets: vec![12_000, 14_000, 17_000, 21_000],
+            same_pcm: false,
+            ..Truth::default()
+        },
+    );
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Measured);
+    assert_eq!(a.offset_us, 12_000);
+    let e = w.entry(0);
+    // Each later window moves the offset when the room reaches it, never before.
+    for (window_s, offset) in [(60, 14_000), (120, 17_000), (180, 21_000)] {
+        assert!(w.run_until(|w| place(w) >= (window_s - 1) * S, 200_000));
+        assert!(
+            w.people[r]
+                .refines()
+                .iter()
+                .all(|x| x.2.offset_us != offset),
+            "not before {window_s} s"
+        );
+        assert!(w.run_until(|w| place(w) >= window_s * S + 100 * MS, 3_000));
+        let last = w.people[r].refines().last().cloned().expect("refined");
+        assert_eq!((last.1, last.2.offset_us), (e, offset));
+        assert_eq!(last.2.class, CopyClass::Measured);
+    }
+    // Every move a glide: never 20 ms or more at once.
+    let mut was = 12_000;
+    for (_, _, x) in w.people[r].refines() {
+        assert!(
+            (x.offset_us - was).abs() <= 20_000,
+            "{} to {}",
+            was,
+            x.offset_us
+        );
+        was = x.offset_us;
+    }
+}
+
+#[test]
+fn e4_a_catalog_copy_is_measured_with_its_encoder_delay() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(&song(1, 200).key, Truth::at(-25_000));
+    w.people[r].truth(&song(2, 200).key, Truth::at(-26_000));
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!((a.class, a.offset_us), (CopyClass::Measured, -25_000));
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, matched")
+    );
+    // The next song, armed ahead, measured too.
+    assert!(w.run_until(|w| !w.people[r].arms().is_empty(), 200_000));
+    let next = w.entry(1);
+    let arm = w.people[r]
+        .aligns()
+        .into_iter()
+        .find(|(e, _)| *e == next)
+        .expect("armed");
+    assert_eq!(
+        (arm.1.class, arm.1.offset_us),
+        (CopyClass::Measured, -26_000)
+    );
+}
+
+#[test]
+fn e5_d14_another_edit_turns_approximate_where_it_shows_for_its_listener_and_the_host_only() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            edit_ms: Some(120_000),
+            ..Truth::at(3_000)
+        },
+    );
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!((a.class, a.offset_us), (CopyClass::Measured, 3_000));
+    assert!(w.run_until(|w| place(w) >= 119 * S, 200_000));
+    assert!(
+        w.people[r].refines().is_empty(),
+        "the same offset: nothing to refine"
+    );
+    assert!(w.run_until(|w| place(w) >= 122 * S, 5_000));
+    let x = w.people[r].refines();
+    assert_eq!(x.len(), 1);
+    assert_eq!(
+        (x[0].2.class, x[0].2.offset_us),
+        (CopyClass::Approximate, 3_000),
+        "approximate from the edit, the offset kept (never a jump)"
+    );
+    w.run_ms(1_000);
+    assert_eq!(
+        copy_seen(&mut w, 0, r).map(|c| c.words()).as_deref(),
+        Some("YouTube Music, another version")
+    );
+    assert_eq!(
+        copy_seen(&mut w, r, r).map(|c| c.class),
+        Some(CopyClass::Approximate)
+    );
+    assert_eq!(copy_seen(&mut w, m, r), None, "nobody else sees it (D14)");
+}
+
+#[test]
+fn e6_a_song_the_host_cant_play_is_approximate_for_everyone_at_once() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    w.people[0]
+        .rules
+        .lock()
+        .unwrap()
+        .none
+        .insert(song(1, 200).key);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(&song(1, 200).key, Truth::at(40_000));
+    let t0 = w.sim_ns();
+    w.host_ask(Action::Play);
+    let (at, a) = first_prepare(&mut w, r);
+    assert_eq!(a, Alignment::APPROXIMATE);
+    assert!(
+        at - t0 < 400 * NS_MS,
+        "no waiting for a measure that can't come: {} ms",
+        (at - t0) / NS_MS
+    );
+}
+
+#[test]
+fn a_measure_too_slow_is_given_up_at_one_second_and_taken_later_only_within_a_glide() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    let key = song(1, 200).key;
+    let slow = |offset| Truth {
+        start_ms: 3_000,
+        whole_ms: 3_000,
+        ..Truth::at(offset)
+    };
+    w.people[r].truth(&key, slow(8_000));
+    w.people[m].truth(&key, slow(300_000));
+    let t0 = w.sim_ns();
+    w.host_ask(Action::Play);
+    for i in [r, m] {
+        let (at, a) = first_prepare(&mut w, i);
+        assert_eq!(a, Alignment::APPROXIMATE, "{}", w.people[i].name);
+        let ms = (at - t0) / NS_MS;
+        assert!((900..1_500).contains(&ms), "given up at 1 s: {ms} ms");
+    }
+    w.run_ms(4_000);
+    let x = w.people[r].refines();
+    assert_eq!(x.len(), 1, "within a glide: taken");
+    assert_eq!(
+        (x[0].2.class, x[0].2.offset_us),
+        (CopyClass::Measured, 8_000)
+    );
+    assert!(
+        w.people[m].refines().is_empty(),
+        "300 ms off: never jumped to for alignment alone"
+    );
+    // The next voice of the song opens with it.
+    w.host_ask(Action::Seek { content_us: 30 * S });
+    assert!(w.run_until(|w| w.people[m].prepares().len() == 2, 3_000));
+    let last = w.people[m]
+        .aligns()
+        .into_iter()
+        .rfind(|(_, a)| a.class == CopyClass::Measured)
+        .expect("measured");
+    assert_eq!(last.1.offset_us, 300_000);
+}
+
+#[test]
+fn e9_every_device_on_another_version_is_offered_the_hosts_copy_one_speaker_or_apart() {
+    let mut w = World::open_measured(songs(2), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.people[r].truth(
+        &song(1, 200).key,
+        Truth {
+            edit_ms: Some(10_000),
+            ..Truth::at(0)
+        },
+    );
+    w.people[r]
+        .guest()
+        .conductor()
+        .set_mode(ListenMode::EveryDevice);
+    w.run_ms(1_500);
+    w.start();
+    let (_, a) = first_prepare(&mut w, r);
+    assert_eq!(a.class, CopyClass::Approximate);
+    w.run_ms(1_500);
+    let v = w.people[r].guest().window(&Default::default());
+    let choices = v.you.unwrap().choices;
+    let every = choices
+        .iter()
+        .find(|c| c.mode == ListenMode::EveryDevice)
+        .unwrap();
+    assert_eq!(
+        every.why_not.as_deref(),
+        Some("Your copy is another version: use Asha's copy, or listen apart")
+    );
+    for mode in [ListenMode::OneSpeaker, ListenMode::Apart] {
+        let c = choices.iter().find(|c| c.mode == mode).unwrap();
+        assert_eq!(c.why_not, None);
+    }
+}
+
+/// `key`'s reference as person `i` gets it on the `env:` stream (`None`: nothing served).
+fn fetch_reference(w: &mut World, i: usize, key: &str) -> Option<together::align::Reference> {
+    use std::task::Poll;
+    use together::sim_net::poll_once;
+    use together::transport::Get;
+    let mut f = w.people[i].t.open_media(
+        w.peer(0),
+        Get {
+            get: format!("env:{key}"),
+            from: 0,
+            to: None,
+        },
+    );
+    let mut s = loop {
+        if let Poll::Ready(s) = poll_once(&mut f) {
+            break s.ok()?;
+        }
+        w.run_ms(5);
+    };
+    let mut body = Vec::new();
+    loop {
+        let got = loop {
+            let mut c = s.body.read_chunk();
+            if let Poll::Ready(x) = poll_once(&mut c) {
+                break x;
+            }
+            drop(c);
+            w.run_ms(5);
+        };
+        match got.ok()? {
+            Some(b) => body.extend_from_slice(&b),
+            None => return together::align::decode_reference(&body).ok(),
+        }
+    }
+}
+
+#[test]
+fn references_go_to_members_only_and_are_made_when_first_asked_for() {
+    use together::align::Reference;
+    let mut w = World::open_measured(songs(3), Opening::Resting);
+    let r = w.join("Ravi", Way::LAN, Way::LAN);
+    w.run_ms(200);
+    // Never prepared yet: the first ask finds nothing, and the host makes it.
+    let key = song(3, 200).key;
+    assert_eq!(fetch_reference(&mut w, r, &key), None);
+    w.run_ms(100);
+    assert!(matches!(
+        fetch_reference(&mut w, r, &key),
+        Some(Reference::Whole(_))
+    ));
+    assert_eq!(
+        fetch_reference(&mut w, r, "online:songzzzzzzz"),
+        None,
+        "never a song not in the room"
+    );
+    w.people[0].host().set_let_in(false);
+    let x = w.arrive("Outsider", Way::LAN, Way::LAN, ListenMode::Apart);
+    assert!(w.run_until(|w| w.people[x].guest().stage() == Stage::AtTheDoor, 2_000));
+    assert_eq!(
+        fetch_reference(&mut w, x, &key),
+        None,
+        "not to someone at the door"
+    );
+}
+
 // --- J. Modes -----------------------------------------------------------------------------
 
 #[test]
@@ -951,6 +1337,287 @@ fn j1_one_speaker_lets_go_of_the_player_and_playing_again_catches_up() {
     }));
     assert_eq!(w.people[1].prepares().len(), n + 1, "a late join");
     assert_eq!(w.people[1].commits().last(), Some(&a));
+}
+
+// --- One speaker (WP18) -------------------------------------------------------------------
+
+#[test]
+fn a16_on_the_hosts_network_a_guest_comes_in_on_the_hosts_speaker_unless_they_chose() {
+    let mut w = World::open(songs(3), Opening::Resting);
+    let r = w.arrive_by_network("Ravi", Way::LAN, Way::LAN);
+    assert!(w.run_until(|w| w.people[r].guest().stage() == Stage::In, 3_000));
+    w.run_ms(500);
+    assert_eq!(
+        w.people[r].guest().conductor().mode(),
+        ListenMode::OneSpeaker
+    );
+    assert!(w.people[r].calls().is_empty(), "nothing of Ravi's plays");
+    let id = w.people[r].guest().me().unwrap();
+    assert_eq!(w.room().mode_of(id), Some(ListenMode::OneSpeaker));
+    let y = w.people[r].guest().window(&Default::default()).you.unwrap();
+    assert_eq!(
+        y.choices.first().map(|c| c.mode),
+        Some(ListenMode::OneSpeaker),
+        "the host's speaker offered first"
+    );
+    assert!(y.choices.iter().any(|c| c.mode != ListenMode::OneSpeaker));
+    assert_eq!(y.line, "Listening on Asha's speaker");
+    // Over the internet: apart, and no question.
+    let (up, down) = internet();
+    let m = w.arrive_by_network("Meera", up, down);
+    assert!(w.run_until(|w| w.people[m].guest().stage() == Stage::In, 5_000));
+    w.run_ms(500);
+    assert_eq!(w.people[m].guest().conductor().mode(), ListenMode::Apart);
+    assert_eq!(
+        w.people[m].calls().first(),
+        Some(&Call::Attach {
+            mode: SyncMode::Apart
+        })
+    );
+    let y = w.people[m].guest().window(&Default::default()).you.unwrap();
+    assert!(y.choices.is_empty());
+    // Chosen while knocking: kept, and the room hears it.
+    let d = w.arrive_by_network("Dev", Way::LAN, Way::LAN);
+    w.people[d]
+        .guest()
+        .conductor()
+        .set_mode(ListenMode::EveryDevice);
+    assert!(w.run_until(|w| w.people[d].guest().stage() == Stage::In, 3_000));
+    w.run_ms(4_000);
+    let id = w.people[d].guest().me().unwrap();
+    assert_eq!(w.room().mode_of(id), Some(ListenMode::EveryDevice));
+    assert_eq!(
+        w.people[d].calls().first(),
+        Some(&Call::Attach {
+            mode: SyncMode::EveryDevice
+        })
+    );
+}
+
+#[test]
+fn j7_a_one_speaker_room_the_host_leads_and_remotes_see_and_control_by_role() {
+    let mut w = World::open(songs(3), Opening::Resting);
+    let r = w.join_as("Ravi", Way::LAN, Way::LAN, ListenMode::OneSpeaker);
+    let m = w.join_as("Meera", Way::LAN, Way::LAN, ListenMode::OneSpeaker);
+    w.run_ms(500);
+    assert_eq!(
+        w.people[0]
+            .calls()
+            .into_iter()
+            .filter(|c| matches!(c, Call::Lead(_)))
+            .collect::<Vec<_>>(),
+        vec![Call::Lead(true)],
+        "the host leads: every other member a remote"
+    );
+    w.host_ask(Action::Play);
+    assert!(w.run_until(|w| w.room().phase() == Phase::Playing, 4_000));
+    w.run_ms(10_000);
+    for i in [r, m] {
+        assert!(
+            w.people[i].calls().is_empty(),
+            "a remote attaches no player"
+        );
+    }
+    let v = w.people[r].guest().window(&Default::default());
+    let you = v.you.clone().unwrap();
+    assert_eq!(you.sub_state, SubState::Remote);
+    let room = v.room.clone().unwrap();
+    assert_eq!(room.queue.len(), 3);
+    let progress = room.anchor.unwrap().content_at(v.host_now_us.unwrap());
+    let truth = place(&mut w);
+    assert!(
+        (progress - truth).abs() < 100 * MS,
+        "progress from the anchor and the clock line: off by {} µs",
+        progress - truth
+    );
+    // Controls by role: listening only, a skip is a request; with control, a press.
+    let mid = w.people[m].guest().me().unwrap();
+    w.people[0]
+        .host()
+        .act(|room, now| room.set_role(mid, Some(Role::Listen), now));
+    w.run_ms(300);
+    w.people[m].guest().request(Action::Next);
+    w.run_ms(300);
+    let hv = w.people[0].host().window(&Default::default());
+    let words: Vec<String> = hv
+        .room
+        .unwrap()
+        .requests
+        .into_iter()
+        .map(|q| q.words)
+        .collect();
+    assert_eq!(words, vec!["Meera asks to skip".to_owned()]);
+    w.people[r].guest().ask(Action::Pause);
+    assert!(w.run_until(|w| w.room().phase() == Phase::Held, 2_000));
+    // Someone plays: the host's player follows the room's clock again.
+    w.people[m].guest().conductor().set_mode(ListenMode::Apart);
+    w.run_ms(1_000);
+    let leads: Vec<Call<String>> = w.people[0]
+        .calls()
+        .into_iter()
+        .filter(|c| matches!(c, Call::Lead(_)))
+        .collect();
+    assert_eq!(leads.last(), Some(&Call::Lead(false)));
+    assert_eq!(
+        w.people[m].calls().first(),
+        Some(&Call::Attach {
+            mode: SyncMode::Apart
+        })
+    );
+}
+
+#[test]
+fn b17_a_remote_changes_the_speakers_volume_only_when_the_host_lets_guests() {
+    let mut w = World::open(songs(2), Opening::Resting);
+    let r = w.join_as("Ravi", Way::LAN, Way::LAN, ListenMode::OneSpeaker);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    w.people[0].host().set_volume(Some(70));
+    let volume_seen = |w: &mut World, i: usize| {
+        w.people[i]
+            .guest()
+            .window(&Default::default())
+            .room
+            .and_then(|r| r.volume)
+    };
+    w.people[r].guest().ask(Action::Volume { percent: 30 });
+    w.run_ms(300);
+    assert_eq!(w.people[0].host().take_volume(), None, "not allowed yet");
+    assert_eq!(volume_seen(&mut w, r), None);
+    w.people[0]
+        .host()
+        .act(|room, now| room.set_guests_volume(true, now));
+    w.run_ms(300);
+    assert_eq!(volume_seen(&mut w, r), Some(70), "the speaker's volume");
+    assert_eq!(volume_seen(&mut w, m), None, "for remotes only");
+    w.people[r].guest().ask(Action::Volume { percent: 30 });
+    w.run_ms(300);
+    assert_eq!(
+        w.people[0].host().take_volume(),
+        Some(30),
+        "the host's player told"
+    );
+    assert_eq!(volume_seen(&mut w, r), Some(30));
+    w.people[m].guest().ask(Action::Volume { percent: 20 });
+    w.run_ms(300);
+    assert_eq!(
+        w.people[0].host().take_volume(),
+        None,
+        "someone who plays their own copy can't"
+    );
+}
+
+/// The songs whose words were asked for, and the words the host has, by song.
+type Asked = Arc<Mutex<(Vec<String>, HashMap<String, Lyrics>)>>;
+
+/// The host's words for its own songs, and how often they were asked for.
+struct Words(Asked);
+
+impl HostLyrics for Words {
+    fn of(&mut self, song: &Song) -> Option<Option<Lyrics>> {
+        let mut w = self.0.lock().unwrap();
+        w.0.push(song.key.clone());
+        Some(w.1.get(&song.key).cloned())
+    }
+}
+
+#[test]
+fn j7_the_words_of_a_song_only_the_host_has_reach_remotes_once() {
+    let mine = host_song(1, 200);
+    let words = Lyrics {
+        lines: vec![(1_000, "First line".into()), (5_000, "Second line".into())],
+        text: String::new(),
+    };
+    let asked: Asked = Arc::new(Mutex::new((
+        Vec::new(),
+        [(mine.key.clone(), words.clone())].into_iter().collect(),
+    )));
+    let mut w = World::open(vec![mine.clone(), song(2, 200)], Opening::Resting);
+    w.people[0]
+        .host()
+        .set_lyrics(Box::new(Words(asked.clone())));
+    let r = w.join_as("Ravi", Way::LAN, Way::LAN, ListenMode::OneSpeaker);
+    let m = w.join("Meera", Way::LAN, Way::LAN);
+    w.start_with_remotes();
+    w.run_ms(3_000);
+    let seen = |w: &mut World, i: usize| {
+        w.people[i]
+            .guest()
+            .window(&Default::default())
+            .room
+            .and_then(|r| r.lyrics)
+    };
+    let l = seen(&mut w, r).expect("the remote has the words");
+    assert_eq!((l.key, l.lines), (mine.key.clone(), words.lines));
+    assert_eq!(
+        seen(&mut w, m),
+        None,
+        "who plays their own copy finds their own"
+    );
+    assert_eq!(asked.lock().unwrap().0, vec![mine.key.clone()], "once");
+    // A catalog song next: no words from the host (the window finds them).
+    w.host_ask(Action::Next);
+    w.run_ms(3_000);
+    assert_eq!(seen(&mut w, r), None);
+}
+
+#[test]
+fn j7_a_remotes_progress_follows_the_hosts_own_sound_card_within_100_ms_for_ten_minutes() {
+    let mut w = World::open(vec![song(1, 700)], Opening::Resting);
+    // The host's sound card runs 300 ppm fast: free running, 18 ms a minute ahead of a clock.
+    let hc: Arc<dyn MonoClock> = w.people[0].clock.clone();
+    w.people[0].log.heard_from(hc, 300.0);
+    let r = w.join_as("Ravi", Way::LAN, Way::LAN, ListenMode::OneSpeaker);
+    w.set_step_ms(10);
+    w.host_ask(Action::Play);
+    assert!(w.run_until(|w| w.room().phase() == Phase::Playing, 4_000));
+    let start = w.people[0].commits()[0];
+    let truth = |h: i64| start.content_us + ((h - start.host_us) as f64 * 1.000_3) as i64;
+    let mut worst = 0i64;
+    let mut anchors: Vec<Anchor> = Vec::new();
+    for _ in 0..6_000 {
+        w.run_ms(100);
+        let h = w.now();
+        if h < start.host_us + S {
+            continue;
+        }
+        let v = w.people[r].guest().window(&Default::default());
+        let a = v.room.unwrap().anchor.unwrap();
+        let progress = a.content_at(v.host_now_us.unwrap());
+        worst = worst.max((progress - truth(h)).abs());
+        let ra = w.room().anchor().unwrap();
+        if anchors.last() != Some(&ra) {
+            anchors.push(ra);
+        }
+    }
+    eprintln!(
+        "ten minutes: the remote's progress at most {} ms from the host's heard place, {} re-anchors",
+        worst / MS,
+        anchors.len() - 1
+    );
+    assert!(worst < 100 * MS, "{} µs", worst);
+    assert!(
+        anchors.len() >= 9,
+        "re-anchored as the card drifts: {}",
+        anchors.len()
+    );
+    for p in anchors.windows(2) {
+        let moved = p[1].content_us - p[0].content_at(p[1].host_us);
+        assert!(moved > 20 * MS && moved < 25 * MS, "moved {moved} µs");
+    }
+    // The host's own player: never told anything but its first start (commits are no-ops for
+    // the entry it plays) and to lead.
+    let host_calls: Vec<Call<String>> = w.people[0]
+        .calls()
+        .into_iter()
+        .filter(|c| !matches!(c, Call::Commit(_)))
+        .collect();
+    assert!(
+        host_calls.iter().all(|c| matches!(
+            c,
+            Call::Attach { .. } | Call::Lead(true) | Call::Prepare { .. }
+        )),
+        "{host_calls:?}"
+    );
 }
 
 // --- The window ---------------------------------------------------------------------------

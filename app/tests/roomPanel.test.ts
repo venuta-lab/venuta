@@ -10,6 +10,7 @@ import type { TogetherViewV2 } from '../src/lib/togetherView.ts'
 import {
   chipTone,
   copyWords,
+  hostWords,
   delayWords,
   doorWords,
   handOverChoices,
@@ -68,6 +69,7 @@ const EXPECTED: Record<string, { screen: string; status: string[]; chip: string 
   'in, crossfading between songs': { screen: 'room', status: [], chip: 'accent' },
   'in, cut between songs': { screen: 'room', status: [], chip: 'accent' },
   "in, a remote on the host's speaker": { screen: 'room', status: [], chip: 'accent' },
+  'in, a remote, the words of a song only the host has': { screen: 'room', status: [], chip: 'accent' },
   'in, a remote who controls and may change the volume': { screen: 'room', status: [], chip: 'accent' },
   "in, every device, on the host's network": { screen: 'room', status: [], chip: 'accent' },
   'in, every device not available': { screen: 'room', status: [], chip: 'accent' },
@@ -470,4 +472,16 @@ test('no em dashes, and sentence case, in what the panel says', () => {
       if (i > 0 && !/[.?!:]$/.test(words[i - 1]) && /^[A-Z][a-z]/.test(w))
         assert.ok(/^(Asha|Ravi|Meera|Ali|Kabir|Sara|Dev|Ira|Noor|Zoya|Om|Tara|Veer|Ishan|YouTube|Music|Bluetooth|Venuta|Hide|IP|Song)/.test(w), `${w} in "${s}"`)
   }
+})
+
+test("a remote shows the words the host sent for a song only the host has", () => {
+  const v = view('in, a remote, the words of a song only the host has')
+  assert.deepEqual(hostWords(v)?.lines[1], [94_500, 'The line being sung'])
+  // Not for another song, and not for someone who plays (they find their own copy's words).
+  v.room!.lyrics!.key = 'host:another'
+  assert.equal(hostWords(v), null)
+  assert.equal(hostWords(view("in, a remote on the host's speaker")), null)
+  const playing = view('in, a remote, the words of a song only the host has')
+  playing.you!.mode = 'apart'
+  assert.equal(hostWords(playing), null)
 })

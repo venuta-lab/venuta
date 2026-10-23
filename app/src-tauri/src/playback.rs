@@ -1549,11 +1549,20 @@ fn parse_lrc(text: &str) -> Vec<(u64, String)> {
 #[tauri::command]
 pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let file = PathBuf::from(&root).join(&path);
+        Ok(lyrics_of_file(&PathBuf::from(&root).join(&path)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The words of a song's file: a `.lrc` beside it, else its tags (none: empty). Reads files:
+/// call it off any thread that must not wait.
+pub(crate) fn lyrics_of_file(file: &std::path::Path) -> Lyrics {
+    {
         let lrc = file.with_extension("lrc");
         let text = engine::text::read_text(&lrc).ok().or_else(|| {
-            let kind = engine::media::FileKind::from_path(&file);
-            engine::media::read_facts(&file, kind).ok().and_then(|f| {
+            let kind = engine::media::FileKind::from_path(file);
+            engine::media::read_facts(file, kind).ok().and_then(|f| {
                 let pick = |k: &str| {
                     f.tags
                         .iter()
@@ -1564,20 +1573,18 @@ pub async fn song_lyrics(root: String, path: String) -> Result<Lyrics, String> {
             })
         });
         let Some(text) = text else {
-            return Ok(Lyrics::default());
+            return Lyrics::default();
         };
         let lines = parse_lrc(&text);
-        Ok(if lines.is_empty() {
+        if lines.is_empty() {
             Lyrics { lines, text }
         } else {
             Lyrics {
                 lines,
                 text: String::new(),
             }
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        }
+    }
 }
 
 /// One song's words for searching: its lines without times, each once.

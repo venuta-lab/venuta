@@ -12,11 +12,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use together::align::Alignment;
+use together::align::{Alignment, CopyClass, Envelope, Track, Verdict, WindowCheck};
 use together::anchor::{Anchor, EntryId, PrepId};
 use together::clock_map;
 use together::conductor::{Conductor, Copies, Copy, Lookup};
 use together::fakes::{Call, FakeLog, FakeRoomPlayer, Script};
+use together::measure::{Aligner, Envelopes, Made, Measured, References, Shelf};
 use together::proto::Song;
 use together::proto::v3::Action;
 use together::room::v2::{HOST, Opening, Room};
@@ -24,7 +25,7 @@ use together::room_player::{ListenMode, RoomPlayer, SyncMode};
 use together::session::{GuestSession, HostConfig, HostSession, Stage};
 use together::sim_net::{SimNet, SimTransport, Way};
 use together::time::{MonoClock, SimClock, SkewedClock, Timebase};
-use together::transport::PeerId;
+use together::transport::{Get, MediaServer, PeerId};
 use together::view::CopyKind;
 
 pub const SECRET: &str = "0123456789abcdef0123456789abcdef";
@@ -69,6 +70,8 @@ pub struct Rules {
     pub host_copy: HashSet<String>,
     /// Every song asked for, in order.
     pub asked: Vec<String>,
+    /// How they listen: every device puts the host's file first (D5, as `sources.rs`).
+    pub mode: Option<ListenMode>,
 }
 
 /// A person's copies: found by the rules (the key is the item; approximate, the catalog's).
@@ -84,7 +87,8 @@ impl Copies<String> for TestCopies {
         if r.looking.contains(&song.key) {
             return Lookup::Looking;
         }
-        let host = r.host_copy.contains(&song.key);
+        let host = r.host_copy.contains(&song.key)
+            || (song.host_file && r.mode == Some(ListenMode::EveryDevice));
         Lookup::Found(Copy {
             item: song.key.clone(),
             align: if host {
@@ -106,6 +110,9 @@ impl Copies<String> for TestCopies {
     fn prefer_host(&mut self, key: &str) {
         self.0.lock().unwrap().host_copy.insert(key.to_owned());
     }
+    fn set_mode(&mut self, mode: ListenMode) {
+        self.0.lock().unwrap().mode = Some(mode);
+    }
 }
 
 pub enum Side {
@@ -120,6 +127,8 @@ pub struct Person {
     pub clock: Arc<SkewedClock>,
     pub log: FakeLog<String>,
     pub rules: Arc<Mutex<Rules>>,
+    /// What each of their copies truly is (measured worlds).
+    pub truths: Truths,
     pub side: Option<Side>,
     pub ways: (Way, Way),
 }
@@ -211,6 +220,8 @@ pub struct World {
     pub invite_open: Arc<std::sync::atomic::AtomicBool>,
     /// People whose computers sleep: their sessions aren't stepped.
     asleep: HashSet<usize>,
+    /// Copies measured (WP11).
+    pub measured: bool,
 }
 
 /// Every person's computer clock: booted at its own moment, a little fast or slow.
@@ -229,6 +240,16 @@ impl World {
     }
 
     pub fn open_with(songs: Vec<Song>, opening: Opening, script: Script) -> World {
+        Self::build(songs, opening, script, false)
+    }
+
+    /// As `open`, everyone's copies measured (WP11): the host shelves its references, each
+    /// guest fetches them and aligns its own (fake envelopes that carry each copy's `Truth`).
+    pub fn open_measured(songs: Vec<Song>, opening: Opening) -> World {
+        Self::build(songs, opening, Script::default(), true)
+    }
+
+    fn build(songs: Vec<Song>, opening: Opening, script: Script, measured: bool) -> World {
         let clock = SimClock::new(1_000_000_000);
         let tb: Arc<dyn Timebase> = Arc::new(clock.clone());
         let net = SimNet::new(tb, 23);
@@ -242,6 +263,7 @@ impl World {
             script,
             invite_open: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             asleep: HashSet::new(),
+            measured,
         };
         let hc = computer(&w.base, 0);
         let t = w.net.peer(hc.clone());
@@ -277,15 +299,21 @@ impl World {
             Some(e) => player.adopt(map.clone(), SyncMode::Apart, e),
             None => player.attach(map.clone(), SyncMode::Apart),
         };
-        let conductor = Conductor::new(
-            player,
-            map,
-            Box::new(TestCopies(rules.clone())),
-            ListenMode::Apart,
-        )
-        .with_handle(handle, playing);
+        let truths = Truths::default();
+        let shelf = Shelf::new();
+        let copies: Box<dyn Copies<String>> = if measured {
+            Box::new(Measured::host(
+                Box::new(TestCopies(rules.clone())),
+                Box::new(FakeEnvelopes::new(truths.clone(), w.base.clone())),
+                shelf.clone(),
+            ))
+        } else {
+            Box::new(TestCopies(rules.clone()))
+        };
+        let conductor =
+            Conductor::new(player, map, copies, ListenMode::Apart).with_handle(handle, playing);
         let open = w.invite_open.clone();
-        let host = HostSession::new(
+        let mut host = HostSession::new(
             Arc::new(t.clone()),
             hc.clone(),
             room,
@@ -294,12 +322,18 @@ impl World {
                 invite_open: Arc::new(move || open.load(std::sync::atomic::Ordering::SeqCst)),
             },
         );
+        if measured {
+            host = host.with_envelopes(shelf);
+            let gate = host.media(Arc::new(NoFiles));
+            w.net.serve(&t, gate);
+        }
         w.people.push(Person {
             name: "Asha".into(),
             t,
             clock: hc,
             log,
             rules,
+            truths,
             side: Some(Side::Host(Box::new(host))),
             ways: (Way::LAN, Way::LAN),
         });
@@ -326,20 +360,52 @@ impl World {
         i
     }
 
+    /// A guest who chose `mode` joins now over these ways; runs until in.
+    pub fn join_as(&mut self, name: &str, up: Way, down: Way, mode: ListenMode) -> usize {
+        let i = self.arrive(name, up, down, mode);
+        assert!(
+            self.run_until(|w| w.people[i].guest().stage() == Stage::In, 5_000),
+            "{name} in"
+        );
+        i
+    }
+
     /// A guest connects and knocks (as `mode`), not waited for.
     pub fn arrive(&mut self, name: &str, up: Way, down: Way, mode: ListenMode) -> usize {
+        self.arrive_with(name, up, down, mode, Some(mode))
+    }
+
+    /// A guest who chose nothing before joining connects and knocks: the network decides (A16).
+    pub fn arrive_by_network(&mut self, name: &str, up: Way, down: Way) -> usize {
+        self.arrive_with(name, up, down, ListenMode::Apart, None)
+    }
+
+    fn arrive_with(
+        &mut self,
+        name: &str,
+        up: Way,
+        down: Way,
+        mode: ListenMode,
+        chosen: Option<ListenMode>,
+    ) -> usize {
         let i = self.people.len();
         let gc = computer(&self.base, i);
         let t = self.net.peer(gc.clone());
         let (player, log) = FakeRoomPlayer::<String>::new(self.base.clone(), self.script.clone());
         let rules = Arc::new(Mutex::new(Rules::default()));
-        let conductor = Conductor::new(
-            Arc::new(player),
-            clock_map::handle(),
-            Box::new(TestCopies(rules.clone())),
-            mode,
-        );
         let host = self.people[0].t.id();
+        let truths = Truths::default();
+        let copies: Box<dyn Copies<String>> = if self.measured {
+            Box::new(Measured::guest(
+                Box::new(TestCopies(rules.clone())),
+                Box::new(FakeEnvelopes::new(truths.clone(), self.base.clone())),
+                References::new(Arc::new(t.clone()), host, None),
+                Arc::new(FakeAligner),
+            ))
+        } else {
+            Box::new(TestCopies(rules.clone()))
+        };
+        let conductor = Conductor::new(Arc::new(player), clock_map::handle(), copies, mode);
         let key = format!("peer{}", t.id().0);
         let g = GuestSession::new(
             Arc::new(t.clone()),
@@ -351,6 +417,7 @@ impl World {
                 proof: together::invite::proof(SECRET, &key),
                 app: "Venuta test".into(),
                 host_name: "Asha".into(),
+                mode: chosen,
             },
         );
         self.net.connect(&t, &self.people[0].t, up, down);
@@ -360,6 +427,7 @@ impl World {
             clock: gc,
             log,
             rules,
+            truths,
             side: Some(Side::Guest(Box::new(g))),
             ways: (up, down),
         });
@@ -453,6 +521,21 @@ impl World {
             self.run_until(
                 |w| w.room().anchor().is_some_and(|a| a.playing)
                     && w.people.iter().all(|p| !p.commits().is_empty()),
+                4_000
+            ),
+            "started"
+        );
+        self.room().anchor().unwrap()
+    }
+
+    /// The room starts from the first song with remotes in it (who play nothing): the room and
+    /// the host's player.
+    pub fn start_with_remotes(&mut self) -> Anchor {
+        self.host_ask(Action::Play);
+        assert!(
+            self.run_until(
+                |w| w.room().phase() == together::proto::v3::Phase::Playing
+                    && !w.people[0].commits().is_empty(),
                 4_000
             ),
             "started"
@@ -560,8 +643,9 @@ impl World {
     }
 
     /// A guest's app started again and joins the same room with the same key (the same
-    /// computer's key in this room): a new player, the same transport, the link back.
-    pub fn guest_comes_back(&mut self, i: usize) {
+    /// computer's key in this room), as `mode` (what its record kept; `None`: chosen by the
+    /// network): a new player, the same transport, the link back.
+    pub fn guest_comes_back(&mut self, i: usize, mode: Option<ListenMode>) {
         let gc = self.people[i].clock.clone();
         let (player, log) = FakeRoomPlayer::<String>::new(self.base.clone(), self.script.clone());
         let rules = Arc::new(Mutex::new(Rules::default()));
@@ -583,6 +667,7 @@ impl World {
                 proof: together::invite::proof(SECRET, &key),
                 app: "Venuta test".into(),
                 host_name: "Asha".into(),
+                mode,
             },
         );
         let p = &mut self.people[i];
@@ -618,6 +703,7 @@ impl World {
                 proof: together::invite::proof(&door, &key),
                 app: "Venuta test".into(),
                 host_name: "Asha".into(),
+                mode: Some(ListenMode::Apart),
             },
         );
         self.net.connect(&t, &self.people[0].t, Way::LAN, Way::LAN);
@@ -629,7 +715,193 @@ impl World {
             rules,
             side: Some(Side::Guest(Box::new(g))),
             ways: (Way::LAN, Way::LAN),
+            truths: Truths::default(),
         });
         i
+    }
+}
+
+// --- Measured copies (WP11) ---------------------------------------------------------------
+
+/// What a copy truly is, for the fake envelopes (they carry it, and the fake aligner reads it
+/// back): its offset from the reference at the start and at each later window (60 s apart),
+/// where another edit begins, whether its decoded audio is the reference's.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Truth {
+    pub offsets: Vec<i64>,
+    pub edit_ms: Option<u32>,
+    pub same_pcm: bool,
+    pub fails: bool,
+    /// The start's envelope is made this long after first asked for; the whole song's this
+    /// long, ms.
+    pub start_ms: u64,
+    pub whole_ms: u64,
+}
+
+impl Default for Truth {
+    /// The reference's own audio: the host's copy, or a copy that decodes the same.
+    fn default() -> Truth {
+        Truth {
+            offsets: vec![0; 4],
+            edit_ms: None,
+            same_pcm: true,
+            fails: false,
+            start_ms: 0,
+            whole_ms: 0,
+        }
+    }
+}
+
+impl Truth {
+    /// Another recording of the same song, `offset_us` later than the reference throughout.
+    pub fn at(offset_us: i64) -> Truth {
+        Truth {
+            offsets: vec![offset_us; 4],
+            same_pcm: false,
+            ..Truth::default()
+        }
+    }
+}
+
+/// Each person's copies' truths, by song key (missing: the reference's own audio).
+pub type Truths = Arc<Mutex<HashMap<String, Truth>>>;
+
+/// Envelopes made from the truths: the start's once `start_ms` has passed, the whole song's
+/// once `whole_ms` has.
+pub struct FakeEnvelopes {
+    truths: Truths,
+    clock: Arc<dyn MonoClock>,
+    since: HashMap<String, u64>,
+}
+
+impl FakeEnvelopes {
+    pub fn new(truths: Truths, clock: Arc<dyn MonoClock>) -> FakeEnvelopes {
+        FakeEnvelopes {
+            truths,
+            clock,
+            since: HashMap::new(),
+        }
+    }
+}
+
+impl Envelopes<String> for FakeEnvelopes {
+    fn of(&mut self, key: &str, _item: &String) -> Made {
+        let t = self
+            .truths
+            .lock()
+            .unwrap()
+            .get(key)
+            .cloned()
+            .unwrap_or_default();
+        let now = self.clock.now_ns();
+        let ran_ms = (now - *self.since.entry(key.to_owned()).or_insert(now)) / NS_MS;
+        if t.fails {
+            return Made::Failed;
+        }
+        if ran_ms < t.start_ms {
+            return Made::Making;
+        }
+        let pcm_hash = Some(if t.same_pcm { [1; 16] } else { [2; 16] });
+        let mut windows = vec![(0, serde_json::to_vec(&t).unwrap())];
+        if ran_ms < t.whole_ms {
+            return Made::Start(Envelope {
+                hop_ms: 10,
+                windows,
+                pcm_hash,
+            });
+        }
+        for k in 1..t.offsets.len() {
+            windows.push((k as u32 * 60_000, vec![k as u8]));
+        }
+        Made::Whole(Envelope {
+            hop_ms: 10,
+            windows,
+            pcm_hash,
+        })
+    }
+}
+
+/// Aligns the truths the fake envelopes carry, by the real analysis's rules: exact for the same
+/// audio with no edit, measured otherwise; later windows agree at each window's offset, or
+/// show the edit (moved 5 s) from where it begins.
+pub struct FakeAligner;
+
+impl Aligner for FakeAligner {
+    fn track(&self, r: &Envelope, m: &Envelope) -> Track {
+        let read = |e: &Envelope| -> Truth { serde_json::from_slice(&e.windows[0].1).unwrap() };
+        let (rt, mt) = (read(r), read(m));
+        let at = |v: &Vec<i64>, k: usize| v.get(k).or(v.first()).copied().unwrap_or(0);
+        let off = |k: usize| at(&mt.offsets, k) - at(&rt.offsets, k);
+        let mut edit_at = mt.edit_ms.filter(|e| *e < 30_000);
+        let mut windows = Vec::new();
+        for k in 1..r.windows.len().min(m.windows.len()) {
+            let start_ms = k as u32 * 60_000;
+            let verdict = if mt.edit_ms.is_some_and(|e| e <= start_ms) {
+                edit_at.get_or_insert(start_ms);
+                Verdict::Moved {
+                    offset_us: off(k) + 5_000_000,
+                }
+            } else {
+                Verdict::Agrees { offset_us: off(k) }
+            };
+            windows.push(WindowCheck { start_ms, verdict });
+        }
+        let exact = r.pcm_hash.is_some() && r.pcm_hash == m.pcm_hash;
+        let alignment = match (exact, edit_at) {
+            (true, None) => Alignment::EXACT,
+            (_, Some(_)) => Alignment {
+                offset_us: off(0),
+                ..Alignment::APPROXIMATE
+            },
+            (false, None) => Alignment {
+                offset_us: off(0),
+                class: CopyClass::Measured,
+                confidence: 15.0,
+            },
+        };
+        Track {
+            alignment,
+            windows,
+            edit_at_ms: edit_at,
+        }
+    }
+}
+
+/// The host's files: none (a measured world serves only references).
+pub struct NoFiles;
+
+impl MediaServer for NoFiles {
+    fn open(&self, _: PeerId, _: &Get) -> Option<Arc<[u8]>> {
+        None
+    }
+}
+
+impl Person {
+    /// Their copies' alignments as the player was told them: prepares' and arms' (entry,
+    /// alignment), and refinements.
+    pub fn aligns(&self) -> Vec<(EntryId, Alignment)> {
+        self.calls()
+            .into_iter()
+            .filter_map(|c| match c {
+                Call::Prepare { entry, align, .. }
+                | Call::ArmNext { entry, align, .. }
+                | Call::Refine { entry, align } => Some((entry, align)),
+                _ => None,
+            })
+            .collect()
+    }
+    pub fn refines(&self) -> Vec<(u64, EntryId, Alignment)> {
+        self.log
+            .calls()
+            .into_iter()
+            .filter_map(|(at, c)| match c {
+                Call::Refine { entry, align } => Some((at, entry, align)),
+                _ => None,
+            })
+            .collect()
+    }
+    /// Set what their copy of `key` truly is.
+    pub fn truth(&self, key: &str, t: Truth) {
+        self.truths.lock().unwrap().insert(key.to_owned(), t);
     }
 }

@@ -32,6 +32,7 @@ pub mod conductor;
 pub mod fakes;
 pub mod invite;
 pub mod lifecycle;
+pub mod measure;
 pub mod proto;
 pub mod room;
 pub mod room_player;

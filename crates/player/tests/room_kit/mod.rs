@@ -582,10 +582,21 @@ pub fn shaped(notes: &[RenderNote], end: u64) -> Vec<Range<u64>> {
         })
         .collect();
     let mut pause: Option<u64> = None;
+    // The volume under 1: from its ramp down to the end of its ramp back (4.7's declared spans).
+    let mut quieter: Option<u64> = None;
     for n in notes {
         match *n {
             RenderNote::Faded { from, to, .. } => out.push(from..to),
-            RenderNote::Gain { from, to, .. } => out.push(from..to),
+            RenderNote::Gain {
+                from, to, target, ..
+            } => {
+                if target < 1.0 {
+                    quieter = quieter.or(Some(from));
+                } else if let Some(q) = quieter.take() {
+                    out.push(q..to);
+                }
+                out.push(from..to);
+            }
             RenderNote::Silent { at, .. } => pause = pause.or(Some(at)),
             RenderNote::Started {
                 at, content, fade, ..
@@ -612,6 +623,7 @@ pub fn shaped(notes: &[RenderNote], end: u64) -> Vec<Range<u64>> {
         }
     }
     out.extend(pause.map(|p| p..end));
+    out.extend(quieter.map(|q| q..end));
     out
 }
 

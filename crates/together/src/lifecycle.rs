@@ -16,6 +16,7 @@
 
 use crate::invite::Invite;
 use crate::room::v2::{Place, RoomState};
+use crate::room_player::ListenMode;
 use crate::session::{Ending, Stage};
 use crate::view::Resume;
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,10 @@ pub struct GuestRecord {
     pub host: String,
     /// When it was last in the room (seconds since 1970).
     pub in_at: u64,
+    /// How it listened then: a rejoin comes back the same way (not chosen again by the
+    /// network, A16).
+    #[serde(default)]
+    pub mode: Option<ListenMode>,
 }
 
 /// What to offer at start.
@@ -249,20 +254,24 @@ impl GuestKeeper {
                 invite,
                 host,
                 in_at: 0,
+                mode: None,
             },
             written_ms: None,
             done: false,
         }
     }
 
-    /// The session's stage and ending now, at `now_ms` (ms since 1970).
-    pub fn step(&mut self, stage: Stage, ending: Option<Ending>, now_ms: u64) {
+    /// The session's stage, ending and how the person listens now, at `now_ms` (ms since
+    /// 1970).
+    pub fn step(&mut self, stage: Stage, ending: Option<Ending>, mode: ListenMode, now_ms: u64) {
         if self.done {
             return;
         }
         match stage {
             Stage::In => {
-                if self.written_ms.is_none_or(|w| now_ms >= w + IN_EVERY_MS) {
+                let changed = self.record.mode != Some(mode);
+                if changed || self.written_ms.is_none_or(|w| now_ms >= w + IN_EVERY_MS) {
+                    self.record.mode = Some(mode);
                     self.record.in_at = now_ms / 1_000;
                     self.written_ms = Some(now_ms);
                     let _ = self.kept.keep_guest(&self.record);
@@ -311,6 +320,7 @@ mod tests {
             invite: invite(until),
             host: "Asha".into(),
             in_at,
+            mode: None,
         }
     }
 
