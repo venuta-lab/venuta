@@ -74,8 +74,8 @@ import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
 import { StudioHost } from './components/themes/ThemeStudio'
 import { ThemeImportHost } from './components/themes/ThemeImport'
-import { settingsSection } from './screens/settingsPage'
-import { startUpdateChecks } from './lib/updates'
+import { SETTINGS_FOUND, SETTINGS_PAGE_NAMES, settingsSection } from './screens/settingsPage'
+import { checkForUpdate, startUpdateChecks } from './lib/updates'
 import { keepRadioGoing } from './lib/radio'
 import { listening } from './lib/listening'
 import { applyZoom, readZoom, zoomBy } from './lib/zoom'
@@ -805,6 +805,18 @@ export default function App() {
       { id: 'choose', group: 'Actions', label: 'Choose the folder with your music', keywords: 'library open', run: () => void chooseRoot() },
       { id: 'setup', group: 'Actions', label: 'Set up your library', keywords: 'first run guide wizard start migrate', run: () => setSetup(true) },
       { id: 'shortcuts', group: 'Help', label: 'Show keyboard shortcuts', keys: '?', run: () => setSheet(true) },
+      ...SETTINGS_FOUND.map(([page, label, keywords]) => ({
+        id: `settings-${page}-${label}`,
+        group: 'Settings',
+        label,
+        detail: `Settings › ${SETTINGS_PAGE_NAMES[page]}`,
+        keywords,
+        run: () => {
+          settingsSection(page)
+          go('settings')
+          if (label === 'Check for updates') void checkForUpdate({ manual: true })
+        },
+      })),
       {
         id: 'theme-toggle',
         group: 'Look and feel',
@@ -1157,7 +1169,7 @@ export default function App() {
           onSearch={() => focusSearch(true)}
           onActivity={() => go('activity')}
           onUpdates={() => {
-            settingsSection('system')
+            settingsSection('about')
             go('settings')
           }}
         />

@@ -18,6 +18,8 @@ const RECENT_IN_PALETTE = 4
 const RECENT = 'recent:'
 /** Groups of things found by the words typed: running one means the search (remembered). */
 const FOUND = new Set(['Music', 'Albums', 'Artists', 'Songs', 'Playlists'])
+/** Shown only for words typed: there are too many to list without. */
+const QUIET_GROUPS = new Set(['Albums', 'Artists', 'Settings'])
 /** Completions of the words, offered as searches, after the things found. */
 const COMPLETIONS = 4
 import { EXACTLY, keyFor, matcher, searchKey } from '../lib/textsearch'
@@ -125,10 +127,10 @@ export function CommandPalette(props: {
     const ranked = props.commands
       .map((c) => ({ c, s: score(c, words, has) }))
       .filter((x) => x.s > 0)
-    // Without a query, show actions first and keep albums and artists out of the way.
+    // Without a query, show actions first and keep albums, artists and settings out of the way.
     const local = q.trim()
       ? ranked.sort((a, b) => b.s - a.s).slice(0, 32)
-      : ranked.filter((x) => x.c.group !== 'Albums' && x.c.group !== 'Artists')
+      : ranked.filter((x) => !QUIET_GROUPS.has(x.c.group))
 
     // Music the words find in the online catalog (a song plays; the rest open in Music), then
     // completions of the words and the words themselves, as searches of Music.

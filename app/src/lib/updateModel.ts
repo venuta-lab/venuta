@@ -110,6 +110,30 @@ export function rememberedUpdate(saved: UpdateInfo | undefined, running: string)
   return { ...saved, current: running }
 }
 
+/** A piece of a release note's line: plain, or bold (written **so**). */
+export type NotePart = { text: string; bold: boolean }
+
+/**
+ * A release's notes (its changelog section, wrapped at the file's width) as one item for each
+ * change: a "- " starts one, the lines under it join it, and **words** are bold.
+ */
+export function noteItems(notes: string | null | undefined): NotePart[][] {
+  const items: string[] = []
+  for (const raw of (notes ?? '').split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    if (line.startsWith('- ') || line.startsWith('* ')) items.push(line.slice(2).trim())
+    else if (items.length) items[items.length - 1] += ' ' + line
+    else items.push(line)
+  }
+  return items.map((item) => {
+    const bits = item.split('**')
+    // An odd number of ** has one left open: then the line is shown as written.
+    if (bits.length % 2 === 0) return [{ text: item, bold: false }]
+    return bits.map((text, i) => ({ text, bold: i % 2 === 1 })).filter((p) => p.text)
+  })
+}
+
 /** The notice comes once for each version. */
 export function shouldAnnounce(info: UpdateInfo, announced: string | undefined): boolean {
   return info.version !== announced

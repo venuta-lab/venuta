@@ -47,12 +47,13 @@ FLAC or AAC for players that need it; a gift card adds a tracklist and a list of
 **Test this player** puts a short test album on the card to check what your player reads.
 
 **Activity** (in the title bar, or Ctrl+H) lists every build, edit, timing and answer, each with
-Undo; while work runs, the same button shows it. **Settings** has six pages,
-one subject each: Look and feel, Playback (where the sound goes, levelling, crossfade, what plays),
-Lyrics (sources and the lyrics windows), Library (folders, where details come from, your backup),
-Online (Local only, accounts, region, listen together) and System (closing and startup, shortcuts,
-history and cache, updates). When a new version is out, **Update to x.y.z** shows in the title
-bar; one press installs it and opens Venuta again.
+Undo; while work runs, the same button shows it. **Settings** has a page for each subject: Look
+and feel, Playback (where the sound goes, levelling, crossfade, what plays), Lyrics (pronunciation
+and translation, sources, the lyrics windows), Library (folders, where details come from, your
+backup), Online (Local only, accounts, region, listen together), System (closing and startup,
+shortcuts, history and cache), Activity, and About and updates (the version, its update, what's
+new, diagnostics). Ctrl+K finds a setting by its name. When a new version is out, **Update to
+x.y.z** shows in the title bar; one press installs it and opens Venuta again.
 
 **Where the sound goes** (Settings > Playback) follows Windows or stays on the output you choose.
 Bluetooth plays in full stereo quality, never through its hands-free side; headphones, USB DACs,

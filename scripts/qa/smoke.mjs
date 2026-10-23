@@ -1386,7 +1386,7 @@ if (want('settings') && !stopped) {
   await check('Settings', 'Lyrics: sources, big screen, desktop lyrics', async () => {
     const m = await settingsPage('Lyrics')
     const sources = await run(`return document.querySelectorAll('main [role=switch]').length`)
-    const miss = ['Sources, in the order they are asked', 'Under each line', 'Translation engine', 'Lyrics windows', 'Big screen', 'Desktop lyrics'].filter((w) => !m.includes(w))
+    const miss = ['Under each line', 'Translation', 'Sources, in the order they are asked', 'Lyrics windows', 'Big screen', 'Desktop lyrics'].filter((w) => !m.includes(w))
     need(!miss.length, 'Lyrics lacks ' + miss.join(', '))
     return `${sources} switches; sources in order, under each line, translation engine, lyrics windows`
   })
@@ -1405,11 +1405,32 @@ if (want('settings') && !stopped) {
     return 'every group there (no sign-in, Local only untouched)'
   })
 
-  await check('Settings', 'System: close, startup, shortcuts, history, cache, updates, diagnostics', async () => {
+  await check('Settings', 'System: close, startup, shortcuts, history, cache', async () => {
     const m = await settingsPage('System')
-    const miss = ['Keep playing in the tray', 'Start with Windows', 'Play or pause', 'Keep a history', 'Clear cache', 'Check for updates', 'Copy diagnostics'].filter((w) => !m.includes(w))
+    const miss = ['Keep playing in the tray', 'Start with Windows', 'Play or pause', 'Keep a history', 'Clear cache'].filter((w) => !m.includes(w))
     need(!miss.length, 'System lacks ' + miss.join(', '))
+    need(!m.includes('Check for updates'), 'System still shows the updates')
     return 'every group there (tray, startup and shortcuts not touched)'
+  })
+
+  await check('Settings', 'About and updates: version, update, checks, pre-releases, diagnostics, credits', async () => {
+    const m = await settingsPage('About and updates')
+    const miss = ['Version', 'Check for updates', 'Check automatically', 'Pre-releases', 'Copy diagnostics', 'MIT licence'].filter((w) => !m.includes(w))
+    need(!miss.length, 'About and updates lacks ' + miss.join(', '))
+    return 'every group there (nothing pressed)'
+  })
+
+  await check('Settings', 'Jump to (Ctrl+K) finds settings by name', async () => {
+    await closeLayers()
+    await ctrl('k')
+    await focusField('[role=dialog][aria-label="Command palette"] input')
+    await typeIn('updates')
+    await sleep(600)
+    const opts = await run(`return [...document.querySelectorAll('[role=dialog][aria-label="Command palette"] [role=option]')].map((o) => o.innerText.replace(/\\s+/g, ' ').trim())`)
+    await esc()
+    const hit = opts.find((o) => o.includes('Check for updates'))
+    need(hit, 'typing updates offers no setting (first: ' + opts.slice(0, 3).join(' / ') + ')')
+    return hit
   })
 }
 
@@ -1519,7 +1540,7 @@ if (want('updates') && !stopped) {
     try {
       const probe = await run(`window.__qaProbe = true; try { return await window.__TAURI_INTERNALS__.invoke('is_test_copy') } finally { window.__qaProbe = false }`)
       need(probe === 'QA-ANSWERED', 'the pretend answer is not in place (probe: ' + J(probe) + '): stopped before any check')
-      await settingsPage('System')
+      await settingsPage('About and updates')
       await press('Check for updates', 'main')
       const shown = await until(`[...document.querySelectorAll('[data-tauri-drag-region] button')].some((b) => b.textContent.trim() === 'Update to 9.9.9')`, 3000)
       const inSettings = await has('Update to 9.9.9', 'main')

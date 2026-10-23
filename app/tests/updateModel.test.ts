@@ -9,9 +9,10 @@ import {
   afterCheck,
   ago,
   isNewer,
-  rememberedUpdate,
   knownUpdate,
   nextCheckIn,
+  noteItems,
+  rememberedUpdate,
   shouldAnnounce,
   statusLine,
   titleButton,
@@ -103,6 +104,28 @@ test('an update found before shows again as soon as Venuta starts, until it is i
   assert.equal(rememberedUpdate({ ...info, version: '0.4.0' }, '0.4.0-beta.1')?.version, '0.4.0')
   assert.equal(isNewer('1.0.0', '0.99.9'), true)
   assert.equal(isNewer('0.4.0', '0.4.0'), false)
+})
+
+test("what's new reads as one change a bullet, bold kept, lines joined", () => {
+  const notes = '- **A new engine.** Decoding runs\n  ahead, and **One speaker**\n  plays.\n- **Fixed**: double-clicks.\n'
+  assert.deepEqual(noteItems(notes), [
+    [
+      { text: 'A new engine.', bold: true },
+      { text: ' Decoding runs ahead, and ', bold: false },
+      { text: 'One speaker', bold: true },
+      { text: ' plays.', bold: false },
+    ],
+    [
+      { text: 'Fixed', bold: true },
+      { text: ': double-clicks.', bold: false },
+    ],
+  ])
+  // Notes that aren't a list are one item; nothing makes an empty one.
+  assert.deepEqual(noteItems('Venuta 0.4.1'), [[{ text: 'Venuta 0.4.1', bold: false }]])
+  assert.deepEqual(noteItems(''), [])
+  assert.deepEqual(noteItems(null), [])
+  // An odd ** stays as it is rather than bolding the rest.
+  assert.deepEqual(noteItems('- 2 ** 3'), [[{ text: '2 ** 3', bold: false }]])
 })
 
 test('times read plainly', () => {

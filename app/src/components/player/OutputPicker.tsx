@@ -75,22 +75,21 @@ export function OutputPicker(props: { signal: Signal | null; choices?: OutputCho
         setC({ ...c, devices: c.devices.map((d) => (d.id === now.id ? { ...d, delay_ms: ms } : d)) })
         void setOutputDelay(now.id, ms)
       }} />}
-      <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-ink/[0.06]">
-        <input
-          type="checkbox"
-          checked={c.exclusive}
-          onChange={(e) => {
-            setC({ ...c, exclusive: e.target.checked })
-            void setOutput(c.device, e.target.checked)
-          }}
-          className="mt-0.5 accent-[var(--accent)]"
-        />
-        <span>
+      <label className="mt-2 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-ink/[0.06]">
+        <span className="min-w-0 flex-1">
           <span className="block text-ink/85">Exclusive (bit-perfect)</span>
           <span className="block text-[11.5px] text-ink/50">
             Each song at its own rate and depth, untouched, where the device takes it. Other apps can't play sound meanwhile. Bluetooth and virtual devices always share.
           </span>
         </span>
+        <Switch
+          label="Exclusive (bit-perfect)"
+          on={c.exclusive}
+          onChange={(on) => {
+            setC({ ...c, exclusive: on })
+            void setOutput(c.device, on)
+          }}
+        />
       </label>
     </div>
   )

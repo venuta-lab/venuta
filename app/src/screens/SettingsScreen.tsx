@@ -20,7 +20,7 @@ import { ACCENTS, accentRoles, colourDistance } from '../lib/themes'
 import { AppearanceChoice, Themes, useRemembered } from '../components/themes/ThemeBrowser'
 import { Page as Frame, Segmented as Choice, Switch } from '../components/ui'
 import { checkForUpdate, installUpdate, openDownloadPage, remember, savedUpdates, useUpdates } from '../lib/updates'
-import { knownUpdate, statusLine } from '../lib/updateModel'
+import { knownUpdate, noteItems, statusLine, type NotePart } from '../lib/updateModel'
 import { SpotifyAccount } from '../components/SpotifyAccount'
 import { YtmAccount } from '../components/YtmAccount'
 import { ProxySetting } from './settings/ProxySetting'
@@ -30,7 +30,7 @@ import { readZoom, setZoom, ZOOM_EVENT } from '../lib/zoom'
 import { notify } from '../lib/notify'
 import { Brand } from '../components/Brand'
 import { APP_ICONS, DEFAULT_ICON, chooseAppIcon, iconSrc, useAppIcon } from '../lib/appIcons'
-import { onSettingsSection, peekSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
+import { SETTINGS_PAGE_NAMES, onSettingsSection, peekSettingsSection, takeSettingsSection, type SettingsPage } from './settingsPage'
 import { ActivityPage } from './ActivityScreen'
 import { HistoryRow, LocalOnlyRow, LyricsSources, RegionRow, RelayRow, TogetherRows } from './settings/ListeningSettings'
 import { PlaybackSettings } from './settings/PlaybackSettings'
@@ -42,15 +42,17 @@ const spring = { type: 'spring', stiffness: 420, damping: 34 } as const
 
 type Page = SettingsPage
 // One subject a page: how it looks, what plays, where lyrics come from, where your music lives,
-// what goes online, how Venuta runs on Windows, and (last) what it changed, each with Undo.
+// what goes online, how Venuta runs on Windows, what it changed (each with Undo), and last, which
+// Venuta this is and its updates, where desktop apps keep them.
 const PAGES: { id: Page; label: string; line: string }[] = [
-  { id: 'look', label: 'Look and feel', line: 'Theme, colour, size' },
-  { id: 'playback', label: 'Playback', line: 'Sound, what plays' },
-  { id: 'lyrics', label: 'Lyrics', line: 'Sources and windows' },
-  { id: 'library', label: 'Library', line: 'Folders and details' },
-  { id: 'online', label: 'Online', line: 'Accounts and rooms' },
-  { id: 'system', label: 'System', line: 'Windows, updates, about' },
-  { id: 'activity', label: 'Activity', line: 'Changes and undo' },
+  { id: 'look', label: SETTINGS_PAGE_NAMES.look, line: 'Theme, colour, size' },
+  { id: 'playback', label: SETTINGS_PAGE_NAMES.playback, line: 'Sound, what plays' },
+  { id: 'lyrics', label: SETTINGS_PAGE_NAMES.lyrics, line: 'Translation, sources' },
+  { id: 'library', label: SETTINGS_PAGE_NAMES.library, line: 'Folders and details' },
+  { id: 'online', label: SETTINGS_PAGE_NAMES.online, line: 'Accounts and rooms' },
+  { id: 'system', label: SETTINGS_PAGE_NAMES.system, line: 'Windows, shortcuts, storage' },
+  { id: 'activity', label: SETTINGS_PAGE_NAMES.activity, line: 'Changes and undo' },
+  { id: 'about', label: SETTINGS_PAGE_NAMES.about, line: 'Version, updates, help' },
 ]
 
 export function SettingsScreen(props: {
@@ -132,8 +134,9 @@ export function SettingsScreen(props: {
           />
         )}
         {page === 'online' && <OnlinePage />}
-        {page === 'system' && <SystemPage onShortcuts={props.onShortcuts} />}
+        {page === 'system' && <SystemPage />}
         {page === 'activity' && <ActivityPage root={props.root} />}
+        {page === 'about' && <AboutPage onShortcuts={props.onShortcuts} />}
       </motion.section>
       </div>
     </Frame>
@@ -141,12 +144,84 @@ export function SettingsScreen(props: {
 }
 
 /**
- * Updates: the state in words, when Venuta last heard from GitHub, and when something went wrong,
- * why, with Try again and the installer to download by hand.
+ * About and updates: which Venuta this is and its update, in one card at the top (the state in
+ * words, when it last heard from GitHub, the button, the progress, and when something went wrong,
+ * why, with Try again and the installer to download by hand); what's new in it, folded; then the
+ * update options, help and the credits.
  */
-function UpdatesGroup(props: { version: string }) {
+function AboutPage(props: { onShortcuts: () => void }) {
+  const [v, setV] = useState('')
+  useEffect(() => {
+    engineVersion().then(setV)
+  }, [])
   const u = useUpdates()
+  const info = knownUpdate(u)
   const [auto, setAuto] = useState(savedUpdates().auto)
+  return (
+    <div>
+      <PageHead title="About and updates" line="Which Venuta this is, its updates, and help when something goes wrong." />
+      <UpdateCard version={v} />
+      {info?.notes && <WhatsNew version={info.version} notes={info.notes} />}
+      <Group title="Updates">
+        <Row
+          title="Check automatically"
+          hint="Soon after Venuta starts and every few hours while it runs, it asks GitHub whether there is a new version. Nothing else is sent. Local only stops these checks."
+        >
+          <Switch
+            label="Check for updates automatically"
+            on={auto}
+            onChange={(on) => {
+              setAuto(on)
+              remember({ auto: on })
+            }}
+          />
+        </Row>
+        <BetaRow />
+      </Group>
+      <Group title="Help">
+        <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
+          <button
+            onClick={() =>
+              void invoke<string>('diagnostics')
+                .then((t) => navigator.clipboard.writeText(t))
+                .then(() => notify('Diagnostics copied.'))
+                .catch((e) => notify(String(e)))
+            }
+            className="btn"
+          >
+            Copy diagnostics
+          </button>
+        </Row>
+        <Row title="Keyboard shortcuts" hint="Every key Venuta knows, in the app and from anywhere. Also on ?.">
+          <button onClick={props.onShortcuts} className="btn">
+            Show
+          </button>
+        </Row>
+      </Group>
+      <div className="mt-8 flex flex-col items-start gap-3 select-text">
+        <p className="text-[13px] text-ink/70">The essence of the flute. Free and open source under the MIT licence.</p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
+          published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
+        </p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Pronunciation under lyrics is made on this PC with word lists adapted from Google's Dakshina dataset (CC BY-SA 4.0),
+          OpenCC's character tables (Apache-2.0), pinyin_pro (MIT), a port of koroman (MIT), and lindera (MIT) with the IPADIC
+          dictionary (under its NAIST notice), fetched the first time a Japanese song needs it.
+        </p>
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
+          Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
+          with fxtranslate (MPL-2.0); nothing you play or read is sent anywhere. Translation with your own key sends a
+          song's lyrics to the service you chose (DeepL, Microsoft, Google or Anthropic) only when you translate.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/** The version and its update: what is happening, in words, and the one thing to press. */
+function UpdateCard(props: { version: string }) {
+  const u = useUpdates()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -155,28 +230,44 @@ function UpdatesGroup(props: { version: string }) {
   const info = knownUpdate(u)
   const busy = u.at === 'checking' || u.at === 'downloading' || u.at === 'installing'
   const installFailed = u.at === 'failed' && !!info
+  const offered = !!info && (u.at === 'found' || u.at === 'failed' || (u.at === 'checking' && !!u.info))
   return (
-    <Group title="Updates">
-      <Row title="Updates" hint={statusLine(u, savedUpdates().last, now, props.version)}>
+    <section aria-label="Version and updates" className="mt-5 rounded-2xl bg-ink/[0.05] px-5 py-4">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+        <Brand size={40} markOnly />
+        <div className="min-w-[220px] flex-1">
+          <div className="text-[15px] font-semibold">{props.version ? `Venuta ${props.version}` : 'Venuta'}</div>
+          <div className="mt-0.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink/60" aria-live="polite">
+            {statusLine(u, savedUpdates().last, now, props.version)}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {u.at === 'local_only' ? (
             <button onClick={() => void checkForUpdate({ manual: true, anyway: true })} className="btn">
               Check once anyway
             </button>
           ) : (
-            <button onClick={() => void checkForUpdate({ manual: true })} disabled={busy} className="btn">
+            <button onClick={() => void checkForUpdate({ manual: true })} disabled={busy} className={offered ? 'btn-ghost' : 'btn'}>
               {u.at === 'checking' ? 'Checking…' : u.at === 'failed' && !info ? 'Try again' : 'Check for updates'}
             </button>
           )}
-          {info && (u.at === 'found' || u.at === 'failed' || (u.at === 'checking' && !!u.info)) && (
+          {offered && (
             <button onClick={() => void installUpdate()} disabled={busy} className="btn-primary">
               {installFailed ? 'Try again' : `Update to ${info.version}`}
             </button>
           )}
         </div>
-      </Row>
+      </div>
+      {(u.at === 'downloading' || u.at === 'installing') && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
+          <div
+            className="h-full rounded-full bg-accent transition-[width]"
+            style={{ width: u.at === 'installing' ? '100%' : u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }}
+          />
+        </div>
+      )}
       {u.at === 'failed' && (
-        <p className="-mt-1 mb-3 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/60">
+        <p className="mt-3 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/60">
           Or{' '}
           <button onClick={openDownloadPage} className="font-semibold text-accent-ink hover:underline">
             download the installer
@@ -184,32 +275,47 @@ function UpdatesGroup(props: { version: string }) {
           from GitHub and run it. Your music, playlists and settings stay as they are.
         </p>
       )}
-      {(u.at === 'downloading' || u.at === 'installing') && (
-        <div className="-mt-1 mb-3 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-label="Downloading the update">
-          <div
-            className="h-full rounded-full bg-accent transition-[width]"
-            style={{ width: u.at === 'installing' ? '100%' : u.total ? `${Math.round((u.done / u.total) * 100)}%` : '15%' }}
-          />
-        </div>
+    </section>
+  )
+}
+
+/** How many changes show, by their headline, before Show all. */
+const NOTES_SHOWN = 5
+
+/** A change's headline: its bold lead when it has one ("A new sound engine"), or the whole line. */
+const headline = (parts: NotePart[]): NotePart[] => (parts[0]?.bold ? [{ text: parts[0].text.replace(/[.:]$/, ''), bold: true }] : parts)
+
+/** What's new in the update offered: the first changes by their headlines, all of them in full on request. */
+function WhatsNew(props: { version: string; notes: string }) {
+  const items = noteItems(props.notes)
+  const [all, setAll] = useState(false)
+  if (!items.length) return null
+  const shown = all ? items : items.slice(0, NOTES_SHOWN).map(headline)
+  return (
+    <section className="mt-6">
+      <h3 className="text-[13px] font-semibold text-ink/60">What's new in {props.version}</h3>
+      <ul className={`mt-2 max-w-[70ch] text-[13px] leading-relaxed text-ink/75 ${all ? 'space-y-2' : 'space-y-1'}`}>
+        {shown.map((parts, i) => (
+          <li key={i} className="relative pl-4">
+            <span aria-hidden className="absolute left-0 top-[0.6em] h-1.5 w-1.5 rounded-full bg-ink/35" />
+            {parts.map((p, j) =>
+              p.bold ? (
+                <strong key={j} className="font-semibold text-ink">
+                  {p.text}
+                </strong>
+              ) : (
+                <span key={j}>{p.text}</span>
+              ),
+            )}
+          </li>
+        ))}
+      </ul>
+      {(items.length > NOTES_SHOWN || items.some((p) => p.length > 1)) && (
+        <button onClick={() => setAll((a) => !a)} aria-expanded={all} className="btn-ghost btn-sm mt-2">
+          {all ? 'Show fewer' : items.length > NOTES_SHOWN ? `Show all ${items.length} changes in full` : 'Show them in full'}
+        </button>
       )}
-      {info?.notes && (u.at === 'found' || u.at === 'downloading' || u.at === 'installing' || u.at === 'failed') && (
-        <div className="mb-3 max-w-[66ch] whitespace-pre-line rounded-xl bg-ink/[0.05] px-4 py-3 text-[12.5px] leading-relaxed text-ink/70">{info.notes}</div>
-      )}
-      <Row
-        title="Check automatically"
-        hint="Soon after Venuta starts and every few hours while it runs, it asks GitHub whether there is a new version. Nothing else is sent. Local only stops these checks."
-      >
-        <Switch
-          label="Check for updates automatically"
-          on={auto}
-          onChange={(on) => {
-            setAuto(on)
-            remember({ auto: on })
-          }}
-        />
-      </Row>
-      <BetaRow />
-    </Group>
+    </section>
   )
 }
 
@@ -658,14 +764,15 @@ function useSettings() {
 function LyricsPage() {
   return (
     <div>
-      <PageHead title="Lyrics" line="Where lyrics come from, what shows under each line, and the two windows that show them away from Venuta." />
+      <PageHead title="Lyrics" line="What shows under each line, where lyrics come from, and the two windows that show them away from Venuta." />
+      {/* What people come for first; the sources, which most leave as they are, after. */}
+      <LyricLinesSettings />
       <Group
         title="Sources, in the order they are asked"
         line="For songs without lyrics of their own, the first source with timed lyrics is used. Any song can use another one (Now Playing, under its lyrics)."
       >
         <LyricsSources />
       </Group>
-      <LyricLinesSettings />
       <LyricWindowsSettings />
       <p className="mt-6 max-w-[66ch] text-[12.5px] leading-relaxed text-ink/50">
         Each window's own toolbar changes the same settings while it is open. Lyrics found online are kept so each song is
@@ -945,9 +1052,12 @@ function CatalogHealth() {
     <div className="border-b border-edge py-4">
       <div className="flex flex-wrap items-center gap-4">
         <div className="min-w-[220px] flex-1">
-          <div className="flex items-center gap-2 text-[14px] font-medium">
-            <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
-            {failed ? 'Couldn’t read the online catalog’s state' : state ? state.label : 'Checking…'}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-[14px] font-medium">Online catalog</span>
+            <span className="flex items-center gap-1.5 text-[12.5px] text-ink/70">
+              <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
+              {failed ? 'Couldn’t read its state' : state ? state.label : 'Checking…'}
+            </span>
           </div>
           {state && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink/55">{state.line}</div>}
         </div>
@@ -1041,7 +1151,7 @@ function OnlinePage() {
   )
 }
 
-function SystemPage(props: { onShortcuts: () => void }) {
+function SystemPage() {
   const { s, save, saved } = useSettings()
   const [startup, setStartup] = useState<boolean | null>(null)
   useEffect(() => {
@@ -1056,13 +1166,9 @@ function SystemPage(props: { onShortcuts: () => void }) {
     await (on ? a.enable() : a.disable())
     setStartup(await a.isEnabled())
   }
-  const [v, setV] = useState('')
-  useEffect(() => {
-    engineVersion().then(setV)
-  }, [])
   return (
     <div>
-      <PageHead title="System" line="How Venuta runs on Windows, what it keeps, and its updates." />
+      <PageHead title="System" line="How Venuta runs on Windows, its shortcuts from anywhere, and what it keeps." />
       <Group title="On Windows">
         <Row
           title="When you close the window"
@@ -1091,45 +1197,6 @@ function SystemPage(props: { onShortcuts: () => void }) {
         <HistoryRow />
         <CacheSetting />
       </Group>
-      <UpdatesGroup version={v} />
-      <Group title="Help">
-        <Row title="Diagnostics" hint="Venuta's version, how online music is set up, and the last of the playback log, as text to paste into a report. No keys or accounts.">
-          <button
-            onClick={() =>
-              void invoke<string>('diagnostics')
-                .then((t) => navigator.clipboard.writeText(t))
-                .then(() => notify('Diagnostics copied.'))
-                .catch((e) => notify(String(e)))
-            }
-            className="btn"
-          >
-            Copy diagnostics
-          </button>
-        </Row>
-        <Row title="Keyboard shortcuts" hint="Every key Venuta knows, in the app and from anywhere. Also on ?.">
-          <button onClick={props.onShortcuts} className="btn">
-            Show
-          </button>
-        </Row>
-      </Group>
-      <div className="mt-8 flex flex-col items-start gap-3 select-text">
-        <Brand size={64} word={40} />
-        <p className="text-[13px] text-ink/70">The essence of the flute. Version {v}, free and open source under the MIT licence.</p>
-        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
-          Details come from MusicBrainz (CC0), Apple's iTunes Search API, the Deezer API and LRCLIB, each used within its
-          published limits. Optional: AcoustID and Discogs. No account, no tracking, and the app never downloads music.
-        </p>
-        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
-          Pronunciation under lyrics is made on this PC with word lists adapted from Google's Dakshina dataset (CC BY-SA 4.0),
-          OpenCC's character tables (Apache-2.0), pinyin_pro (MIT), a port of koroman (MIT), and lindera (MIT) with the IPADIC
-          dictionary (under its NAIST notice), fetched the first time a Japanese song needs it.
-        </p>
-        <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-ink/50">
-          Translation on this PC runs Mozilla's Firefox Translations models, downloaded from Mozilla when you ask for one,
-          with fxtranslate (MPL-2.0); nothing you play or read is sent anywhere. Translation with your own key sends a
-          song's lyrics to the service you chose (DeepL, Microsoft, Google or Anthropic) only when you translate.
-        </p>
-      </div>
       {saved && <p className="mt-3 text-[13px] text-good">{saved}</p>}
     </div>
   )

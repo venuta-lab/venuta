@@ -53,22 +53,22 @@ export function LyricLinesSettings() {
           </Row>
         )}
       </Group>
-      <TranslationEngine into={readerLang(c, system)} />
-      <TranslationModels into={readerLang(c, system)} />
+      <Translation into={readerLang(c, system)} />
     </>
   )
 }
 
-/** Which engine translates, and its key. */
-function TranslationEngine({ into }: { into: string }) {
+/** Which engine translates: its key, or (on this PC) its models. */
+function Translation({ into }: { into: string }) {
   const choice = useEngineChoice()
   const keys = useTranslationKeys()
   const set = (change: Partial<EngineChoice>) => setEngineChoice({ ...engineChoice(), ...change })
   const e = choice.engine
   const info = ENGINES[e]
+  const models = useTranslationModels()
   return (
     <Group
-      title="Translation engine"
+      title="Translation"
       line="What translates a song when its lyrics carry no translation in your language. A service with your own key translates poetry, slang and Hinglish better; its lyrics are sent to it only when you translate."
     >
       <Row
@@ -116,6 +116,7 @@ function TranslationEngine({ into }: { into: string }) {
           <Switch on={choice.auto} onChange={(on) => set({ auto: on })} label="Translate automatically with my key" />
         </Row>
       )}
+      {(e === 'device' || models.some((m) => m.installed || m.progress !== null)) && <ModelRows models={models} into={into} />}
     </Group>
   )
 }
@@ -206,8 +207,8 @@ function KeyRows(props: { engine: KeyedId; kept: KeyState | undefined; model: st
 }
 
 /** The translation models on this PC: download, size, remove. */
-function TranslationModels({ into }: { into: string }) {
-  const models = useTranslationModels()
+/** The models that translate on this PC: one language into another, downloaded only when asked. */
+function ModelRows({ models, into }: { models: ReturnType<typeof useTranslationModels>; into: string }) {
   // Those into the language you read (there are over a hundred pairs in all), and any on this
   // PC or on its way.
   const sorted = models
@@ -215,10 +216,10 @@ function TranslationModels({ into }: { into: string }) {
     .sort((a, b) => Number(langBase(b.to) === into) - Number(langBase(a.to) === into) || a.name.localeCompare(b.name))
   const used = models.filter((m) => m.installed).reduce((n, m) => n + m.size_bytes, 0)
   return (
-    <Group
-      title="Translation models"
-      line="Each translates one language into another, on this PC: nothing is sent anywhere. One is downloaded only when you ask, from its publisher."
-    >
+    <>
+      <p className="pt-4 text-[12.5px] leading-relaxed text-ink/55">
+        Models on this PC: each translates one language into another, and nothing is sent anywhere. One is downloaded only when you ask, from its publisher.
+      </p>
       {sorted.length === 0 ? (
         <Row title="None on this PC" hint="Models show here once translation on this PC is available. Translations the lyrics carry are shown already." />
       ) : (
@@ -247,6 +248,6 @@ function TranslationModels({ into }: { into: string }) {
           {used > 0 && <p className="pt-3 text-[12.5px] text-ink/50">{`${sizeWords(used)} used by translation models.`}</p>}
         </>
       )}
-    </Group>
+    </>
   )
 }

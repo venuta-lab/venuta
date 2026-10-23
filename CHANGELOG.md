@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **About and updates**, a page of its own in Settings: your version and its update at the top,
+  with one button and its progress; what's new in it, by headline, in full on request; then the
+  update options, diagnostics and credits. System keeps only how Venuta runs on Windows.
+- **Settings, easier to find your way in**: Ctrl+K finds settings by name (type "updates",
+  "bluetooth" or "translation"); Lyrics opens on what shows under each line, with translation in
+  one group; the online catalog's state has its name beside it; Exclusive is a switch like the
+  others.
 - **Fixed**: an update found before is back in the title bar the moment Venuta starts, instead
   of after its first check, and also with the quiet checks off or Local only on.
 
