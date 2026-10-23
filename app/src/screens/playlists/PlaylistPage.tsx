@@ -1044,7 +1044,8 @@ function PlaylistRow(props: {
       onClick={(e) => {
         if (grab?.justDropped() || (e.target as HTMLElement).closest('button')) return
         if (props.pick) props.pick.onPick(e.shiftKey)
-        else if (!get) props.onPlay()
+        // The first click of a double-click already plays it; the second must not pause it again.
+        else if (!get && e.detail <= 1) props.onPlay()
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return

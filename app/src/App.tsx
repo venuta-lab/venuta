@@ -55,7 +55,7 @@ import { dismissNotice, useNotice } from './lib/notify'
 import * as player from './lib/player'
 import { catalogNow, ensureCatalog, trackAt } from './lib/catalog'
 import { albumWork, menuFor, playlistFacts, playlistWork } from './lib/actions'
-import { indexTracks } from './screens/listen/model'
+import { artistKey, indexTracks } from './screens/listen/model'
 import { connectPlayer, resumePlayer } from './lib/player'
 import { artUrl } from './components/RemoteArt'
 import { NowPlayingBar } from './components/player/NowPlayingBar'
@@ -872,6 +872,25 @@ export default function App() {
           setListenAlbum(a.dir)
         },
         menu: albumMenu(a.dir),
+      })
+    }
+    // Each album artist once, as the Artists list groups them.
+    const artists = new Map<string, { name: string; albums: number }>()
+    for (const a of report?.albums ?? []) {
+      const name = a.album_artist.trim()
+      if (!name) continue
+      const key = artistKey(name)
+      const found = artists.get(key)
+      if (found) found.albums++
+      else artists.set(key, { name, albums: 1 })
+    }
+    for (const [key, ar] of artists) {
+      list.push({
+        id: `artist-${key}`,
+        group: 'Artists',
+        label: ar.name,
+        detail: `Artist · ${ar.albums === 1 ? '1 album' : `${ar.albums} albums`}`,
+        run: () => palNav.openArtist(ar.name),
       })
     }
     return list

@@ -125,10 +125,10 @@ export function CommandPalette(props: {
     const ranked = props.commands
       .map((c) => ({ c, s: score(c, words, has) }))
       .filter((x) => x.s > 0)
-    // Without a query, show actions first and keep albums out of the way.
+    // Without a query, show actions first and keep albums and artists out of the way.
     const local = q.trim()
       ? ranked.sort((a, b) => b.s - a.s).slice(0, 32)
-      : ranked.filter((x) => x.c.group !== 'Albums')
+      : ranked.filter((x) => x.c.group !== 'Albums' && x.c.group !== 'Artists')
 
     // Music the words find in the online catalog (a song plays; the rest open in Music), then
     // completions of the words and the words themselves, as searches of Music.

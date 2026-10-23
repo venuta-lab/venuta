@@ -143,6 +143,8 @@ const TrackList = memo(function TrackList({ album: a, pick }: { album: Album; pi
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
                   if (pick) pick.onPick(t.path, e.shiftKey)
+                  // The first click of a double-click already plays it; the second must not pause it again.
+                  else if (e.detail > 1) return
                   else if (isNow) void toggle()
                   else playAt(i)
                 }}

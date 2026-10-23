@@ -36,7 +36,7 @@ export function PlaylistShelf(props: { root: string; onOpen: (name: string) => v
       <div className="mb-3.5 flex items-baseline gap-3">
         <h2 className="title text-[19px]">Your playlists</h2>
         <span className="text-[12.5px] text-ink/50">{lists.length.toLocaleString('en-IN')}</span>
-        <button onClick={props.onSeeAll} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
+        <button onClick={() => props.onSeeAll()} className="ml-auto rounded-full px-3 py-1 text-[12.5px] text-ink/65 hover:bg-ink/[0.08] hover:text-ink">
           See all
         </button>
       </div>

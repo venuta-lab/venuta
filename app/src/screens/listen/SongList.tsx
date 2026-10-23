@@ -175,6 +175,8 @@ const SongRow = memo(function SongRow(props: {
       aria-current={isNow || undefined}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, a, input') && (e.target as HTMLElement).closest('button, a, input') !== e.currentTarget) return
+        // The first click of a double-click already plays it; the second must not pause it again.
+        if (e.detail > 1) return
         if (isNow) void toggle()
         else props.onPlay(i)
       }}

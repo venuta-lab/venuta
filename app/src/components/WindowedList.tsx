@@ -127,6 +127,16 @@ function WindowedListInner<R>(props: WindowedListProps<R>, ref: React.ForwardedR
   const dropped = useRef(0)
   const grabAt = useRef(0)
   const pointer = useRef(0)
+  // A row moved by keyboard may come back as a new element (its key holds its place); the focus
+  // follows it to where it landed, so the next Alt+arrow moves it again.
+  const refocus = useRef<number | null>(null)
+  useEffect(() => {
+    const at = refocus.current
+    if (at === null) return
+    refocus.current = null
+    const row = box.current?.querySelector(`[data-line="${at}"]`)?.firstElementChild
+    if (row instanceof HTMLElement && document.activeElement !== row) row.focus()
+  }, [lines])
 
   const onGrab = (i: number) => (e: React.PointerEvent) => {
     if (!canMove(i) || e.button !== 0) return
@@ -248,12 +258,18 @@ function WindowedListInner<R>(props: WindowedListProps<R>, ref: React.ForwardedR
               justDropped: () => Date.now() - dropped.current < 250,
               nudge: (by) => {
                 const to = i + by
-                if (to >= lo && to <= hi && canMove(to)) props.onMove(i, to)
+                if (to < lo || to > hi || !canMove(to)) return
+                refocus.current = to
+                props.onMove(i, to)
               },
               dragging: moving,
             }
           : null
-        return <div key={l.key}>{props.render(l.row, i, style, grab)}</div>
+        return (
+          <div key={l.key} data-line={i}>
+            {props.render(l.row, i, style, grab)}
+          </div>
+        )
       })}
     </div>
   )

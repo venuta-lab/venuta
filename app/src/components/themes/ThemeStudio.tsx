@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useCovers } from '../../lib/covers'
+import { useEscape } from '../../lib/layers'
 import { notify } from '../../lib/notify'
 import { current, usePlayerValue } from '../../lib/player'
 import {
@@ -118,6 +119,8 @@ function Studio({ request: r }: { request: Request }) {
 }
 
 function Head(props: { title: string; sub?: string; onClose: () => void; children?: ReactNode }) {
+  // Escape closes the Studio as its × does (the editor asks about unsaved changes first).
+  useEscape(true, props.onClose)
   return (
     <div className="shrink-0 border-b border-[var(--edge)] px-5 pb-3 pt-4">
       <div className="flex items-start gap-3">

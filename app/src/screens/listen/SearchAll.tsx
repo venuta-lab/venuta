@@ -117,6 +117,8 @@ export function MixedSongs(props: {
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest('button')) return
                 if (pick) pick.onPick(key, e.shiftKey)
+                // The first click of a double-click already plays it; the second must not pause it again.
+                else if (e.detail > 1) return
                 else if (now) void toggle()
                 else playIt()
               }}
