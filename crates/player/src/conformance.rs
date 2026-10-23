@@ -217,8 +217,13 @@ pub struct Report {
     pub info: OutputInfo,
     /// Frames rendered of the 10 s tone.
     pub rendered: u64,
-    /// The DAC's pace against its rate, in ppm.
+    /// The DAC's pace against its rate, in ppm, between its clock's steps.
     pub pace_ppm: f64,
+    /// Steps of the DAC's clock (it stood still for more than 2 ms against time, as a
+    /// Bluetooth link's driver does when it pauses), and the ms they held it back. Not gaps:
+    /// the output's own buffer says those (`xruns`).
+    pub clock_steps: u32,
+    pub stepped_ms: f64,
     /// The furthest the DAC was behind the frames rendered, in ms (at most the learned
     /// latency'"'"'s most and 1).
     pub worst_behind_ms: f64,
@@ -255,6 +260,12 @@ struct Watch {
     last: Option<PresentationPair>,
     first: Option<PresentationPair>,
     worst_behind: f64,
+    /// The pace is measured between the clock's steps: the stretches before the current one
+    /// (frames, ns), and the steps.
+    done_frames: f64,
+    done_ns: f64,
+    steps: u32,
+    stepped: f64,
 }
 
 impl Watch {
@@ -267,6 +278,10 @@ impl Watch {
             last: None,
             first: None,
             worst_behind: 0.0,
+            done_frames: 0.0,
+            done_ns: 0.0,
+            steps: 0,
+            stepped: 0.0,
         }
     }
 
@@ -283,8 +298,7 @@ impl Watch {
                 "the presentation went back: {l:?} then {p:?}"
             )));
         }
-        self.last = Some(p);
-        self.first.get_or_insert(p);
+        self.note(p);
         // Where the DAC is now, from the pair.
         let at_dac = p.frame as f64 + now.saturating_sub(p.time_ns) as f64 * self.rate / 1e9;
         if p.frame as f64 >= after || at_dac > after + self.tolerance {
@@ -308,14 +322,39 @@ impl Watch {
         Ok(())
     }
 
-    fn pace_ppm(&self) -> f64 {
-        match (self.first, self.last) {
-            (Some(a), Some(b)) if b.time_ns > a.time_ns => {
-                let per_s = (b.frame - a.frame) as f64 * 1e9 / (b.time_ns - a.time_ns) as f64;
-                (per_s / self.rate - 1.0) * 1e6
+    /// A pair, for the pace: a pair more than 2 ms behind where the last one, run on at the
+    /// rate, says it would be is a step of the DAC's clock, and the stretch before it ends there.
+    fn note(&mut self, p: PresentationPair) {
+        if let (Some(l), Some(f)) = (self.last, self.first)
+            && p.time_ns > l.time_ns
+        {
+            let expected = l.frame as f64 + (p.time_ns - l.time_ns) as f64 * self.rate / 1e9;
+            let behind_by = expected - p.frame as f64;
+            if behind_by > 2.0 * self.tolerance {
+                self.done_frames += (l.frame - f.frame) as f64;
+                self.done_ns += (l.time_ns - f.time_ns) as f64;
+                self.steps += 1;
+                self.stepped += behind_by;
+                self.first = Some(p);
             }
-            _ => 0.0,
         }
+        self.last = Some(p);
+        self.first.get_or_insert(p);
+    }
+
+    /// The DAC's pace over every stretch between its clock's steps.
+    fn pace_ppm(&self) -> f64 {
+        let (mut frames, mut ns) = (self.done_frames, self.done_ns);
+        if let (Some(a), Some(b)) = (self.first, self.last)
+            && b.time_ns > a.time_ns
+        {
+            frames += (b.frame - a.frame) as f64;
+            ns += (b.time_ns - a.time_ns) as f64;
+        }
+        if ns <= 0.0 {
+            return 0.0;
+        }
+        (frames * 1e9 / ns / self.rate - 1.0) * 1e6
     }
 }
 
@@ -469,6 +508,8 @@ pub fn run(
         info,
         rendered,
         pace_ppm,
+        clock_steps: w.steps,
+        stepped_ms: w.stepped * 1000.0 / w.rate,
         worst_behind_ms: w.worst_behind * 1000.0 / w.rate,
         latency,
         tones,
@@ -529,4 +570,63 @@ fn check_run(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn watch() -> Watch {
+        Watch::new(&OutputInfo {
+            format: DeviceFormat {
+                rate: 48_000,
+                channels: 2,
+                container_bits: 32,
+                valid_bits: 32,
+                kind: SampleKind::Float,
+            },
+            period_frames: 480,
+            buffer_frames: 1_920,
+        })
+    }
+
+    fn pair(frame: u64, ms: u64) -> PresentationPair {
+        PresentationPair {
+            frame,
+            time_ns: ms * 1_000_000,
+        }
+    }
+
+    #[test]
+    fn the_pace_is_measured_between_the_clocks_steps() {
+        // A DAC on time for 5 s, then its clock stands still 11.7 ms (the owner's AirPods),
+        // then on time for 5 s more: on its rate, with one step, not 1171 ppm slow.
+        let mut w = watch();
+        for k in 0..=500 {
+            w.note(pair(480 * k, 10 * k));
+        }
+        let held = 562;
+        for k in 501..=1_000 {
+            w.note(pair(480 * k - held, 10 * k));
+        }
+        assert!(w.pace_ppm().abs() < 1.0, "{} ppm", w.pace_ppm());
+        assert_eq!(w.steps, 1);
+        assert!((w.stepped - 562.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_dac_that_runs_slow_shows_in_its_pace_and_jitter_is_no_step() {
+        // 1500 ppm slow, read with a millisecond of jitter: no step, the pace as it runs.
+        let mut w = watch();
+        for k in 0..=1_000u64 {
+            let jitter = if k % 2 == 0 { 40 } else { 0 };
+            w.note(pair(((480 * k) as f64 * 0.9985) as u64 + jitter, 10 * k));
+        }
+        assert_eq!(w.steps, 0);
+        assert!(
+            (w.pace_ppm() + 1_500.0).abs() < 20.0,
+            "{} ppm",
+            w.pace_ppm()
+        );
+    }
 }

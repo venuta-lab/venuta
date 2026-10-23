@@ -595,11 +595,18 @@ pub struct Reading {
 ///   can come short), or a fill took nearly as long as what it held. Only a suspect: an engine
 ///   that reads a burst (as at a start, filling its pipeline) leaves little held without any
 ///   gap, and at a start there is no usual pipeline yet, so suspects are not taken then.
-/// - A gap is certain when the position falls behind the time passed by more than 1 ms (the
-///   DAC sat in silence), or when, after a suspect, the pipeline differs from the usual by more
-///   than a quarter of a millisecond (the position counted silence as the stream's frames, as
-///   for a pass that found less than a period). That difference is the slip taken off later
-///   positions. A suspect that shows neither is a near miss, and nothing is said.
+/// - A gap is certain when, with the buffer low (a suspect now or still settling), the position
+///   falls behind the time passed by more than 1 ms (the DAC sat in silence), or when, after a
+///   suspect, the pipeline differs from the usual by more than a quarter of a millisecond (the
+///   position counted silence as the stream's frames, as for a pass that found less than a
+///   period). That difference is the slip taken off later positions. A suspect that shows
+///   neither is a near miss, and nothing is said.
+/// - Only the buffer can run the stream out: what the device holds only falls between fills, so
+///   what it held at a wake is the least it held since the last fill, and the engine took a
+///   short pass only if that was under a pass. A position that falls behind time with the
+///   buffer full is the device's own clock stepping (a Bluetooth link's driver pauses for a
+///   pass or two, the headphones playing on from their own buffer): a step, counted and settled
+///   so the presentation stays true, never a gap.
 /// - From a suspect until it is settled (100 ms for the pipeline to refill, then 16 samples) no
 ///   pair is published, and none afterwards for frames up to where the gap began.
 ///
@@ -653,6 +660,9 @@ pub struct PositionMap {
     queued: bool,
     short_wakes: u32,
     last_wake_ns: Option<u64>,
+    /// Shared mode: steps of the device's clock (see `step`), and the frames they held back.
+    steps: u64,
+    stepped: u64,
 }
 
 /// Samples kept for a usual value.
@@ -681,6 +691,9 @@ pub const WHY_COUNTED: u32 = 32;
 pub const WHY_DRY: u32 = 64;
 pub const WHY_WATCHING: u32 = 128;
 pub const WHY_QUEUED: u32 = 256;
+/// Shared mode: the position stood still against time while the buffer held enough (a step of
+/// the device's clock, as a Bluetooth link's driver makes when it pauses): no gap.
+pub const WHY_STEP: u32 = 512;
 /// Shared mode: the DAC moves this long before the pipeline counts as usual, and after a
 /// suspect the pipeline has this long to refill before it is judged.
 const SETTLE_NS: u64 = 100_000_000;
@@ -723,8 +736,11 @@ impl Ring {
 struct Watch {
     /// Frames handed over when it was suspected (where a gap would have begun).
     at: u64,
-    /// Already certain (the position fell behind).
+    /// Already certain (the position fell behind while the buffer ran low).
     certain: bool,
+    /// Opened by a step of the device's clock alone, with the buffer full: settled to keep the
+    /// presentation true, never a gap (unless the buffer runs low meanwhile).
+    step: bool,
     /// Pipeline samples from then on count.
     from_ns: u64,
     after: Ring,
@@ -788,14 +804,25 @@ impl PositionMap {
             // No usual pipeline yet (a start): only the position can tell.
             return;
         }
-        if self.watch.is_none() {
-            self.watch = Some(Watch {
-                at,
-                certain: false,
-                from_ns: now_ns + SETTLE_NS,
-                after: Ring::default(),
-                slip_at: self.slip,
-            });
+        match &mut self.watch {
+            // The buffer ran low while a step settles: from now on it may be a gap.
+            Some(w) if w.step => {
+                w.step = false;
+                w.at = at;
+                w.from_ns = now_ns + SETTLE_NS;
+                w.after = Ring::default();
+            }
+            Some(_) => {}
+            None => {
+                self.watch = Some(Watch {
+                    at,
+                    certain: false,
+                    step: false,
+                    from_ns: now_ns + SETTLE_NS,
+                    after: Ring::default(),
+                    slip_at: self.slip,
+                });
+            }
         }
     }
 
@@ -889,6 +916,7 @@ impl PositionMap {
                 self.watch = Some(Watch {
                     at,
                     certain: true,
+                    step: false,
                     from_ns: time_ns + SETTLE_NS,
                     after: Ring::default(),
                     slip_at: self.slip,
@@ -940,7 +968,8 @@ impl PositionMap {
             self.why.flags |= WHY_COUNTED;
             self.slip += shift;
         }
-        let xrun = if counted || w.certain {
+        // A step's settle keeps the presentation true; only a buffer that ran low is a gap.
+        let xrun = if (counted && !w.step) || w.certain {
             self.gap(w.at)
         } else {
             None
@@ -977,6 +1006,31 @@ impl PositionMap {
         xrun.or(settled)
     }
 
+    /// Shared mode: the device's clock stood still against time while the stream's buffer held
+    /// enough. Counted once per settle, and settled like a suspect so the presentation stays
+    /// true (a moved pipeline is taken off as a slip), but never said as a gap.
+    fn step(&mut self, raw: u64, lag: f64, time_ns: u64) {
+        self.why.flags |= WHY_STEP;
+        self.stepped += lag.round() as u64;
+        if self.watch.is_some() {
+            return;
+        }
+        self.steps += 1;
+        self.watch = Some(Watch {
+            at: raw,
+            certain: false,
+            step: true,
+            from_ns: time_ns + SETTLE_NS,
+            after: Ring::default(),
+            slip_at: self.slip,
+        });
+    }
+
+    /// Shared mode: steps of the device's clock so far, and the frames they held back.
+    pub fn clock_steps(&self) -> (u64, u64) {
+        (self.steps, self.stepped)
+    }
+
     /// Shared mode: what this reading says of gaps and the pipeline.
     fn shared_reading(&mut self, raw: u64, time_ns: u64) -> Option<u64> {
         let mut xrun = None;
@@ -988,7 +1042,16 @@ impl PositionMap {
             let lag = pr as f64 + self.frames_of_ns(time_ns - pt) - raw as f64;
             self.why.delta = lag.round() as i64;
             if lag > f64::from(self.rate) / 1_000.0 {
-                xrun = self.certain(raw, time_ns);
+                // The DAC stood still. A gap only if the stream could have run out: the buffer
+                // held less than a pass at this wake or ran low during the fill (a suspect now,
+                // or one still settling). With the buffer full the engine never lacked a frame:
+                // the device's own clock stepped.
+                let low = self.why.flags & WHY_SUSPECT != 0 || self.watch.is_some_and(|w| !w.step);
+                if low {
+                    xrun = self.certain(raw, time_ns);
+                } else {
+                    self.step(raw, lag, time_ns);
+                }
             }
         }
         if raw > 0 && self.moving_since.is_none() {
@@ -2435,6 +2498,77 @@ mod tests {
         x.space(None, 960, 0);
         x.filled(500_000_000);
         assert_eq!(x.slip(), 0);
+    }
+
+    #[test]
+    fn shared_mode_a_clock_step_with_the_buffer_full_is_no_gap() {
+        // A Bluetooth link pauses its driver for a pass (the owner's AirPods, 11 ms): the
+        // engine reads nothing and the position stands still, but the stream's buffer stays
+        // full, so the engine never lacked a frame of it. A step of the device's clock, not a
+        // gap: nothing is said, nothing slips, and the presentation goes on once settled.
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        let (r, _) = e.wake(1_920, true);
+        assert_eq!(r.xrun, None, "a step, not a gap");
+        assert_ne!(e.m.why().flags & WHY_STEP, 0, "said as a step");
+        assert_eq!(r.pair, None, "withheld while the clock settles");
+        let mut first = None;
+        for k in 42..=80 {
+            let (r, _) = e.wake(1_920, false);
+            assert_eq!(r.xrun, None, "wake {k}");
+            if let Some(p) = r.pair
+                && first.is_none()
+            {
+                first = Some(k);
+                assert_eq!(p.frame, 480 * k - 480 - 1_440, "the true frame at the DAC");
+            }
+        }
+        assert_eq!(first, Some(66), "pairs again once settled");
+        assert_eq!(e.m.slip(), 0);
+        assert_eq!(e.m.clock_steps(), (1, 480));
+    }
+
+    #[test]
+    fn shared_mode_a_step_that_moves_the_pipeline_re_anchors_but_is_no_gap() {
+        // The link pauses, and when it goes on the position counts 200 frames the engine did not
+        // read from the stream (its own pipeline refilled): the buffer was full throughout, so
+        // no silence was played for the stream. The presentation takes the 200 off; no gap.
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        e.extra = 200;
+        let (r, _) = e.wake(1_920, true);
+        assert_eq!(r.xrun, None);
+        for k in 42..=80 {
+            let (r, _) = e.wake(1_920, false);
+            assert_eq!(r.xrun, None, "wake {k}");
+        }
+        assert_eq!(e.m.slip(), 200, "the presentation re-anchored");
+        assert_eq!(e.m.clock_steps().0, 1);
+    }
+
+    #[test]
+    fn shared_mode_a_step_while_the_buffer_ran_low_is_a_gap_and_a_later_step_is_not() {
+        let mut e = Engine::new();
+        for _ in 1..=40 {
+            e.wake(1_920, false);
+        }
+        // Nothing held, and a pass found nothing: a gap, as before.
+        let (r, at) = e.wake(0, true);
+        assert_eq!(r.xrun, Some(at));
+        for _ in 42..=90 {
+            assert_eq!(e.wake(1_920, false).0.xrun, None);
+        }
+        // Later the link pauses with the buffer full: a step, no second gap.
+        let (r, _) = e.wake(1_920, true);
+        assert_eq!(r.xrun, None);
+        for k in 92..=140 {
+            assert_eq!(e.wake(1_920, false).0.xrun, None, "wake {k}");
+        }
+        assert_eq!(e.m.clock_steps().0, 1, "only the step with the buffer full");
     }
 
     #[test]

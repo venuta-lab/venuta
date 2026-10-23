@@ -134,7 +134,22 @@ fn wasapi_shared_passes_the_conformance_suite_with_a_clean_loopback() {
     let report = run.expect("conformance");
     std::thread::sleep(Duration::from_millis(500));
     let (rate, channels) = (rec.rate, rec.channels);
-    rec.stop().expect("the recording");
+    let timeline = rec.stop().expect("the recording");
+    // Where the recording itself lost data or was filled with silence: a difference from what
+    // was rendered there is the recording's, not the output's.
+    eprintln!(
+        "loopback: capture glitches at {:?}, idle (filled) {:?}",
+        timeline.capture_glitches, timeline.idle
+    );
+    if let Some(t) = trace_path() {
+        // The recording, kept for looking into: raw f32, interleaved, at the mix rate.
+        let all = captured.lock().unwrap();
+        let bytes: Vec<u8> = all.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(format!("{t}-loopback-{rate}hz-{channels}ch.f32"), bytes).ok();
+        timeline
+            .save(std::path::Path::new(&format!("{t}-loopback.wav")))
+            .ok();
+    }
     eprintln!("{report:?}");
     assert_eq!(out.mode(), Mode::Shared);
     assert_eq!(report.xruns, 0, "the device ran dry");
@@ -159,15 +174,27 @@ fn wasapi_shared_passes_the_conformance_suite_with_a_clean_loopback() {
     let fits = judge_loopback(&x, &report.info.format, &report.tones)
         .unwrap_or_else(|e| panic!("the loopback: {e}"));
     eprintln!("loopback against what was rendered: {fits:?}");
+    // Sound where only silence can be: another app played on this output during the run (the
+    // loopback takes the whole mix), so nothing here can be judged.
+    if let Some((at, db)) = other_sound(&x, &fits) {
+        panic!(
+            "other sound on this output: {db:.1} dBFS at capture frame {at}, where only silence can be. Another app played here during the run; quiet it (music, video, notifications) and run again."
+        );
+    }
     if let Some(why) = processed(&fits) {
         panic!(
             "effects in the path ({why}): the loopback is taken after this output's sound effects, so it can't judge clicks or silence here. Turn the output's audio enhancements off and run again."
         );
     }
     for (f, &(freq, tail_from, _)) in fits.iter().zip(&report.tones) {
-        let seg: Vec<f64> = x[f.onset..f.end].iter().map(|&v| f64::from(v)).collect();
+        let seg: Vec<f64> = x[f.judged_from..f.end]
+            .iter()
+            .map(|&v| f64::from(v))
+            .collect();
         let lock = audio_check::sine::SineLock::new(freq, rate, 0.5 * f.gain);
-        let fade = audio_check::Declared::span(tail_from as usize..seg.len());
+        let fade = audio_check::Declared::span(
+            (tail_from as usize).saturating_sub(f.rendered_from)..seg.len(),
+        );
         let clicks = audio_check::sine::check(&seg, &lock, &fade);
         assert_eq!(clicks, [], "{freq} Hz through the loopback");
     }
@@ -192,6 +219,10 @@ struct ToneFit {
     /// Where it begins in the capture (its first sound) and where its fade ends.
     onset: usize,
     end: usize,
+    /// Where it is judged from (after the mixer's fade-in at a start, `START_RAMP_MS`), in the
+    /// capture and as the rendered frame there.
+    judged_from: usize,
+    rendered_from: usize,
     /// The loopback's level against the rendered tone's (the endpoint's volume, where the
     /// loopback is taken after it).
     gain: f64,
@@ -202,6 +233,10 @@ struct ToneFit {
     /// Sound in the 60 ms after the fade's end (from 1 ms on), dBFS.
     after_db: f64,
 }
+
+/// Windows' shared mixer fades a stream in when it starts from silence (about 10 ms, seen on
+/// every output): the start of each tone, this long, is the mixer's, not judged.
+const START_RAMP_MS: usize = 20;
 
 /// Finds each tone of a conformance run (`tones`: frequency, fade start, silence start) in a
 /// capture, in order, each beginning at the first sound after the last one's end, and compares
@@ -225,36 +260,111 @@ fn judge_loopback(
                 .position(|v| v.abs() > SILENT)
                 .ok_or(format!("no {freq} Hz tone after sample {from}"))?;
         let len = silent_from as usize;
-        if onset + len + after > x.len() {
-            return Err(format!("the capture ends inside the {freq} Hz tone"));
-        }
         let tone = conformance::ToneRender::faded(freq, fmt.clone(), tail_from);
         let r: Vec<f64> = (0..len as u64).map(|k| tone.value(k)).collect();
-        let steady = rate / 20..(tail_from as usize).saturating_sub(rate / 20);
-        let (xr, rr) = steady.clone().fold((0.0, 0.0), |(a, b), k| {
-            (a + f64::from(x[onset + k]) * r[k], b + r[k] * r[k])
+        // Where the tone is in the capture. Its fade ends in digital silence at frame `len`,
+        // known exactly, so the first millisecond of silence after its onset places it, even
+        // when the capture began after the tone did (a loopback starts a moment after the
+        // output). Without such silence before the next tone (an output's effects ringing on),
+        // its first sound places it, as the capture's start would.
+        let quiet = rate / 1000;
+        let silence_at = (onset..x.len().saturating_sub(quiet))
+            .find(|&i| x[i..i + quiet].iter().all(|v| v.abs() <= SILENT));
+        // Capture frame of rendered frame 0: before the capture's start (negative) when the
+        // capture began inside the tone.
+        let near = match silence_at {
+            Some(e) if e as i64 - len as i64 <= onset as i64 => e as i64 - len as i64,
+            _ => onset as i64,
+        };
+        // The fade's last frames are under the silence threshold, so that places it within a
+        // few frames. The best fit within 16 frames (under half a period of the highest tone,
+        // so never a whole period off) places it exactly; the fade, in the fit, tells periods
+        // apart. Rendered frame `k` is capture frame `zero + k`; frames before the capture
+        // began are not judged.
+        let fit = |zero: i64| {
+            // Rendered frames from `first` on are in the capture; judged from after the
+            // mixer's fade-in, where the stream started in the capture.
+            let in_capture = (onset as i64 - zero).max(-zero).max(0) as usize;
+            let first = if zero >= 0 {
+                in_capture.max(rate * START_RAMP_MS / 1000)
+            } else {
+                in_capture
+            };
+            let at = |k: usize| f64::from(x[(zero + k as i64) as usize]);
+            let steady = (rate / 20).max(first)..(tail_from as usize).saturating_sub(rate / 20);
+            let (xr, rr) = steady.fold((0.0, 0.0), |(a, b), k| (a + at(k) * r[k], b + r[k] * r[k]));
+            let gain = if rr > 0.0 { xr / rr } else { 0.0 };
+            let (mut err, mut sig) = (0.0, 0.0);
+            for (k, &rk) in r.iter().enumerate().take(len).skip(first) {
+                let want = gain * rk;
+                let d = at(k) - want;
+                err += d * d;
+                sig += want * want;
+            }
+            (first, gain, err, sig)
+        };
+        let zero = (near - 16..=near + 16)
+            .filter(|&z| {
+                z + (len + after) as i64 <= x.len() as i64 && z + len as i64 > onset as i64
+            })
+            .min_by(|&a, &b| {
+                let (fa, fb) = (fit(a), fit(b));
+                (fa.2 / fa.3.max(1e-300)).total_cmp(&(fb.2 / fb.3.max(1e-300)))
+            })
+            .ok_or(format!("the capture ends inside the {freq} Hz tone"))?;
+        let (first, gain, err, sig) = fit(zero);
+        let sound = (onset as i64 - zero).max(-zero).max(0) as usize;
+        // In capture frames, from here on: where rendered frame `k` is.
+        let cap = |k: usize| (zero + k as i64) as usize;
+        // Where the loopback first departs from the tone (10 ms windows), for looking into.
+        let win = rate / 100;
+        let departs = (first / win..len / win).find_map(|w| {
+            let (mut e, mut g) = (0.0, 0.0);
+            for k in (w * win).max(first)..(w + 1) * win {
+                let want = gain * r[k];
+                let d = f64::from(x[cap(k)]) - want;
+                e += d * d;
+                g += want * want;
+            }
+            (g > 0.0 && 10.0 * (e / g).log10() > -60.0).then_some(cap((w * win).max(first)))
         });
-        let gain = if rr > 0.0 { xr / rr } else { 0.0 };
-        let (mut err, mut sig) = (0.0, 0.0);
-        for k in 0..len {
-            let want = gain * r[k];
-            let d = f64::from(x[onset + k]) - want;
-            err += d * d;
-            sig += want * want;
-        }
-        let tail = &x[onset + len + rate / 1000..onset + len + after];
+        eprintln!("{freq} Hz: first departs from the tone at capture frame {departs:?}");
+        // Sound in the 60 ms after the fade (from 1 ms on), up to where the next sound begins:
+        // a tone close after (Bluetooth's 30 ms) is the next tone, not this one's.
+        let tail = &x[cap(len) + quiet..cap(len) + after];
         let rms =
             (tail.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / tail.len() as f64).sqrt();
         fits.push(ToneFit {
-            onset,
-            end: onset + len,
+            onset: cap(sound),
+            end: cap(len),
+            judged_from: cap(first),
+            rendered_from: first,
             gain,
             residual_db: 10.0 * (err.max(1e-300) / sig.max(1e-300)).log10(),
             after_db: 20.0 * rms.max(1e-15).log10(),
         });
-        from = onset + len;
+        from = cap(len);
     }
     Ok(fits)
+}
+
+/// Sound where only silence can be, between one tone's fade and the next tone, or after the
+/// last: another app played on the output during the run (the loopback takes the whole mix),
+/// or the output played on what it was not given. Where, and how loud, in dBFS.
+fn other_sound(x: &[f32], fits: &[ToneFit]) -> Option<(usize, f64)> {
+    let mut stretches: Vec<(usize, usize)> =
+        fits.windows(2).map(|w| (w[0].end, w[1].onset)).collect();
+    if let Some(last) = fits.last() {
+        stretches.push((last.end, x.len()));
+    }
+    stretches.into_iter().find_map(|(a, b)| {
+        let (i, v) = x
+            .get(a..b)?
+            .iter()
+            .enumerate()
+            .find(|(_, v)| v.abs() > SILENT)?;
+        Some((a + i, 20.0 * f64::from(v.abs()).log10()))
+    })
 }
 
 /// Why the path has effects in it, if it has.
@@ -316,6 +426,57 @@ mod loopback_judge {
             ]
         );
         assert!(fits.iter().all(|f| (f.gain - 0.7).abs() < 1e-6));
+    }
+
+    #[test]
+    fn a_capture_that_begins_inside_the_first_tone_is_judged_by_where_it_ends() {
+        // The loopback started after the output (the AirPods' run): the first 3000 frames of
+        // the first tone are not in it. Each tone ends on its fade at a frame known exactly, so
+        // that end places it, and the part that was captured is judged.
+        let (full, tones) = capture(0.7, [0, 13_174, 3_600]);
+        let x = full[3_000..].to_vec();
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        assert_eq!(processed(&fits), None, "{fits:?}");
+        assert!(fits.iter().all(|f| (f.gain - 0.7).abs() < 1e-6), "{fits:?}");
+        assert_eq!(fits[0].end, 25_440 - 3_000);
+        assert_eq!(other_sound(&x, &fits), None);
+    }
+
+    #[test]
+    fn windows_fading_a_stream_in_as_it_starts_is_not_judged() {
+        // Windows' shared mixer fades a stream in over about 10 ms when it starts from silence
+        // (seen on the AirPods: the tones that began from silence rose from nothing, the one
+        // that followed close after did not). The first 20 ms of each tone are its, not the
+        // output's.
+        let (mut x, tones) = capture(0.7, [6_353, 13_174, 3_600]);
+        for k in 0..480 {
+            x[6_353 + k] *= (k + 1) as f32 / 481.0;
+        }
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        assert_eq!(processed(&fits), None, "{fits:?}");
+        assert_eq!(fits[0].onset, 6_353, "its first sound");
+        assert_eq!(fits[0].judged_from, 6_353 + 960, "judged after the fade-in");
+        assert_eq!(fits[0].rendered_from, 960);
+    }
+
+    #[test]
+    fn tones_30_ms_apart_are_two_tones_and_the_silence_between_is_theirs() {
+        // Bluetooth's run: the third tone began 30 ms after the second one's fade.
+        let (x, tones) = capture(0.7, [6_353, 13_174, 1_440]);
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        assert_eq!(processed(&fits), None, "{fits:?}");
+        assert_eq!(other_sound(&x, &fits), None);
+    }
+
+    #[test]
+    fn another_apps_sound_between_the_tones_is_told() {
+        let (mut x, tones) = capture(0.7, [6_353, 13_174, 3_600]);
+        let fits = judge_loopback(&x, &fmt(), &tones).unwrap();
+        let between = fits[0].end + 6_000;
+        for (k, v) in x[between..between + 480].iter_mut().enumerate() {
+            *v = 0.05 * (k as f32 * 0.07).sin();
+        }
+        assert!(other_sound(&x, &fits).is_some());
     }
 
     #[test]
@@ -713,4 +874,69 @@ fn wasapi_the_presentation_matches_the_loopback_across_a_gap() {
         "the presentation moved against the loopback by {:.2} ms",
         hi - lo
     );
+}
+
+/// A loopback kept by a run (`VENUTA_HW_TRACE` keeps it), judged again without playing anything:
+/// `VENUTA_HW_LOOPBACK` the `.f32` file, `VENUTA_HW_TONES` the report's tones as
+/// `freq:tail_from:silent_from,…`, `VENUTA_HW_RATE` and `VENUTA_HW_CHANNELS`.
+#[test]
+#[ignore = "judges a kept loopback; run by hand"]
+fn a_kept_loopback_judged_again() {
+    let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} is needed"));
+    let bytes = std::fs::read(var("VENUTA_HW_LOOPBACK")).expect("the loopback");
+    let rate: u32 = var("VENUTA_HW_RATE").parse().unwrap();
+    let channels: usize = var("VENUTA_HW_CHANNELS").parse().unwrap();
+    let all: Vec<f32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    let x: Vec<f32> = all.iter().step_by(channels).copied().collect();
+    let tones: Vec<(f64, u64, u64)> = var("VENUTA_HW_TONES")
+        .split(',')
+        .map(|t| {
+            let p: Vec<&str> = t.split(':').collect();
+            (
+                p[0].parse().unwrap(),
+                p[1].parse().unwrap(),
+                p[2].parse().unwrap(),
+            )
+        })
+        .collect();
+    let fmt = player::output::DeviceFormat {
+        rate,
+        channels: channels as u16,
+        container_bits: 32,
+        valid_bits: 32,
+        kind: player::output::SampleKind::Float,
+    };
+    let fits = judge_loopback(&x, &fmt, &tones).expect("the tones");
+    eprintln!("{fits:?}");
+    assert_eq!(
+        other_sound(&x, &fits),
+        None,
+        "sound where only silence can be"
+    );
+    assert_eq!(
+        processed(&fits),
+        None,
+        "the loopback against what was rendered"
+    );
+    for (f, &(freq, tail_from, _)) in fits.iter().zip(&tones) {
+        let seg: Vec<f64> = x[f.judged_from..f.end]
+            .iter()
+            .map(|&v| f64::from(v))
+            .collect();
+        let lock = audio_check::sine::SineLock::new(freq, rate, 0.5 * f.gain);
+        let fade = audio_check::Declared::span(
+            (tail_from as usize).saturating_sub(f.rendered_from)..seg.len(),
+        );
+        let clicks = audio_check::sine::check(&seg, &lock, &fade);
+        assert_eq!(clicks, [], "{freq} Hz through the loopback");
+        eprintln!(
+            "{freq} Hz: {} s judged, no clicks",
+            seg.len() as f64 / f64::from(rate)
+        );
+    }
 }

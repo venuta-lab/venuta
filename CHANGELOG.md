@@ -2,6 +2,10 @@
 
 ## 0.4.1 (2026-10-23)
 
+- **Fixed: Bluetooth no longer reports gaps that never happened.** A Bluetooth link pauses its
+  driver now and then while the headphones play on from their own buffer; Venuta took that for
+  its sound running out. Now only its own buffer running low counts as a gap. Proven on AirPods:
+  through such a pause, what reached them matched what Venuta played, sample for sample.
 - **Fixed: Venuta closed at start when a sound device's name had a curly apostrophe**, as
   Windows names Bluetooth devices ("Name’s AirPods"). On 0.4.0, if Venuta closes as soon as it
   opens, switch the device off or disconnect it, start Venuta and update, then connect it again.
