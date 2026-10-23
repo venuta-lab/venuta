@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod conformance;
 pub mod decode;
+pub mod drift_memory;
 pub mod dsp;
 pub mod engine;
 pub mod output;

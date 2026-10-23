@@ -393,6 +393,14 @@ impl<T: Item + Serialize> Player<T> {
         }
     }
 
+    /// Where rooms keep the drift they learn of each output (engine 2's; WP15). Engine 1's
+    /// rooms learn nothing to keep.
+    pub fn set_drift_memory(&self, memory: Arc<crate::drift_memory::DriftMemory>) {
+        if let Some(m) = &self.msgs {
+            let _ = m.send(control::Msg::Drift(memory));
+        }
+    }
+
     /// Whether the player thread is still running (it ends only on Quit, or a panic).
     pub fn is_alive(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())

@@ -1196,6 +1196,8 @@ pub(super) struct RoomProgram<T> {
     adopted: bool,
     ctl: Controller,
     dac: DacRate,
+    /// The output `dac` measures (its key in the drift memory, WP15).
+    dac_key: Option<String>,
     epoch: Option<u32>,
     last_tick: u64,
     realign_since: Option<u64>,
@@ -1272,6 +1274,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
             adopted: false,
             ctl: Controller::default(),
             dac: DacRate::default(),
+            dac_key: None,
             epoch: None,
             last_tick: 0,
             realign_since: None,
@@ -1282,6 +1285,31 @@ impl<T: Item + Serialize> RoomProgram<T> {
 
     fn map(&self) -> Option<ClockMap> {
         **self.clock.load()
+    }
+
+    /// The output the sound card rate is measured on (WP15): on taking one (the first tick
+    /// with it open, or a switch), what was measured of the one before is remembered, and the
+    /// rate remembered for this one seeds the measure until its own pairs span 2 s.
+    fn follow_output(&mut self, deck: &Deck) {
+        let Some(key) = deck.output_key() else {
+            return;
+        };
+        if self.dac_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.remember_output(deck);
+        self.dac
+            .seed(deck.drift.as_ref().and_then(|m| m.recall(&key)));
+        self.dac_key = Some(key);
+    }
+
+    /// What was measured of the output, remembered by its key (long enough measures only).
+    fn remember_output(&self, deck: &Deck) {
+        if let (Some(key), Some(m), Some((ppm, span))) =
+            (&self.dac_key, &deck.drift, self.dac.measured())
+        {
+            m.remember(key, ppm, span);
+        }
     }
 
     /// Out of the room's sound: stepped out, or away for the platform's reason.
@@ -2001,6 +2029,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
     /// The sync tick (4.9): measure, steer, realign, can't hold; and what is heard.
     fn tick(&mut self, deck: &mut Deck) {
         let now = deck.now_ns();
+        self.follow_output(deck);
         if let Some((generation, frame, time)) = deck.presented() {
             self.dac.push(generation, frame, time, deck.rate());
         }
@@ -2452,6 +2481,7 @@ impl<T: Item + Serialize> RoomProgram<T> {
     /// The room lets go: what sounds fades out over a second, on the deck's own; the renderer
     /// is renewed before your own music sounds again.
     fn detach(self, deck: &mut Deck) {
+        self.remember_output(deck);
         if let Some(s) = self.spare {
             retire(deck, s.rs.song);
         }

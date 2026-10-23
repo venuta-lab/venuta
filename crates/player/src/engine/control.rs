@@ -50,6 +50,8 @@ pub(super) const GLIDE_MS: u32 = 50;
 pub(crate) enum Msg<T> {
     Cmd(Cmd<T>),
     Room(RoomMsg<T>),
+    /// Where room programs keep what they learn of each output (WP15).
+    Drift(Arc<crate::drift_memory::DriftMemory>),
 }
 
 pub(super) struct Spawned<T> {
@@ -170,6 +172,10 @@ impl<T: Item + Serialize> Control<T> {
             Msg::Cmd(c) => self.command(c),
             Msg::Room(r) => {
                 self.program.room(r, &mut self.deck);
+                false
+            }
+            Msg::Drift(m) => {
+                self.deck.drift = Some(m);
                 false
             }
         };
@@ -503,6 +509,8 @@ pub(super) struct Deck {
     gain_ready_at: u64,
     /// The output's endpoint (the key of its remembered delay, WP19).
     pub(super) endpoint: Option<String>,
+    /// The drift learned per output, for room programs (WP15).
+    pub(super) drift: Option<Arc<crate::drift_memory::DriftMemory>>,
     pub(super) quitting: bool,
     snapshot: Option<RenderSnapshot>,
     /// How far what was handed over runs ahead of the DAC, as the presentation pairs say (the
@@ -563,6 +571,7 @@ impl Deck {
             gain_sent: 1.0,
             gain_ready_at: 0,
             endpoint: None,
+            drift: None,
             quitting: false,
             snapshot: None,
             lead: None,
@@ -571,6 +580,17 @@ impl Deck {
 
     pub(super) fn now_ns(&self) -> u64 {
         self.tb.now_ns()
+    }
+
+    /// The open output's key for what is remembered of it (WP15): its endpoint id, else its
+    /// name (an output without an id: the simulated ones, later AAudio's).
+    pub(super) fn output_key(&self) -> Option<String> {
+        let open = self.open.as_ref()?;
+        Some(
+            self.endpoint
+                .clone()
+                .unwrap_or_else(|| format!("name:{}", open.name)),
+        )
     }
 
     /// Anything of the output under way (the control thread looks every 5 ms meanwhile).
@@ -1788,6 +1808,8 @@ pub(super) struct DacRate {
     pts: std::collections::VecDeque<(f64, f64)>,
     generation: u64,
     last_time: u64,
+    /// The rate remembered for this output, ppm, answered until the pairs span 2 s.
+    seed: Option<f64>,
 }
 
 /// The window, and the least span used, s.
@@ -1845,9 +1867,25 @@ impl DacRate {
         (sxx > 0.0).then(|| sxy / sxx)
     }
 
-    /// How fast the card runs against the mono clock, ppm (positive: fast); 0 until known.
+    /// How fast the card runs against the mono clock, ppm (positive: fast); until its own
+    /// pairs span 2 s, the rate remembered for this output (WP15), else 0.
     pub(super) fn ppm(&self) -> f64 {
-        self.slope().map_or(0.0, |s| (s - 1.0) * 1e6)
+        self.slope()
+            .map_or(self.seed.unwrap_or(0.0), |s| (s - 1.0) * 1e6)
+    }
+
+    /// The rate remembered for the output measured now (`None`: nothing known).
+    pub(super) fn seed(&mut self, ppm: Option<f64>) {
+        self.seed = ppm;
+    }
+
+    /// What its own pairs say, and over how long (s): to be remembered.
+    pub(super) fn measured(&self) -> Option<(f64, f64)> {
+        let span = match (self.pts.front(), self.pts.back()) {
+            (Some(a), Some(b)) => b.0 - a.0,
+            _ => return None,
+        };
+        self.slope().map(|s| ((s - 1.0) * 1e6, span))
     }
 }
 

@@ -5353,6 +5353,7 @@ dependencies = [
  "serde_json",
  "symphonia",
  "symphonia-adapter-libopus",
+ "tempfile",
  "together",
  "ureq",
  "wasapi",

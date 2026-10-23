@@ -18,6 +18,8 @@ symphonia = { workspace = true, features = ["flac", "mp3", "aac", "alac", "isomp
 # Building it needs CMake, which comes with Visual Studio's C++ build tools.
 symphonia-adapter-libopus = "0.3"
 serde = { workspace = true }
+# The drift remembered per output, in its file (drift_memory.rs).
+serde_json.workspace = true
 ureq.workspace = true
 rand = "0.9"
 md-5 = "0.10"
@@ -36,7 +38,7 @@ windows-core = "0.61"
 
 [dev-dependencies]
 media-access = { path = "../media-access" }
-serde_json.workspace = true
+tempfile.workspace = true
 audio-check = { path = "../audio-check" }
 
 
