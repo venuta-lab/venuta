@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **A new sound engine, clean in every case.** Decoding runs ahead on its own thread, and one
+  stage shapes every change: pauses, seeks, skips, volume and EQ changes fade or glide instead
+  of cutting, gapless albums join sample-exact, and nothing on the way to your speakers waits
+  for anything else. Seeks in MP3, AAC, Vorbis and Opus land exactly. Online songs start
+  sooner, are levelled like your files, and a stream that stalls fades out and back in. Exclusive
+  mode works with drivers that queue deeply, and a song started after a stop no longer begins
+  late. The old engine stays one setting away (Player engine 1).
+- **Listen together, rebuilt.** Three ways to listen: **One speaker** (one device plays, the
+  others choose and control from theirs), **Every device** (several speakers in one room, in
+  step to about a millisecond) and **Apart** (different places, in step to about 15 ms over the
+  internet). Different copies of a song (your file, a friend's stream) are lined up by their
+  sound. The room waits for people only at a start, a seek or a skip, never mid-song: someone
+  whose connection stalls drops out alone and fades back in. A dropped connection never stops
+  the music; a room survives the host's app restarting and guests rejoin as themselves; rooms on
+  your network can be found nearby; and when a room ends, everyone's own queue comes back
+  paused where it was, exactly as it played before. Rooms need everyone on this version: an
+  older copy is told so.
+- **Every kind of output.** Bluetooth always plays in full stereo quality, never through its
+  hands-free side; headphones, USB DACs, HDMI and speakers can come and go and the music
+  carries on, or pauses when headphones or Bluetooth go (a setting, on by default). USB DACs
+  play each song at its own rate and depth where they can, and the signal path says honestly
+  when it isn't bit-perfect. Each output keeps its own delay, so lyrics and rooms stay in time
+  on Bluetooth.
+- **Lyrics in English letters, and in your language.** Under each line, its pronunciation
+  (Hindi, Marathi, Bengali, Punjabi, Gujarati, Tamil, Telugu, Kannada, Malayalam, Odia, Nepali,
+  Korean, Chinese, Japanese, Russian and more), made on your PC or taken from lyrics that carry
+  it, and a translation: the one the lyrics carry, one made on your PC for languages where that
+  proved reliable, or one from DeepL, Microsoft, Google or Claude with your own key. Two
+  switches on every lyrics view, remembered per song language, and any line can be corrected.
+- **Lyrics, fixed**: one reader for every lyrics file, word timing kept for your own files and
+  through the lyrics maker; sources that refuse or are down are said to be so instead of
+  "nothing found"; credit lines no longer show as sung lines; the big screen fits long lines;
+  the lyrics windows and the mini player can no longer be opened twice by quick presses.
 - **Up next from YouTube Music.** What plays next is what YouTube Music's own player plays: one
   radio session, kept and never restarted, more of it as you near the end, its tuning chips
   above the queue, and with Autoplay on an album or playlist goes on with what YouTube Music
