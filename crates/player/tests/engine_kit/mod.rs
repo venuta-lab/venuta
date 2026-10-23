@@ -85,6 +85,34 @@ impl<T: Item + Serialize> Rig<T> {
         }
     }
 
+    /// A rig on `clock` playing to `choice` (simulated sound devices, say): what it played is
+    /// read from the choice's own outputs, not `outputs`.
+    pub fn with_choice(clock: SimClock, choice: OutputChoice) -> Rig<T> {
+        let (tx, statuses) = channel();
+        let (notes_tx, notes) = channel();
+        let player = Player::spawn_watched(
+            EngineKind::Two,
+            choice,
+            move |s| {
+                let name = std::thread::current().name().map(str::to_owned);
+                let _ = tx.send((name, s));
+            },
+            Watch {
+                notes: Some(notes_tx),
+                wrap: None,
+            },
+        );
+        Rig {
+            clock,
+            player: Some(player),
+            statuses,
+            notes,
+            outputs: Arc::new(Mutex::new(Vec::new())),
+            seen: Vec::new(),
+            heard_notes: Vec::new(),
+        }
+    }
+
     pub fn send(&self, cmd: Cmd<T>) {
         self.player.as_ref().expect("playing").send(cmd);
     }

@@ -89,6 +89,8 @@ enum Link {
 
 pub(super) struct OwnProgram<T> {
     queue: Queue<T>,
+    /// Paused because headphones or Bluetooth went away: the error says so until it plays.
+    left_paused: bool,
     queue_changed: bool,
     from: String,
     stop_after_current: bool,
@@ -123,6 +125,7 @@ impl<T: Item + Serialize> OwnProgram<T> {
             spare: None,
             link: None,
             failures: 0,
+            left_paused: false,
         }
     }
 
@@ -252,6 +255,8 @@ impl<T: Item + Serialize> OwnProgram<T> {
             | Cmd::SleepIn(_)
             | Cmd::Spectrum(_)
             | Cmd::Output(_)
+            | Cmd::OutputDelays(_)
+            | Cmd::PauseWhenHeadphonesGo(_)
             | Cmd::Sync(_)
             | Cmd::Quit => {}
         }
@@ -259,6 +264,9 @@ impl<T: Item + Serialize> OwnProgram<T> {
 
     fn set_playing(&mut self, on: bool, deck: &mut Deck) {
         if on {
+            if std::mem::take(&mut self.left_paused) {
+                self.error.clear();
+            }
             if self.cur.is_none() && self.queue.current().is_some() {
                 self.load_current(deck, Place::Frame(0));
             }
@@ -452,8 +460,10 @@ impl<T: Item + Serialize> OwnProgram<T> {
         let Some(c) = self.cur.as_ref() else {
             return 0;
         };
+        // Where it reaches your ear: through the output's extra delay (lyrics follow this).
         if matches!(c.state, State::Sounding | State::Stopping(_))
-            && let (Some(content), Some(f)) = (deck.heard_content(c.vid()), c.lane.status().format)
+            && let (Some(content), Some(f)) =
+                (deck.heard_content_by_ear(c.vid()), c.lane.status().format)
         {
             return (content.max(0.0) as u64) * 1000 / u64::from(f.rate.max(1));
         }
@@ -867,7 +877,8 @@ impl<T: Item + Serialize> OwnProgram<T> {
         let c = self.cur.as_ref()?;
         let s = c.lane.status();
         let src = s.format.clone()?;
-        let (name, mode, out, latency_ms) = deck.output_signal()?;
+        let side = deck.output_signal()?;
+        let (mode, out) = (side.mode, side.format.clone());
         let (mut steps, active) = deck.steps(&c.lane.gain, s.loudness_db, out.rate, src.channels);
         let fading = self.link == Some(Link::Crossfade);
         if fading {
@@ -876,8 +887,13 @@ impl<T: Item + Serialize> OwnProgram<T> {
                 deck.sound.crossfade_s
             ));
         }
+        if let Some(why) = &side.why_shared {
+            steps.push(format!("Not exclusive: {why}"));
+        }
         if mode == Mode::Shared {
-            steps.push("Mixed by Windows (shared mode), which may resample".into());
+            // D2: the song reaches Windows at its mix format (the resampler's step says so), and
+            // Windows mixes it with other apps' sound and its own effects.
+            steps.push("Mixed by Windows (shared mode)".into());
         }
         if out.rate != src.rate {
             steps.push(format!("Resampled to {} kHz", out.rate as f32 / 1000.0));
@@ -888,17 +904,33 @@ impl<T: Item + Serialize> OwnProgram<T> {
         if !src.lossless {
             steps.push(format!("Decoded from {}", src.codec));
         }
+        // What the device itself does (Bluetooth's codec, a virtual device's software).
+        let device_steps = side
+            .kind
+            .map(|k| crate::devices::device_steps(k, side.hands_free))
+            .unwrap_or_default();
+        let device_keeps = device_steps.is_empty();
+        steps.extend(device_steps);
         let rate = src.rate.max(1) as f32;
         Some(Signal {
-            device: name,
+            device: side.name,
             mode,
             file: s.info.clone(),
             buffer_ms: (s.in_ring as f32 * 1000.0 / rate) as u32,
-            latency_ms,
-            bit_perfect: !active && !fading && output::bit_perfect(&src, &out, mode, deck.volume),
+            latency_ms: side.latency_ms,
+            bit_perfect: !active
+                && !fading
+                && device_keeps
+                && output::bit_perfect(&src, &out, mode, deck.volume),
             source: src,
             output: out,
             steps,
+            endpoint: side.endpoint,
+            kind: side.kind,
+            note: side.note,
+            delay_ms: side.delay_ms,
+            suggested_delay_ms: side.suggested_delay_ms,
+            follows_default: side.follows_default,
         })
     }
 }
@@ -3127,6 +3159,15 @@ impl<T: Item + Serialize> Program<T> {
     }
 
     pub(super) fn step(&mut self, deck: &mut Deck) {
+        // Headphones or Bluetooth went away: your own music pauses there (a room keeps its own
+        // rules: the fallback plays for it).
+        if let Some(name) = deck.take_left()
+            && let Program::Own(o) | Program::Adopting { own: o, .. } = self
+        {
+            o.error = format!("Paused: {name} disconnected.");
+            o.left_paused = true;
+            o.set_playing(false, deck);
+        }
         match self {
             Program::Own(o) => o.step(deck),
             Program::Room { room, .. } => room.step(deck),

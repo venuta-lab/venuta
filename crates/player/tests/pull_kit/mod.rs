@@ -751,6 +751,7 @@ impl PullOpener for FakeOpener {
                 device_buffer_frames: if c.exclusive { c.period } else { c.buffer },
                 stream_latency_frames: latency,
                 pro_audio: false,
+                ..DeviceNotes::default()
             },
         })
     }

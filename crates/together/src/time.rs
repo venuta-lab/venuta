@@ -286,6 +286,18 @@ impl SimClock {
         g.passing = false;
     }
 
+    /// Leap `d_ns` ahead with nothing running meanwhile (a computer that slept): once every
+    /// awake thread sleeps, the clock jumps, and every thread and callback due in the leap runs
+    /// after it, late, at the new time (at the next `pass`).
+    pub fn leap(&self, d_ns: u64) {
+        let s = &self.0;
+        let g = s.state.lock().unwrap();
+        assert!(!g.passing, "only one thread runs a simulation");
+        let _g = Self::settle(s, g);
+        let now = s.now.load(Ordering::SeqCst) + d_ns;
+        s.now.store(now, Ordering::SeqCst);
+    }
+
     /// Wait until every awake thread sleeps again (or leaves).
     fn settle<'a>(
         s: &'a Sim,
@@ -428,6 +440,25 @@ mod tests {
         assert_eq!(c.now_ns(), 1_000);
         c.pass(500);
         assert_eq!(c.now_ns(), 1_500);
+    }
+
+    #[test]
+    fn a_leap_runs_nothing_meanwhile_and_everything_due_after_it() {
+        let c = SimClock::new(0);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for t in [10, 20] {
+            let (s, c2) = (seen.clone(), c.clone());
+            c.at(t, Box::new(move || s.lock().unwrap().push(c2.now_ns())));
+        }
+        c.leap(1_000);
+        assert_eq!(c.now_ns(), 1_000);
+        assert!(seen.lock().unwrap().is_empty(), "nothing ran in the leap");
+        c.pass(0);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [1_000, 1_000],
+            "both, late, after it"
+        );
     }
 
     #[test]

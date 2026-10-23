@@ -201,6 +201,14 @@ pub struct WindowStatus {
     bands: Option<Vec<u8>>,
 }
 
+/// The output the music is on: its endpoint (the key of its delay), its name and kind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayingOn {
+    pub endpoint: String,
+    pub name: String,
+    pub kind: Option<player::devices::Kind>,
+}
+
 /// What the Windows media overlay, media keys and the tray show. A loaded song has a non-empty
 /// `title`; `file` is the local cover source (None for remote items, which use `artwork_url`).
 #[derive(Clone, Default)]
@@ -225,8 +233,15 @@ pub struct Playback {
     spectrum: Mutex<std::collections::HashSet<String>>,
     /// The folder the queue's songs are in (for plays and picking up where you were).
     root: Arc<Mutex<String>>,
-    /// Exclusive (bit-perfect) unless you choose shared; the device, or the default.
+    /// Exclusive (bit-perfect) unless you choose shared; the device, or the default (saved in
+    /// Settings, `player.output` and `player.exclusive`).
     output: Mutex<(Option<String>, bool)>,
+    /// The endpoint the music is on now (the chosen one, its stereo twin, the default or a
+    /// fallback), as the player last said.
+    endpoint: Arc<Mutex<Option<PlayingOn>>>,
+    /// Told when the music moves to another endpoint (a room takes that output's delay).
+    #[allow(clippy::type_complexity)]
+    on_output: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
     /// Catalog + session-audio access for remote items (the app factory until a real provider).
     catalog: Arc<dyn MediaAccess>,
     /// Local only (Settings, Listening): every catalog request is refused while it's on.
@@ -368,8 +383,14 @@ impl Default for Playback {
             window: Arc::default(),
             spectrum: Mutex::default(),
             root: Arc::default(),
-            // Bit-perfect unless you choose otherwise.
-            output: Mutex::new((None, true)),
+            // As chosen before: Windows' default, followed, and bit-perfect unless you choose
+            // otherwise.
+            output: Mutex::new({
+                let p = engine::settings::load().player;
+                (p.output, p.exclusive)
+            }),
+            endpoint: Arc::default(),
+            on_output: Arc::default(),
             catalog: media_access::default_media_access(),
             local_only: Arc::default(),
             offline: Arc::new(LocalOnlyAccess),
@@ -401,6 +422,8 @@ impl Playback {
             let local_only = self.local_only.clone();
             let room_now = self.room_now.clone();
             let last_status = self.last.clone();
+            let endpoint = self.endpoint.clone();
+            let on_output = self.on_output.clone();
             // Last next-id we asked the cache to warm (avoid spamming resolve every status tick).
             let mut warmed: Option<String> = None;
             // Plays and where you were are written to disk on a thread of their own: never on
@@ -447,6 +470,48 @@ impl Playback {
                     if let Some(q) = &s.queue {
                         queue = q.clone();
                         order = s.unshuffled.clone();
+                    }
+                    // The output the music is on now (the key of its delay): a room is told
+                    // when it moves to another one.
+                    if let Some(g) = s.signal.as_ref()
+                        && let Some(e) = g.endpoint.clone()
+                    {
+                        let now = PlayingOn {
+                            endpoint: e,
+                            name: g.device.clone(),
+                            kind: g.kind,
+                        };
+                        let moved = endpoint
+                            .lock()
+                            .map(|mut cur| {
+                                let moved =
+                                    cur.as_ref().map(|c| &c.endpoint) != Some(&now.endpoint);
+                                *cur = Some(now);
+                                moved
+                            })
+                            .unwrap_or(false);
+                        if moved {
+                            // In the playback log, for the guided test (docs/qa/devices-live.md).
+                            note_play(
+                                &format!(
+                                    "output: on {} ({:?}, {:?}, {} Hz){}",
+                                    g.device,
+                                    g.kind,
+                                    g.mode,
+                                    g.output.rate,
+                                    g.note
+                                        .as_ref()
+                                        .map(|n| format!(": {n}"))
+                                        .unwrap_or_default()
+                                ),
+                                "the player",
+                            );
+                            if let Ok(hook) = on_output.lock()
+                                && let Some(h) = hook.as_ref()
+                            {
+                                h();
+                            }
+                        }
                     }
                     // In a room, the windows, the overlay and plays follow the room (`room_tick`);
                     // where you were is still your own program's.
@@ -646,6 +711,14 @@ impl Playback {
                 && let Some(p) = slot.as_ref()
             {
                 p.send(Cmd::Sound(sound));
+            }
+            // The extra delay set for each output (what you hear is that much later).
+            if let Some(p) = slot.as_ref() {
+                let s = engine::settings::load();
+                p.send(Cmd::OutputDelays(s.output_delays()));
+                p.send(Cmd::PauseWhenHeadphonesGo(
+                    s.player.pause_when_headphones_go,
+                ));
             }
         }
         Ok(f(slot.as_ref().expect("just made")))
@@ -949,6 +1022,62 @@ impl Playback {
     /// The output chosen (its id), or `None` for the Windows default.
     pub fn output_id(&self) -> Option<String> {
         self.output.lock().ok().and_then(|o| o.0.clone())
+    }
+
+    /// The output the music is on (as the player last said), else the one the choice would
+    /// play on now.
+    pub fn current_output(&self) -> Option<PlayingOn> {
+        if let Some(p) = self.endpoint.lock().ok().and_then(|e| e.clone()) {
+            return Some(p);
+        }
+        let chosen = self.output_id();
+        #[cfg(windows)]
+        if let Ok((eps, default)) = player::wasapi_devices::list_endpoints() {
+            return player::devices::resolve(chosen.as_deref(), &eps, default.as_deref(), &[]).map(
+                |r| PlayingOn {
+                    endpoint: r.id,
+                    name: r.entry.name,
+                    kind: Some(r.entry.kind),
+                },
+            );
+        }
+        chosen.map(|endpoint| PlayingOn {
+            name: endpoint.clone(),
+            endpoint,
+            kind: None,
+        })
+    }
+
+    /// The endpoint the music is on, or would be on: the key of the output's delay.
+    pub fn current_endpoint(&self) -> Option<String> {
+        self.current_output().map(|p| p.endpoint)
+    }
+
+    /// Call `f` whenever the music moves to another endpoint.
+    pub fn on_output_change(&self, f: impl Fn() + Send + 'static) {
+        if let Ok(mut h) = self.on_output.lock() {
+            *h = Some(Box::new(f));
+        }
+    }
+
+    /// Set (or clear) an output's extra delay: kept in Settings, told to the player (the place
+    /// it reports, and so lyrics, follow it at once), and to a room.
+    pub fn set_output_delay(&self, endpoint: &str, ms: Option<i32>) -> Result<(), String> {
+        let mut s = engine::settings::load();
+        s.set_output_delay(endpoint, ms);
+        engine::settings::save(&s)?;
+        let delays = s.output_delays();
+        if let Ok(slot) = self.player.lock()
+            && let Some(p) = slot.as_ref()
+        {
+            p.send(Cmd::OutputDelays(delays));
+        }
+        if let Ok(hook) = self.on_output.lock()
+            && let Some(h) = hook.as_ref()
+        {
+            h();
+        }
+        Ok(())
     }
 
     /// Listening together: what the room plays now (`None`: your own program shows again),
@@ -1447,56 +1576,115 @@ pub fn player_jump(
     pb.send(Cmd::Jump(index))
 }
 
-#[cfg(windows)]
-use player::wasapi_out::{OutputDevice, list_devices};
-
-#[cfg(not(windows))]
+/// One device as the picker lists it (`docs/design/devices.md`): what it is, and its delay and
+/// the exclusive formats it takes, once known.
 #[derive(Serialize)]
-pub struct OutputDevice {
-    id: String,
-    name: String,
-    default: bool,
-}
-
-#[cfg(not(windows))]
-fn list_devices() -> Result<Vec<OutputDevice>, String> {
-    Ok(Vec::new())
+pub struct DeviceView {
+    #[serde(flatten)]
+    entry: player::devices::OutputEntry,
+    /// The extra delay set for it, ms (`None`: not set).
+    delay_ms: Option<i32>,
+    /// A starting value to offer while not set (Bluetooth).
+    suggested_delay_ms: Option<i32>,
+    /// Exclusive mode suits it (never Bluetooth or a virtual device).
+    exclusive_suits: bool,
+    /// The rates it takes in exclusive mode, and its deepest bits, once it has been asked.
+    exclusive_rates: Vec<u32>,
+    exclusive_bits: u16,
 }
 
 #[derive(Serialize)]
 pub struct OutputChoices {
-    devices: Vec<OutputDevice>,
-    /// The chosen device (`None`: follow the Windows default).
+    /// Every device connected, grouped by kind (and the chosen one when it is away).
+    devices: Vec<DeviceView>,
+    /// The chosen device's endpoint (`None`: follow the Windows default).
     device: Option<String>,
     exclusive: bool,
+    /// The endpoint the music is on now (the chosen one, its stereo twin, the default or a
+    /// fallback), once something has played.
+    playing: Option<String>,
+}
+
+/// The devices listed for the picker, with the chosen one (away or not) and each one's delay.
+fn device_views(chosen: Option<&str>) -> Result<Vec<DeviceView>, String> {
+    #[cfg(windows)]
+    let (eps, default) = player::wasapi_devices::list_endpoints()?;
+    #[cfg(not(windows))]
+    let (eps, default): (Vec<player::devices::Endpoint>, Option<String>) = (Vec::new(), None);
+    let delays = engine::settings::load().output_delays();
+    let probes = player::devices::ProbeCache::global();
+    Ok(player::devices::entries(&eps, default.as_deref(), chosen)
+        .into_iter()
+        .map(|entry| {
+            let (rates, bits) = probes.summary(&entry.id).unwrap_or_default();
+            DeviceView {
+                delay_ms: delays.get(&entry.id).copied(),
+                suggested_delay_ms: player::devices::suggested_delay_ms(
+                    entry.kind,
+                    entry.hands_free_only,
+                ),
+                exclusive_suits: player::devices::plays_exclusive(entry.kind),
+                exclusive_rates: rates,
+                exclusive_bits: bits,
+                entry,
+            }
+        })
+        .collect())
 }
 
 /// Sound outputs, and which one plays.
 #[tauri::command]
 pub async fn player_devices(pb: State<'_, Playback>) -> Result<OutputChoices, String> {
     let (device, exclusive) = pb.output.lock().map_err(|e| e.to_string())?.clone();
-    let devices = tauri::async_runtime::spawn_blocking(list_devices)
+    let playing = pb
+        .endpoint
+        .lock()
+        .ok()
+        .and_then(|e| e.as_ref().map(|p| p.endpoint.clone()));
+    let chosen = device.clone();
+    let devices = tauri::async_runtime::spawn_blocking(move || device_views(chosen.as_deref()))
         .await
         .map_err(|e| e.to_string())??;
     Ok(OutputChoices {
         devices,
         device,
         exclusive,
+        playing,
     })
 }
 
-/// Play through another device, or switch between exclusive (bit-perfect) and shared.
+/// Play through another device (`None`: follow Windows' default), or switch between exclusive
+/// (bit-perfect) and shared. Remembered, with the device's name for when it is away.
 #[tauri::command]
 pub fn player_output(
     device: Option<String>,
+    name: Option<String>,
     exclusive: bool,
     pb: State<'_, Playback>,
 ) -> Result<(), String> {
     *pb.output.lock().map_err(|e| e.to_string())? = (device.clone(), exclusive);
+    let mut s = engine::settings::load();
+    if s.player.output != device {
+        s.player.output_name = name.unwrap_or_default();
+    }
+    s.player.output = device.clone();
+    s.player.exclusive = exclusive;
+    engine::settings::save(&s)?;
     pb.send(Cmd::Output(OutputChoice::Device {
         id: device,
         exclusive,
     }))
+}
+
+/// Set (or, `None`, clear) an output's extra delay, -500 to +500 ms: how much later than the
+/// device says you hear it (Bluetooth, a receiver). Lyrics and rooms follow it.
+#[tauri::command]
+pub fn player_set_output_delay(
+    endpoint: String,
+    ms: Option<i32>,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
+    pb.set_output_delay(&endpoint, ms)
 }
 
 /// A song's words: timed lines (from a synced .lrc or LYRICS tag), or plain text.
@@ -2121,4 +2309,23 @@ mod mini_one_window {
         assert!(live != "mini" && live != "mini-90", "{live}");
         assert!(host.has("main"), "the main window is never taken for one");
     }
+}
+
+/// Pause when headphones, a headset or Bluetooth go away (rather than carry on through the
+/// speakers): kept in Settings and told to the player.
+#[tauri::command]
+pub fn player_set_pause_when_headphones_go(
+    on: bool,
+    pb: State<'_, Playback>,
+) -> Result<(), String> {
+    let mut s = engine::settings::load();
+    s.player.pause_when_headphones_go = on;
+    engine::settings::save(&s)?;
+    pb.send(Cmd::PauseWhenHeadphonesGo(on))
+}
+
+/// Whether headphones or Bluetooth going away pause the music.
+#[tauri::command]
+pub fn player_pause_when_headphones_go() -> bool {
+    engine::settings::load().player.pause_when_headphones_go
 }

@@ -15,8 +15,9 @@ use super::program::{Program, RoomMsg};
 use super::status::{self, Shared, Tap};
 use super::{Cmd, Item, OutputChoice, Status, Watch};
 use crate::decode::{Download, SourceFormat, Streams};
+use crate::devices::{self, Devices, EndpointState, Kind, Resolved};
 use crate::dsp::{Chain, Gain, Sound};
-use crate::output::{DeviceFormat, Mode};
+use crate::output::{DeviceFormat, DeviceNotes, Mode};
 use crate::output_api::{OpenRequest, Output, OutputError, OutputEvent, OutputInfo, Render};
 use crate::render::{RenderSetup, RenderSnapshot, RenderStatus, Renderer, VoiceState};
 use crate::voice::{Pace, Phase, Voice, VoiceSpec, VoiceStatus};
@@ -24,7 +25,7 @@ use crate::voice_api::{
     Marker, RateTarget, RenderCmd, RenderLink, RenderNote, Returned, Splice, VoiceId, render_link,
 };
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TrySendError, channel};
@@ -38,6 +39,15 @@ const IDLE_NS: u64 = 100_000_000;
 const RELEASE_NS: u64 = 10_000_000_000;
 /// A lost output is opened again after these waits, ns; then the player pauses.
 const RETRY_NS: [u64; 4] = [500_000_000, 1_000_000_000, 2_000_000_000, 5_000_000_000];
+/// The devices are looked at this long after they change (Windows tells a change in a burst), ns.
+const RECHECK_NS: u64 = 300_000_000;
+/// A device that has just come (a Bluetooth link settling, a monitor waking in bursts) is
+/// played to once it has stayed this long, ns.
+const DEVICE_SETTLE_NS: u64 = 1_500_000_000;
+/// A lost sound device is opened again (or its fallback) this long after: Windows tells a device
+/// gone to its stream at once, and to the list of devices a moment later (the listing waits for
+/// the burst of changes to end, 100 ms, and takes a few ms).
+const LOST_LOOK_NS: u64 = 250_000_000;
 /// Markers kept per voice.
 const MARKS: usize = 256;
 /// Decoded ahead for a solo start, s.
@@ -69,13 +79,17 @@ pub(super) fn spawn<T: Item + Serialize>(
     // The clock everything waits on; sleepers made here, before the threads start.
     let (tb, own_clock): (Arc<dyn Timebase>, Option<SimClock>) = match &output {
         OutputChoice::Sim(s) => (Arc::new(s.clock.clone()), None),
+        OutputChoice::SimDevices(s) => (Arc::new(s.clock.clone()), None),
         OutputChoice::Memory(_) => {
             let c = SimClock::new(RealClock.now_ns());
             (Arc::new(c.clone()), Some(c))
         }
         _ => (Arc::new(RealClock), None),
     };
-    let virtual_time = matches!(output, OutputChoice::Sim(_) | OutputChoice::Memory(_));
+    let virtual_time = matches!(
+        output,
+        OutputChoice::Sim(_) | OutputChoice::SimDevices(_) | OutputChoice::Memory(_)
+    );
     let pacer = |tb: &Arc<dyn Timebase>| {
         if virtual_time {
             Pacer::Virtual(tb.sleeper())
@@ -190,6 +204,8 @@ impl<T: Item + Serialize> Control<T> {
                 self.deck.switch_output(choice);
                 self.program.hush(&mut self.deck);
             }
+            Cmd::OutputDelays(d) => self.deck.delays = d,
+            Cmd::PauseWhenHeadphonesGo(on) => self.deck.pause_when_headphones_go = on,
             Cmd::Quit => {
                 self.program.quit(&mut self.deck);
                 self.deck.quitting = true;
@@ -208,6 +224,11 @@ impl<T: Item + Serialize> Control<T> {
         let notes = self.deck.poll();
         for n in &notes {
             self.program.note(n, &mut self.deck);
+        }
+        // The devices moved the sound (the chosen device back, the default moved): an output
+        // switch.
+        if self.deck.take_rehome() {
+            self.program.hush(&mut self.deck);
         }
         if self.deck.sleep_due() {
             self.deck.sleep_at = None;
@@ -383,6 +404,10 @@ struct Open {
     name: String,
     events: Receiver<OutputEvent>,
     presentation: Arc<crate::output_api::Presentation>,
+    /// What the device said about itself (its exclusive formats, why it opened shared).
+    notes: Option<DeviceNotes>,
+    /// A sound device: which endpoint it is, and why that one.
+    on: Option<Resolved>,
 }
 
 /// A started output's renderer.
@@ -396,36 +421,17 @@ struct Running {
     fresh: bool,
 }
 
-enum Dev {
-    #[cfg(windows)]
-    Wasapi(Box<crate::wasapi_out::WasapiOutput>),
-    Other(Box<dyn Output>),
-}
+/// The output the deck plays to.
+struct Dev(Box<dyn Output>);
 
 impl Dev {
     fn out(&mut self) -> &mut dyn Output {
-        match self {
-            #[cfg(windows)]
-            Dev::Wasapi(w) => w.as_mut(),
-            Dev::Other(o) => o.as_mut(),
-        }
+        self.0.as_mut()
     }
 
     /// The latency the output learned while running (WP1d).
     fn latency(&self) -> Option<crate::output_api::Latency> {
-        match self {
-            #[cfg(windows)]
-            Dev::Wasapi(w) => w.latency(),
-            Dev::Other(o) => o.latency(),
-        }
-    }
-
-    fn endpoint(&self) -> Option<String> {
-        match self {
-            #[cfg(windows)]
-            Dev::Wasapi(w) => w.notes().and_then(|n| n.endpoint_id),
-            Dev::Other(_) => None,
-        }
+        self.0.latency()
     }
 }
 
@@ -508,6 +514,66 @@ pub(super) struct Deck {
     /// How far what was handed over runs ahead of the DAC, as the presentation pairs say (the
     /// output's real latency: `OutputInfo::buffer_frames` can say far less).
     lead: Option<u64>,
+    /// Where sound devices come from when one is chosen: Windows' own, or a test's.
+    devices: Option<Arc<dyn Devices>>,
+    /// The devices changed (looked at `RECHECK_NS` later: Windows tells a change in a burst).
+    device_changes: Option<Receiver<()>>,
+    recheck_at: Option<u64>,
+    /// When each endpoint was first seen connected (one that has just come is waited for).
+    seen_since: HashMap<String, u64>,
+    /// The devices have been listed since they were given.
+    listed: bool,
+    /// Endpoints whose opens all failed: passed over until the devices change.
+    avoid: Vec<String>,
+    /// What the open being tried is on (for a failed open).
+    tried: Option<Resolved>,
+    /// The devices moved the sound (the chosen device back, the default moved): the program
+    /// hushes as for an output switch.
+    rehome: bool,
+    /// The extra delay set per endpoint, ms (the store in Settings): what you hear is the frame
+    /// at the DAC that long ago.
+    pub(super) delays: BTreeMap<String, i32>,
+    /// Pause rather than carry on from another output when headphones, a headset or a
+    /// Bluetooth device goes away (on unless turned off).
+    pub(super) pause_when_headphones_go: bool,
+    /// The device a lost output was on (looked at once its listing has caught up).
+    lost_from: Option<Resolved>,
+    /// Headphones or Bluetooth went away and the music is to pause: their name, for the program.
+    left: Option<String>,
+}
+
+/// The output's part of the signal path.
+pub(super) struct OutputSide {
+    pub name: String,
+    pub mode: Mode,
+    pub format: DeviceFormat,
+    /// What the output holds before the DAC, as it learned it, ms.
+    pub latency_ms: f32,
+    pub endpoint: Option<String>,
+    pub kind: Option<Kind>,
+    /// A Bluetooth device's hands-free (call) endpoint.
+    pub hands_free: bool,
+    pub note: Option<String>,
+    pub delay_ms: Option<i32>,
+    pub suggested_delay_ms: Option<i32>,
+    pub follows_default: bool,
+    /// Exclusive mode was asked and this plays shared: why.
+    pub why_shared: Option<String>,
+}
+
+/// A choice as the deck keeps it, and the devices it brings: simulated devices become the
+/// `Device` choice among them.
+fn split(choice: OutputChoice) -> (OutputChoice, Option<Arc<dyn Devices>>) {
+    match choice {
+        OutputChoice::SimDevices(s) => (
+            OutputChoice::Device {
+                id: s.id,
+                exclusive: s.exclusive,
+            },
+            Some(s.devices),
+        ),
+        other => (other, None),
+    }
 }
 
 /// What the output is asked to open for a song.
@@ -528,11 +594,14 @@ impl Deck {
         watch: Watch,
     ) -> Deck {
         let mono: Arc<dyn MonoClock> = tb.clone();
-        Deck {
+        let mut deck = Deck {
             tb,
             mono,
             pace,
-            choice,
+            choice: OutputChoice::Device {
+                id: None,
+                exclusive: false,
+            },
             common,
             watch,
             streams: Arc::new(Streams::new()),
@@ -566,7 +635,123 @@ impl Deck {
             quitting: false,
             snapshot: None,
             lead: None,
+            devices: None,
+            device_changes: None,
+            recheck_at: None,
+            seen_since: HashMap::new(),
+            listed: false,
+            avoid: Vec::new(),
+            tried: None,
+            rehome: false,
+            delays: BTreeMap::new(),
+            pause_when_headphones_go: true,
+            lost_from: None,
+            left: None,
+        };
+        deck.adopt(choice);
+        deck
+    }
+
+    /// Take `choice` as the output to play to: a sound device's choice brings the devices it
+    /// is among (Windows' own, made the first time; a test's).
+    fn adopt(&mut self, choice: OutputChoice) {
+        let (choice, devices) = split(choice);
+        if devices.is_some() {
+            self.set_devices(devices);
         }
+        self.choice = choice;
+        #[cfg(windows)]
+        if matches!(self.choice, OutputChoice::Device { .. })
+            && self.devices.is_none()
+            && let Ok(d) = crate::wasapi_devices::WasapiDevices::new()
+        {
+            self.set_devices(Some(d));
+        }
+    }
+
+    fn set_devices(&mut self, d: Option<Arc<dyn Devices>>) {
+        self.device_changes = d.as_ref().map(|d| d.watch());
+        self.devices = d;
+        self.seen_since.clear();
+        self.listed = false;
+        self.avoid.clear();
+    }
+
+    /// The endpoint to play on for the choice `id`, among the devices as they are now.
+    fn resolve(
+        &mut self,
+        devs: &dyn Devices,
+        id: Option<&str>,
+    ) -> (Option<Resolved>, Vec<devices::Endpoint>) {
+        let eps = devs.endpoints();
+        let default = devs.default_id();
+        self.note_seen(&eps);
+        let r = devices::resolve(id, &eps, default.as_deref(), &self.avoid);
+        (r, eps)
+    }
+
+    /// When each connected endpoint was first seen so (those of the first listing: always).
+    fn note_seen(&mut self, eps: &[devices::Endpoint]) {
+        let now = self.now_ns();
+        let since = if self.listed { now } else { 0 };
+        self.listed = true;
+        let active = |id: &String| {
+            eps.iter()
+                .any(|e| &e.id == id && e.state == EndpointState::Active)
+        };
+        self.seen_since.retain(|id, _| active(id));
+        for e in eps.iter().filter(|e| e.state == EndpointState::Active) {
+            self.seen_since.entry(e.id.clone()).or_insert(since);
+        }
+    }
+
+    /// The devices changed: is another endpoint to play now? Then the sound moves there, as
+    /// for an output switch (one that has just come is waited for until it has stayed).
+    fn recheck(&mut self) {
+        let (Some(devs), OutputChoice::Device { id, .. }) =
+            (self.devices.clone(), self.choice.clone())
+        else {
+            return;
+        };
+        let (r, eps) = self.resolve(&*devs, id.as_deref());
+        let Some(r) = r else {
+            return;
+        };
+        if self.switching.is_some() {
+            return;
+        }
+        let now = self.now_ns();
+        let since = self.seen_since.get(&r.id).copied().unwrap_or(now);
+        let Some(o) = self.open.as_mut() else {
+            return;
+        };
+        let Some(cur) = o.on.as_ref() else {
+            return;
+        };
+        if r.id == cur.id {
+            // The same endpoint: what is said about it may have changed.
+            o.on = Some(r);
+            return;
+        }
+        let ours_here = eps
+            .iter()
+            .any(|e| e.id == cur.id && e.state == EndpointState::Active);
+        if !ours_here {
+            // Ours went: its stream says so (`Lost`), and what follows is decided there (the
+            // fallback, or a pause when headphones went).
+            return;
+        }
+        if now < since + DEVICE_SETTLE_NS {
+            self.recheck_at = Some(since + DEVICE_SETTLE_NS);
+            return;
+        }
+        self.switching = Some(self.choice.clone());
+        self.rehome = true;
+    }
+
+    /// The devices moved the sound: said once, to the control thread.
+    pub(super) fn take_rehome(&mut self) -> bool {
+        std::mem::take(&mut self.rehome)
     }
 
     pub(super) fn now_ns(&self) -> u64 {
@@ -582,6 +767,7 @@ impl Deck {
             || self.reopen
             || self.renew
             || self.switching.is_some()
+            || self.recheck_at.is_some()
     }
 
     fn quit_done(&self) -> bool {
@@ -705,11 +891,20 @@ impl Deck {
     }
 
     /// The output can play `f` as it is open: shared mode converts any format (D2); the
-    /// others play only the one they were opened for.
+    /// others play only the one they were opened for, or (exclusive, the device's formats
+    /// known) one whose plan lands on the format open (a 44.1 kHz song on a 48 kHz-only device
+    /// open at 48 kHz: no reopen between them).
     pub(super) fn fits(&self, f: &SourceFormat) -> bool {
-        self.open
-            .as_ref()
-            .is_some_and(|o| o.mode == Mode::Shared || o.request == request(f))
+        let want = request(f);
+        self.open.as_ref().is_some_and(|o| {
+            o.mode == Mode::Shared
+                || o.request == want
+                || (o.mode == Mode::Exclusive
+                    && o.notes
+                        .as_ref()
+                        .and_then(|n| n.exclusive_formats.as_ref())
+                        .is_some_and(|t| devices::fits_exclusive(t, &want, &o.info.format)))
+        })
     }
 
     /// A renderer that can play `f` is running (commands go to it): opened and started now if
@@ -723,7 +918,7 @@ impl Deck {
             self.reopen |= !self.fits(f);
             return false;
         }
-        if self.switching.is_some() || self.gave_up.is_some() {
+        if self.switching.is_some() || self.gave_up.is_some() || self.left.is_some() {
             return false;
         }
         let now = self.now_ns();
@@ -732,6 +927,16 @@ impl Deck {
         }
         if self.open.is_some() && !self.fits(f) {
             self.reopen = true;
+            return false;
+        }
+        // Headphones or Bluetooth gone for good (not a format change, still there): the music
+        // pauses instead of carrying on out loud from another output.
+        if self.open.is_none()
+            && let Some(gone) = self.lost_from.take()
+            && self.went_for_good(&gone)
+        {
+            self.retry = None;
+            self.left = Some(gone.entry.name);
             return false;
         }
         if self.open.is_none() {
@@ -747,15 +952,52 @@ impl Deck {
         self.run.is_some()
     }
 
+    /// The device a lost output was on went away (it is not connected now), the setting is on,
+    /// and it is headphones, a headset or Bluetooth: one whose going must not move the music
+    /// to the speakers.
+    fn went_for_good(&self, gone: &Resolved) -> bool {
+        let e = &gone.entry;
+        let pausing = e.kind == Kind::Bluetooth
+            || matches!(e.form, devices::Form::Headphones | devices::Form::Headset);
+        if !self.pause_when_headphones_go || !pausing {
+            return false;
+        }
+        let Some(devs) = self.devices.as_ref() else {
+            return false;
+        };
+        !devs
+            .endpoints()
+            .iter()
+            .any(|x| x.id == e.id && x.state == EndpointState::Active)
+    }
+
+    /// Headphones or Bluetooth went away and the music is to pause: their name, said once to
+    /// the program (a room has rules of its own, and a fallback plays for it).
+    pub(super) fn take_left(&mut self) -> Option<String> {
+        self.left.take()
+    }
+
     /// An open failed: tried again 0.5, 1, 2 and 5 s later after a lost output, then given up;
-    /// any other failure is said at once.
+    /// any other failure is said at once. A chosen sound device that won't open is passed over
+    /// (until the devices change) and the fallback opened at once; only when nothing opens
+    /// does the player give up.
     fn failed_open(&mut self, e: OutputError) {
         let now = self.now_ns();
+        let tried = self.tried.take();
         match self.retry {
             Some((k, _)) if k + 1 < RETRY_NS.len() => {
                 self.retry = Some((k + 1, now + RETRY_NS[k + 1]));
             }
             _ => {
+                if let Some(r) = tried
+                    && !r.fallback
+                    && matches!(self.choice, OutputChoice::Device { id: Some(_), .. })
+                    && !self.avoid.contains(&r.id)
+                {
+                    self.avoid.push(r.id);
+                    self.retry = Some((0, now));
+                    return;
+                }
                 self.retry = None;
                 self.gave_up = Some(e.to_string());
             }
@@ -768,35 +1010,58 @@ impl Deck {
     }
 
     fn open_output(&mut self, want: &OpenRequest) -> Result<(), OutputError> {
-        let mut dev = match &self.choice {
-            #[cfg(windows)]
-            OutputChoice::Device { id, exclusive } => Dev::Wasapi(Box::new(
-                crate::wasapi_out::wasapi_output(id.as_deref(), *exclusive),
-            )),
-            #[cfg(not(windows))]
-            OutputChoice::Device { .. } => {
-                return Err(OutputError::Other(
-                    "Playing to a sound device needs Windows for now.".into(),
-                ));
+        let mut on = None;
+        let mut dev = match self.choice.clone() {
+            // A sound device: the endpoint for the choice now (its stereo twin, the default, a
+            // fallback while the chosen one is away), exclusive where that suits its kind.
+            OutputChoice::Device { id, exclusive } => match self.devices.clone() {
+                Some(devs) => {
+                    let (r, _) = self.resolve(&*devs, id.as_deref());
+                    let r = r.ok_or_else(|| {
+                        OutputError::Other("No sound output is connected.".into())
+                    })?;
+                    let exclusive = exclusive && devices::plays_exclusive(r.entry.kind);
+                    let d = devs.open(&r.id, exclusive);
+                    self.tried = Some(r.clone());
+                    on = Some(r);
+                    Dev(d)
+                }
+                // Windows' devices could not be listed: the endpoint as chosen.
+                #[cfg(windows)]
+                None => Dev(Box::new(crate::wasapi_out::wasapi_output(
+                    id.as_deref(),
+                    exclusive,
+                ))),
+                #[cfg(not(windows))]
+                None => {
+                    return Err(OutputError::Other(
+                        "Playing to a sound device needs Windows for now.".into(),
+                    ));
+                }
+            },
+            OutputChoice::Memory(c) => Dev(Box::new(MemoryOutput::new(self.tb.clone(), c, false))),
+            OutputChoice::PacedMemory(c) => {
+                Dev(Box::new(MemoryOutput::new(self.tb.clone(), c, true)))
             }
-            OutputChoice::Memory(c) => Dev::Other(Box::new(MemoryOutput::new(
-                self.tb.clone(),
-                c.clone(),
-                false,
-            ))),
-            OutputChoice::PacedMemory(c) => Dev::Other(Box::new(MemoryOutput::new(
-                self.tb.clone(),
-                c.clone(),
-                true,
-            ))),
-            OutputChoice::Sim(s) => Dev::Other((s.output)()),
+            OutputChoice::Sim(s) => Dev((s.output)()),
+            // Kept as the `Device` choice among its devices (`adopt`).
+            OutputChoice::SimDevices(_) => {
+                return Err(OutputError::State("Simulated devices not taken".into()));
+            }
         };
         let info = dev.out().open(want)?;
+        self.tried = None;
         let events = dev.out().events();
         let presentation = dev.out().presentation();
         let mode = dev.out().mode();
-        let name = dev.out().name();
-        self.endpoint = dev.endpoint();
+        let notes = dev.0.notes();
+        let name = on
+            .as_ref()
+            .map_or_else(|| dev.out().name(), |r| r.entry.name.clone());
+        self.endpoint = on
+            .as_ref()
+            .map(|r| r.id.clone())
+            .or_else(|| notes.as_ref().and_then(|n| n.endpoint_id.clone()));
         self.lead = None;
         self.open = Some(Open {
             dev,
@@ -806,6 +1071,8 @@ impl Deck {
             name,
             events,
             presentation,
+            notes,
+            on,
         });
         self.idle_since = Some(self.now_ns());
         Ok(())
@@ -1124,8 +1391,12 @@ impl Deck {
     /// Another output: the program hushes, the open one is closed once quiet, and the next
     /// start opens the new one.
     pub(super) fn switch_output(&mut self, choice: OutputChoice) {
+        // Another choice: a device passed over before may be the one now.
+        self.avoid.clear();
+        self.lost_from = None;
+        self.left = None;
         if self.open.is_none() {
-            self.choice = choice;
+            self.adopt(choice);
         } else {
             self.switching = Some(choice);
         }
@@ -1133,8 +1404,23 @@ impl Deck {
 
     // --- What comes back ---
 
-    /// The output's events, the renderer's markers, notes and returned things.
+    /// The output's events, the devices' changes, the renderer's markers, notes and returned
+    /// things.
     fn poll(&mut self) -> Vec<RenderNote> {
+        if let Some(rx) = &self.device_changes {
+            let mut changed = false;
+            while rx.try_recv().is_ok() {
+                changed = true;
+            }
+            if changed {
+                self.avoid.clear();
+                self.recheck_at = Some(self.now_ns() + RECHECK_NS);
+            }
+        }
+        if self.recheck_at.is_some_and(|t| self.now_ns() >= t) {
+            self.recheck_at = None;
+            self.recheck();
+        }
         let mut lost = false;
         if let Some(o) = &self.open {
             while let Ok(e) = o.events.try_recv() {
@@ -1256,6 +1542,26 @@ impl Deck {
         })
     }
 
+    /// The extra delay set for the output playing (Bluetooth, a receiver), ns.
+    fn ear_delay_ns(&self) -> i64 {
+        self.endpoint
+            .as_ref()
+            .and_then(|e| self.delays.get(e))
+            .map_or(0, |ms| i64::from(*ms) * 1_000_000)
+    }
+
+    /// Where `vid` reaches your ear now: the frame at the DAC the output's extra delay ago
+    /// (what lyrics and the place shown follow).
+    pub(super) fn heard_content_by_ear(&self, vid: VoiceId) -> Option<f64> {
+        self.run.as_ref()?;
+        let t = (self.now_ns() as i64 - self.ear_delay_ns()).max(0) as u64;
+        let f = self.frame_at(t)?;
+        self.content_at(vid, f).or_else(|| {
+            let (_, q) = self.marks.iter().find(|(v, _)| *v == vid)?;
+            q.front().map(|m| m.content)
+        })
+    }
+
     /// The renderer's state of `vid` at its last call.
     pub(super) fn voice_state(&self, vid: VoiceId) -> Option<VoiceState> {
         let s = self.snapshot.as_ref()?;
@@ -1297,9 +1603,13 @@ impl Deck {
     // --- The output's life ---
 
     /// The output lost (or the default changed under one following it): its renderer and
-    /// voices go; it is opened again on the next start, after a moment.
+    /// voices go; it is opened again on the next start: among sound devices once their listing
+    /// has caught up (`LOST_LOOK_NS`), the choice resolved again (the same endpoint when it is
+    /// still there, as after a format change; the fallback when it went), else after a moment.
     fn lose(&mut self) {
-        let heard = self.heard_frame();
+        // Never past what was rendered: a device lost in a sleep reads as far on as the sleep
+        // was long, but the DAC stopped with the computer.
+        let heard = self.heard_frame().map(|f| f.min(self.frames()));
         if let Some(o) = self.open.as_mut() {
             let back = o.dev.out().stop();
             drop(back);
@@ -1310,11 +1620,19 @@ impl Deck {
         if let Some(o) = self.open.as_mut() {
             o.dev.out().close();
         }
+        // What it was on: looked at once the listing has caught up (`ready_for`).
+        self.lost_from = self.open.as_ref().and_then(|o| o.on.clone());
         self.open = None;
         self.endpoint = None;
-        let changed = !matches!(self.choice, OutputChoice::Device { id: Some(_), .. });
         let now = self.now_ns();
-        self.retry = Some((0, now + if changed { 0 } else { RETRY_NS[0] }));
+        let wait = if self.devices.is_some() {
+            LOST_LOOK_NS
+        } else if matches!(self.choice, OutputChoice::Device { id: Some(_), .. }) {
+            RETRY_NS[0]
+        } else {
+            0
+        };
+        self.retry = Some((0, now + wait));
     }
 
     /// A start is over (its renderer back from the output and dropped): its voices go.
@@ -1400,18 +1718,59 @@ impl Deck {
         if self.open.is_none()
             && let Some(c) = self.switching.take()
         {
-            self.choice = c;
+            self.adopt(c);
         }
         self.event.take()
     }
 
     // --- What the window sees ---
 
-    /// The output's part of the signal path: its name, mode, format and latency (ms).
-    pub(super) fn output_signal(&self) -> Option<(String, Mode, DeviceFormat, f32)> {
+    /// The output's part of the signal path: its name, mode, format, latency (ms), and for a
+    /// sound device what it is, what was done about the choice, and its delay.
+    pub(super) fn output_signal(&self) -> Option<OutputSide> {
         let o = self.open.as_ref()?;
-        let latency = self.lead_frames() as f32 * 1000.0 / o.info.format.rate.max(1) as f32;
-        Some((o.name.clone(), o.mode, o.info.format.clone(), latency))
+        let latency_ms = self.lead_frames() as f32 * 1000.0 / o.info.format.rate.max(1) as f32;
+        let (asked_exclusive, follows_default) = match &self.choice {
+            OutputChoice::Device { id, exclusive } => (*exclusive, id.is_none()),
+            _ => (false, false),
+        };
+        let kind = o.on.as_ref().map(|r| r.entry.kind);
+        let hands_free = o.on.as_ref().is_some_and(|r| r.entry.hands_free_only);
+        let why_shared = if !asked_exclusive || o.mode != Mode::Shared {
+            None
+        } else if let Some(w) = o.notes.as_ref().and_then(|n| n.why_shared.clone()) {
+            Some(w)
+        } else {
+            match kind {
+                Some(Kind::Bluetooth) => {
+                    Some("Bluetooth plays shared: its codec re-encodes the sound anyway".into())
+                }
+                Some(Kind::Virtual) => Some("a virtual device plays shared".into()),
+                _ => None,
+            }
+        };
+        Some(OutputSide {
+            name: o.name.clone(),
+            mode: o.mode,
+            format: o.info.format.clone(),
+            latency_ms,
+            endpoint: self.endpoint.clone(),
+            kind,
+            hands_free,
+            note: o
+                .on
+                .as_ref()
+                .and_then(|r| r.note.as_ref())
+                .map(|n| n.words()),
+            delay_ms: self
+                .endpoint
+                .as_ref()
+                .and_then(|e| self.delays.get(e))
+                .copied(),
+            suggested_delay_ms: kind.and_then(|k| devices::suggested_delay_ms(k, hands_free)),
+            follows_default,
+            why_shared,
+        })
     }
 
     fn fill_view<T>(&self, v: &mut status::View<T>) {

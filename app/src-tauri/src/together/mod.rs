@@ -74,29 +74,55 @@ pub fn my_name() -> String {
         .collect()
 }
 
-/// This output's delay setting, ms.
+/// The delay set for the output the music is on (the store in Settings, by endpoint id).
 pub fn my_delay(app: &AppHandle) -> i32 {
-    let out = app
-        .state::<Playback>()
-        .output_id()
-        .unwrap_or_else(|| "default".into());
-    engine::settings::load()
-        .listening
-        .together_delay
-        .get(&out)
-        .copied()
+    app.state::<Playback>()
+        .current_endpoint()
+        .and_then(|e| engine::settings::load().output_delays().get(&e).copied())
         .unwrap_or(0)
 }
 
-/// The output the room is heard on, for the window.
+/// The music moved to another output, or its delay changed: the room plays with that output's
+/// delay (the conductor is told on its session's thread, never waited for: this runs on the
+/// player's status thread), and the window shows it.
+pub fn output_changed(app: &AppHandle) {
+    let us = my_delay(app) * 1_000;
+    match current(&app.state::<Together>()) {
+        Some(Session::Host(s)) => {
+            let _ = s.send(Box::new(move |l: &mut host::Live| {
+                l.s.conductor().set_extra_latency(us);
+            }));
+        }
+        Some(Session::Guest(s)) => {
+            let _ = s.send(Box::new(move |l: &mut guest::Live| {
+                l.s.conductor().set_extra_latency(us);
+            }));
+        }
+        None => emit_idle(app),
+    }
+}
+
+/// The output the room is heard on, for the window: the device the music is on, its delay from
+/// the store (docs/design/devices.md), whether it is Bluetooth, and whether its delay is known
+/// (set by you, or an output whose own report covers it: wired and USB; Bluetooth, a display
+/// and a virtual device need it set).
 fn output_view(app: &AppHandle) -> OutputView {
-    let id = app.state::<Playback>().output_id();
+    let on = app.state::<Playback>().current_output();
+    let set = on.as_ref().and_then(|o| {
+        engine::settings::load()
+            .output_delays()
+            .get(&o.endpoint)
+            .copied()
+    });
+    let kind = on.as_ref().and_then(|o| o.kind);
+    use player::devices::Kind;
     OutputView {
-        name: id.unwrap_or_else(|| "Default output".into()),
-        delay_ms: my_delay(app),
-        // Which outputs are Bluetooth, and whose delay is measured, is WP19's.
-        bluetooth: false,
-        delay_known: true,
+        name: on
+            .as_ref()
+            .map_or_else(|| "Default output".into(), |o| o.name.clone()),
+        delay_ms: set.unwrap_or(0),
+        bluetooth: kind == Some(Kind::Bluetooth),
+        delay_known: set.is_some() || matches!(kind, Some(Kind::Wired | Kind::Usb) | None),
     }
 }
 
@@ -861,34 +887,15 @@ pub fn together_set_name(app: AppHandle, name: String) -> Result<(), String> {
 
 /// Your output's delay (Bluetooth, a receiver): how much later than the device says you hear.
 #[tauri::command]
-pub fn together_set_delay(app: AppHandle, t: State<'_, Together>, ms: i32) -> Result<(), String> {
+pub fn together_set_delay(app: AppHandle, ms: i32) -> Result<(), String> {
     let ms = ms.clamp(-500, 500);
-    let out = app
-        .state::<Playback>()
-        .output_id()
-        .unwrap_or_else(|| "default".into());
-    let mut s = engine::settings::load();
-    s.listening.together_delay.insert(out, ms);
-    engine::settings::save(&s)?;
-    if current(&t).is_some() {
-        let f = move |c: &mut together::conductor::Conductor<QueueItem>| {
-            c.set_extra_latency(ms * 1_000)
-        };
-        let _ = on_session(
-            &t,
-            move |l| {
-                f(l.s.conductor());
-                Ok(())
-            },
-            move |l| {
-                f(l.s.conductor());
-                Ok(())
-            },
-        );
-    } else {
-        emit_idle(&app);
-    }
-    Ok(())
+    let pb = app.state::<Playback>();
+    let out = pb
+        .current_endpoint()
+        .ok_or("No sound output is connected.")?;
+    // The one store (docs/design/devices.md): the player, and so lyrics, take it too, and the
+    // room's conductor is told by the output hook (`output_changed`).
+    pb.set_output_delay(&out, Some(ms))
 }
 
 #[cfg(test)]

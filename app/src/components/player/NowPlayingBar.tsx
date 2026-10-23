@@ -4,6 +4,7 @@ import { useCovers } from '../../lib/covers'
 import { usePrefs, useThemeInfo } from '../../lib/prefs'
 import type { SeekBar as BarDesign } from '../../lib/themes'
 import { LcdSpectrum } from './Spectrum'
+import { OutputPicker } from './OutputPicker'
 import { openBigScreen } from '../../lib/lyricWindows'
 import {
   clock,
@@ -13,11 +14,9 @@ import {
   current,
   isOnline,
   next,
-  outputChoices,
   previous,
   remoteArtUrl,
   seek,
-  setOutput,
   setRepeat,
   setShuffle,
   setSleep,
@@ -29,7 +28,6 @@ import {
   toggle,
   usePlayer,
   usePlayerValue,
-  type OutputChoices,
   type PlayerState,
   type Signal,
   type Verification,
@@ -394,12 +392,10 @@ function Volume(props: { volume: number }) {
  *  song: "Online · AAC 129 kbps", the one Online label it gets here (just "Online" until it opens). */
 function SignalBadge(props: { signal: Signal | null; online: boolean; room?: boolean; fallback: string }) {
   const [open, setOpen] = useState(false)
-  const [choices, setChoices] = useState<OutputChoices | null>(null)
   const box = useRef<HTMLDivElement>(null)
   const s = props.signal
   useEffect(() => {
     if (!open) return
-    void outputChoices().then(setChoices)
     const close = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
@@ -439,44 +435,13 @@ function SignalBadge(props: { signal: Signal | null; online: boolean; room?: boo
             transition={{ duration: 0.16 }}
             role="dialog"
             aria-label="Signal path"
-            className="popover absolute bottom-9 left-0 z-50 w-[340px] rounded-2xl p-4 text-[12.5px]"
+            className="popover absolute bottom-9 left-0 z-50 max-h-[calc(100vh-110px)] w-[360px] overflow-y-auto rounded-2xl p-4 text-[12.5px]"
           >
             <SignalPath signal={s} />
-            {choices && (
-              <div className="mt-4 border-t border-edge pt-3">
-                <div className="mb-2 text-[12px] text-ink/55">Play through</div>
-                {[{ id: null as string | null, name: 'Windows default', default: false }, ...choices.devices].map((d) => (
-                  <button
-                    key={d.id ?? 'default'}
-                    onClick={() => {
-                      void setOutput(d.id, choices.exclusive)
-                      setChoices({ ...choices, device: d.id })
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-ink/[0.06] ${choices.device === d.id ? 'text-accent-ink' : 'text-ink/80'}`}
-                  >
-                    <span className="flex-1 truncate">{d.name}</span>
-                    {choices.device === d.id && <span aria-hidden>✓</span>}
-                  </button>
-                ))}
-                <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-ink/[0.06]">
-                  <input
-                    type="checkbox"
-                    checked={choices.exclusive}
-                    onChange={(e) => {
-                      void setOutput(choices.device, e.target.checked)
-                      setChoices({ ...choices, exclusive: e.target.checked })
-                    }}
-                    className="mt-0.5 accent-[var(--accent)]"
-                  />
-                  <span>
-                    <span className="block text-ink/85">Exclusive (bit-perfect)</span>
-                    <span className="block text-[11.5px] text-ink/50">
-                      Each song at its own rate and depth, untouched. Other apps can't play sound meanwhile.
-                    </span>
-                  </span>
-                </label>
-              </div>
-            )}
+            <div className="mt-4 border-t border-edge pt-3">
+              <div className="mb-1 text-[12px] text-ink/55">Play through</div>
+              <OutputPicker signal={s} />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
