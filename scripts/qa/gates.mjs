@@ -49,13 +49,16 @@ await back()
 {
   let w = 0
   for (let round = 0; round < 3; round++) {
-    for (const k of ['2', '3', '4', '5', '1']) {
+    for (const k of ['2', '3', '4', '5', '6', '7', '1']) {
       await t.longFrames()
       await place(k)
       await t.sleep(900)
       w = Math.max(w, await worst())
     }
-    for (const name of ['Albums', 'Artists', 'Songs', 'Playlists', 'Home']) {
+    // Library (Ctrl+3) holds the Albums, Artists, Songs and Playlists tabs.
+    await place('3')
+    await t.sleep(600)
+    for (const name of ['Albums', 'Artists', 'Songs', 'Playlists']) {
       await t.longFrames()
       await tab(name).catch(() => {})
       await t.sleep(900)
@@ -101,9 +104,8 @@ await back()
 // 3. The big playlist, if named: opens under 300 ms, no frame over 50 ms.
 if (process.env.QA_BIG_PLAYLIST) {
   const name = process.env.QA_BIG_PLAYLIST
-  await place('1')
+  await place('3')
   await t.sleep(500)
-  await back()
   await tab('Playlists')
   await t.sleep(1200)
   await t.longFrames()
@@ -124,11 +126,11 @@ if (process.env.QA_BIG_PLAYLIST) {
   await back()
 }
 
-// 4. Typing in Music's search: no keystroke over 50 ms.
+// 4. Typing in the search box (in the title bar): no keystroke over 50 ms.
 {
   await place('1')
   await t.sleep(500)
-  await t.run(`const i = document.querySelector('main input[placeholder^="Search albums"]'); i.focus(); i.select()`)
+  await t.run(`const i = document.querySelector('input[aria-label="Search your music"]'); i.focus(); i.select()`)
   await t.longFrames()
   for (const ch of 'arijit singh') {
     await t.send('Input.insertText', { text: ch })
