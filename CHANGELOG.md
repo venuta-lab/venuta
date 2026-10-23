@@ -114,6 +114,9 @@
 - **Fixed**: uploads work again after switching back to your own channel; songs in the queue
   show their length instead of a dash, and fill it in once played; Go to album works for songs
   from your YouTube Music playlists; Choose artists you like shows each artist's picture.
+- **Fixed**: double-clicking a song plays it instead of pausing it again; See all on Your
+  playlists opens your playlists; a song moved in the queue with Alt+arrows can keep moving;
+  Escape closes the Theme Studio; Jump to (Ctrl+K) finds the artists in your library.
 
 ## 0.3.0 (2026-10-18)
 
