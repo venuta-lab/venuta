@@ -12,8 +12,8 @@
 //! - copies and alignment: E1 to E6 and E9 here (WP11, with fake envelopes), and on real encodes
 //!   in `crates/player/tests/room_align.rs`; one speaker mode (A16, B17, J7) here (WP18) and
 //!   with a real host in `crates/player/tests/room_one_speaker.rs`; output delays (H3, H3b,
-//!   J8): WP19; hand-over (I3b): WP20; reopen and rejoin (I6, I7): WP15; rooms nearby (A15):
-//!   not built;
+//!   J8): WP19; hand-over (I3b): WP20; reopen and rejoin (I6, I7): WP15, in `lifecycle.rs`,
+//!   with the door for rooms nearby (A15);
 //! - the window's (B9, the panel's words and greying): `app/tests` and WP12's model tests;
 //!   the app shell's (A14, B15, C8, J4, H13): the app.
 

@@ -397,6 +397,14 @@ impl<T: Item + Serialize> Player<T> {
         }
     }
 
+    /// Where rooms keep the drift they learn of each output (engine 2's; WP15). Engine 1's
+    /// rooms learn nothing to keep.
+    pub fn set_drift_memory(&self, memory: Arc<crate::drift_memory::DriftMemory>) {
+        if let Some(m) = &self.msgs {
+            let _ = m.send(control::Msg::Drift(memory));
+        }
+    }
+
     /// Engine 2's shared downloads (`None` on engine 1): a source of a song opened on them
     /// reads the bytes its voices read, so measuring a stream's copy (the room's alignment)
     /// never downloads it twice.

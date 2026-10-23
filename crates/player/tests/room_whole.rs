@@ -832,3 +832,83 @@ fn explain(what: &str, h: &Heard) {
         }
     }
 }
+
+// --- WP15: the host's app restarts (I6) ---------------------------------------------------------
+
+/// The content of the song counting from `base` heard at `t_ns`, s.
+fn content_s(h: &Heard, base: i32, t_ns: f64) -> f64 {
+    let k = h.tick_at(t_ns);
+    f64::from(h.count(k) - base - 1) / f64::from(R)
+}
+
+#[test]
+fn a_host_restart_is_heard_as_nothing_of_the_old_room_until_the_room_starts() {
+    let mut w = Whole::new(singles(2, 90.0), true);
+    let r = w.join("Ravi", Way::LAN, Way::LAN, ListenMode::Apart, 40.0);
+    w.start();
+    w.pass_ms(15_000);
+    let state = w.people[0].host().state();
+    let ravi = w.people[r].guest().me();
+    // The host's app goes: nothing more on its link, its session and player gone with it.
+    w.cut(r);
+    let _ = w.people[0].finish();
+    w.pass_ms(8_000);
+    // The app again: a fresh player (its own queue, empty), the room reopened from what was
+    // kept, on the same endpoint (the same transport here).
+    let (p, seat) = w.person(0.0);
+    w.people[0].p = p;
+    w.people[0].seat = seat.clone();
+    let map = clock_map::handle();
+    map.store(Arc::new(Some(ClockMap::identity())));
+    let player: Arc<dyn RoomPlayer<PathBuf>> = Arc::new(Seat(seat));
+    let handle = player.attach(map.clone(), SyncMode::Apart);
+    let conductor =
+        Conductor::new(player, map, w.copies(), ListenMode::Apart).with_handle(handle, None);
+    let mono: Arc<dyn MonoClock> = Arc::new(w.clock.clone());
+    let room = Room::reopen(state, w.host_now());
+    let host = HostSession::new(
+        Arc::new(w.people[0].t.clone()),
+        mono,
+        room,
+        conductor,
+        HostConfig {
+            invite_open: Arc::new(|| true),
+        },
+    );
+    w.people[0].side = Some(Side::Host(Box::new(host)));
+    let reopened = w.now_ns() as f64;
+    w.restore(r);
+    assert!(w.run_until(|w| w.people[r].guest().stage() == Stage::In, 5_000));
+    assert_eq!(w.people[r].guest().me(), ravi, "Ravi is Ravi");
+    // The welcome holds Ravi at the kept place (a pause's fade).
+    w.pass_ms(1_000);
+    let quiet = w.now_ns() as f64;
+    let held = w.people[0].host().room().anchor().unwrap();
+    assert!(!held.playing);
+    w.pass_ms(4_000);
+    w.start();
+    let a = w.people[0].host().room().anchor().unwrap();
+    assert_eq!((a.entry, a.content_us), (held.entry, held.content_us));
+    let start_ns = a.host_us as f64 * 1_000.0;
+    w.pass_ms(10_000);
+    let base = w.base_of(a.entry);
+    let heard = w.finish();
+    let place = held.content_us as f64 / 1e6;
+    for (i, from, who) in [(0, reopened, "the host"), (r, quiet, "Ravi")] {
+        let h = &heard[i];
+        assert_music_clean(&format!("a host restart, {who}"), h);
+        let first = first_sound(h, from).expect("heard after the start");
+        assert!(
+            first >= start_ns - 1e6,
+            "{who}: nothing of the old room from {:.2} s until the start ({:.3} s early)",
+            from / 1e9,
+            (start_ns - first) / 1e9
+        );
+        let c = content_s(h, base, start_ns + 2e9);
+        assert!(
+            (c - (place + 2.0)).abs() < 0.02,
+            "{who}: from the kept place on: {c:.3} s, want {:.3} s",
+            place + 2.0
+        );
+    }
+}
