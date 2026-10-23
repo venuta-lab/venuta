@@ -37,12 +37,14 @@ const THEMES = [
 
 /** Each screen: how to get there from anywhere (a script run in the page). */
 const SCREENS = {
-  music: `await goTo('Music'); await tab('Home')`,
+  home: `await goTo('Home')`,
+  library: `await goTo('Library'); await tab('Albums')`,
   album: `await openNowPlaying('Lyrics'); await __shots.sleep(400); await __shots.click('Go to album', () => document.querySelector('[aria-label="Now Playing"]') ?? document)`,
-  playlists: `await goTo('Music'); await tab('Playlists')`,
+  playlists: `await goTo('Library'); await tab('Playlists')`,
   nowplaying: `await openNowPlaying('Sound')`,
   health: `await goTo('Health')`,
-  settings: `await goTo('Settings'); await tab('Look and feel')`,
+  // Settings opens on its first page, Look and feel.
+  settings: `await goTo('Settings')`,
 }
 
 // Helpers the screen scripts use, defined in the page once. Each waits for what it clicks to be
