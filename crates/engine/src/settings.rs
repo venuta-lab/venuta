@@ -93,6 +93,11 @@ pub struct PlayerSettings {
     /// delay per output is this one.
     #[serde(default)]
     pub output_delay_ms: BTreeMap<String, i32>,
+    /// Pause when the output the music is on goes away and it is headphones, a headset or
+    /// Bluetooth, so music never suddenly plays out loud through the speakers (wired or USB
+    /// speakers going away hand over to Windows' default). On unless turned off.
+    #[serde(default = "yes")]
+    pub pause_when_headphones_go: bool,
 }
 
 impl Default for PlayerSettings {
@@ -103,6 +108,7 @@ impl Default for PlayerSettings {
             output_name: String::new(),
             exclusive: true,
             output_delay_ms: BTreeMap::new(),
+            pause_when_headphones_go: true,
         }
     }
 }
@@ -459,6 +465,11 @@ mod tests {
         assert_eq!(old.player.output, None, "Windows' default, followed");
         assert!(old.player.exclusive, "bit-perfect unless turned off");
         assert!(PlayerSettings::default().exclusive);
+        assert!(
+            old.player.pause_when_headphones_go,
+            "headphones going away pause"
+        );
+        assert!(PlayerSettings::default().pause_when_headphones_go);
         // Listen together's values by output id come over; its "default" named no output.
         let mut s: Settings = serde_json::from_str(
             r#"{"listening": {"together_delay": {"default": 90, "{bt}": 180}},

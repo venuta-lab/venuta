@@ -205,6 +205,7 @@ impl<T: Item + Serialize> Control<T> {
                 self.program.hush(&mut self.deck);
             }
             Cmd::OutputDelays(d) => self.deck.delays = d,
+            Cmd::PauseWhenHeadphonesGo(on) => self.deck.pause_when_headphones_go = on,
             Cmd::Quit => {
                 self.program.quit(&mut self.deck);
                 self.deck.quitting = true;
@@ -532,6 +533,13 @@ pub(super) struct Deck {
     /// The extra delay set per endpoint, ms (the store in Settings): what you hear is the frame
     /// at the DAC that long ago.
     pub(super) delays: BTreeMap<String, i32>,
+    /// Pause rather than carry on from another output when headphones, a headset or a
+    /// Bluetooth device goes away (on unless turned off).
+    pub(super) pause_when_headphones_go: bool,
+    /// The device a lost output was on (looked at once its listing has caught up).
+    lost_from: Option<Resolved>,
+    /// Headphones or Bluetooth went away and the music is to pause: their name, for the program.
+    left: Option<String>,
 }
 
 /// The output's part of the signal path.
@@ -636,6 +644,9 @@ impl Deck {
             tried: None,
             rehome: false,
             delays: BTreeMap::new(),
+            pause_when_headphones_go: true,
+            lost_from: None,
+            left: None,
         };
         deck.adopt(choice);
         deck
@@ -725,7 +736,12 @@ impl Deck {
         let ours_here = eps
             .iter()
             .any(|e| e.id == cur.id && e.state == EndpointState::Active);
-        if ours_here && now < since + DEVICE_SETTLE_NS {
+        if !ours_here {
+            // Ours went: its stream says so (`Lost`), and what follows is decided there (the
+            // fallback, or a pause when headphones went).
+            return;
+        }
+        if now < since + DEVICE_SETTLE_NS {
             self.recheck_at = Some(since + DEVICE_SETTLE_NS);
             return;
         }
@@ -902,7 +918,7 @@ impl Deck {
             self.reopen |= !self.fits(f);
             return false;
         }
-        if self.switching.is_some() || self.gave_up.is_some() {
+        if self.switching.is_some() || self.gave_up.is_some() || self.left.is_some() {
             return false;
         }
         let now = self.now_ns();
@@ -911,6 +927,16 @@ impl Deck {
         }
         if self.open.is_some() && !self.fits(f) {
             self.reopen = true;
+            return false;
+        }
+        // Headphones or Bluetooth gone for good (not a format change, still there): the music
+        // pauses instead of carrying on out loud from another output.
+        if self.open.is_none()
+            && let Some(gone) = self.lost_from.take()
+            && self.went_for_good(&gone)
+        {
+            self.retry = None;
+            self.left = Some(gone.entry.name);
             return false;
         }
         if self.open.is_none() {
@@ -924,6 +950,31 @@ impl Deck {
         }
         self.start_renderer();
         self.run.is_some()
+    }
+
+    /// The device a lost output was on went away (it is not connected now), the setting is on,
+    /// and it is headphones, a headset or Bluetooth: one whose going must not move the music
+    /// to the speakers.
+    fn went_for_good(&self, gone: &Resolved) -> bool {
+        let e = &gone.entry;
+        let pausing = e.kind == Kind::Bluetooth
+            || matches!(e.form, devices::Form::Headphones | devices::Form::Headset);
+        if !self.pause_when_headphones_go || !pausing {
+            return false;
+        }
+        let Some(devs) = self.devices.as_ref() else {
+            return false;
+        };
+        !devs
+            .endpoints()
+            .iter()
+            .any(|x| x.id == e.id && x.state == EndpointState::Active)
+    }
+
+    /// Headphones or Bluetooth went away and the music is to pause: their name, said once to
+    /// the program (a room has rules of its own, and a fallback plays for it).
+    pub(super) fn take_left(&mut self) -> Option<String> {
+        self.left.take()
     }
 
     /// An open failed: tried again 0.5, 1, 2 and 5 s later after a lost output, then given up;
@@ -1342,6 +1393,8 @@ impl Deck {
     pub(super) fn switch_output(&mut self, choice: OutputChoice) {
         // Another choice: a device passed over before may be the one now.
         self.avoid.clear();
+        self.lost_from = None;
+        self.left = None;
         if self.open.is_none() {
             self.adopt(choice);
         } else {
@@ -1567,6 +1620,8 @@ impl Deck {
         if let Some(o) = self.open.as_mut() {
             o.dev.out().close();
         }
+        // What it was on: looked at once the listing has caught up (`ready_for`).
+        self.lost_from = self.open.as_ref().and_then(|o| o.on.clone());
         self.open = None;
         self.endpoint = None;
         let now = self.now_ns();

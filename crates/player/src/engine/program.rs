@@ -89,6 +89,8 @@ enum Link {
 
 pub(super) struct OwnProgram<T> {
     queue: Queue<T>,
+    /// Paused because headphones or Bluetooth went away: the error says so until it plays.
+    left_paused: bool,
     queue_changed: bool,
     from: String,
     stop_after_current: bool,
@@ -123,6 +125,7 @@ impl<T: Item + Serialize> OwnProgram<T> {
             spare: None,
             link: None,
             failures: 0,
+            left_paused: false,
         }
     }
 
@@ -253,6 +256,7 @@ impl<T: Item + Serialize> OwnProgram<T> {
             | Cmd::Spectrum(_)
             | Cmd::Output(_)
             | Cmd::OutputDelays(_)
+            | Cmd::PauseWhenHeadphonesGo(_)
             | Cmd::Sync(_)
             | Cmd::Quit => {}
         }
@@ -260,6 +264,9 @@ impl<T: Item + Serialize> OwnProgram<T> {
 
     fn set_playing(&mut self, on: bool, deck: &mut Deck) {
         if on {
+            if std::mem::take(&mut self.left_paused) {
+                self.error.clear();
+            }
             if self.cur.is_none() && self.queue.current().is_some() {
                 self.load_current(deck, Place::Frame(0));
             }
@@ -3152,6 +3159,15 @@ impl<T: Item + Serialize> Program<T> {
     }
 
     pub(super) fn step(&mut self, deck: &mut Deck) {
+        // Headphones or Bluetooth went away: your own music pauses there (a room keeps its own
+        // rules: the fallback plays for it).
+        if let Some(name) = deck.take_left()
+            && let Program::Own(o) | Program::Adopting { own: o, .. } = self
+        {
+            o.error = format!("Paused: {name} disconnected.");
+            o.left_paused = true;
+            o.set_playing(false, deck);
+        }
         match self {
             Program::Own(o) => o.step(deck),
             Program::Room { room, .. } => room.step(deck),

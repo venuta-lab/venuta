@@ -615,6 +615,9 @@ fn windows_changing_the_format_while_playing_reopens_cleanly_at_the_new_one() {
 #[test]
 fn sleep_and_wake_play_on_the_fallback_until_the_dac_is_back_without_anything_old() {
     let mut b = bench(vec![speakers(), dac()], Some("speakers"), Some("dac"), true);
+    // Carrying on to the speakers is what is judged here (the DAC is for headphones, which
+    // pause by default when they go: the next gates).
+    b.rig.send(Cmd::PauseWhenHeadphonesGo(false));
     b.rig.send(play(vec![song(48_000, 0.0, 12.0, true, true)]));
     assert!(b.until_on("dac", 3_000));
     b.rig.pass(3_000);
@@ -759,4 +762,129 @@ fn the_place_reported_is_what_reaches_the_ear_through_the_outputs_delay() {
     b.rig.pass(500);
     b.never_stopped();
     b.finish("the delay", &[], |_| true);
+}
+
+// --- Headphones and Bluetooth going away pause --------------------------------------------------
+
+/// USB speakers (a USB device that is speakers, not headphones).
+fn usb_speakers() -> SimEndpoint {
+    sim(
+        endpoint(
+            "usb-speakers",
+            "Speakers",
+            "Desk Speakers",
+            "USB",
+            ff::SPEAKERS,
+            "{22220000-0000-0000-0000-000000000006}",
+        ),
+        fmt(48_000, 2, 32, 32),
+        None,
+    )
+}
+
+#[test]
+fn bluetooth_going_away_pauses_where_it_was_instead_of_playing_out_loud() {
+    let mut b = bench(
+        vec![speakers(), pods(), pods_hfp()],
+        Some("speakers"),
+        Some("pods"),
+        false,
+    );
+    b.rig.send(play(vec![song(48_000, 0.0, 12.0, true, true)]));
+    assert!(b.until_on("pods", 3_000));
+    b.rig.pass(2_000);
+    let before = b.status().position_ms;
+    // Back in their case.
+    b.devices.set_state("pods", EndpointState::Unplugged);
+    b.devices.set_state("pods-hf", EndpointState::Unplugged);
+    assert!(b.rig.until(1_000, |s| !s.playing), "paused");
+    let s = b.status();
+    assert_eq!(s.error, "Paused: AirPods Pro disconnected.");
+    assert!(
+        s.position_ms.abs_diff(before) < 300,
+        "paused where it was heard: {before} then {} ms",
+        s.position_ms
+    );
+    b.rig.pass(2_000);
+    assert!(
+        b.devices.opened().iter().all(|o| o.id == "pods"),
+        "never a sound from the speakers meanwhile"
+    );
+    // Play: on the speakers now (the AirPods are away), the notice gone.
+    b.rig.send(Cmd::Play);
+    assert!(b.until_on("speakers", 2_000));
+    assert!(b.status().error.is_empty());
+    b.rig.pass(500);
+    b.finish("Bluetooth gone, paused", &[0], |_| true);
+}
+
+#[test]
+fn a_headphone_dac_pauses_too_but_speakers_going_away_carry_on_and_the_setting_turns_it_off() {
+    // A USB DAC for headphones: paused.
+    let mut b = bench(
+        vec![speakers(), dac()],
+        Some("speakers"),
+        Some("dac"),
+        false,
+    );
+    b.rig.send(play(vec![song(48_000, 0.0, 6.0, true, true)]));
+    assert!(b.until_on("dac", 3_000));
+    b.rig.pass(1_000);
+    b.devices.set_state("dac", EndpointState::NotPresent);
+    assert!(b.rig.until(1_000, |s| !s.playing), "paused");
+    assert_eq!(b.status().error, "Paused: SNOWSKY DISC disconnected.");
+    b.finish("a headphone DAC gone, paused", &[0], |_| true);
+    // USB speakers: the music carries on from the default.
+    let mut b = bench(
+        vec![speakers(), usb_speakers()],
+        Some("speakers"),
+        Some("usb-speakers"),
+        false,
+    );
+    b.rig.send(play(vec![song(48_000, 0.0, 6.0, true, true)]));
+    assert!(b.until_on("usb-speakers", 3_000));
+    b.rig.pass(1_000);
+    b.devices
+        .set_state("usb-speakers", EndpointState::NotPresent);
+    assert!(b.until_on("speakers", 1_000), "carried on");
+    b.rig.pass(500);
+    b.never_stopped();
+    b.finish("USB speakers gone, carried on", &[0], |_| true);
+    // The setting off: the DAC going away carries on too.
+    let mut b = bench(
+        vec![speakers(), dac()],
+        Some("speakers"),
+        Some("dac"),
+        false,
+    );
+    b.rig.send(Cmd::PauseWhenHeadphonesGo(false));
+    b.rig.send(play(vec![song(48_000, 0.0, 6.0, true, true)]));
+    assert!(b.until_on("dac", 3_000));
+    b.rig.pass(1_000);
+    b.devices.set_state("dac", EndpointState::NotPresent);
+    assert!(b.until_on("speakers", 1_000), "carried on");
+    b.rig.pass(500);
+    b.never_stopped();
+    b.finish("the setting off", &[0], |_| true);
+}
+
+#[test]
+fn a_format_change_on_headphones_never_pauses() {
+    let mut b = bench(
+        vec![speakers(), dac()],
+        Some("speakers"),
+        Some("dac"),
+        false,
+    );
+    b.rig.send(play(vec![song(48_000, 0.0, 6.0, true, true)]));
+    assert!(b.until_on("dac", 3_000));
+    b.rig.pass(1_000);
+    // Still there, its stream invalidated: reopened, not paused.
+    b.devices.set_mix("dac", fmt(44_100, 2, 32, 32));
+    assert!(b.rig.until(1_000, |s| {
+        s.signal.as_ref().is_some_and(|g| g.output.rate == 44_100)
+    }));
+    b.rig.pass(500);
+    b.never_stopped();
+    b.finish("a format change on headphones", &[0], |k| k == 0);
 }

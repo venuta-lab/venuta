@@ -203,6 +203,10 @@ pub enum Cmd<T> {
     /// output not in it has none set): what you hear is the frame at the DAC that long ago.
     /// Engine 2 puts it into the place it reports; engine 1 ignores it.
     OutputDelays(std::collections::BTreeMap<String, i32>),
+    /// Pause, rather than carry on from another output, when the device the music is on goes
+    /// away and it is headphones, a headset or Bluetooth (so music never suddenly plays out loud
+    /// through the speakers). On unless turned off. Engine 2 only; engine 1 ignores it.
+    PauseWhenHeadphonesGo(bool),
     /// The sound tools (equalizer, levelling…).
     Sound(Sound),
     /// Stop when the playing song ends, instead of going on.
@@ -847,7 +851,7 @@ impl<T: Item + Serialize> Engine<T> {
                 self.choice = choice;
             }
             // Engine 2's (the place it reports is the one heard through the output's delay).
-            Cmd::OutputDelays(_) => {}
+            Cmd::OutputDelays(_) | Cmd::PauseWhenHeadphonesGo(_) => {}
             Cmd::Sound(s) => {
                 self.sound = s;
                 // Every song makes its tools again with the new settings.
