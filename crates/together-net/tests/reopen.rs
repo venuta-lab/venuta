@@ -34,3 +34,17 @@ async fn an_endpoint_comes_back_with_its_key_on_its_port() {
     other.close().await;
     again.close().await;
 }
+
+#[test]
+fn a_rooms_key_goes_through_its_record() {
+    let (k, hex) = net::room_key(None);
+    assert_eq!(hex.len(), 64);
+    let (again, hex2) = net::room_key(Some(&hex));
+    assert_eq!((again.public(), hex2), (k.public(), hex.clone()));
+    let (other, _) = net::room_key(Some("not a key"));
+    assert_ne!(
+        other.public(),
+        k.public(),
+        "a new one when the kept one doesn't read"
+    );
+}

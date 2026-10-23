@@ -9,8 +9,10 @@
 //! - **Local only**: no relay and no address lookup, nothing online; the invite carries the
 //!   host's local addresses, so people on the same Wi-Fi connect directly.
 
+/// The endpoint a room is on (iroh's), named here for those who keep one.
+pub use iroh::Endpoint;
 use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream};
-use iroh::{Endpoint, RelayMap, RelayMode, RelayUrl, endpoint::presets};
+use iroh::{RelayMap, RelayMode, RelayUrl, endpoint::presets};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -86,6 +88,25 @@ pub fn random_hex(n: usize) -> String {
     let mut b = vec![0u8; n];
     getrandom::fill(&mut b).expect("the system's randomness");
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// A hosted room's endpoint key, and the same as hex for its record (WP15): the key kept
+/// (`hex`, when it reads as one), else a new one.
+pub fn room_key(hex: Option<&str>) -> (iroh::SecretKey, String) {
+    let kept = hex.and_then(|h| {
+        let b: Vec<u8> = (0..h.len())
+            .step_by(2)
+            .map(|i| h.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()))
+            .collect::<Option<Vec<u8>>>()?;
+        <[u8; 32]>::try_from(b).ok()
+    });
+    let bytes = kept.unwrap_or_else(|| {
+        let mut k = [0u8; 32];
+        getrandom::fill(&mut k).expect("random bytes");
+        k
+    });
+    let hex = bytes.iter().map(|x| format!("{x:02x}")).collect();
+    (iroh::SecretKey::from_bytes(&bytes), hex)
 }
 
 fn key_in_room(mine: &[u8; 32], room_secret: &str) -> iroh::SecretKey {

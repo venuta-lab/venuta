@@ -197,6 +197,14 @@ impl HostKeeper {
         &self.record
     }
 
+    /// The app's own part changed (songs of its own added): written at once.
+    pub fn set_app(&mut self, app: serde_json::Value) {
+        if !self.done && app != self.record.app {
+            self.record.app = app;
+            let _ = self.kept.keep_host(&self.record);
+        }
+    }
+
     /// The room as it is now (`playing`: its place moves), at `now_ms` (ms since 1970).
     pub fn step(&mut self, room: RoomState, playing: bool, now_ms: u64) {
         if self.done {
