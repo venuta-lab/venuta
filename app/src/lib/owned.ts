@@ -31,7 +31,7 @@ interface Song {
  * spell the same name a letter apart once read in Roman letters). Title and length still have to
  * agree, so the looseness here never makes two songs one.
  */
-function sameName(a: string, b: string): boolean {
+export function sameName(a: string, b: string): boolean {
   if (a === b) return true
   const [short, long] = a.length <= b.length ? [a.split(' '), b.split(' ')] : [b.split(' '), a.split(' ')]
   const fits = (w: string, v: string) => w === v || (w.length >= 3 && v.startsWith(w)) || (v.length >= 3 && w.startsWith(v))

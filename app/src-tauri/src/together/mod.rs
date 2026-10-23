@@ -256,7 +256,7 @@ pub fn random_hex(n: usize) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn qr_svg(text: &str) -> String {
+pub(crate) fn qr_svg(text: &str) -> String {
     qrcode::QrCode::new(text.as_bytes())
         .map(|c| {
             c.render::<qrcode::render::svg::Color>()

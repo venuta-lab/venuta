@@ -98,12 +98,12 @@ test('an online album opens, plays and is added, with nothing local to edit', ()
   assert.ok(!a.includes('details') && !a.includes('folder'))
 })
 
-test('a song can be liked; an online song can also be disliked and its link copied', () => {
+test('a song can be liked and shared; an online song can also be disliked', () => {
   const local = ids(actionsFor('song', {}))
   const online = ids(actionsFor('song', { online: true }))
   assert.ok(local.includes('like') && online.includes('like'))
   assert.ok(online.includes('dislike') && !local.includes('dislike'), 'dislike steers what the catalog plays next')
-  assert.ok(online.includes('share') && !local.includes('share'), 'a file of yours has no link')
+  assert.ok(online.includes('share') && local.includes('share'), 'a file of yours is shared by its YouTube Music version')
   // Liking sits right after playing, as in a music app's menu.
   assert.deepEqual(actionsFor('song', { online: true })[1], ['radio', 'like', 'dislike'])
 })
@@ -189,4 +189,10 @@ test('an online song can follow its artist on YouTube Music, beside Go to artist
   assert.ok(o[3].includes('follow'))
   assert.ok(!ids(actionsFor('song', { online: true, noArtist: true })).includes('follow'))
   assert.ok(!ids(actionsFor('song', {})).includes('follow'))
+})
+
+test('a playlist of yours can be shared from its menu, beside Export', () => {
+  const p = ids(actionsFor('playlist', {}))
+  assert.ok(p.includes('share') && p.includes('export'))
+  assert.ok(p.indexOf('share') < p.indexOf('export'))
 })

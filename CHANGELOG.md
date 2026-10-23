@@ -1,5 +1,15 @@
 # Changes
 
+## Unreleased
+
+- **Share, for your own songs too.** A song of yours is shared by its YouTube Music version, found
+  the moment you share it and only when it is the same recording (same title, artist, length and
+  version: a live or remix take is never taken for the studio one); otherwise the closest few are
+  offered to choose from, and your choice is kept. The Share button sits by the heart in Now
+  Playing; songs, albums, artists and playlists share from their menus. Share copies the link at
+  once, and More ways opens Windows' share panel (WhatsApp, Mail, Phone Link, Nearby Share) and a
+  QR code to scan with a phone.
+
 ## 0.4.1 (2026-10-23)
 
 - **Fixed: Bluetooth no longer reports gaps that never happened.** A Bluetooth link pauses its

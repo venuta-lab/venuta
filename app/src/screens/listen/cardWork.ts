@@ -1,5 +1,6 @@
 import { askAddSongs } from '../../components/AddToPlaylist'
-import { copyLink, ytmMenuWork, type Work } from '../../lib/actions'
+import { ytmMenuWork, type Work } from '../../lib/actions'
+import { shareLink } from '../../lib/share'
 import { onlineAlbumPage, onlineArtistPage, onlineCollection, type OnlineAlbum, type OnlineArtist, type OnlineCollection } from '../../lib/engine'
 import { radioOfCard } from '../../lib/mixes'
 import { notify } from '../../lib/notify'
@@ -36,7 +37,7 @@ export function onlineAlbumCardWork(root: string, a: OnlineAlbum, from: From): W
       void page()
         .then((p) => p.tracks.length && askAddSongs(p.tracks.map((t) => ({ online: onlineEntryFrom(t) })), a.title, undefined, p.playlist_id ?? undefined))
         .catch((e) => notify(onlineProblem(e))),
-    share: link ? () => copyLink(link, a.title) : undefined,
+    share: link ? () => shareLink(link, a.title) : undefined,
     ...ytmMenuWork(`album:${a.album_id}`, a.title, { feedback: a.feedback }),
   }
 }
@@ -60,7 +61,7 @@ export function collectionCardWork(root: string, c: OnlineCollection, from: From
       void songs()
         .then((t) => t.length && askAddSongs(t.map((x) => ({ online: onlineEntryFrom(x) })), c.title, undefined, list ?? undefined))
         .catch((e) => notify(onlineProblem(e))),
-    share: link ? () => copyLink(link, c.title) : undefined,
+    share: link ? () => shareLink(link, c.title) : undefined,
     ...ytmMenuWork(`list:${c.collection_id}`, c.title, { feedback: c.feedback }),
   }
 }
@@ -86,6 +87,6 @@ export function onlineArtistCardWork(root: string, ar: OnlineArtist): Work {
         .catch((e) => notify(onlineProblem(e))),
     next: () => queue(true),
     queue: () => queue(false),
-    share: link ? () => copyLink(link, ar.name) : undefined,
+    share: link ? () => shareLink(link, ar.name) : undefined,
   }
 }

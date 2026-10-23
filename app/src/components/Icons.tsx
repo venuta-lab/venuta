@@ -311,3 +311,9 @@ export const IconPlaylistAdd = (p: P) => (
     <path d="M4 6h11M4 12h11M4 18h7M18 14v7M14.5 17.5h7" />
   </svg>
 )
+/** Share: an arrow up out of a tray. */
+export const IconShare = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M12 15V3.5M7.5 8 12 3.5 16.5 8M5 12v6.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V12" />
+  </svg>
+)

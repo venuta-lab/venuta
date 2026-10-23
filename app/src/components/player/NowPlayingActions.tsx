@@ -10,12 +10,13 @@ import { isSearchCancelled } from '../../lib/engine'
 import { onlineProblem } from '../../lib/online'
 import { rankOnlineTracks } from '../../lib/searchRank'
 import { isOnline, playItems, queueKey, songItemOf, toRemoteItem, type QueueItem } from '../../lib/player'
-import { copySongLink, goToEach, likeWork, menuFor, showInFolder, ytmMenuWork } from '../../lib/actions'
+import { goToEach, likeWork, menuFor, showInFolder, ytmMenuWork } from '../../lib/actions'
+import { shareSong } from '../../lib/share'
 import { blockArtist, dislike, startRadio } from '../../lib/radio'
 import { LikeButton } from '../LikeButton'
 import { menuFromEvent } from '../../lib/menu'
 import { findOnlineArtist } from '../../screens/listen/onlineSearch'
-import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconTiming } from '../Icons'
+import { IconAlbum, IconBigScreen, IconDesktopLyrics, IconLyricStyle, IconMore, IconPlaylistAdd, IconShare, IconTiming } from '../Icons'
 import { LookPanel } from '../lyrics/LookPanel'
 import { useLyricColour } from '../lyrics/useNowLyrics'
 
@@ -275,7 +276,7 @@ export function SongActions(props: {
         like: likeWork(props.root, song),
         dislike: remote ? () => void dislike(props.root, song) : undefined,
         block: remote ? artists.slice(0, 3).map((name) => ({ label: `Block ${name}`, run: () => void blockArtist(name) })) : undefined,
-        share: remote && song.online?.kind === 'online' ? () => copySongLink({ track_id: (song.online as { track_id: string }).track_id, title: song.title }) : undefined,
+        share: () => void shareSong(song),
         artist: goToEach(names, props.onArtist),
         album: remote ? undefined : () => props.onAlbum(song.dir),
         moreOnline: remote && artists[0] ? [{ label: `More online by ${artists[0]}`, run: () => void moreBy(artists[0]) }] : undefined,
@@ -319,6 +320,10 @@ export function SongActions(props: {
         <div className="seg inline-flex items-center rounded-full bg-ink/[0.07] p-1 shadow-[inset_0_0_0_1px_var(--edge)]">
           <IconAction label="Add to playlist" onClick={() => askAddSongs([songItemOf(song)], song.title)}>
             <IconPlaylistAdd width={18} height={18} />
+          </IconAction>
+          {/* A song of yours too: shared by its YouTube Music version. */}
+          <IconAction label="Share" onClick={() => void shareSong(song)}>
+            <IconShare width={18} height={18} />
           </IconAction>
           {!remote && (
             <IconAction label="Go to album" onClick={() => props.onAlbum(song.dir)}>

@@ -72,6 +72,7 @@ import { showPlaylists, type PlaylistsPlace } from './screens/PlaylistsScreen'
 import { onGoToPlaylists } from './screens/playlists/ops'
 import { AddToPlaylist } from './components/AddToPlaylist'
 import { ConfirmHost, chooseAsk } from './components/Confirm'
+import { ShareHost } from './components/SharePanel'
 import { StudioHost } from './components/themes/ThemeStudio'
 import { ThemeImportHost } from './components/themes/ThemeImport'
 import { SETTINGS_FOUND, SETTINGS_PAGE_NAMES, settingsSection } from './screens/settingsPage'
@@ -1279,6 +1280,7 @@ export default function App() {
         <StudioHost />
         <ThemeImportHost />
         <ConfirmHost />
+        <ShareHost />
         <ShortcutSheet open={sheet} onClose={() => setSheet(false)} />
         <YtmWelcome />
         <YtmTaste />

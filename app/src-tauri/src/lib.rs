@@ -33,6 +33,7 @@ mod one_window;
 mod online;
 mod phone;
 mod playback;
+mod share;
 mod theme_packs;
 mod together;
 mod translation;
@@ -3093,6 +3094,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             engine_version,
+            share::share_qr,
+            share::share_to_app,
             scan_library,
             library_health,
             album_covers,

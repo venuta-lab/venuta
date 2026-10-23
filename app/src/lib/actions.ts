@@ -4,6 +4,7 @@ import { actionsFor, LABELS, type ActionId, type Facts, type Kind } from './acti
 import { searchWeb, ytmArtistFollowed, ytmSubscribe, ytmDeleteUpload, ytmMenuPress, ytmPlaylistEdit, ytmRemovePastSearch, ytmSongMenu, type CatalogTrack, type OnlineTrack, type PlaylistSummary, type SmartRule } from './engine'
 import { rebuildMenu, type MenuGroups, type MenuItem } from './menu'
 import { notify } from './notify'
+import { shareLink, shareSong, songLink } from './share'
 import { isLiked, setLiked } from './likes'
 import { blockArtist, dislike, playWithRadio, startRadio } from './radio'
 import { shortcutWork } from './shortcuts'
@@ -66,24 +67,13 @@ export function songWork(nav: Go, t: CatalogTrack, playIt?: () => void): Work {
     album: () => nav.openAlbum(t.dir),
     details: () => nav.editDetails(t.dir),
     folder: () => showInFolder(nav.root, t.path),
+    // Shared by its YouTube Music version (lib/share.ts).
+    share: () => void shareSong(toItem(t)),
     web: () => void searchWeb(`${t.title} ${artists[0] ?? ''}`.trim()),
   }
 }
 export const songFacts = (t: CatalogTrack): Facts => ({ noArtist: !artistsOf(t).length })
 
-/** The catalog's own page for an online song, to share. */
-export const onlineSongLink = (t: Pick<OnlineTrack, 'track_id'>) => `https://music.youtube.com/watch?v=${encodeURIComponent(t.track_id)}`
-
-/** Put a link on the clipboard, and say so. */
-export function copyLink(url: string, name: string) {
-  navigator.clipboard
-    .writeText(url)
-    .then(() => notify(`Link to “${name}” copied.`))
-    .catch(() => notify("Couldn't reach the clipboard."))
-}
-
-/** Put a song's link on the clipboard, and say so. */
-export const copySongLink = (t: Pick<OnlineTrack, 'track_id' | 'title'>) => copyLink(onlineSongLink(t), t.title)
 
 /** Like a song, or take it out of Liked songs when it is in. */
 export function likeWork(root: string, q: QueueItem): MenuItem[] {
@@ -243,7 +233,7 @@ export function onlineSongWork(nav: GoOnline, t: OnlineTrack, playIt?: () => voi
             artwork_url: t.artwork_url,
           })
       : undefined,
-    share: () => copySongLink(t),
+    share: () => shareLink(songLink(t.track_id), t.title),
     web: () => void searchWeb(`${t.title} ${t.artists[0] ?? ''}`.trim()),
     saveEpisode: isEpisode(t) && ytmReady() ? () => void saveEpisodeForLater(t) : undefined,
     follow: t.artist_id && t.artists[0] && ytmReady() ? [{ label: `Follow ${t.artists[0]} on YouTube Music`, run: () => void followArtist(t.artist_id ?? '', t.artists[0]) }] : undefined,
@@ -306,6 +296,8 @@ export function playlistWork(root: string, p: PlaylistSummary, rule?: SmartRule)
     update: p.source_id
       ? [{ label: `Update from ${fromWhere(p.source ?? '') || 'where it came from'}…`, run: () => goToPlaylists({ kind: 'import', start: { kind: 'update', name: p.name } }) }]
       : undefined,
+    // A playlist of yours goes as YouTube Music links, a file or a list: Send out has them all.
+    share: () => void exportPlaylist(root, p, rule),
     export: () => void exportPlaylist(root, p, rule),
     delete: () => void deletePlaylist(root, p),
   }
