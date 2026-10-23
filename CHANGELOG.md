@@ -9,6 +9,9 @@
   "bluetooth" or "translation"); Lyrics opens on what shows under each line, with translation in
   one group; the online catalog's state has its name beside it; Exclusive is a switch like the
   others.
+- **Pronunciation of Malayalam, Tamil and Marathi**, spelled more as people spell them: "nd" in
+  Malayalam words like "randu", no stray "u" after English words ("bus"), Tamil "nth", "thth" and
+  "chch", Marathi plurals and case endings ("gharchya").
 - **Translation shows where the lyrics come with one**, in your language, as Apple Music does.
   Translating songs on this PC or with your own key is set aside until it works well for
   everyone without a key: Pronunciation stays for every song.
