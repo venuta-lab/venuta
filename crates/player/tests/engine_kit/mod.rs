@@ -178,7 +178,7 @@ pub fn song(from_s: f64, secs: f64, rise: bool, fall: bool) -> PathBuf {
         channels: 2,
     };
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!(
+    let d = player::test_support::temp_dir().join(format!(
         "venuta-engine2-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

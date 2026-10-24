@@ -17,6 +17,8 @@ pub mod sim;
 pub mod sim_devices;
 pub mod spectrum;
 pub mod sync;
+#[doc(hidden)]
+pub mod test_support;
 pub mod verify;
 pub mod voice;
 pub mod voice_api;

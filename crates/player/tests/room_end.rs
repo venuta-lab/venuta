@@ -44,7 +44,8 @@ fn wav(path: &Path, frames: usize, base: i32) {
 
 /// A counting song of `secs` seconds whose frame i is `base + i + 1`.
 fn counting(name: &str, secs: u32, base: i32) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("venuta-end-{}-{name}", std::process::id()));
+    let d =
+        player::test_support::temp_dir().join(format!("venuta-end-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     let f = d.join("song.wav");
     wav(&f, (RATE * secs) as usize, base);

@@ -37,7 +37,8 @@ fn wav(path: &Path, frames: usize, sample: impl Fn(usize) -> i32) {
 }
 
 fn dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("venuta-room-{}-{name}", std::process::id()));
+    let d =
+        player::test_support::temp_dir().join(format!("venuta-room-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

@@ -170,7 +170,7 @@ fn make_fixtures() {
     }
     // The catalog's WebM: its index before the music, timed from 0 (remuxed from the cut, as
     // a cut encoded straight to WebM keeps the cut's offset in its times).
-    let cut = std::env::temp_dir().join("venuta-seek-music-cut.webm");
+    let cut = player::test_support::temp_dir().join("venuta-seek-music-cut.webm");
     for (input, args, out) in [
         (
             fixture("align-music.m4a"),

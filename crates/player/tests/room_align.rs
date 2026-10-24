@@ -89,7 +89,8 @@ fn reference_wav() -> PathBuf {
         align_kit::FIXTURE_SECS,
         m,
     );
-    let dir = std::env::temp_dir().join(format!("venuta-room-align-{}", std::process::id()));
+    let dir =
+        player::test_support::temp_dir().join(format!("venuta-room-align-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let f = dir.join("reference.wav");
     align_kit::write_wav(&f, &pcm, m.rate, m.ch);

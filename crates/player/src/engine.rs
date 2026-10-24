@@ -2357,7 +2357,7 @@ mod tests {
         // A folder of its own for each test (they run at once and name their files alike: the
         // clock alone can give two of them the same folder).
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        let dir = crate::test_support::temp_dir().join(format!(
             "venuta-engine-{}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),

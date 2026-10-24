@@ -243,7 +243,7 @@ fn codec_priming_is_measured_within_2_ms() {
 #[ignore = "writes the fixtures; needs ffmpeg"]
 fn make_fixtures() {
     let ffmpeg = std::env::var("FFMPEG").expect("FFMPEG names ffmpeg");
-    let dir = std::env::temp_dir().join("venuta-align-fixtures");
+    let dir = player::test_support::temp_dir().join("venuta-align-fixtures");
     std::fs::create_dir_all(&dir).unwrap();
     let wav = dir.join("align-music.wav");
     let m = Master { ch: 1, ..REF };
@@ -429,7 +429,7 @@ fn the_pcm_hash_matches_only_identical_audio() {
     );
 
     // The same audio through a file and the decoder: the same hash.
-    let dir = std::env::temp_dir().join(format!("venuta-align-{}", std::process::id()));
+    let dir = player::test_support::temp_dir().join(format!("venuta-align-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let wav = dir.join("same.wav");
     write_wav(&wav, &pcm, REF.rate, REF.ch);

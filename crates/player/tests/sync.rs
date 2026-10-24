@@ -46,7 +46,8 @@ fn heard(c: &Captured) -> Vec<i32> {
 }
 
 fn song(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("venuta-sync-{}-{name}", std::process::id()));
+    let dir =
+        player::test_support::temp_dir().join(format!("venuta-sync-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let f = dir.join("song.wav");
     counting_wav(&f, RATE as usize * 6);

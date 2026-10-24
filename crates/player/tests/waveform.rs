@@ -36,7 +36,8 @@ fn quiet_then_loud_bytes() -> Vec<u8> {
 
 #[test]
 fn a_file_shows_its_quiet_and_loud_parts() {
-    let f = std::env::temp_dir().join(format!("venuta-wave-{}.wav", std::process::id()));
+    let f =
+        player::test_support::temp_dir().join(format!("venuta-wave-{}.wav", std::process::id()));
     quiet_then_loud(&f);
     let w = waveform(&f, 64).unwrap();
     let _ = std::fs::remove_file(&f);

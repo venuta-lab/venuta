@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// A test song in a folder of its own: `secs` long, cut from the piece at `from_s` seconds.
 pub fn song(name: &str, piece: &Piece, from_s: f64, secs: f64, rise: bool, fall: bool) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!(
+    let d = player::test_support::temp_dir().join(format!(
         "venuta-clicks-{}-{}-{name}",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

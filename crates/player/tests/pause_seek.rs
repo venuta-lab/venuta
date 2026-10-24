@@ -48,7 +48,7 @@ fn wav(path: &Path, secs: u32) {
 
 fn song(name: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!(
+    let d = player::test_support::temp_dir().join(format!(
         "venuta-pause-seek-{}-{}-{name}",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

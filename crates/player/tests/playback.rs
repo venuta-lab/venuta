@@ -111,7 +111,7 @@ fn expected(frames: usize, channels: u16, f: impl Fn(usize, u16) -> i32) -> Vec<
 /// would play the other's song. A count makes each folder its own.
 fn tempdir() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!(
+    let d = player::test_support::temp_dir().join(format!(
         "venuta-player-{}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
