@@ -3,6 +3,7 @@
 //! room is now. Each test song's samples are their own frame numbers, so the device's bytes say
 //! exactly what was heard when.
 
+mod engines;
 use player::engine::{Cmd, OutputChoice, Player, Status};
 use player::output::Captured;
 use player::sync::SyncPlan;
@@ -91,6 +92,7 @@ fn frame_at(h: &[i32], first: usize) -> i32 {
 
 #[test]
 fn a_room_start_waits_silent_then_plays_from_the_rooms_place() {
+    let _turn = engines::real_time();
     let (c, now) = run(song("start"), 1_200, |now| SyncPlan {
         anchor: Some(now + Duration::from_millis(400)),
         position_ms: 1_000,
@@ -126,6 +128,7 @@ fn a_room_start_waits_silent_then_plays_from_the_rooms_place() {
 
 #[test]
 fn joining_late_lands_where_the_room_is_now() {
+    let _turn = engines::real_time();
     // The room started this song 2 s ago.
     let (c, now) = run(song("late"), 800, |now| SyncPlan {
         anchor: Some(now - Duration::from_millis(2_000)),
@@ -147,6 +150,7 @@ fn joining_late_lands_where_the_room_is_now() {
 
 #[test]
 fn a_paused_room_holds_its_place() {
+    let _turn = engines::real_time();
     let (c, _) = run(song("paused"), 500, |now| SyncPlan {
         anchor: Some(now),
         position_ms: 3_000,
@@ -162,6 +166,7 @@ fn a_paused_room_holds_its_place() {
 
 #[test]
 fn same_room_closes_a_small_gap_by_single_frames() {
+    let _turn = engines::real_time();
     let captured = Arc::new(Mutex::new(Captured::default()));
     let errors = Arc::new(Mutex::new(Vec::<(Instant, f32)>::new()));
     let seen = errors.clone();

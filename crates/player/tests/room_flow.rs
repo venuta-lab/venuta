@@ -5,6 +5,7 @@
 //! counting WAVs (each frame says which frame of which song it is), so the device's bytes show
 //! where every sound came from.
 
+mod engines;
 use player::engine::{Cmd, OutputChoice, Player, Status};
 use player::output::Captured;
 use player::sync::SyncPlan;
@@ -297,6 +298,7 @@ fn only_silence_between(h: &[i32]) -> bool {
 
 #[test]
 fn a_skip_starts_the_next_song_from_its_start_not_where_the_last_was_paused() {
+    let _turn = engines::real_time();
     let a = counting("skip-a", 10, 0);
     let b = counting("skip-b", 10, B);
     let r = Run::new();
@@ -329,6 +331,7 @@ fn a_skip_starts_the_next_song_from_its_start_not_where_the_last_was_paused() {
 
 #[test]
 fn a_resume_plays_on_from_the_pause_without_a_jump() {
+    let _turn = engines::real_time();
     let a = counting("resume", 12, 0);
     let r = Run::new();
     sleep(100);
@@ -365,6 +368,7 @@ fn a_resume_plays_on_from_the_pause_without_a_jump() {
 /// start. The song starts from 30 s, straight on, in step.
 #[test]
 fn a_seek_while_a_resume_gets_ready_starts_there_and_stays_there() {
+    let _turn = engines::real_time();
     let a = counting("seek-resume", 40, 0);
     let r = Run::new();
     sleep(100);
@@ -409,6 +413,7 @@ fn a_seek_while_a_resume_gets_ready_starts_there_and_stays_there() {
 /// timeline, then the next one where the seek put it), a pause and a resume. In step all along.
 #[test]
 fn in_step_after_skips_a_seek_while_starting_a_pause_and_a_resume() {
+    let _turn = engines::real_time();
     let a = counting("all-a", 8, 0);
     let b = counting("all-b", 8, B);
     let c = counting("all-c", 40, C);
@@ -477,6 +482,7 @@ fn in_step_after_skips_a_seek_while_starting_a_pause_and_a_resume() {
 /// silence at once, instead of coming back behind and waiting for the drift rule.
 #[test]
 fn another_output_mid_song_lines_up_with_the_room_at_once() {
+    let _turn = engines::real_time();
     let a = counting("switch-a", 30, 0);
     let r = Run::new();
     sleep(100);

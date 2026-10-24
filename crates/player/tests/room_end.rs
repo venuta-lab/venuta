@@ -8,6 +8,7 @@
 //! takes sound at real-time pace, so the bytes that reach it show every frame dropped, repeated
 //! or moved.
 
+mod engines;
 use player::engine::{Cmd, OutputChoice, Player, Status};
 use player::output::Captured;
 use player::sync::{SyncNote, SyncPlan};
@@ -281,6 +282,7 @@ fn straight_from(h: &[i32], from_ms: u64) -> (bool, usize) {
 
 #[test]
 fn after_a_room_ends_your_music_plays_sample_for_sample() {
+    let _turn = engines::real_time();
     for when in [
         When::WaitingForStart,
         When::PlayingApart,
@@ -331,6 +333,7 @@ fn own_queue_under_a_left_plan(left: SyncPlan) -> (Vec<i32>, Status<PathBuf>) {
 
 #[test]
 fn your_own_queue_never_plays_under_a_rooms_plan() {
+    let _turn = engines::real_time();
     let now = Instant::now();
     for left in [
         // Readied for a start that never comes: it would play silence, "playing", forever.
@@ -357,6 +360,7 @@ fn your_own_queue_never_plays_under_a_rooms_plan() {
 
 #[test]
 fn every_correction_in_a_room_is_said() {
+    let _turn = engines::real_time();
     // Apart, the room suddenly 900 ms on (a long stall somewhere): one seek, faded.
     let a = counting("said-apart", 12, 0);
     let r = Run::new(&a);
@@ -413,6 +417,7 @@ fn every_correction_in_a_room_is_said() {
 
 #[test]
 fn waiting_silent_for_the_rooms_start_is_not_a_stall() {
+    let _turn = engines::real_time();
     let a = counting("not-a-stall", 4, 0);
     let r = Run::new(&a);
     // Readied and silent, the start a while off (others still getting ready).

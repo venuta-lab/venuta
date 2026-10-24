@@ -3,6 +3,7 @@
 //! frame it is), played on a device that takes sound at real-time pace, so the bytes that reach
 //! it show every discontinuity exactly; one test uses a sine, to hear clicks.
 
+mod engines;
 use player::engine::{Cmd, OutputChoice, Player, Status};
 use player::output::Captured;
 use player::sync::SyncPlan;
@@ -186,6 +187,7 @@ fn song_change(react_ms: u64, same_room: bool) -> (Vec<i32>, (i32, i32)) {
 
 #[test]
 fn a_song_change_in_a_room_plays_straight_on() {
+    let _turn = engines::real_time();
     for (react, same_room) in [(50, false), (150, false), (150, true)] {
         let (h, seam) = song_change(react, same_room);
         assert_eq!(
@@ -199,6 +201,7 @@ fn a_song_change_in_a_room_plays_straight_on() {
 
 #[test]
 fn apart_a_moving_clock_estimate_is_never_heard() {
+    let _turn = engines::real_time();
     let f = counting("apart-noise", 9.0, 0);
     let r = start(f);
     let at = Instant::now() + Duration::from_millis(300);
@@ -224,6 +227,7 @@ fn apart_a_moving_clock_estimate_is_never_heard() {
 
 #[test]
 fn apart_far_off_lines_up_once_and_without_a_click() {
+    let _turn = engines::real_time();
     // A sine at 1 kHz: a cut from one place to another shows as a spike in its curvature.
     let f = dir("apart-far").join("song.wav");
     let amp = 4_000_000.0;
@@ -256,6 +260,7 @@ fn apart_far_off_lines_up_once_and_without_a_click() {
 
 #[test]
 fn same_room_ignores_clock_noise_under_a_few_ms() {
+    let _turn = engines::real_time();
     let f = counting("same-noise", 9.0, 0);
     let r = start(f);
     let at = Instant::now() + Duration::from_millis(300);
